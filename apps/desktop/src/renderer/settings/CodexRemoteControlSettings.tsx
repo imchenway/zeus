@@ -23,7 +23,6 @@ const copy = {
     connecting: '连接中',
     connected: '已连接',
     errored: '连接异常',
-    statusHelp: '通过 Codex 官方 Remote Control 配对设备后，可以远程访问新对话和空闲对话。',
     standaloneTitle: 'Remote Control 独立版',
     standaloneReady: '已为 Zeus 安装',
     standaloneMissing: '需要单独安装',
@@ -67,7 +66,6 @@ const copy = {
     connecting: 'Connecting',
     connected: 'Connected',
     errored: 'Connection error',
-    statusHelp: 'Pair a device using Codex’s official Remote Control to access new and idle conversations remotely.',
     standaloneTitle: 'Remote Control standalone',
     standaloneReady: 'Installed for Zeus',
     standaloneMissing: 'Separate install required',
@@ -135,7 +133,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
         <section className="remote-connection-summary" aria-label={stateLabel}>
           <span className="settings-row-copy">
             <strong>{snapshot?.enabled ? labels.enabled : labels.disabled}</strong>
-            <small>{labels.statusHelp}</small>
           </span>
           <span className="remote-status" data-connected={snapshot?.status.status === 'connected'}>
             {stateLabel}

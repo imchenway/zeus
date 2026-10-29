@@ -324,7 +324,6 @@ export function TaskGitConflictWorkspace(props: {
                     disabled={props.aiBusy}
                     ariaLabel={props.zh ? '选择冲突处理 Skill' : 'Choose conflict resolution skill'}
                   />
-                  <small>{props.zh ? '默认值可在侧边栏的 Skill 管理中配置；这里只影响本次处理。' : 'Configure the default in Skill management. This choice applies only to this run.'}</small>
                 </label>
                 <footer>
                   <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>

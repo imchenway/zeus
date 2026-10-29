@@ -107,11 +107,6 @@ export function MemorySettingsPane(props: {
       <header className="memory-settings-header">
         <span>
           <h2>{props.scopeLabel ?? (zh ? '长期记忆' : 'Long-term memory')}</h2>
-          {scope.kind !== 'employee' ? (
-            <p>
-              {zh ? '保存可复用的知识、偏好和工作方法。每条经验保留来源与复核时间，可修正或停用；不会把整个会话当作记忆。' : 'Keep reusable knowledge, preferences, and workflows with sources, review dates, correction and deactivation.'}
-            </p>
-          ) : null}
         </span>
         <div className="settings-heading-actions">
           <SettingsSaveStatus status={busy ? 'saving' : formError ? 'failed' : saved ? 'saved' : 'idle'} language={props.language} />

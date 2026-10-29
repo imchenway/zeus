@@ -119,7 +119,6 @@ export function GlobalAgentSettingsPane(props: {
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '全局规则' : 'Global rules'}</h2>
-          <p>{zh ? '编辑 Zeus 的 AGENTS.md。项目专属规则请放在各自仓库中。' : 'Edit the Zeus AGENTS.md. Keep project-specific rules in each repository.'}</p>
         </span>
         <div className="settings-heading-actions">
           <Button

@@ -508,7 +508,7 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
             <footer className="project-code-search-footer">
               {current?.incomplete ? <p role="status">{zh ? '部分内容达到搜索上限或暂不可用，请缩小范围后重试。' : 'Some content reached a search limit or is unavailable. Refine your search and retry.'}</p> : null}
               {visible.length < selections.length ? <p role="status">{zh ? `每类最多显示 ${searchResultLimit} 条，请选择项目或细化关键词。` : `Up to ${searchResultLimit} results per type. Select a project or refine the query.`}</p> : null}
-              {includeSource ? <span>{zh ? '全部搜索包含文件路径；代码分类查看完整正文命中。仅搜索已保存的 UTF-8 文件。' : 'All includes file paths; Code shows full content matches in saved UTF-8 files.'}</span> : null}
+              {includeSource ? <span>{zh ? '仅搜索已保存的 UTF-8 文件。' : 'Searches saved UTF-8 files only.'}</span> : null}
               <span>{zh ? '↑ ↓ 选择 · Enter 打开 · Esc 关闭' : '↑ ↓ Select · Enter Open · Esc Close'}</span>
             </footer>
           </section>

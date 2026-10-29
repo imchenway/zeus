@@ -209,18 +209,12 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '第三方接入' : 'Third-party integrations'}</h2>
-          <p>{zh ? '连接外部任务系统，自动读取链接中的任务信息。' : 'Connect task systems and read task information from links.'}</p>
         </span>
         <SettingsSaveStatus status={saveState} language={props.language} />
       </header>
       <header className="settings-section-heading model-connections-heading">
         <span>
           <strong>{zh ? '禅道实例' : 'ZenTao instances'}</strong>
-          <small>
-            {zh
-              ? '配置实例后，粘贴禅道链接会优先通过 REST 接口解析并自动填入任务信息；密码只保存到本机钥匙串。'
-              : 'After configuring an instance, pasted ZenTao links are parsed through the REST API first and filled into tasks automatically. Passwords stay in the local Keychain.'}
-          </small>
         </span>
         <Button
           variant="secondary"

@@ -139,7 +139,6 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
           <div className="skills-workspace-title-row">
             <div>
               <h1>{zh ? '技能管理' : 'Skill management'}</h1>
-              <p>{zh ? '安装一次，在推送任务、代码审查和冲突处理时直接选择。' : 'Install once, then choose a skill in task push, code review, or conflict resolution.'}</p>
             </div>
             <span className="skills-workspace-actions">
               <Button variant="secondary" size="regular" busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
@@ -157,7 +156,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
 
       {props.embedded ? (
         <div className="skills-embedded-toolbar">
-          <span>{zh ? '选择技能供任务、审查和冲突处理使用。' : 'Choose skills for tasks, reviews, and conflict resolution.'}</span>
+          <strong>{zh ? '已安装技能' : 'Installed skills'}</strong>
           <div className="skills-workspace-actions">
             <Button busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
               <ArrowClockwise aria-hidden="true" />
@@ -175,7 +174,6 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
         <div className="skills-section-heading">
           <div>
             <h2 id="skills-workflow-defaults-title">{zh ? '各类工作的默认技能' : 'Default skills for each workflow'}</h2>
-            <p>{zh ? '每次打开工作流时自动带入，仍可在提交前临时改选。' : 'Preselected when a workflow opens, with a per-run override before submission.'}</p>
           </div>
         </div>
         <div className="skills-workflow-grid">

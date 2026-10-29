@@ -9,7 +9,6 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/Caret
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { FolderSimpleIcon as FolderSimple } from '@phosphor-icons/react/dist/csr/FolderSimple';
-import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -1467,20 +1466,16 @@ function CommandRunModal(props: {
                       </span>
                     ) : null}
                   </label>
-                  <details className="command-parameter-help">
-                    <summary aria-label={`${zh ? '查看说明' : 'View help'} ${parameter.label}`}>
-                      <Question aria-hidden="true" />
-                    </summary>
-                    <div id={`${fieldPrefix}-${index}-help`}>
-                      <code>{parameter.key}</code>
-                      {parameter.description ? <p>{parameter.description}</p> : null}
-                    </div>
-                  </details>
+                  {parameter.description ? (
+                    <p className="command-parameter-help" id={`${fieldPrefix}-${index}-help`}>
+                      {parameter.description}
+                    </p>
+                  ) : null}
                 </div>
                 {parameter.type === 'boolean' ? (
                   <input
                     id={`${fieldPrefix}-${index}`}
-                    aria-describedby={`${fieldPrefix}-${index}-help`}
+                    aria-describedby={parameter.description ? `${fieldPrefix}-${index}-help` : undefined}
                     autoFocus={index === 0}
                     type="checkbox"
                     checked={Boolean(props.values[parameter.key])}
@@ -1489,7 +1484,7 @@ function CommandRunModal(props: {
                 ) : (
                   <input
                     id={`${fieldPrefix}-${index}`}
-                    aria-describedby={`${fieldPrefix}-${index}-help`}
+                    aria-describedby={parameter.description ? `${fieldPrefix}-${index}-help` : undefined}
                     autoFocus={index === 0}
                     required={parameter.required}
                     type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}

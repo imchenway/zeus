@@ -346,7 +346,6 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
         <section className="im-connect-wizard" aria-labelledby="im-connect-title">
           <div className="im-section-title">
             <h3 id="im-connect-title">{zh ? '连接你的 Telegram 机器人' : 'Connect your Telegram bot'}</h3>
-            <p>{zh ? '选择项目，验证机器人，然后在手机上完成私聊配对。' : 'Choose a project, verify your bot, then pair in a private chat on your phone.'}</p>
           </div>
           <ol className="im-step-list">
             <li>

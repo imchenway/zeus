@@ -66,7 +66,7 @@ export function TeamNodeExecutionPreview(props: { client: DashboardClient; proje
       {open ? (
         <FormDialog
           title="执行预览"
-          description="按所选任务核对当前节点；正式接纳时会再次校验并固定配置。"
+
           zh={props.language === 'zh-CN'}
           busy={false}
           submitLabel="关闭"

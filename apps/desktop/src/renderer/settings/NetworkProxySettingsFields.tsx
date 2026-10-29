@@ -304,16 +304,11 @@ export function NetworkProxySettingsFields(props: {
     <>
       <section className="network-settings-group" aria-labelledby={`${id}-proxy-heading`}>
         <header className="network-settings-group-heading">
-          <span aria-hidden="true">1</span>
           <div>
             <h3 id={`${id}-proxy-heading`}>{zh ? '代理配置' : 'Proxy configuration'}</h3>
-            <p>{zh ? '统一保存 Zeus 的浏览器和模型网络出口，修改后需完整重启。' : 'Save one network route for Zeus browser and model traffic; changes require a full restart.'}</p>
           </div>
         </header>
-        <NativeControlRow
-          title={zh ? '代理模式' : 'Proxy mode'}
-          description={zh ? '输入完成后自动保存。待任务结束，完全退出并重新打开 Zeus 生效。' : 'Saves when editing finishes. Let tasks finish, then fully quit and reopen Zeus to apply.'}
-        >
+        <NativeControlRow title={zh ? '代理模式' : 'Proxy mode'} description={zh ? '重启 Zeus 后生效。' : 'Applies after restarting Zeus.'}>
           <div className="network-proxy-modes" role="radiogroup" aria-label={zh ? '网络代理模式' : 'Network proxy mode'}>
             {(
               [
@@ -366,7 +361,7 @@ export function NetworkProxySettingsFields(props: {
                 }}
               />
             </NativeControlRow>
-            <NativeControlRow title={zh ? '主机名' : 'Host name'} description={zh ? '填写域名或 IP，不需要填写协议和端口。' : 'Enter a hostname or IP, without the protocol or port.'}>
+            <NativeControlRow title={zh ? '主机名' : 'Host name'}>
               <input
                 aria-label={zh ? '主机名' : 'Host name'}
                 aria-describedby={error ? `${id}-error` : undefined}
@@ -382,7 +377,7 @@ export function NetworkProxySettingsFields(props: {
                 }}
               />
             </NativeControlRow>
-            <NativeControlRow title={zh ? '端口号' : 'Port number'} description={zh ? '范围为 1–65535，与代理客户端显示的同协议端口一致。' : 'Use a port from 1–65535 that matches the same protocol in your proxy client.'}>
+            <NativeControlRow title={zh ? '端口号' : 'Port number'}>
               <input
                 className="network-proxy-port"
                 aria-label={zh ? '端口号' : 'Port number'}
@@ -443,7 +438,6 @@ export function NetworkProxySettingsFields(props: {
 
       <section className="network-settings-group" aria-labelledby={`${id}-path-heading`}>
         <header className="network-settings-group-heading">
-          <span aria-hidden="true">2</span>
           <div>
             <h3 id={`${id}-path-heading`}>{zh ? '网址链路' : 'URL paths'}</h3>
             <p>{zh ? '使用当前表单草稿分别检查内置浏览器与模型宿主；不修改运行中的代理。' : 'Check the built-in browser and model host with the current form draft without changing the active proxy.'}</p>
@@ -496,7 +490,6 @@ export function NetworkProxySettingsFields(props: {
 
       <section className="network-settings-group" aria-labelledby={`${id}-provider-heading`}>
         <header className="network-settings-group-heading">
-          <span aria-hidden="true">3</span>
           <div>
             <h3 id={`${id}-provider-heading`}>{zh ? '供应商真实请求' : 'Real provider requests'}</h3>
             <p>
@@ -509,11 +502,7 @@ export function NetworkProxySettingsFields(props: {
         <NativeControlRow
           className="network-model-connection-check-row"
           title={zh ? '已启用供应商' : 'Enabled providers'}
-          description={
-            zh
-              ? '列表跟随“模型供应商”中的启用状态，并包含 Codex 订阅。成功只表示本次文本对话完成；图片和工具能力需单独探测。'
-              : 'The list follows enabled Model Providers and includes Codex. Success means this text request completed; image and tool capabilities require separate probes.'
-          }
+          description={zh ? '仅验证文本请求，不验证图片或工具能力。' : 'Checks text requests only, not image or tool capabilities.'}
         >
           <Button disabled={disabled || !props.client || loadingConnections} busy={checkingModelConnections} onClick={() => void checkModelConnections()}>
             {checkingModelConnections ? (zh ? `${completedModelChecks}/${modelConnectionRows.length} 已完成` : `${completedModelChecks}/${modelConnectionRows.length} complete`) : zh ? '验证真实请求' : 'Verify real requests'}

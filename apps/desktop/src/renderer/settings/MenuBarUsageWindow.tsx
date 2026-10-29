@@ -44,7 +44,6 @@ const copy = {
     all: '全部',
     allProviders: '全部供应源',
     providers: '供应商',
-    reorderHint: '拖拽调整顺序，顶部同步',
     reorderHelp: '拖动手柄排序，也可聚焦手柄后按 ↑ ↓',
     reorder: '排序',
     loading: '正在读取用量',
@@ -119,7 +118,6 @@ const copy = {
     all: 'All',
     allProviders: 'All providers',
     providers: 'Provider',
-    reorderHint: 'Drag to reorder the list and tabs',
     reorderHelp: 'Drag to reorder, or focus a handle and press ↑ ↓',
     reorder: 'Reorder',
     loading: 'Loading usage',
@@ -577,7 +575,6 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
           </div>
         );
       })}
-      {props.providers.length > 1 ? <small className="menu-bar-usage-reorder-hint">{text.reorderHint}</small> : null}
     </section>
   );
 }

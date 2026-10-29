@@ -100,7 +100,6 @@ export function NetworkSettingsPane(props: {
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '网络' : 'Network'}</h2>
-          <p>{zh ? '配置 Zeus 的统一代理，并分别验证网页链路与模型真实请求。' : 'Configure the shared Zeus proxy, then verify web paths and real model requests separately.'}</p>
         </span>
         <div className="settings-heading-actions">
           <SettingsSaveStatus status={status} language={props.value.appLanguage} />

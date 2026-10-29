@@ -88,18 +88,17 @@ export function TaskWorkReviewPanel(props: {
         <small>{notes.filter((note) => note.status === 'open').length} 条待处理</small>
       </header>
       {props.deliverable.bundle ? (
-        <details className="task-deliverable-evidence-summary" open={props.deliverable.bundle.gaps.length > 0 || undefined}>
-          <summary>
+        <section className="task-deliverable-evidence-summary" aria-label="证据来源">
+          <strong>
             证据来源 · {props.deliverable.bundle.sources.filter((source) => source.kind === 'change_set').length} 份变更 · {props.deliverable.bundle.sources.filter((source) => source.kind === 'command').length} 条命令记录
             {props.deliverable.bundle.sources.some((source) => source.kind === 'deployment') ? ` · ${props.deliverable.bundle.sources.filter((source) => source.kind === 'deployment').length} 份部署凭证` : ''}
-          </summary>
-          <p>请按上方列出的证据来源核对成果正文。命令成功不代替对任务目标的审查。</p>
+          </strong>
           {props.deliverable.bundle.gaps.map((gap) => (
             <p key={gap} className="digital-employee-feedback is-error">
               {gap}
             </p>
           ))}
-        </details>
+        </section>
       ) : null}
       {error || operationError ? (
         <p role="alert" className="digital-employee-feedback is-error">
@@ -107,7 +106,7 @@ export function TaskWorkReviewPanel(props: {
         </p>
       ) : null}
       {!loaded && !error ? <p role="status">正在读取审查意见…</p> : null}
-      {loaded && !notes.length ? <p>尚无审查意见。意见始终关联这份成果修订。</p> : null}
+      {loaded && !notes.length ? <p>尚无审查意见。</p> : null}
       <ul>
         {notes.map((note) => (
           <li key={note.id} data-state={note.status}>

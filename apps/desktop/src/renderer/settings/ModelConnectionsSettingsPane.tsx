@@ -83,6 +83,8 @@ export function ModelConnectionsSettingsPane(props: {
   completionScope?: 'project' | 'conversation' | 'new_projects';
 }) {
   const zh = props.language === 'zh-CN';
+  /** 价格输入的标签与相邻更新按钮独立关联。 */
+  const pricingInputId = useId();
   /** 可见标签和读屏名称共用当前接入范围文案。 */
   const completionModelLabel =
     props.completionScope === 'conversation'
@@ -518,9 +520,6 @@ export function ModelConnectionsSettingsPane(props: {
       <header className="settings-section-heading model-connections-heading">
         <span>
           <strong>{zh ? '自定义供应商' : 'Custom providers'}</strong>
-          <small>
-            {zh ? '填写服务地址和访问密钥（API Key），即可在项目中选择该服务的模型。密钥只保存在本机钥匙串。' : 'Enter the service address and API key to use its models in projects. The key is stored only in this Mac’s Keychain.'}
-          </small>
         </span>
         <span className="settings-heading-actions">
           {!props.onSaveStateChange ? <SettingsSaveStatus status={saveState} language={props.language} /> : null}
@@ -657,9 +656,6 @@ export function ModelConnectionsSettingsPane(props: {
                   {apiKeyVisible ? <EyeSlashIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}
                 </Button>
               </span>
-              {current?.apiKeyConfigured ? (
-                <small>{zh ? '密钥只保存在本机钥匙串；点击眼睛查看当前密钥，每次查看都会写审计记录。' : 'Stored only in this Mac Keychain. Use the eye button to read the current key; every view is audited.'}</small>
-              ) : null}
             </label>
             {draft.templateId === 'custom' ? (
               <label>
@@ -675,62 +671,42 @@ export function ModelConnectionsSettingsPane(props: {
             ) : null}
           </div>
 
-          <section aria-label={zh ? '价格来源' : 'Pricing source'}>
-            <label>
-              <span>{zh ? '价格清单页面' : 'Pricing page'}</span>
-              <input
-                type="url"
-                value={draft.pricingUrl ?? ''}
-                placeholder={draft.templateId === 'custom' ? 'https://example.com/pricing' : zh ? '留空使用供应商公开价格页面' : 'Use the built-in pricing page'}
-                onChange={(event) => changeDraft({ ...draft, pricingUrl: event.currentTarget.value })}
-                disabled={busy}
-              />
-            </label>
-            <p>
-              {zh
-                ? '提供一个页面即可自动匹配模型；公开价估算不包含私人折扣。未知页面可能调用此连接的模型辅助识别，产生少量用量。'
-                : 'One page covers all models. Public-price estimates exclude private discounts. Unfamiliar pages may use this connection’s model to extract prices.'}
-            </p>
-            <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => void refreshPricing()}>
-              {zh ? (current?.pricingCatalog?.retrievedAt ? '立即更新' : '读取并启用') : 'Read pricing'}
-            </Button>
-            {!current ? <small>{zh ? '保存供应商后即可读取价格。' : 'Save the provider first.'}</small> : null}
-            {current?.pricingCatalog ? (
-              <div role="status">
-                <p>
-                  {zh
-                    ? `已匹配 ${current.models.filter((model) => current.pricingCatalog?.prices.some((price) => price.model === model.id)).length} / ${current.models.length} 个模型`
-                    : `${current.pricingCatalog.prices.length} prices recognized`}
-                </p>
-                {current.pricingCatalog.retrievedAt ? (
-                  <small>
-                    {zh ? '上次读取：' : 'Last read: '}
-                    {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
-                  </small>
-                ) : null}
-                {current.pricingCatalog.error ? (
-                  <p>
-                    {current.pricingCatalog.error}
-                    {current.pricingCatalog.retrievedAt && current.pricingCatalog.retrievedAt !== current.pricingCatalog.checkedAt ? (zh ? '；当前显示最近一次读取的有效价格。' : '; showing the latest valid prices.') : ''}
-                  </p>
-                ) : null}
-                <details>
-                  <summary>{zh ? '查看价格明细' : 'View prices'}</summary>
-                  <a href={current.pricingCatalog.url} target="_blank" rel="noreferrer">
-                    {current.pricingCatalog.url}
-                  </a>
-                  <ul>
-                    {current.pricingCatalog.prices.map((price, index) => (
-                      <li key={`${price.model}:${index}`}>
-                        <strong>{price.model}</strong> · {price.currency} ·{' '}
-                        {price.perMillion ? `${zh ? '输入' : 'Input'} ${price.perMillion.input} / ${zh ? '输出' : 'Output'} ${price.perMillion.output} / 1M tokens` : `${price.perRequest} / ${zh ? '次' : 'request'}`}
-                        <br />
-                        {price.basis}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              </div>
+          <section className="model-connection-pricing" aria-label={zh ? '公开价格' : 'Public pricing'}>
+            <div className="model-connection-pricing-field">
+              <label htmlFor={pricingInputId}>{zh ? '公开价格页面' : 'Public pricing page'}</label>
+              <span className="model-connection-pricing-input">
+                <input
+                  id={pricingInputId}
+                  type="url"
+                  value={draft.pricingUrl ?? ''}
+                  placeholder={draft.templateId === 'custom' ? 'https://example.com/pricing' : zh ? '供应商默认价格页面' : 'Provider pricing page'}
+                  onChange={(event) => changeDraft({ ...draft, pricingUrl: event.currentTarget.value })}
+                  disabled={busy}
+                />
+                <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => void refreshPricing()}>
+                  {zh ? '更新价格' : 'Refresh prices'}
+                </Button>
+              </span>
+            </div>
+            <div className="model-connection-pricing-status" role="status">
+              <small>{zh ? '读取价格可能产生模型用量' : 'Reading prices may incur model usage'}</small>
+              {current?.pricingCatalog?.retrievedAt ? (
+                <small>
+                  {zh ? '上次读取：' : 'Last read: '}
+                  {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
+                </small>
+              ) : null}
+              {current?.pricingCatalog ? (
+                <a href={current.pricingCatalog.url} target="_blank" rel="noreferrer">
+                  {zh ? '价格来源' : 'Pricing source'}
+                </a>
+              ) : null}
+            </div>
+            {current?.pricingCatalog?.error ? (
+              <p className="model-connection-diagnostic warning" role="alert">
+                <VisibleApplicationError error={current.pricingCatalog.error} language={zh ? 'zh-CN' : 'en'} summary={zh ? '价格读取异常' : 'Pricing issue'} />
+                {current.pricingCatalog.retrievedAt && current.pricingCatalog.retrievedAt !== current.pricingCatalog.checkedAt ? (zh ? '，沿用上次价格' : '; using previous prices') : ''}
+              </p>
             ) : null}
           </section>
 
@@ -752,11 +728,6 @@ export function ModelConnectionsSettingsPane(props: {
                 <strong>
                   {zh ? '已启用模型' : 'Enabled models'} <small>{enabledModelCount}</small>
                 </strong>
-                <small>
-                  {zh
-                    ? `获取模型只更新候选池（共 ${draft.models.length} 个）；下面只配置已勾选的模型，未勾选的候选不显示。`
-                    : `Fetching only refreshes the candidate pool (${draft.models.length} in total). Only checked models are configured below; unchecked candidates stay hidden.`}
-                </small>
               </span>
               <Button
                 className="model-expand-all"
@@ -776,7 +747,6 @@ export function ModelConnectionsSettingsPane(props: {
             </header>
             {draft.models.length > 0 ? (
               <label className="model-enable-picker">
-                <span>{zh ? '启用模型' : 'Enable models'}</span>
                 <ZeusSelect
                   size="regular"
                   ariaLabel={zh ? '勾选要启用的模型' : 'Choose models to enable'}
@@ -788,7 +758,6 @@ export function ModelConnectionsSettingsPane(props: {
                   searchPlaceholder={zh ? '搜索候选模型' : 'Search candidate models'}
                   onChange={toggleModelEnabled}
                 />
-                <small>{zh ? '下拉中勾选即启用，取消勾选即停用；候选模型不会自动启用。' : 'Check to enable and uncheck to disable; candidates are never enabled automatically.'}</small>
               </label>
             ) : null}
             <div className="model-definition-toolbar">
@@ -815,11 +784,7 @@ export function ModelConnectionsSettingsPane(props: {
               ) : null}
             </div>
             {enabledModelCount > 0 && filteredModels.length === 0 ? <p role="status">{zh ? '没有匹配的模型。' : 'No matching models.'}</p> : null}
-            {enabledModelCount === 0 && draft.models.length > 0 ? (
-              <p role="status">
-                {zh ? '还没有启用模型。在上方“启用模型”下拉里勾选后，这里才会出现该模型的请求格式与登录方式。' : 'No models enabled yet. Check a model in the dropdown above to configure its request format and authentication here.'}
-              </p>
-            ) : null}
+            {enabledModelCount === 0 && draft.models.length > 0 ? <p role="status">{zh ? '尚未启用模型。' : 'No enabled models.'}</p> : null}
             {draft.models.length === 0 ? (
               <p>
                 {draft.templateId === 'custom'
@@ -838,6 +803,7 @@ export function ModelConnectionsSettingsPane(props: {
                   key={`${draft.id ?? 'new'}:${model.id}`}
                   language={props.language}
                   model={model}
+                  prices={current?.pricingCatalog?.prices.filter((price) => price.model === model.id)}
                   expanded={expandedModelIds.has(model.id)}
                   onToggle={() => setModelsExpanded([model.id], !expandedModelIds.has(model.id))}
                   readOnly={draft.templateId !== 'custom'}
@@ -1179,11 +1145,6 @@ function ModelReasoningDialog(props: { language: 'zh-CN' | 'en-US'; model: Model
       <section className="model-reasoning-dialog zeus-solid-form-surface">
         <header>
           <strong id={titleId}>{zh ? `自定义推理档位：${props.model.id}` : `Customize reasoning levels: ${props.model.id}`}</strong>
-          <p>
-            {zh
-              ? '不改就用 Zeus 的默认判定（官方档案 / 厂商文档 / 模型目录 / 模型名推断）。只有你自己填过的清单会一直生效，直到「恢复自动判定」。'
-              : 'Leave it alone and Zeus keeps its automatic resolution. Only a list you save stays in effect, until you reset it.'}
-          </p>
         </header>
         <ModelReasoningSection language={props.language} model={props.model} context={props.context} />
         <footer>
@@ -1325,6 +1286,8 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
 function ModelDefinitionEditor(props: {
   language: 'zh-CN' | 'en-US';
   model: ModelConnectionModel;
+  /** 公开价格直接随模型展示，不另建价格目录。 */
+  prices?: NonNullable<ModelConnectionRecord['pricingCatalog']>['prices'];
   readOnly: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -1369,6 +1332,12 @@ function ModelDefinitionEditor(props: {
           <span>
             <strong data-icon-tooltip={model.displayName || model.id}>{model.displayName || model.id}</strong>
             <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
+            {props.prices?.map((price, index) => (
+              <small key={`${price.model}:${index}`}>
+                {price.currency} · {price.perMillion ? `${zh ? '输入' : 'Input'} ${price.perMillion.input} / ${zh ? '输出' : 'Output'} ${price.perMillion.output} / 1M tokens` : `${price.perRequest} / ${zh ? '次' : 'request'}`} ·{' '}
+                {price.basis}
+              </small>
+            ))}
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
         </button>

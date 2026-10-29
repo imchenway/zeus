@@ -984,8 +984,7 @@ function TaskBoardSettingsDialog(props: {
           </fieldset>
           {draft.hiddenGroupIds.length > 0 ? (
             <fieldset hidden={props.section !== 'layout'}>
-              <legend>{zh ? '隐藏分组' : 'Hidden groups'}</legend>
-              <p>{zh ? '勾选要恢复显示的分组，然后保存。取消不会改变当前看板。' : 'Select groups to show again, then save. Cancel keeps the current board unchanged.'}</p>
+              <legend>{zh ? '恢复隐藏分组' : 'Show hidden groups'}</legend>
               {groupOptions
                 .filter((option) => draft.hiddenGroupIds.includes(option.id))
                 .map((option) => (
