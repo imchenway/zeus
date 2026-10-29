@@ -189,11 +189,11 @@ export class WorkArtifactRepository {
     return Boolean(run?.source_ref && this.repairHandoff(run.task_id, run.source_ref, deliverableId));
   }
 
-  /** 既有调度循环只领取少量待导出或任务重编号的目录，失败后留出恢复间隔。 */
+  /** 按两端路径分隔符识别已导出目录，只领取待导出或重编号任务并保留重试间隔。 */
   pendingTaskIds(limit: number, eligibleBefore: string): string[] {
     return this.db
       .select<{ task_id: string }>(
-        `SELECT publication.task_id FROM work_artifact_publications publication JOIN tasks task ON task.id=publication.task_id LEFT JOIN work_task_doc_locations location ON location.task_id=task.id WHERE publication.updated_at<=? AND (publication.exported_root IS NULL OR publication.export_error IS NOT NULL OR location.root IS NULL OR substr(location.root,-length(task.task_code)-1)<>'/' || task.task_code) GROUP BY publication.task_id ORDER BY MIN(publication.updated_at),publication.task_id LIMIT ?`,
+        `SELECT publication.task_id FROM work_artifact_publications publication JOIN tasks task ON task.id=publication.task_id LEFT JOIN work_task_doc_locations location ON location.task_id=task.id WHERE publication.updated_at<=? AND (publication.exported_root IS NULL OR publication.export_error IS NOT NULL OR location.root IS NULL OR substr(location.root,-length(task.task_code)-1) NOT IN ('/' || task.task_code,char(92) || task.task_code)) GROUP BY publication.task_id ORDER BY MIN(publication.updated_at),publication.task_id LIMIT ?`,
         [eligibleBefore, limit],
       )
       .map((row) => row.task_id);
