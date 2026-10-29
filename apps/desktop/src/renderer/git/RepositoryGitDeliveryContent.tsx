@@ -1,4 +1,5 @@
 import { GitDeliveryRunControl, type GitDeliveryClient } from './GitDeliveryRunControl.js';
+import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
@@ -298,7 +299,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
               action === 'commit'
                 ? { type: 'commit', message, paths: selection[repository.id] ?? [], expectedBranch: repository.snapshot.branch, expectedHeadSha: repository.snapshot.headSha }
                 : action === 'merge'
-                  ? { type: 'merge', branchName: mergeBranch }
+                  ? createProjectGitMergeAction(repository, mergeBranch)
                   : {
                       type: 'push',
                       remote: repository.snapshot.upstream?.split('/')[0] ?? repository.snapshot.remotes[0],

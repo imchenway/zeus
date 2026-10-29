@@ -1,4 +1,5 @@
 import './gitWorkspace.css';
+import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { repositoryColor } from './repositoryColor.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
@@ -202,7 +203,7 @@ export function BranchSwitcher(props: {
                         disabled={props.busy !== null}
                         onClick={async () => {
                           for (const repository of props.repositories.filter((candidate) => candidate.snapshot.branch !== branch)) {
-                            if ((await props.onExecute(repository, { type: 'merge', branchName: branch }, props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`)) !== 'completed') break;
+                            if ((await props.onExecute(repository, createProjectGitMergeAction(repository, branch), props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`)) !== 'completed') break;
                           }
                           setOpen(false);
                         }}
@@ -1188,7 +1189,12 @@ export function BranchContextMenu(props: {
           <button type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'rebase', branchName: props.branch }, props.zh ? '变基当前分支' : 'Rebase current branch')}>
             {props.zh ? `将“${current}”变基到“${props.branch}”` : `Rebase '${current}' onto '${props.branch}'`}
           </button>
-          <button type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'merge', branchName: props.branch }, props.zh ? `将“${props.branch}”合并到“${current}”` : `Merge '${props.branch}' into '${current}'`)}>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={props.busy !== null}
+            onClick={run(createProjectGitMergeAction(props.repository, props.branch), props.zh ? `将“${props.branch}”合并到“${current}”` : `Merge '${props.branch}' into '${current}'`)}
+          >
             {props.zh ? `将“${props.branch}”合入“${current}”` : `Merge '${props.branch}' into '${current}'`}
           </button>
         </>
@@ -1462,7 +1468,8 @@ export function MergeBranchDialog(props: {
             disabled={!branch || props.busy !== null}
             busy={props.busy?.action === 'merge'}
             onClick={async () => {
-              const result = await props.onExecute(props.repository, { type: 'merge', branchName: branch }, props.zh ? '合并分支' : 'Merge branch');
+              /** 目标身份取自当前弹窗展示的仓库快照，后台不替换为更新后的分支。 */
+              const result = await props.onExecute(props.repository, createProjectGitMergeAction(props.repository, branch), props.zh ? '合并分支' : 'Merge branch');
               if (result) props.onClose();
             }}
           >

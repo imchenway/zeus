@@ -270,6 +270,7 @@ function stableRepositoryId(projectId: string, relativePath: string): string {
   return `project_git_repository_${createHash('sha256').update(`${projectId}\0${relativePath}`).digest('hex').slice(0, 24)}`;
 }
 
+/** 解析桌面动作白名单，并保留用户确认的目标快照供共享 Git 层核验。 */
 function parseProjectGitAction(value: unknown): ProjectGitAction {
   if (!isRecord(value) || typeof value.type !== 'string') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '必须选择受支持的 Git 动作。');
   const stringValue = (key: string): string | undefined => (typeof value[key] === 'string' ? value[key].trim() || undefined : undefined);
@@ -359,7 +360,7 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'cherry_pick':
       return { type: 'cherry_pick', revision: stringValue('revision') ?? '' };
     case 'merge':
-      return { type: 'merge', branchName: stringValue('branchName') ?? '' };
+      return { type: 'merge', branchName: stringValue('branchName') ?? '', expectedBranch: stringValue('expectedBranch') ?? '', expectedHeadSha: stringValue('expectedHeadSha') ?? '' };
     case 'rebase':
       return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
     case 'stash':
