@@ -149,7 +149,16 @@ export function SideQuestionWorkspace(props: {
         if (
           failure instanceof ZeusApiError &&
           !failure.recoveryRequired &&
-          ['ZEUS_INVALID_CONVERSATION_SETTINGS', 'ZEUS_INVALID_PERMISSION_MODE', 'ZEUS_INVALID_COLLABORATION_MODE', 'ZEUS_MODEL_UNAVAILABLE', 'ZEUS_MODEL_NOT_READY', 'ZEUS_TASK_EXECUTION_CONTEXT_INVALID'].includes(failure.error ?? '')
+          ([
+            'ZEUS_INVALID_CONVERSATION_CONTEXT',
+            'ZEUS_INVALID_CONVERSATION_SETTINGS',
+            'ZEUS_INVALID_PERMISSION_MODE',
+            'ZEUS_INVALID_COLLABORATION_MODE',
+            'ZEUS_MODEL_UNAVAILABLE',
+            'ZEUS_MODEL_NOT_READY',
+            'ZEUS_TASK_EXECUTION_CONTEXT_INVALID',
+          ].includes(failure.error ?? '') ||
+            failure.error?.startsWith('ZEUS_CONVERSATION_SOURCE_'))
         ) {
           props.onStateChange(
             (current) =>

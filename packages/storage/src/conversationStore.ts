@@ -2387,6 +2387,15 @@ export class ConversationSubmissionRepository {
     return row ? mapConversationSubmissionRow(row) : undefined;
   }
 
+  /** 来源关系保存在首次带来源的提交中，已有侧栏可在下一次引用时补齐关系。 */
+  getSourceContextSubmission(conversationId: string): ZeusConversationSubmissionRecord | undefined {
+    const row = this.db.get<DbConversationSubmissionRow>(
+      `SELECT * FROM conversation_submissions WHERE conversation_id = ? AND json_extract(input_json, '$.conversationContext.sourceConversation.id') IS NOT NULL ORDER BY created_at, id LIMIT 1`,
+      [conversationId],
+    );
+    return row ? mapConversationSubmissionRow(row) : undefined;
+  }
+
   /** 只读取最早提交的创建操作身份，避免会话列表加载提示词和附件正文。 */
   getEarliestOperationIdentityByConversation(conversationId: string): string | null {
     return this.db.get<{ idempotency_key: string }>(`SELECT idempotency_key FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId])?.idempotency_key ?? null;

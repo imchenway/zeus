@@ -1,4 +1,4 @@
-import type { CodexAppServerManager, CodexThreadRuntimeStatus, CodexThreadSnapshot } from '@zeus/ai-runtime';
+import type { CodexAppServerManager, CodexDynamicToolSpec, CodexThreadRuntimeStatus, CodexThreadSnapshot } from '@zeus/ai-runtime';
 import type { ConversationSubmissionRepository, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import type { NativeConversationRunState } from './codexNativeConversationContracts.js';
@@ -17,6 +17,8 @@ interface ProviderActiveObserver {
 }
 
 interface CodexProviderThreadAuthorityOptions {
+  /** 当前宿主的完整工具目录，恢复时替换旧线程中已过期的目录。 */
+  dynamicTools?: CodexDynamicToolSpec[];
   manager: Pick<CodexAppServerManager, 'generationForThread' | 'readThread' | 'resumeThread'>;
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
   runStates: Map<string, NativeConversationRunState>;
@@ -274,6 +276,7 @@ export function createCodexProviderThreadAuthorityApplication(options: CodexProv
     let resumed: CodexThreadSnapshot;
     try {
       resumed = await options.manager.resumeThread({
+        dynamicTools: options.dynamicTools,
         contextCapacityTokens: context.contextCapacityTokens ?? null,
         threadId: providerThreadId,
         ...(context.projectLocalPath ? { cwd: context.projectLocalPath } : {}),

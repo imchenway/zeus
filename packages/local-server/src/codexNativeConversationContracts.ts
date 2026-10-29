@@ -1,5 +1,6 @@
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
+import type { ConversationSourceContextReader } from './conversationSourceContext.js';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import type { CodexAppServerManager, CodexServerRequestResponse } from '@zeus/ai-runtime';
 import type { CodexBootstrapAdditionalContext, TaskPushMessageLayout } from '@zeus/shared';
@@ -67,6 +68,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   browserAutomation?: BrowserAutomationPort;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
+  /** 具备产品来源查询时，向模型注册只读历史入口。 */
+  sourceContexts?: ConversationSourceContextReader;
   plugins?: ZeusConversationPluginRuntime;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   trustedAttachmentRoots: string[];

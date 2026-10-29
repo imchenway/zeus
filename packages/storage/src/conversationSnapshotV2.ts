@@ -1374,17 +1374,23 @@ export class ConversationSnapshotV2Repository {
     assistantOutputOnly?: boolean;
     /** 建议可分别读取用户原话与助手正文，给用户要求保留独立预算。 */
     dialogueRole?: 'user' | 'assistant';
+    /** 来源上下文只读取用户与助手可见对话，不包含工具记录和思考摘要。 */
+    dialogueOnly?: boolean;
     /** 从尾部读取时仍返回正序结果，后续页保持相同过滤和高水位。 */
     direction?: 'forward' | 'tail';
   }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     /** 角色是内部枚举，SQL 仍使用参数绑定，不拼接外部文本。 */
-    const dialogueWhere = input.dialogueRole ? ` AND role = ? AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : '';
+    const dialogueWhere = input.dialogueRole
+      ? ` AND role = ? AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`
+      : input.dialogueOnly
+        ? ` AND role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`
+        : '';
     /** 游标绑定过滤条件，不能把用户页游标用于助手正文。 */
     const context = this.sequencePageContext(
       input,
       'model_history',
-      input.dialogueRole ? `dialogue:${input.dialogueRole}` : input.assistantOutputOnly ? 'assistant-output' : '',
-      input.dialogueRole ? { table: 'conversation_model_history', column: 'sequence', extraWhere: dialogueWhere, extraParams: [input.dialogueRole] } : null,
+      input.dialogueRole ? `dialogue:${input.dialogueRole}` : input.dialogueOnly ? 'dialogue' : input.assistantOutputOnly ? 'assistant-output' : '',
+      dialogueWhere ? { table: 'conversation_model_history', column: 'sequence', extraWhere: dialogueWhere, extraParams: input.dialogueRole ? [input.dialogueRole] : [] } : null,
     );
     if (!input.cursor && input.afterSequence !== undefined) {
       if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0 || context.direction !== 'forward') throw new Error('消息送达位置必须是正向分页的非负安全整数。');

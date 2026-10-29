@@ -277,6 +277,17 @@ export class ConversationProviderItemRepository {
     return row ? mapRow(row) : undefined;
   }
 
+  /** 在来源会话内解析显示身份，兼容同一产品会话的不同原生运行分段。 */
+  getByConversationItemId(conversationId: string, itemId: string): ZeusConversationItemRecord | undefined {
+    const row = this.db.get<ProviderItemRow>(`SELECT * FROM conversation_provider_item_states WHERE conversation_id = ? AND (id = ? OR provider_item_id = ?) ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`, [
+      conversationId,
+      itemId,
+      itemId,
+      itemId,
+    ]);
+    return row ? mapRow(row) : undefined;
+  }
+
   listByConversation(conversationId: string): ZeusConversationItemRecord[] {
     return this.db.select<ProviderItemRow>(`SELECT * FROM conversation_provider_item_states WHERE conversation_id = ? ORDER BY updated_at, id`, [conversationId]).map(mapRow);
   }

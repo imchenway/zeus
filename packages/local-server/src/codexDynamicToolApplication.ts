@@ -242,7 +242,7 @@ async function resolveResponse(input: {
       return dynamicToolResponse(input.event, contentItems, !result.isError);
     }
     if (!input.options.toolBroker) throw dynamicToolError('ZEUS_NATIVE_AUTOMATION_UNAVAILABLE', 'The Zeus native automation host is unavailable.');
-    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer' && input.namespace !== 'zeus_work')) {
+    if (!input.tool || (input.namespace !== 'zeus_browser' && input.namespace !== 'zeus_computer' && input.namespace !== 'zeus_work' && input.namespace !== 'zeus_conversation')) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_UNSUPPORTED', 'The requested dynamic tool is not owned by a Zeus native automation namespace.');
     }
     const permissionContext = input.options.pluginContext(input.conversation.id);

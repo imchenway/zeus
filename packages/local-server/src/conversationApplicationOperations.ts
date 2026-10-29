@@ -15,6 +15,7 @@ import { mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shar
 import { TaskWorkPlanningRepository } from '@zeus/storage';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import type { ConversationSourceContextReader } from './conversationSourceContext.js';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
 import {
@@ -94,6 +95,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ConversationApplicationOperationDependencies = Record<string, any> & {
+  /** 来源引用与模型读取共用服务端归属校验。 */
+  conversationSources: ConversationSourceContextReader;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   artifactStore: ArtifactStore;
   codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
@@ -233,6 +236,8 @@ export function isNativeApiRecord(value: unknown): value is Record<string, unkno
 }
 
 export function createConversationApplicationOperations(dependencies: ConversationApplicationOperationDependencies) {
+  /** 初始来源及后续引用使用同一个核实和原文快照入口。 */
+  const conversationSources = dependencies.conversationSources;
   const {
     aiRuntimeManager,
     appendAuditLog,
@@ -1748,7 +1753,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'composerDraft must be a string no longer than 100000 characters.');
             })();
     const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
-    const conversationContext = normalizeNativeConversationContext(body.conversationContext);
+    const conversationContext = conversationSources.enrich(normalizeNativeConversationContext(body.conversationContext) ?? undefined, conversation);
     if (body.pluginReferences !== undefined) {
       if (!zeusPluginService) throw nativeApiError('ZEUS_PLUGINS_UNAVAILABLE', 'Zeus Plugin Host 当前不可用，不能接受结构化 Plugin/Skill 引用。');
       await zeusPluginService.validateExplicitReferences({ projectId: conversation.projectId, references: body.pluginReferences });
@@ -2273,6 +2278,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         typeof anchor.selectedText !== 'string' ||
         !anchor.selectedText.trim() ||
         anchor.selectedText.length > 20_000 ||
+        (anchor.sourceConversationId !== undefined && (typeof anchor.sourceConversationId !== 'string' || !anchor.sourceConversationId.trim() || anchor.sourceConversationId.length > 200)) ||
         (entry.note !== undefined && (typeof entry.note !== 'string' || entry.note.length > 20_000))
       ) {
         throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', `Response annotation ${index} is invalid.`);
@@ -2307,7 +2313,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (Buffer.byteLength(serialized, 'utf8') > 1_000_000) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_CONTEXT', 'conversationContext must be no larger than 1 MB.');
     }
-    return JSON.parse(serialized) as Record<string, unknown>;
+    /** 来源身份和原文快照由服务端重建，不接受客户端伪造的授权依据。 */
+    const normalized = JSON.parse(serialized) as Record<string, unknown>;
+    delete normalized.sourceConversation;
+    return normalized;
   }
 
   function normalizeNativeClientUserMessageId(value: unknown, legacyFallback: string): string {
@@ -2538,7 +2547,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
     /** 批注提示词经过与后续消息相同的校验。 */
     const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
     /** 首发评论使用后续消息相同的长度与结构校验。 */
-    const conversationContext = normalizeNativeConversationContext(body.conversationContext) ?? undefined;
+    const conversationContext = conversationSources.enrich(
+      normalizeNativeConversationContext(body.conversationContext) ?? undefined,
+      { id: reservation.conversationId, projectId: project.id, taskId: null },
+      !body.source && typeof body.inheritConversationId === 'string' ? body.inheritConversationId : undefined,
+    );
     const content = reviewWorkspace
       ? [
           '请审查当前会话工作树的代码变化。',
@@ -3721,7 +3734,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
         /** 校验提示词后再冻结派发计划。 */
         const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
         /** 首发评论使用后续消息相同的长度与结构校验。 */
-        const conversationContext = normalizeNativeConversationContext(body.conversationContext) ?? undefined;
+        const conversationContext = conversationSources.enrich(
+          normalizeNativeConversationContext(body.conversationContext) ?? undefined,
+          { id: reservation.conversationId, projectId: project.id, taskId: task.id },
+          typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : undefined,
+        );
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
         const canonicalAttachmentInput = body.attachments === undefined && !explicitContent && !browserComments.length ? normalizeTaskPushAttachments(task, project.localPath) : null;
         const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;

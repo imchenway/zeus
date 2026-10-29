@@ -233,6 +233,8 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
 }
 
 export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
+  /** 宿主恢复旧线程时提供当前完整工具目录，省略则沿用 Provider 已保存的目录。 */
+  dynamicTools?: CodexDynamicToolSpec[];
   /** 省略时仅恢复订阅；null 跟随默认，数值指定本轮上下文容量，不配置压缩时机。 */
   contextCapacityTokens?: number | null;
   threadId: string;
@@ -1740,6 +1742,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             // 恢复只返回元信息和实时状态；正文走已有分页读取，避免完整历史回包触发接收上限。
             excludeTurns: true,
             cwd: input.cwd,
+            dynamicTools: input.dynamicTools,
             config: {
               // 恢复线程同样不重定义内置供应商，保留有限重连。
               'features.unbounded_connection_retries': false,
