@@ -6,6 +6,7 @@ import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerg
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
+import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { BranchSwitcher, MergeBranchDialog, UpdateProjectDialog, NewBranchDialog, RemoteBranchCheckoutDialog, CheckoutRevisionDialog, BranchDirectoryTree, BranchContextMenu, StashDialog, PullDialog } from './GitRepositoryControls.js';
 import type { ExecutionOutcome } from './gitWorkbenchTypes.js';
 import type { BranchKind } from './gitWorkbenchTypes.js';
@@ -382,7 +383,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       newBranch(target.ref);
       action(
         label(`将“${target.ref}”合并到“${repository.snapshot.branch}”…`, `Merge '${target.ref}' into '${repository.snapshot.branch}'…`),
-        { type: 'merge', branchName: target.ref },
+        createProjectGitMergeAction(repository, target.ref),
         label(
           `将来源分支“${target.ref}”合并到目标分支“${repository.snapshot.branch}”，可能产生合并提交或冲突。`,
           `Merge source branch '${target.ref}' into target branch '${repository.snapshot.branch}'. This may create a merge commit or conflicts.`,

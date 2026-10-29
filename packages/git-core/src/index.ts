@@ -487,7 +487,16 @@ export type ProjectGitAction =
   | { type: 'delete_branch'; branchName: string }
   | { type: 'revert'; revision: string }
   | { type: 'cherry_pick'; revision: string }
-  | { type: 'merge'; branchName: string }
+  | {
+      /** 将来源分支合并到已确认的目标快照。 */
+      type: 'merge';
+      /** 待合并的本地或远端跟踪分支。 */
+      branchName: string;
+      /** 用户确认时的目标本地分支，不能改用执行时的分支。 */
+      expectedBranch: string;
+      /** 用户确认时的目标完整提交 SHA。 */
+      expectedHeadSha: string;
+    }
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
@@ -3154,10 +3163,12 @@ export function withGitOperationSignal<T>(signal: AbortSignal, operation: () => 
   return projectGitExecution.run({ ...projectGitExecution.getStore(), signal }, operation);
 }
 
+/** 所有工作台写操作在公共仓库锁内执行，并沿用调用方的取消与命令记录。 */
 export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onCommand?: (command: string) => Promise<void>): Promise<ProjectGitActionResult> {
   return withGitRepositoryOperation(cwd, () => projectGitExecution.run({ signal, env, onCommand }, () => executeProjectGitActionInternal(cwd, action)));
 }
 
+/** 在已持有的锁内读取实际仓库状态，校验动作目标后执行 Git。 */
 async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
@@ -3329,6 +3340,12 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
       args = ['cherry-pick', await resolveCommit(repositoryPath, action.revision)];
       break;
     case 'merge':
+      if (typeof action.expectedBranch !== 'string' || !action.expectedBranch.trim() || typeof action.expectedHeadSha !== 'string' || !action.expectedHeadSha.trim()) {
+        throw gitCoreError('ZEUS_GIT_MERGE_CONTEXT_REQUIRED', '合并必须提供已确认的目标分支与提交，请刷新仓库后重新确认。');
+      }
+      if (context.detached || action.expectedBranch !== context.branch || action.expectedHeadSha !== context.headSha) {
+        throw gitCoreError('ZEUS_GIT_MERGE_CONTEXT_CHANGED', '目标分支或提交已变化，本次合并未执行。请刷新仓库后重新确认。');
+      }
       args = ['merge', '--no-edit', await assertGitBranchFormat(repositoryPath, action.branchName, 'merge branch')];
       break;
     case 'rebase':

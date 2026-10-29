@@ -4184,6 +4184,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       .send({ error: code, message, cause: userFacingErrorCause(error).cause, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') || code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ? { recoveryRequired: true } : {}) });
   }
 
+  /** 解析后台动作白名单，并保留与桌面相同的合并目标快照。 */
   function parseProjectGitAction(value: unknown): ProjectGitAction {
     if (!isNativeApiRecord(value) || typeof value.type !== 'string') throw nativeApiError('ZEUS_GIT_ACTION_INVALID', 'A supported Git action is required.');
     const stringValue = (key: string): string | undefined => (typeof value[key] === 'string' ? value[key].trim() || undefined : undefined);
@@ -4256,7 +4257,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'cherry_pick':
         return { type: 'cherry_pick', revision: stringValue('revision') ?? '' };
       case 'merge':
-        return { type: 'merge', branchName: stringValue('branchName') ?? '' };
+        return { type: 'merge', branchName: stringValue('branchName') ?? '', expectedBranch: stringValue('expectedBranch') ?? '', expectedHeadSha: stringValue('expectedHeadSha') ?? '' };
       case 'rebase':
         return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
       case 'stash':

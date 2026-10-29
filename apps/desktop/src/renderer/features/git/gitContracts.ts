@@ -172,7 +172,16 @@ export type ProjectGitAction =
   | { type: 'delete_branch'; branchName: string }
   | { type: 'revert'; revision: string }
   | { type: 'cherry_pick'; revision: string }
-  | { type: 'merge'; branchName: string }
+  | {
+      /** 将来源分支合并到已确认的目标快照。 */
+      type: 'merge';
+      /** 待合并的本地或远端跟踪分支。 */
+      branchName: string;
+      /** 用户确认时的目标本地分支，不能改用执行时的分支。 */
+      expectedBranch: string;
+      /** 用户确认时的目标完整提交 SHA。 */
+      expectedHeadSha: string;
+    }
   | { type: 'rebase'; branchName: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
