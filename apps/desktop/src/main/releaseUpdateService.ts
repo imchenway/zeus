@@ -364,6 +364,8 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
   let receivedBytes = 0;
   /** 限制界面更新频率，下载仍按每个数据块完整写入。 */
   let lastProgressAt = 0;
+  /** 未写完的暂存文件在关闭句柄后删除，避免 Windows 拒绝删除打开中的文件。 */
+  let downloadComplete = false;
   try {
     if (source.protocol === 'file:') {
       const bytes = await readFile(fileURLToPath(source));
@@ -372,7 +374,9 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
       await output.writeFile(bytes);
     } else {
       input.onProgress?.({ phase: 'downloading', ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
-      const response = await fetch(source, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
+      /** 下载沿用系统及应用代理；安装辅助进程仅导入校验能力时无需加载 Electron。 */
+      const { net } = await import('electron');
+      const response = await net.fetch(source.href, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
       if (!response.ok || !response.body)
         throw new Error(`更新下载失败：HTTP ${response.status}`, { cause: { code: response.status === 408 || response.status === 429 || response.status >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' } });
       const responseUrl = new URL(response.url);
@@ -391,14 +395,15 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
       }
     }
     await output.sync();
+    downloadComplete = true;
   } catch (error) {
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
-    if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) {
+    if (error instanceof TypeError || (error instanceof Error && (['TimeoutError', 'AbortError'].includes(error.name) || error.message.startsWith('net::ERR_')))) {
       throw new Error('更新下载中断，请重试。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', message: error.message } });
     }
     throw error;
   } finally {
     await output.close();
+    if (!downloadComplete) await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
   const actualSha256 = hash.digest('hex');
   input.onProgress?.({ phase: 'verifying' });
