@@ -318,14 +318,6 @@ body:has(.menu-bar-usage-root),
   inset-block-end: 0;
 }
 
-.menu-bar-usage-reorder-hint {
-  padding: 12px 2px 4px;
-  color: var(--usage-muted);
-  font-size: 11px;
-  line-height: 1.5;
-  text-align: center;
-}
-
 /* 排序播报只对辅助阅读工具可见，不挤占浮窗空间。 */
 .menu-bar-usage-sr-only {
   position: absolute;

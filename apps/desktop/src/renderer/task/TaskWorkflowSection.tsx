@@ -181,7 +181,6 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
             {busyKey === 'initialize' ? (zh ? '正在启用…' : 'Enabling…') : zh ? '启用阶段工作流' : 'Enable workflow'}
           </Button>
         </span>
-        <p>{zh ? '每个阶段使用独立对话和模型。交付物验收后，会提供给下一阶段使用。' : 'Each stage uses a separate conversation and model. Accepted deliverables are passed to the next stage.'}</p>
       </section>
     );
   }

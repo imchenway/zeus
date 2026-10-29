@@ -1941,7 +1941,7 @@ export function TaskCreateModal(props: {
                 value={thirdPartyLinkInput}
                 placeholder={props.copy.taskCreateThirdPartyLinkPlaceholder}
                 aria-labelledby="task-create-third-party-label"
-                aria-describedby="task-create-third-party-help task-create-third-party-feedback"
+                aria-describedby="task-create-third-party-feedback"
                 aria-invalid={thirdPartyHint?.tone === 'error' ? true : undefined}
                 inputMode="url"
                 autoComplete="off"
@@ -1961,9 +1961,7 @@ export function TaskCreateModal(props: {
                 }}
                 disabled={interactionBusy}
               />
-              <small id="task-create-third-party-help" className="task-create-third-party-hint">
-                {props.copy.taskCreateThirdPartyLinkHelp}
-              </small>
+
               <small id="task-create-third-party-feedback" className={`task-create-third-party-hint${thirdPartyHint ? ` task-create-third-party-hint-${thirdPartyHint.tone}` : ''}`} role="status">
                 {thirdPartyHint
                   ? [

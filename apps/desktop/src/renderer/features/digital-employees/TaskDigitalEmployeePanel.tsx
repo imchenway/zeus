@@ -1113,11 +1113,6 @@ function TaskEmployeeRunDialog(props: {
               onPaste={inputResources.handlePaste}
               onKeyDown={inputResources.handlePasteShortcut}
             />
-            <small>
-              {zh
-                ? '可粘贴图片、文件或长文本；只提供给本次独立工作项，不修改任务描述或员工提示词。'
-                : 'Paste images, files, or long text here. They are used only for this independent work item and do not change the task or employee prompt.'}
-            </small>
           </section>
 
           {agentEntrypoint && capabilities && capabilities.repositories.length > 0 ? (
@@ -1234,10 +1229,9 @@ function TaskEmployeeRunDialog(props: {
             />
           </details>
           {preview && hasRunnableModel ? (
-            <details>
-              <summary>执行预览</summary>
+            <section aria-label={zh ? '执行预览' : 'Execution preview'}>
               <EmployeeExecutionPreview preview={preview} language={props.language} />
-            </details>
+            </section>
           ) : null}
           {!capabilitiesLoaded || (previewBusy && hasRunnableModel) ? (
             <p className="task-work-preview-status" role="status">
@@ -1257,7 +1251,6 @@ function TaskEmployeeRunDialog(props: {
             ))}
         </div>
         <footer>
-          <small>{zh ? '指派后开始工作，进展和成果会回到当前任务。' : 'Work starts after assignment. Progress and deliverables return to this task.'}</small>
           {capabilitiesLoaded && !hasRunnableModel ? (
             <Button
               variant="primary"

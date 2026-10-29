@@ -1080,10 +1080,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       ) : null}
                       {conflictingWorkspaces.map((workspace) => (
                         <section key={workspace.id} className="task-git-delivery-target-issues" role="status" aria-label={zh ? `${repositoryLabel(workspace, zh)} 的冲突` : `Conflicts in ${repositoryLabel(workspace, zh)}`}>
-                          <details>
-                            <summary>
+                          <div>
+                            <strong>
                               {repositoryLabel(workspace, zh)} · {zh ? `${workspace.review!.conflictFiles.length} 个冲突` : `${workspace.review!.conflictFiles.length} conflicts`}
-                            </summary>
+                            </strong>
                             <small>{workspace.conflictRecovery ? workspaceConflictMessage(workspace.conflictRecovery, zh) : zh ? '请先解决冲突，再提交。' : 'Resolve conflicts before committing.'}</small>
                             <ul>
                               {workspace.review!.conflictFiles.map((path) => (
@@ -1093,7 +1093,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                               ))}
                             </ul>
                             {workspace.conflictRecovery?.unavailableReason ? <small>{workspace.conflictRecovery.unavailableReason}</small> : null}
-                          </details>
+                          </div>
                           {workspace.conflictRecovery ? (
                             <>
                               <Button
@@ -1121,8 +1121,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   mergeIssues={
                     <>
                       {targetIssues.length > 0 ? (
-                        <details className="task-git-delivery-target-issues" role="status">
-                          <summary>{zh ? `${targetIssues.length} 个仓库无法合入` : `${targetIssues.length} repositories cannot merge`}</summary>
+                        <section className="task-git-delivery-target-issues" role="status">
+                          <strong>{zh ? `${targetIssues.length} 个仓库无法合入` : `${targetIssues.length} repositories cannot merge`}</strong>
                           <ul>
                             {targetIssues.map((issue) => (
                               <li key={issue.workspaceId}>
@@ -1131,7 +1131,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                               </li>
                             ))}
                           </ul>
-                        </details>
+                        </section>
                       ) : null}
                     </>
                   }

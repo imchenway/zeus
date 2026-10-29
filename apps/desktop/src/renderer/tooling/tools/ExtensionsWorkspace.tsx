@@ -156,7 +156,7 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
         <div className="skills-workspace-title-row">
           <div>
             <h1>{zh ? '扩展管理' : 'Extension management'}</h1>
-            <p>{zh ? '管理插件、技能和来源。更改用于新对话，进行中的对话保持原配置。' : 'Install and manage plugins here. Changes apply to conversations created afterward.'}</p>
+            <p>{zh ? '更改对新对话生效。' : 'Changes apply to new conversations.'}</p>
           </div>
           {tab !== 'skills' ? (
             <Button variant="secondary" size="regular" busy={busyKey === 'load'} onClick={() => void load()} disabled={!props.client || Boolean(busyKey)}>
@@ -285,29 +285,26 @@ function PluginCatalog(props: {
               <Collapsible open={open}>
                 <div className="extension-plugin-detail">
                   <p>{plugin.description || (props.zh ? '无描述' : 'No description')}</p>
-                  <details className="extension-source-details">
-                    <summary>{props.zh ? '来源与组件信息' : 'Source and components'}</summary>
-                    <dl>
-                      <div>
-                        <dt>SHA-256</dt>
-                        <dd>
-                          <code>{revision.contentSha256}</code>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>{props.zh ? '来源' : 'Source'}</dt>
-                        <dd>
-                          {plugin.sourceKind} · <code>{plugin.sourceLocator}</code>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>{props.zh ? '组件' : 'Components'}</dt>
-                        <dd>
-                          {revision.components.skills.length} Skill · {revision.components.hooks.length} Hook · {revision.components.mcpServers.length} MCP · {revision.components.apps.length} Connector
-                        </dd>
-                      </div>
-                    </dl>
-                  </details>
+                  <dl className="extension-source-details">
+                    <div>
+                      <dt>SHA-256</dt>
+                      <dd>
+                        <code>{revision.contentSha256}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{props.zh ? '来源' : 'Source'}</dt>
+                      <dd>
+                        {plugin.sourceKind} · <code>{plugin.sourceLocator}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{props.zh ? '组件' : 'Components'}</dt>
+                      <dd>
+                        {revision.components.skills.length} Skill · {revision.components.hooks.length} Hook · {revision.components.mcpServers.length} MCP · {revision.components.apps.length} Connector
+                      </dd>
+                    </div>
+                  </dl>
                   <HookReview descriptor={descriptor} {...props} />
                   <McpPolicyPanel descriptor={descriptor} {...props} />
                   <ConnectorPanel descriptor={descriptor} {...props} />
@@ -531,7 +528,6 @@ function ConnectorDialog(props: {
   return (
     <FormDialog
       title={props.zh ? `连接 ${props.app.name}` : `Connect ${props.app.name}`}
-      description={props.zh ? '填写服务提供的连接配置。' : 'Enter the connection configuration supplied by the service.'}
       zh={props.zh}
       busy={Boolean(props.busyKey)}
       submitLabel={props.zh ? '保存连接' : 'Save connection'}

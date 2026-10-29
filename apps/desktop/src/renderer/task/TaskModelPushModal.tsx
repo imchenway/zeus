@@ -1112,7 +1112,6 @@ export function TaskModelPushModal(props: {
           >
             <span className="task-model-push-section-heading">
               <strong>{zh ? '本次推送工作区' : 'Workspace for this push'}</strong>
-              <small>{zh ? '直接修改项目文件，或使用独立分支与工作目录（worktree）' : 'Edit project files directly, or use a separate branch and working folder (worktree)'}</small>
             </span>
             <div className="task-model-push-mode-group">
               <fieldset className="task-model-push-mode-choice" aria-describedby="task-model-push-workspace-description">

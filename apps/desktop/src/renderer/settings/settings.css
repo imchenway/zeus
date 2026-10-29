@@ -493,6 +493,11 @@
     padding: 16px 0;
     border: 0;
   }
+  /* 没有说明的设置行按单行控件高度排布，保留点击空间。 */
+  .native-control-row:not(:has(.native-control-description)) {
+    min-block-size: 56px;
+    padding-block: 10px;
+  }
   :where(.native-control-copy, .settings-row-copy, .release-update-copy) {
     display: grid;
     gap: 4px;
@@ -569,21 +574,10 @@
   }
   .network-settings-group-heading {
     display: grid;
-    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: 10px;
     padding-block: 14px 4px;
-  }
-  .network-settings-group-heading > span {
-    display: grid;
-    inline-size: 24px;
-    block-size: 24px;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--zeus-product-selected);
-    color: var(--zeus-product-text-subtle);
-    font-size: 11px;
-    font-weight: 700;
   }
   .network-settings-group-heading h3 {
     margin: 1px 0 3px;
@@ -898,6 +892,33 @@
     color: var(--zeus-product-muted);
     cursor: pointer;
   }
+  /* 价格输入与更新同行，窄窗口按控件宽度自然换行。 */
+  .model-connection-pricing,
+  .model-connection-pricing-field {
+    display: grid;
+    gap: 6px;
+    min-inline-size: 0;
+  }
+  .model-connection-pricing-input,
+  .model-connection-pricing-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    min-inline-size: 0;
+  }
+  .model-connection-pricing-input > input {
+    flex: 1 1 240px;
+    min-inline-size: 0;
+  }
+  .model-connection-pricing-status {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .model-connection-pricing > p {
+    margin: 0;
+  }
   .model-connection-enabled {
     display: flex;
     align-items: center;
@@ -911,7 +932,7 @@
     padding-block-start: 18px;
     border-block-start: 1px solid var(--zeus-card-border);
   }
-  /* 批量展开保持独立快捷入口，标题和说明共用左侧空间。 */
+  /* 模型分组标题与批量展开操作同行。 */
   .model-definition-section > header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1029,6 +1050,7 @@
     font-size: 13px;
   }
   .model-definition-identity small {
+    overflow-wrap: anywhere;
     font-size: 11px;
   }
   .model-definition-header .model-definition-remove {
@@ -1691,7 +1713,7 @@
       min-block-size: 36px;
     }
     .network-settings-group-heading {
-      grid-template-columns: 24px minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: 8px;
     }
     .settings-sidebar-shell {

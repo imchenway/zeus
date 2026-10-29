@@ -41,7 +41,7 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
       <header>
         <div>
           <h3>{plan ? '工作安排' : '让团队接力完成任务'}</h3>
-          <p>{plan ? planStateLabel(plan.state, props.readOnly) : '安排阶段、分工和负责人，让调研、开发与审查围绕同一个任务推进。'}</p>
+          {plan ? <p>{planStateLabel(plan.state, props.readOnly)}</p> : null}
         </div>
         <div className="digital-employee-actions">
           {!props.readOnly && (!plan || ['draft', 'completed', 'cancelled'].includes(plan.state)) ? (

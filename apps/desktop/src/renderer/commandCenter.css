@@ -280,8 +280,7 @@
 }
 
 .command-definition-title::-webkit-details-marker,
-.command-run-details > summary::-webkit-details-marker,
-.command-parameter-help > summary::-webkit-details-marker {
+.command-run-details > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -318,8 +317,7 @@
 }
 
 .command-definition-title:focus-visible,
-.command-run-details > summary:focus-visible,
-.command-parameter-help > summary:focus-visible {
+.command-run-details > summary:focus-visible {
   border-radius: 4px;
   outline: 2px solid var(--zeus-focus-line);
   outline-offset: 2px;
@@ -1173,8 +1171,7 @@
 
 .command-run-parameter-heading {
   min-height: 24px;
-  padding-right: 28px;
-  position: relative;
+  min-width: 0;
 }
 
 .command-run-parameter-heading > label {
@@ -1188,41 +1185,13 @@
   color: var(--zeus-control-danger-text);
 }
 
-/* 字段说明在原位展开，输入值保持可见且不使用悬浮卡片。 */
-.command-parameter-help > summary {
-  align-items: center;
-  color: var(--zeus-control-muted-text);
-  cursor: pointer;
-  display: flex;
-  height: 24px;
-  justify-content: center;
-  list-style: none;
-  min-block-size: 24px;
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 24px;
-}
-
-.command-parameter-help > summary > svg {
-  height: 15px;
-  width: 15px;
-}
-
-.command-parameter-help > div {
+/* 必填参数的业务说明直接跟随字段，长内容在当前列换行。 */
+.command-parameter-help {
   color: var(--zeus-control-muted-text);
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
-  padding-top: 6px;
-}
-
-.command-parameter-help code {
-  font-size: 10px;
-}
-
-.command-parameter-help p {
-  margin-top: 3px;
+  margin: 3px 0 0;
 }
 
 .command-run-parameter[data-type='boolean'] {

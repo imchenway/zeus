@@ -18,11 +18,8 @@ const copy = {
     enabled: '启用内置浏览器',
     enabledHelp: '在对话中打开网页并添加评论，AI 可直接访问网站和操作页面，无需逐次确认。',
     webLinks: '普通网页默认打开方式',
-    webLinksHelp: '选择点击对话中的网页链接或网站卡片时使用的浏览器。',
-    localWeb: '本地网页默认打开方式',
-    localWebHelp: '单独控制项目内 HTML 和 localhost 链接。',
+    localWeb: '本地 HTML 与 localhost',
     files: '文件引用默认打开方式',
-    filesHelp: '选择点击对话中的代码引用和本地文件时使用的应用。',
     zeusBrowser: 'Zeus 内置浏览器',
     externalBrowser: '系统默认浏览器',
     zeusPreview: 'Zeus 预览',
@@ -34,7 +31,6 @@ const copy = {
     downloads: '下载目录',
     downloadsHelp: '默认保存在 Zeus 私有资料目录，不会申请系统“下载”文件夹权限；改为其他受保护目录后，保存设置时可能由 macOS 询问。',
     askWhere: '每次询问保存位置',
-    askWhereHelp: '开启后，下载开始前显示本机保存对话框。',
     save: '保存浏览器设置',
     saved: '浏览器设置已保存。',
     // 单个开关保存不能暗示页面中的其他草稿也已保存。
@@ -84,11 +80,8 @@ const copy = {
     enabled: 'Enable built-in browser',
     enabledHelp: 'Open web pages and add comments in conversations. The AI can access sites and operate pages without per-action confirmation.',
     webLinks: 'Default for web links',
-    webLinksHelp: 'Choose the browser used when you open a web link or website card in a conversation.',
-    localWeb: 'Default for local websites',
-    localWebHelp: 'Controls project HTML and localhost links separately.',
+    localWeb: 'Local HTML and localhost',
     files: 'Default for file references',
-    filesHelp: 'Choose the app used to open code references and local files in conversations.',
     zeusBrowser: 'Zeus built-in browser',
     externalBrowser: 'System default browser',
     zeusPreview: 'Zeus preview',
@@ -100,7 +93,6 @@ const copy = {
     downloads: 'Download directory',
     downloadsHelp: 'The default Zeus-managed folder does not require access to the system Downloads folder. macOS may ask when you save another protected folder.',
     askWhere: 'Ask where to save each file',
-    askWhereHelp: 'Shows a native save dialog before a download starts.',
     save: 'Save browser settings',
     saved: 'Browser settings saved.',
     // 只确认本次开关已经保存。
@@ -346,7 +338,6 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{labels.title}</h2>
-          <p>{props.language === 'zh-CN' ? '管理网页打开方式、下载与浏览器权限。修改后自动保存。' : 'Manage links, downloads and browser permissions. Changes save automatically.'}</p>
         </span>
         <SettingsSaveStatus language={props.language} status={busy ? 'saving' : error ? 'failed' : status === labels.saved || status === labels.switchSaved ? 'saved' : 'idle'} />
       </header>
@@ -356,7 +347,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
             <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => void setBoolean('enabled', checked)} />
           </BrowserSettingRow>
-          <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
+          <BrowserSettingRow title={labels.webLinks}>
             <ZeusSelect
               size="regular"
               ariaLabel={labels.webLinks}
@@ -369,7 +360,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
               ]}
             />
           </BrowserSettingRow>
-          <BrowserSettingRow title={labels.localWeb} description={labels.localWebHelp}>
+          <BrowserSettingRow title={labels.localWeb}>
             <ZeusSelect
               size="regular"
               ariaLabel={labels.localWeb}
@@ -382,7 +373,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
               ]}
             />
           </BrowserSettingRow>
-          <BrowserSettingRow title={labels.files} description={labels.filesHelp}>
+          <BrowserSettingRow title={labels.files}>
             <ZeusSelect
               size="regular"
               ariaLabel={labels.files}
@@ -416,7 +407,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
               onBlur={(event) => void save({ downloadDirectory: event.currentTarget.value })}
             />
           </BrowserSettingRow>
-          <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
+          <BrowserSettingRow title={labels.askWhere}>
             <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
           </BrowserSettingRow>
         </section>
@@ -536,12 +527,13 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
   );
 }
 
-function BrowserSettingRow(props: { title: string; description: string; children: ReactNode; danger?: boolean }) {
+/** 浏览器设置复用设置行布局，仅在存在必要说明时占用说明行。 */
+function BrowserSettingRow(props: { title: string; description?: string; children: ReactNode; danger?: boolean }) {
   return (
     <div className={`native-control-row browser-settings-row ${props.danger ? 'danger' : ''}`}>
       <span className="native-control-copy">
         <strong>{props.title}</strong>
-        <span className="native-control-description">{props.description}</span>
+        {props.description ? <span className="native-control-description">{props.description}</span> : null}
       </span>
       <span className="native-control-slot">{props.children}</span>
     </div>

@@ -305,9 +305,7 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
           </tbody>
         </table>
       </div>
-      <p className="codex-usage-note">
-        {props.language === 'zh-CN' ? '费用按已知模型单价估算，非实际账单。不同供应商分别统计；点击名称查看明细。' : 'Costs use known model rates, not actual bills. Providers stay separate. Select a name for details.'}
-      </p>
+      <p className="codex-usage-note">{props.language === 'zh-CN' ? '费用按公开单价估算，非实际账单。' : 'Costs are estimated from public rates, not actual bills.'}</p>
     </section>
   );
 }
@@ -477,7 +475,7 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
   );
 }
 
-/** 概览沿用菜单栏四项核心指标，Token 构成按需展开。 */
+/** 概览沿用菜单栏四项核心指标，Token 构成直接列在趋势下方。 */
 function LocalOverview(props: { analytics: UsageProviderAnalytics; language: Language }) {
   /** 当前供应商的本地范围汇总。 */
   const { local, provider } = props.analytics;
@@ -500,8 +498,8 @@ function LocalOverview(props: { analytics: UsageProviderAnalytics; language: Lan
       </p>
       {totals.turnCount === 0 ? <p className="codex-usage-state">{text[props.language].empty}</p> : <LocalUsageTrend days={local.daily} range={props.analytics.range} label={text[props.language].onlyZeus} language={props.language} />}
       {totals.turnCount > 0 ? (
-        <details className="codex-usage-token-detail">
-          <summary>{props.language === 'zh-CN' ? 'Token 构成' : 'Token breakdown'}</summary>
+        <section className="codex-usage-token-detail" aria-label={props.language === 'zh-CN' ? 'Token 构成' : 'Token breakdown'}>
+          <h4>{props.language === 'zh-CN' ? 'Token 构成' : 'Token breakdown'}</h4>
           <MetricGrid
             language={props.language}
             items={[
@@ -513,7 +511,7 @@ function LocalOverview(props: { analytics: UsageProviderAnalytics; language: Lan
               [props.language === 'zh-CN' ? '缓存写入' : 'Cache writes', formatTokens(totals.cacheWriteInputTokens, props.language)],
             ]}
           />
-        </details>
+        </section>
       ) : null}
     </>
   );

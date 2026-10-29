@@ -635,8 +635,7 @@
 }
 
 .macos-ai-app .extension-source-tabs button:focus-visible,
-.macos-ai-app .extension-plugin-summary:focus-visible,
-.macos-ai-app .extension-source-details > summary:focus-visible {
+.macos-ai-app .extension-plugin-summary:focus-visible {
   outline: 2px solid var(--zeus-product-accent);
   outline-offset: 2px;
 }
@@ -668,14 +667,8 @@
   transform: rotate(90deg);
 }
 
-.macos-ai-app .extension-source-details > summary {
-  color: var(--zeus-product-muted);
-  cursor: pointer;
-  font-size: 12px;
-  padding-block: 4px;
-}
-
-.macos-ai-app .extension-source-details dl {
+/* 来源与组件字段随插件详情直接展示。 */
+.macos-ai-app .extension-source-details {
   padding-block-start: 8px;
 }
 

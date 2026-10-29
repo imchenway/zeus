@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
@@ -11,7 +11,6 @@ import { ZeusSelect } from '../ZeusSelect.js';
 export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'loadRuntimeSettings' | 'saveRuntimeSettings'> | null; language: 'zh-CN' | 'en-US' }) {
   /** 文案与字段说明跟随应用语言。 */
   const zh = props.language === 'zh-CN';
-  const helpId = useId();
   /** 未读取时禁用保存，空字符串是用户主动关闭启动命令。 */
   const [command, setCommand] = useState<string | null>(null);
   /** 脚本解释器与正文一起保存，不因切换系统而自动修改。 */
@@ -86,7 +85,6 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
           <textarea
             data-markdown-lists="off"
             aria-label={zh ? '启动命令' : 'Startup command'}
-            aria-describedby={helpId}
             rows={5}
             maxLength={4_000}
             spellCheck={false}
@@ -102,7 +100,7 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
           />
         </NativeControlRow>
       </NativeSettingsPane>
-      <p id={helpId}>{zh ? '支持多行命令。切换标签、收起面板或重新连接不会重复执行。' : 'Supports multiple lines. Switching tabs, hiding the panel, or reconnecting does not run it again.'}</p>
+
       {error ? (
         <div role="status">
           <p>

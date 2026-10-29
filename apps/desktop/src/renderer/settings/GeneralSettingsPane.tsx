@@ -118,7 +118,6 @@ export function GeneralSettingsPane(props: {
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '通用' : 'General'}</h2>
-          <p>{zh ? '调整界面、通知与输入建议，修改后自动保存。' : 'Appearance, notifications and input suggestions. Changes save automatically.'}</p>
         </span>
         {status === 'failed' ? (
           <div className="settings-heading-actions">
@@ -132,7 +131,7 @@ export function GeneralSettingsPane(props: {
       <section className="settings-product-section">
         <h3>{zh ? '界面与通知' : 'Appearance and notifications'}</h3>
         <NativeSettingsPane label={zh ? '界面与通知' : 'Appearance and notifications'}>
-          <NativeControlRow title={zh ? '应用语言' : 'Language'} description={zh ? '选择 Zeus 的界面语言。' : 'Choose the Zeus interface language.'}>
+          <NativeControlRow title={zh ? '应用语言' : 'Language'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '应用语言' : 'Language'}
@@ -144,7 +143,7 @@ export function GeneralSettingsPane(props: {
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow title={zh ? '外观' : 'Appearance'} description={zh ? '跟随系统，或固定为浅色、深色。' : 'Follow the system or choose a light or dark theme.'}>
+          <NativeControlRow title={zh ? '外观' : 'Appearance'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '外观' : 'Appearance'}
@@ -157,7 +156,7 @@ export function GeneralSettingsPane(props: {
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow title={zh ? '主界面布局' : 'Main layout'} description={zh ? '选择主界面布局，修改后立即生效。' : 'Choose the main interface layout. Changes apply immediately.'}>
+          <NativeControlRow title={zh ? '主界面布局' : 'Main layout'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '主界面布局' : 'Main layout'}
@@ -186,10 +185,7 @@ export function GeneralSettingsPane(props: {
       <section className="settings-product-section">
         <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
         <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>
-          <NativeControlRow
-            title={zh ? '自动建议' : 'Automatic suggestions'}
-            description={zh ? '回复结束后显示灰字，按 Tab 采纳。关闭后仍可手动生成或润色。' : 'Show a suggestion after a reply; press Tab to accept. Manual suggestions and polishing remain available when off.'}
-          >
+          <NativeControlRow title={zh ? '自动建议' : 'Automatic suggestions'}>
             <label className="settings-switch-state">
               <input
                 className="native-switch-input"
@@ -202,10 +198,7 @@ export function GeneralSettingsPane(props: {
               <span className="native-switch-track" aria-hidden="true" />
             </label>
           </NativeControlRow>
-          <NativeControlRow
-            title={zh ? '建议模型' : 'Suggestion model'}
-            description={suggestions.followConversationModel ? (zh ? '跟随会话模型；新草稿使用输入框选择的模型。' : 'Use the conversation model, or the selected model for a new draft.') : undefined}
-          >
+          <NativeControlRow title={zh ? '建议模型' : 'Suggestion model'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议模型' : 'Input suggestion model'}

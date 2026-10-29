@@ -1076,6 +1076,12 @@ a {
   padding-block-start: 16px;
   border-block-start: 1px solid var(--zeus-product-line-soft);
 }
+/* Token 分项直接展示，标题沿用统计区字号。 */
+.macos-ai-app .codex-usage-token-detail > h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
 .macos-ai-app .codex-usage-settings summary {
   cursor: pointer;
   font-size: 13px;

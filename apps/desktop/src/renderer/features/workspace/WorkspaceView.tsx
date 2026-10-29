@@ -2049,7 +2049,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <header className="settings-page-heading">
                           <span>
                             <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
-                            <p>{appShellSettings.appLanguage === 'zh-CN' ? '选择字段，调整选项与排序。修改后自动保存。' : 'Choose a field to edit options and order. Changes save automatically.'}</p>
                           </span>
                           <SettingsSaveStatus status={taskAutosave.status} language={appShellSettings.appLanguage} />
                         </header>
