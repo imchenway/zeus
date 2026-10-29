@@ -341,6 +341,8 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
             }
           }
           if (revision.snapshot.action.kind === 'project_task' && !revision.snapshot.action.taskFilter) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 原运行未冻结任务筛选，请核对规则后重新运行。');
+          /** 手动、定时、事件和恢复都在准备新目标前核对实际用量。 */
+          options.runs.assertDailyTokenBudget(running.automationId, options.now());
           assertFullAccessGrant(running, revision);
           /** 缺失项目明确阻塞，已有目标引用不被清空。 */
           const project = options.getProject(target.projectId) ?? (running.projectIds.length === 0 ? options.ensureTemporaryWorkspace(running.id) : undefined);
@@ -363,6 +365,8 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           await options.save();
           /** 保存可能让出控制权，业务接纳前最后核对暂停或取消。 */
           if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
+          /** 保存期间可能收到新的用量回执，不能沿用准备前的额度判断。 */
+          options.runs.assertDailyTokenBudget(running.automationId, options.now());
           assertFullAccessGrant(running, revision);
           /** 接纳后保存该目标引用，仍保持 dispatching 直到全部目标完成。 */
           const reference = await options.dispatchAction({ run: options.runs.getById(running.id)!, snapshot, project, target });
@@ -384,9 +388,10 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
             }
             /** 未发生业务接纳的目标保留准确失败原因，人工恢复仍沿冻结范围。 */
             options.runs.updateDispatchTarget(running.id, { ...target, status: 'pending', reason: error instanceof Error ? error.message : String(error) });
-            /** 部分工作已接纳时保留串行占位，恢复规则只补原运行剩余目标。 */
-            if (options.runs.getById(running.id)?.executionReferences.length) options.tasks.setStatus(running.automationId, 'paused');
-            else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
+            /** 部分接纳遇到日额度耗尽时保留原占位并等待下一自然日，其他错误仍需人工恢复。 */
+            if (options.runs.getById(running.id)?.executionReferences.length) {
+              if (errorCode(error) !== 'ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED') options.tasks.setStatus(running.automationId, 'paused');
+            } else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
           } catch (reconciliationError) {
             /** 接纳事实待核对时同样保留原占位和身份，不能放行后继运行。 */
             options.tasks.setStatus(running.automationId, 'paused');

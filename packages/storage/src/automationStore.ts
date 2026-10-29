@@ -64,6 +64,7 @@ export interface AutomationDefinitionSnapshot {
   blockStrategy: AutomationBlockStrategy;
   queueCapacity: number;
   maxRunsPerDay: number | null;
+  /** 按规则时区的自然日累计实际 Token 用量；空值表示不限制新工作派发。 */
   maxTokensPerDay: number | null;
   retentionDays: number;
   notifications: AutomationNotificationConfig;
@@ -965,6 +966,62 @@ function normalizeRevisionSnapshot(value: string): AutomationDefinitionSnapshot 
 
 export class AutomationRunRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
+
+  /** 派发时读取当前预算，已排队或恢复的旧修订同样受规则的最新上限约束。 */
+  assertDailyTokenBudget(automationId: string, at: string): void {
+    /** 内容修订继续冻结，预算和时区作为整条规则的当前运行约束。 */
+    const task = new AutomationTaskRepository(this.db).getById(automationId);
+    if (task?.maxTokensPerDay == null) return;
+    if (this.readDailyTokenUsage(automationId, at, task.timezone) >= task.maxTokensPerDay) {
+      throw new Error('ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED: 已达到规则时区内的当日 Token 用量上限，暂不派发新工作。');
+    }
+  }
+
+  /** 按准确执行引用汇总账本，同一会话的多份引用只计费一次，不读取其他任务的最新运行。 */
+  private readDailyTokenUsage(automationId: string, at: string, timezone: string): number {
+    /** 日期归属使用规则时区，不依赖宿主系统时区或固定的每日小时数。 */
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    /** 当前自然日用于筛选实际账本发生时间。 */
+    const today = formatter.format(new Date(at));
+    /** 日历字段只用于扩大 SQL 时间范围，最终日期仍由 IANA 时区判断。 */
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(at)).map((part) => [part.type, part.value]));
+    /** 同一本地日期以 UTC 零点承载，单位为毫秒。 */
+    const calendarDay = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
+    /** UTC 日历前后各扩一天，覆盖时区偏移、夏令时和非整点时区。 */
+    const rows = this.db.select<{ occurred_at: string; total_tokens: number }>(
+      `WITH RECURSIVE execution_refs AS (
+        SELECT json_extract(ref.value, '$.kind') AS kind, json_extract(ref.value, '$.id') AS id,
+          json_extract(ref.value, '$.generation') AS generation, json_extract(ref.value, '$.conversationId') AS conversation_id
+        FROM automation_runs run, json_each(run.execution_references_json) ref WHERE run.automation_id = ?
+      ), root_items(id) AS (
+        SELECT work.work_item_id FROM task_work_runs work JOIN execution_refs ref ON ref.kind = 'task_work' AND ref.id = work.id
+        UNION
+        SELECT work.work_item_id FROM task_work_runs work JOIN digital_team_node_attempts node ON node.work_run_id = work.id
+          JOIN execution_refs ref ON ref.kind = 'workflow' AND ref.id = node.run_id
+        UNION
+        SELECT item.id FROM task_work_items item JOIN task_stages stage ON stage.id = json_extract(item.arrangement_json, '$.stageId')
+          JOIN execution_refs ref ON ref.kind = 'task_plan' AND ref.id = stage.workflow_id
+          AND ref.generation = COALESCE(json_extract(stage.output_contract_json, '$.workGeneration'), 1)
+      ), scoped_items(id) AS (
+        SELECT id FROM root_items
+        UNION
+        SELECT child.id FROM task_work_items child JOIN scoped_items parent ON json_extract(child.arrangement_json, '$.parentWorkItemId') = parent.id
+      ), scoped_conversations(id) AS (
+        SELECT conversation_id FROM automation_runs WHERE automation_id = ? AND conversation_id IS NOT NULL
+        UNION SELECT conversation_id FROM execution_refs WHERE conversation_id IS NOT NULL
+        UNION SELECT id FROM execution_refs WHERE kind = 'conversation'
+        UNION SELECT work.conversation_id FROM task_work_runs work JOIN scoped_items item ON item.id = work.work_item_id
+        UNION SELECT workflow.main_conversation_id FROM digital_team_workflow_runs workflow JOIN execution_refs ref ON ref.kind = 'workflow' AND ref.id = workflow.id
+        UNION SELECT node.conversation_id FROM digital_team_node_attempts node JOIN execution_refs ref ON ref.kind = 'workflow' AND ref.id = node.run_id
+        UNION SELECT execution.conversation_id FROM digital_employee_executions execution JOIN execution_refs ref ON ref.kind = 'legacy_employee' AND ref.id = execution.id
+      )
+      SELECT ledger.occurred_at, ledger.total_tokens FROM codex_usage_ledger ledger
+      WHERE ledger.conversation_id IN (SELECT id FROM scoped_conversations)
+        AND ledger.occurred_at >= ? AND ledger.occurred_at < ?`,
+      [automationId, automationId, new Date(calendarDay - 86_400_000).toISOString(), new Date(calendarDay + 2 * 86_400_000).toISOString()],
+    );
+    return rows.reduce((total, row) => total + (formatter.format(new Date(row.occurred_at)) === today ? row.total_tokens : 0), 0);
+  }
 
   enqueue(input: EnqueueAutomationRunInput): AutomationRunRecord {
     const task = new AutomationTaskRepository(this.db).getById(input.automationId);
