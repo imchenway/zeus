@@ -1,6 +1,7 @@
 import { Collapsible } from '../ui/Collapsible.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { type FocusEvent, type KeyboardEvent, createContext, useContext, memo, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useReadingScroll, useReadingState } from '../ui/readingState.js';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
@@ -243,7 +244,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   /** 技能链接显示完整名称标题，保留原有文件打开入口。 */
   const skillActivity = activitySkillNames([props.item]).length > 0;
   /** 打开处理过程不自动打开命令，也不提前读取截断正文。 */
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useReadingState(`activity:${props.item.key}`, false);
   const Icon = activityItemIcon(props.item);
   const toolResult = activityToolResult(props.item);
   const titleNode = target ? (
@@ -291,7 +292,16 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
                 {/* 终止只描述进程结束，原始非零退出码仍供用户核对。 */}
                 {detail.exitCode !== null ? <small>{props.language === 'zh-CN' ? `退出码：${detail.exitCode}` : `Exit code: ${detail.exitCode}`}</small> : null}
-                {detail.output || toolResult ? <ActivityItemOutput key={toolResult?.handle ?? props.item.key} output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
+                {detail.output || toolResult ? (
+                  <ActivityItemOutput
+                    key={toolResult?.handle ?? props.item.key}
+                    identity={toolResult?.handle ?? props.item.key}
+                    output={detail.output}
+                    toolResult={toolResult}
+                    language={props.language}
+                    onLoadToolResult={props.onLoadToolResult}
+                  />
+                ) : null}
               </div>
             ) : null}
           </details>
@@ -304,11 +314,17 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
 });
 
 /** 打开命令后按输出滚动位置补齐正文，不增加“展开剩余内容”等操作入口。 */
-function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
+function ActivityItemOutput(props: {
+  identity: string;
+  output: string | null;
+  toolResult: ActivityToolResult | null;
+  language: SessionUiLanguage;
+  onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
+}) {
   /** 当前已读的不可变页，按真实偏移保留连续顺序。 */
   const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
   /** 长的本地输出与远端输出使用相同的分段展示上限。 */
-  const [visibleCharacters, setVisibleCharacters] = useState(MAX_ACTIVITY_OUTPUT_CHARACTERS);
+  const [visibleCharacters, setVisibleCharacters] = useReadingState(`output-length:${props.identity}`, MAX_ACTIVITY_OUTPUT_CHARACTERS);
   /** 加载状态只播报，不要求用户再点一次展开。 */
   const [loading, setLoading] = useState(false);
   /** 失败时保留已读输出并停止自动请求。 */
@@ -319,6 +335,16 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
   const mountedRef = useRef(true);
   /** 复用现有输出滚动区，只有读到末尾才继续展示或读取。 */
   const outputRef = useRef<HTMLPreElement>(null);
+  /** 只保存输出位置，正文继续通过原有只读分页入口读取。 */
+  const readingScroll = useReadingScroll(`output:${props.identity}`);
+  /** 分页和位置恢复共用同一输出容器。 */
+  const bindOutput = useCallback(
+    (element: HTMLPreElement | null) => {
+      outputRef.current = element;
+      return readingScroll(element);
+    },
+    [readingScroll],
+  );
   /** 输出正文只在投影或已读页变化时合并，滚动不重复解析协议。 */
   const outputText = useMemo(() => {
     /** 已读正文不足投影长度时继续保留投影，避免首个完整页使内容缩短。 */
@@ -370,7 +396,7 @@ function ActivityItemOutput(props: { output: string | null; toolResult: Activity
   return (
     <div className="session-activity-item-output" aria-busy={loading || undefined}>
       <pre
-        ref={outputRef}
+        ref={bindOutput}
         tabIndex={0}
         onScroll={(event) => {
           /** 键盘和鼠标共用原生滚动，末尾每次只推进一个展示段或远端页。 */

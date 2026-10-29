@@ -3,6 +3,7 @@ import type { ConversationTurnUsage, ZeusBrowserComment } from '@zeus/shared';
 import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useReadingState } from '../ui/readingState.js';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
@@ -452,8 +453,8 @@ const RecoveredRequestUserInputItem = memo(function RecoveredRequestUserInputIte
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const labels = copy[props.language];
-  const [expanded, setExpanded] = useState(false);
-  const [messageExpanded, setMessageExpanded] = useState(false);
+  const [expanded, setExpanded] = useReadingState(`user-message:${props.item.key}`, false);
+  const [messageExpanded, setMessageExpanded] = useReadingState(`message-width:${props.item.key}`, false);
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');

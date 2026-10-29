@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
+import { useReadingScroll, useReadingSnapshot } from '../ui/readingState.js';
 import { basicSetup } from 'codemirror';
 import { defaultKeymap, historyField, indentWithTab } from '@codemirror/commands';
 import { Compartment, EditorState, StateEffect, type Extension, type Text } from '@codemirror/state';
@@ -72,6 +73,18 @@ export interface CodeEditorProps {
 
 /** 编辑器实例独立于 React 输入更新，语言异步加载期间先显示纯文本。 */
 export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
+  /** 源码与 Diff 的左右视图使用稳定路径，行号跳转不重建编辑器。 */
+  const readingKey = `editor:${props.path}`;
+  /** 重开保留阅读位置，新点击仍执行行号跳转。 */
+  const savedScroll = useReadingSnapshot(readingKey);
+  /** 不同的显式定位优先于上次阅读位置。 */
+  const savedLocation = useReadingSnapshot<string>(`${readingKey}:location`);
+  /** 定位签名只用于恢复判定，不参与编辑器生命周期。 */
+  const requestedLocation = JSON.stringify([props.location, props.revealLine]);
+  /** 首次定位用于区分恢复与用户后续的跳转请求。 */
+  const initialLocation = useRef({ location: props.location, revealLine: props.revealLine }).current;
+  /** 滚动容器由 CodeMirror 建立，销毁前保存位置。 */
+  const readingScroll = useReadingScroll(readingKey);
   /** 编辑器宿主。 */
   const hostRef = useRef<HTMLDivElement>(null);
   /** 当前文件唯一编辑器实例。 */
@@ -189,13 +202,17 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     const view = props.externalView ?? new EditorView({ parent: hostRef.current, state: EditorState.create(config) });
     if (props.externalView) view.dispatch({ effects: StateEffect.appendConfig.of(config.extensions) });
     viewRef.current = view;
+    if (savedLocation.current !== requestedLocation) savedScroll.current = undefined;
+    /** 外部 MergeView 同样使用自己的滚动容器。 */
+    const releaseReading = readingScroll(view.scrollDOM);
     callbacksRef.current.onView?.(view);
     return () => {
+      releaseReading?.();
       callbacksRef.current.onView?.(null);
       viewRef.current = null;
       if (!props.externalView) view.destroy();
     };
-  }, [props.path, props.externalView, languageSlot, accessSlot, decorationSlot, blameSlot, readingSlot]);
+  }, [props.path, props.externalView, languageSlot, accessSlot, decorationSlot, blameSlot, readingSlot, readingScroll]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
@@ -256,7 +273,8 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     /** 定位仅滚动目标编辑器，不抢占会话或评论输入焦点。 */
     const view = viewRef.current;
     const requested = props.location?.line ?? props.revealLine;
-    if (!view || !requested || !Number.isFinite(requested)) return;
+    savedLocation.current = requestedLocation;
+    if (!view || !requested || !Number.isFinite(requested) || (savedScroll.current && props.location === initialLocation.location && props.revealLine === initialLocation.revealLine)) return;
     const line = view.state.doc.line(Math.max(1, Math.min(Math.trunc(requested), view.state.doc.lines)));
     /** 内容搜索保留命中列，长代码行横向滚动到真实位置。 */
     const column = props.location?.column;

@@ -225,10 +225,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const tabId = activeTab?.id;
     const bridge = window.zeus;
     if (!tabId || !bridge?.onNativeCloseActiveContextTab) return;
-    return bridge.onNativeCloseActiveContextTab(() => {
+    return bridge.onNativeCloseActiveContextTab((owner) => {
+      if (owner && owner !== props.conversationId) return;
+      if (!viewportRef.current?.getClientRects().length || viewportRef.current.closest('[hidden], [inert], [data-tool-covered="true"]')) return;
       void closeTab(tabId);
     });
-  }, [activeTab?.id]);
+  }, [activeTab?.id, props.conversationId]);
 
   useLayoutEffect(() => {
     // 沿用当前标签的原生布局通道，隐藏期间保留网页实例与页面状态。

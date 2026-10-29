@@ -8,6 +8,7 @@ import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
+import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
 import { temporaryWorkspaceId, isConversationWorktreeOptions, splitZeusSkillIds, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import {
   type CSSProperties,
@@ -1954,6 +1955,17 @@ export function createSessionHeaderSnapshot(conversation: NativeConversationChoi
   };
 }
 
+/** 旧会话没有虚拟行，直接保存正文容器的阅读位置。 */
+function LegacyConversationTranscript(props: { label: string; children: ReactNode }) {
+  /** 只读正文与原生会话一样在切回时恢复。 */
+  const readingScroll = useReadingScroll('legacy-transcript');
+  return (
+    <section ref={readingScroll} className="session-legacy-transcript" role="log" aria-live="off" aria-label={props.label}>
+      {props.children}
+    </section>
+  );
+}
+
 export function SessionWorkspace(props: SessionWorkspaceProps) {
   const copy = labels[props.language];
   const actions = props.actions ?? {};
@@ -2288,7 +2300,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       const owner = ownerConversationId ?? document.activeElement?.closest('[data-context-owner]')?.getAttribute('data-context-owner');
       if (owner && owner !== props.conversation?.id) return;
       const current = contextWorkspaceRef.current;
-      if (projectTools.open || current.kind === 'none' || current.kind === 'browser') return;
+      if (projectTools.open || current.kind === 'none' || current.kind === 'browser' || current.kind === 'source') return;
       closeContextWorkspace();
     });
   }, [props.conversation?.id, projectTools.open]);
@@ -3104,15 +3116,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </p>
           ) : null}
           {legacyMessages.length > 0 ? (
-            <section className="session-legacy-transcript" role="log" aria-live="off" aria-label={copy.legacyTranscript}>
-              {legacyMessages.map((message) => (
-                <article key={message.id} className={`session-legacy-message session-legacy-message-${message.role}`}>
-                  <strong>{message.role}</strong>
-                  <ConversationMarkdown text={message.content} streamId={`legacy:${props.conversation!.id}:${message.id}`} phase="final" language={props.language} />
-                </article>
-              ))}
-              <span ref={legacyLatestContentRef} className="session-latest-content-marker" aria-hidden="true" />
-            </section>
+            <ReadingStateScope id={`legacy:${props.conversation.projectId}:${navigationId}`}>
+              <LegacyConversationTranscript label={copy.legacyTranscript}>
+                {legacyMessages.map((message) => (
+                  <article key={message.id} className={`session-legacy-message session-legacy-message-${message.role}`}>
+                    <strong>{message.role}</strong>
+                    <ConversationMarkdown text={message.content} streamId={`legacy:${props.conversation!.id}:${message.id}`} phase="final" language={props.language} />
+                  </article>
+                ))}
+                <span ref={legacyLatestContentRef} className="session-latest-content-marker" aria-hidden="true" />
+              </LegacyConversationTranscript>
+            </ReadingStateScope>
           ) : null}
         </>
       ) : props.state ? (
@@ -3269,111 +3283,113 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
                     <div className="session-browser-pane" data-environment-open={(browserOpen && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
-                      {sideQuestionState && props.renderSideQuestion
-                        ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace, contextToolbarHost)
-                        : null}
-                      {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
-                      {contextWorkspace.kind === 'browser' ? (
-                        <BrowserWorkspace
-                          toolbarHost={contextOpen ? contextToolbarHost : null}
-                          conversationId={props.state?.conversationId ?? props.conversation.id}
-                          initialSnapshot={browserSnapshotRef.current}
-                          language={props.language}
-                          disabled={composerReadOnly || !actions.onStageBrowserComments}
-                          expanded={contextFullWidth}
-                          canSplit={browserLayoutWidth > 840}
-                          onClose={closeContextWorkspace}
-                          onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
-                          onResetSize={() => {
-                            setBrowserPaneShare(56);
-                            setContextFullWidth(false);
-                          }}
-                          onStageComments={async (prepared) => {
-                            // 能力切换期间保留网页与批注，不能把缺少发送回调当成已成功暂存。
-                            if (!actions.onStageBrowserComments) return;
-                            await actions.onStageBrowserComments(prepared);
-                            closeContextWorkspace({ focusComposer: true });
-                          }}
-                        />
-                      ) : null}
-                      {browserOpen ? <div ref={setBrowserEnvironmentHost} className="session-browser-environment-host" /> : null}
-                      {contextWorkspace.kind === 'subagents' && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
-                        <SubagentWorkspace
-                          language={props.language}
-                          conversationId={props.state.conversationId ?? props.conversation.id}
-                          activityRevision={`${subagentActivity.revision}|${subagentSnapshotRevision}`}
-                          hintCount={subagentThreadIds.length}
-                          initialSnapshot={props.subagentListSnapshot}
-                          fullWidth={contextFullWidth}
-                          onFullWidthChange={setContextFullWidth}
-                          onClose={closeContextWorkspace}
-                          loadList={actions.onLoadSubagents}
-                          loadThread={actions.onLoadSubagentThread}
-                        />
-                      ) : null}
-                      {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
-                        <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
-                      ) : null}
-                      {contextWorkspace.kind === 'file' ? (
-                        <FilePreviewWorkspace
-                          request={contextWorkspace.request}
-                          location={contextWorkspace.location}
-                          commentPath={contextWorkspace.commentPath}
-                          language={props.language}
-                          toolbarHost={contextOpen ? contextToolbarHost : null}
-                          canSplit={browserLayoutWidth > 840}
-                          fullWidth={contextFullWidth}
-                          comments={props.state?.contextDraft.codeComments}
-                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
-                          onFullWidthChange={setContextFullWidth}
-                          onClose={closeContextWorkspace}
-                        />
-                      ) : null}
-                      {contextWorkspace.kind === 'source' ? (
-                        <SourceWorkspace
-                          state={sourceWorkspaceState}
-                          onStateChange={setSourceWorkspaceState}
-                          canSplit={browserLayoutWidth > 840}
-                          toolbarHost={contextOpen ? contextToolbarHost : null}
-                          preview={contextWorkspace.preview}
-                          onOpen={transcriptReadActionsEnabled ? (target, resource) => openConversationResource(resource ?? contextWorkspace.preview.resource, target) : undefined}
-                          resources={[
-                            ...new Map(
-                              Object.values(props.state?.items ?? {})
-                                .flatMap((item) => item.resources)
-                                .filter((resource) => resource.kind === 'file' && isConversationSourcePreviewable(resource.projectRelativePath))
-                                .map((resource) => [resource.id, resource]),
-                            ).values(),
-                          ]}
-                          onOpenFile={transcriptReadActionsEnabled ? (resource) => openConversationResource(resource, 'zeus_source') : undefined}
-                          viewMode={contextWorkspace.viewMode}
-                          onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
-                          language={props.language}
-                          fullWidth={contextFullWidth}
-                          onFullWidthChange={setContextFullWidth}
-                          onClose={closeContextWorkspace}
-                          comments={props.state?.contextDraft.codeComments}
-                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
-                        />
-                      ) : null}
-                      {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
-                        <TurnDiffWorkspace
-                          changeSet={turnDiffChangeSet}
-                          initialFileId={contextWorkspace.initialFileId}
-                          language={props.language}
-                          fullWidth={contextFullWidth}
-                          onFullWidthChange={setContextFullWidth}
-                          onClose={closeContextWorkspace}
-                          loading={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.loading}
-                          loadError={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.error}
-                          onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
-                          onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
-                          onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
-                          onLoadPreview={actions.onLoadTurnChangeFilePreview}
-                          comments={props.state?.contextDraft.codeComments}
-                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
-                        />
-                      ) : null}
+                      <ReadingStateScope id={JSON.stringify([props.conversation.projectId, navigationId])}>
+                        {sideQuestionState && props.renderSideQuestion
+                          ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace, contextToolbarHost)
+                          : null}
+                        {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
+                        {contextWorkspace.kind === 'browser' ? (
+                          <BrowserWorkspace
+                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            conversationId={props.state?.conversationId ?? props.conversation.id}
+                            initialSnapshot={browserSnapshotRef.current}
+                            language={props.language}
+                            disabled={composerReadOnly || !actions.onStageBrowserComments}
+                            expanded={contextFullWidth}
+                            canSplit={browserLayoutWidth > 840}
+                            onClose={closeContextWorkspace}
+                            onToggleExpanded={() => setContextFullWidth((expanded) => !expanded)}
+                            onResetSize={() => {
+                              setBrowserPaneShare(56);
+                              setContextFullWidth(false);
+                            }}
+                            onStageComments={async (prepared) => {
+                              // 能力切换期间保留网页与批注，不能把缺少发送回调当成已成功暂存。
+                              if (!actions.onStageBrowserComments) return;
+                              await actions.onStageBrowserComments(prepared);
+                              closeContextWorkspace({ focusComposer: true });
+                            }}
+                          />
+                        ) : null}
+                        {browserOpen ? <div ref={setBrowserEnvironmentHost} className="session-browser-environment-host" /> : null}
+                        {contextWorkspace.kind === 'subagents' && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
+                          <SubagentWorkspace
+                            language={props.language}
+                            conversationId={props.state.conversationId ?? props.conversation.id}
+                            activityRevision={`${subagentActivity.revision}|${subagentSnapshotRevision}`}
+                            hintCount={subagentThreadIds.length}
+                            initialSnapshot={props.subagentListSnapshot}
+                            fullWidth={contextFullWidth}
+                            onFullWidthChange={setContextFullWidth}
+                            onClose={closeContextWorkspace}
+                            loadList={actions.onLoadSubagents}
+                            loadThread={actions.onLoadSubagentThread}
+                          />
+                        ) : null}
+                        {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
+                          <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
+                        ) : null}
+                        {contextWorkspace.kind === 'file' ? (
+                          <FilePreviewWorkspace
+                            request={contextWorkspace.request}
+                            location={contextWorkspace.location}
+                            commentPath={contextWorkspace.commentPath}
+                            language={props.language}
+                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            canSplit={browserLayoutWidth > 840}
+                            fullWidth={contextFullWidth}
+                            comments={props.state?.contextDraft.codeComments}
+                            onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
+                            onFullWidthChange={setContextFullWidth}
+                            onClose={closeContextWorkspace}
+                          />
+                        ) : null}
+                        {contextWorkspace.kind === 'source' ? (
+                          <SourceWorkspace
+                            state={sourceWorkspaceState}
+                            onStateChange={setSourceWorkspaceState}
+                            canSplit={browserLayoutWidth > 840}
+                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            preview={contextWorkspace.preview}
+                            onOpen={transcriptReadActionsEnabled ? (target, resource) => openConversationResource(resource ?? contextWorkspace.preview.resource, target) : undefined}
+                            resources={[
+                              ...new Map(
+                                Object.values(props.state?.items ?? {})
+                                  .flatMap((item) => item.resources)
+                                  .filter((resource) => resource.kind === 'file' && isConversationSourcePreviewable(resource.projectRelativePath))
+                                  .map((resource) => [resource.id, resource]),
+                              ).values(),
+                            ]}
+                            onOpenFile={transcriptReadActionsEnabled ? (resource) => openConversationResource(resource, 'zeus_source') : undefined}
+                            viewMode={contextWorkspace.viewMode}
+                            onViewModeChange={(viewMode) => setContextWorkspace((current) => (current.kind === 'source' ? { ...current, viewMode } : current))}
+                            language={props.language}
+                            fullWidth={contextFullWidth}
+                            onFullWidthChange={setContextFullWidth}
+                            onClose={closeContextWorkspace}
+                            comments={props.state?.contextDraft.codeComments}
+                            onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
+                          />
+                        ) : null}
+                        {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
+                          <TurnDiffWorkspace
+                            changeSet={turnDiffChangeSet}
+                            initialFileId={contextWorkspace.initialFileId}
+                            language={props.language}
+                            fullWidth={contextFullWidth}
+                            onFullWidthChange={setContextFullWidth}
+                            onClose={closeContextWorkspace}
+                            loading={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.loading}
+                            loadError={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.error}
+                            onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
+                            onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                            onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
+                            onLoadPreview={actions.onLoadTurnChangeFilePreview}
+                            comments={props.state?.contextDraft.codeComments}
+                            onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
+                          />
+                        ) : null}
+                      </ReadingStateScope>
                     </div>
                   </aside>
                 ) : null}

@@ -1,4 +1,5 @@
 import { FilePreview } from '../code/FilePreview.js';
+import { useReadingState } from '../ui/readingState.js';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
@@ -184,7 +185,9 @@ export function TurnDiffWorkspace(props: {
   const canComment = Boolean(props.onCommentsChange);
   const canOpen = Boolean(props.onOpenFile);
   const zh = props.language === 'zh-CN';
-  const [activeFileId, setActiveFileId] = useState(props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
+  const [activeFileId, setActiveFileId] = useReadingState(`diff-file:${props.changeSet.id}`, props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
+  /** 相同打开请求的重新挂载不覆盖用户在目录中的选择。 */
+  const initialOpenRequest = useRef({ changeSetId: props.changeSet.id, fileId: props.initialFileId });
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -268,6 +271,8 @@ export function TurnDiffWorkspace(props: {
 
   useEffect(() => {
     // 外部打开意图只在目标改变时生效，不能覆盖用户随后在目录中的选择。
+    if (initialOpenRequest.current.changeSetId === props.changeSet.id && initialOpenRequest.current.fileId === props.initialFileId) return;
+    initialOpenRequest.current = { changeSetId: props.changeSet.id, fileId: props.initialFileId };
     setActiveFileId(props.initialFileId ?? callbacksRef.current.changeSet.files[0]?.id ?? null);
   }, [props.changeSet.id, props.initialFileId]);
 
