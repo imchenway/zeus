@@ -1,5 +1,6 @@
 import { ZeusApiError } from '../transport/localApiTransport.js';
-import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createPortal } from 'react-dom';
 import type { ConversationContextDraft, ConversationResponseAnnotation } from '@zeus/shared';
 import { ArrowsOutIcon } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { ArrowsInIcon } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -24,6 +25,8 @@ export interface SideQuestionStartInput {
   attachments: NativeConversationAttachment[];
   /** 发送时明确选择的运行设置。 */
   settings: ComposerRuntimeSettings;
+  /** 解释仅发送选区，接纳后保留尚未发送的侧栏草稿。 */
+  preserveDraft?: boolean;
 }
 
 /** 右侧会话属于主会话的界面状态，关闭面板不丢弃草稿或已创建的产品会话。 */
@@ -34,6 +37,8 @@ export interface SideQuestionState {
   draft: string;
   /** 未交给右侧会话输入框的选区评论。 */
   annotations: ConversationResponseAnnotation[];
+  /** 按点击顺序交给正式发送链路的解释选区。 */
+  pendingExplanations?: ConversationResponseAnnotation[];
   /** 归档切换时保留原输入框尚未发送的代码评论。 */
   codeComments?: ConversationContextDraft['codeComments'];
   /** 尚未发送的附件。 */
@@ -48,6 +53,8 @@ export interface SideQuestionState {
 
 /** 复用正式会话输入框和完整会话页，只负责侧栏首发与页面外框。 */
 export function SideQuestionWorkspace(props: {
+  /** 标题沿用主会话的顶栏位置。 */
+  toolbarHost?: HTMLElement | null;
   /** 所属主会话保存的侧栏草稿或会话。 */
   state: SideQuestionState;
   /** 只更新当前主会话的侧栏状态。 */
@@ -106,64 +113,87 @@ export function SideQuestionWorkspace(props: {
   }, [props.visible, props.state.annotations.length, props.state.conversation]);
 
   /** 成功回执立即切换真实会话；刷新失败不能触发第二次创建。 */
-  async function submit(selected = settings): Promise<void> {
-    if (sending.current) return;
-    /** 首次发送后冻结输入，手动核对仍使用原始内容及身份。 */
-    const input = props.state.attempt ?? {
-      id: props.state.id,
-      content: props.state.draft.trim() || (zh ? '请解释引用的内容。' : 'Please explain the quoted text.'),
-      conversationContext: state.contextDraft,
-      attachments: props.state.attachments,
-      settings: selected,
-    };
-    sending.current = true;
-    setBusy(true);
-    setError(null);
-    props.onStateChange((current) => current && { ...current, attempt: input });
-    try {
-      await props.onStart(input, (conversation) =>
-        props.onStateChange(
-          (current) =>
-            current && {
-              ...current,
-              conversation,
-              draft: '',
-              attachments: [],
-              codeComments: [],
-              attempt: undefined,
-              annotations: current.annotations.filter((annotation) => !input.conversationContext.responseAnnotations.some((sent) => sent.id === annotation.id)),
-            },
-        ),
-      );
-    } catch (failure) {
-      // 仅发送前明确拒绝的设置与目录校验恢复编辑；网络失败和未知结果继续冻结原请求。
-      if (
-        failure instanceof ZeusApiError &&
-        !failure.recoveryRequired &&
-        ['ZEUS_INVALID_CONVERSATION_SETTINGS', 'ZEUS_INVALID_PERMISSION_MODE', 'ZEUS_INVALID_COLLABORATION_MODE', 'ZEUS_MODEL_UNAVAILABLE', 'ZEUS_MODEL_NOT_READY', 'ZEUS_TASK_EXECUTION_CONTEXT_INVALID'].includes(failure.error ?? '')
-      ) {
-        props.onStateChange((current) => current && { ...current, attempt: undefined });
+  const submit = useCallback(
+    async (selected = settings, explanation?: ConversationResponseAnnotation): Promise<void> => {
+      if (sending.current) return;
+      /** 首次发送后冻结输入，手动核对仍使用原始内容及身份。 */
+      const input = props.state.attempt ?? {
+        id: explanation?.id ?? props.state.id,
+        content: (!explanation && props.state.draft.trim()) || (zh ? '请解释引用的内容。' : 'Please explain the quoted text.'),
+        conversationContext: explanation ? { responseAnnotations: [explanation], codeComments: [] } : state.contextDraft,
+        attachments: explanation ? [] : props.state.attachments,
+        settings: selected,
+        ...(explanation ? { preserveDraft: true } : {}),
+      };
+      sending.current = true;
+      setBusy(true);
+      setError(null);
+      props.onStateChange((current) => current && { ...current, attempt: input, pendingExplanations: current.pendingExplanations?.filter((entry) => entry.id !== explanation?.id) });
+      try {
+        await props.onStart(input, (conversation) =>
+          props.onStateChange(
+            (current) =>
+              current && {
+                ...current,
+                conversation,
+                draft: input.preserveDraft ? current.draft : '',
+                attachments: input.preserveDraft ? current.attachments : [],
+                codeComments: input.preserveDraft ? current.codeComments : [],
+                attempt: undefined,
+                annotations: current.annotations.filter((annotation) => !input.conversationContext.responseAnnotations.some((sent) => sent.id === annotation.id)),
+              },
+          ),
+        );
+      } catch (failure) {
+        // 仅发送前明确拒绝的设置与目录校验恢复编辑；网络失败和未知结果继续冻结原请求。
+        if (
+          failure instanceof ZeusApiError &&
+          !failure.recoveryRequired &&
+          ['ZEUS_INVALID_CONVERSATION_SETTINGS', 'ZEUS_INVALID_PERMISSION_MODE', 'ZEUS_INVALID_COLLABORATION_MODE', 'ZEUS_MODEL_UNAVAILABLE', 'ZEUS_MODEL_NOT_READY', 'ZEUS_TASK_EXECUTION_CONTEXT_INVALID'].includes(failure.error ?? '')
+        ) {
+          props.onStateChange(
+            (current) =>
+              current && {
+                ...current,
+                attempt: undefined,
+                // 明确拒绝后把解释选区留在待发送区，调整设置时仍能查看和移除。
+                annotations: input.preserveDraft ? [...current.annotations, ...input.conversationContext.responseAnnotations] : current.annotations,
+              },
+          );
+        }
+        setError(failure);
+      } finally {
+        sending.current = false;
+        setBusy(false);
       }
-      setError(failure);
-    } finally {
-      sending.current = false;
-      setBusy(false);
-    }
-  }
+    },
+    [props.state, props.onStateChange, props.onStart, settings, state.contextDraft, zh],
+  );
+
+  useEffect(() => {
+    /** 首发未确认时只保留后续选区，不能自动重试未知请求。 */
+    const explanation = props.state.pendingExplanations?.[0];
+    if (props.visible && !props.state.conversation && !props.state.attempt && explanation) void submit(settings, explanation);
+  }, [props.visible, props.state.conversation, props.state.attempt, props.state.pendingExplanations, settings, submit]);
+
+  /** 与其他右侧工作面一样，标题挂入主会话的顶栏槽位。 */
+  const header = (
+    <header className="session-side-question-header">
+      <strong>{zh ? '侧边栏提问' : 'Ask in sidebar'}</strong>
+      <nav aria-label={zh ? '侧边栏会话操作' : 'Sidebar conversation actions'}>
+        <button type="button" aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
+          {props.fullWidth ? <ArrowsInIcon /> : <ArrowsOutIcon />}
+        </button>
+        <button type="button" aria-label={zh ? '关闭侧边栏会话' : 'Close sidebar conversation'} onClick={props.onClose}>
+          <XIcon />
+        </button>
+      </nav>
+    </header>
+  );
 
   return (
     <section className="session-side-question" hidden={!props.visible} inert={!props.visible} aria-label={zh ? '侧边栏会话' : 'Sidebar conversation'}>
-      <header className="session-side-question-header">
-        <strong>{zh ? '侧边栏提问' : 'Ask in sidebar'}</strong>
-        <nav aria-label={zh ? '侧边栏会话操作' : 'Sidebar conversation actions'}>
-          <button type="button" aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
-            {props.fullWidth ? <ArrowsInIcon /> : <ArrowsOutIcon />}
-          </button>
-          <button type="button" aria-label={zh ? '关闭侧边栏会话' : 'Close sidebar conversation'} onClick={props.onClose}>
-            <XIcon />
-          </button>
-        </nav>
-      </header>
+      {props.visible ? (props.toolbarHost ? createPortal(header, props.toolbarHost) : header) : null}
       {props.state.conversation ? (
         props.renderConversation(props.state.conversation, props.state.annotations, (ids) => props.onStateChange((current) => current && { ...current, annotations: current.annotations.filter((annotation) => !ids.includes(annotation.id)) }))
       ) : (

@@ -1,6 +1,7 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
+import { LightbulbIcon as Lightbulb } from '@phosphor-icons/react/dist/csr/Lightbulb';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
@@ -29,8 +30,8 @@ export function ResponseSelectionActions(props: {
   enabled: boolean;
   language: SessionUiLanguage;
   annotations: ConversationResponseAnnotation[];
-  /** 在右侧会话中暂存同一段原文，点击本身不发送。 */
-  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
+  /** 在右侧会话中暂存原文；解释操作直接发送同一选区。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor, sendImmediately?: boolean) => void;
   onAddAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateAnnotation?: (id: string, note: string) => void;
   onRemoveAnnotation?: (id: string) => void;
@@ -226,19 +227,34 @@ export function ResponseSelectionActions(props: {
               <ChatTeardropDots aria-hidden="true" weight="regular" />
             </button>
             {props.onAskInSidebar ? (
-              <button
-                type="button"
-                aria-label={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
-                data-icon-tooltip={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  props.onAskInSidebar?.(candidate.anchor);
-                  setCandidate(null);
-                  view?.getSelection()?.removeAllRanges();
-                }}
-              >
-                <SidebarSimple aria-hidden="true" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  aria-label={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
+                  data-icon-tooltip={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    props.onAskInSidebar?.(candidate.anchor);
+                    setCandidate(null);
+                    view?.getSelection()?.removeAllRanges();
+                  }}
+                >
+                  <SidebarSimple aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label={props.language === 'zh-CN' ? '解释选中文字' : 'Explain selected text'}
+                  data-icon-tooltip={props.language === 'zh-CN' ? '解释' : 'Explain'}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    props.onAskInSidebar?.(candidate.anchor, true);
+                    setCandidate(null);
+                    view?.getSelection()?.removeAllRanges();
+                  }}
+                >
+                  <Lightbulb aria-hidden="true" />
+                </button>
+              </>
             ) : null}
           </PopoverSurface>
         ) : null}

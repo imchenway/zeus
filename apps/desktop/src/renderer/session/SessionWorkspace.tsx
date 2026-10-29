@@ -1,7 +1,8 @@
 import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
+import { createInitialSessionState } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
-import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages } from './conversationSystemMessages.js';
+import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 import { SystemMessageNotice } from './ConversationTranscript.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
@@ -378,6 +379,10 @@ export interface ConnectedSessionWorkspaceProps {
   sideQuestionDisabled?: boolean;
   /** 从主会话交付的原文评论，只加入本会话待发送区。 */
   pendingResponseAnnotations?: ConversationResponseAnnotation[];
+  /** 解释选区直接进入本会话发送队列，不改写输入框。 */
+  pendingExplanations?: ConversationResponseAnnotation[];
+  /** 发送链路接管选区后释放父页面的交付记录。 */
+  onExplanationsHandled?: (ids: string[]) => void;
   /** 完成草稿交付后从父页面释放待交付记录。 */
   onResponseAnnotationsStaged?: (ids: string[]) => void;
   /** 侧栏收到已确认的归档状态后，将未发送内容交回新会话草稿。 */
@@ -560,6 +565,29 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [controller, controllerEnabled, props.pendingResponseAnnotations, props.onResponseAnnotationsStaged]);
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
+  /** 同一选区交给控制器后，父页面刷新不能再次派发。 */
+  const handledExplanationId = useRef<string | null>(null);
+  useEffect(() => {
+    /** 正式发送服务继续负责排队、持久化和失败恢复。 */
+    const explanation = props.pendingExplanations?.[0];
+    if (!controllerEnabled || !explanation || handledExplanationId.current === explanation.id || state.busyOperation || props.conversation.archived || state.snapshot?.archived) return;
+    handledExplanationId.current = explanation.id;
+    void controller
+      .send('queue', undefined, undefined, {
+        content: props.language === 'zh-CN' ? '请解释引用的内容。' : 'Please explain the quoted text.',
+        conversationContext: { responseAnnotations: [explanation], codeComments: [] },
+      })
+      .catch((error) => {
+        // 已进入持久发送链路的失败由原消息展示，只为前置拒绝补充系统消息。
+        if (error && typeof error === 'object' && handledMessageDeliveryErrors.has(error)) return;
+        /** 前置拒绝没有发送记录，选区退回待发送区，保留其他草稿内容。 */
+        const current = controller.getState().contextDraft;
+        controller.setContextDraft({ ...current, responseAnnotations: [...current.responseAnnotations, explanation] });
+        recordSystemMessage(systemMessageScope(props.conversation.projectId, props.conversation.id), error, 'message_send', props.language === 'zh-CN' ? '解释未能发送。' : 'Could not send the explanation.');
+      });
+    // 控制器接管后立即释放父页面引用，切换会话时不重新派发同一选区。
+    props.onExplanationsHandled?.([explanation.id]);
+  }, [controller, controllerEnabled, props.pendingExplanations, props.onExplanationsHandled, props.conversation.id, props.conversation.projectId, props.conversation.archived, props.language, state.busyOperation, state.snapshot?.archived]);
   useEffect(() => {
     /** 归档回执或当前会话快照均可确认归档；读取失败不能触发新建。 */
     const current = controller.getState();
@@ -872,9 +900,10 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     <SessionWorkspace
       renderSideQuestion={
         !props.sideQuestionDisabled && controllerEnabled && !props.readOnlyGate && (props.conversation.taskId ? props.task && props.client.startNativeConversation : props.client.startProjectConversation)
-          ? (question, onChange, visible, fullWidth, onFullWidthChange, onClose) => (
+          ? (question, onChange, visible, fullWidth, onFullWidthChange, onClose, toolbarHost) => (
               <SideQuestionWorkspace
                 key={question.id}
+                toolbarHost={toolbarHost}
                 state={question}
                 onStateChange={onChange}
                 visible={visible}
@@ -903,7 +932,12 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     {...props}
                     conversation={conversation}
                     initialCachedState={undefined}
-                    initialOptimisticState={undefined}
+                    initialOptimisticState={{
+                      ...createInitialSessionState(),
+                      draft: question.draft,
+                      attachments: question.attachments,
+                      contextDraft: { responseAnnotations: question.annotations, codeComments: question.codeComments ?? [] },
+                    }}
                     stableConversationId={undefined}
                     localState={undefined}
                     localActions={undefined}
@@ -913,6 +947,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     suppressComposer={false}
                     terminalClient={undefined}
                     pendingResponseAnnotations={annotations}
+                    pendingExplanations={question.pendingExplanations}
+                    onExplanationsHandled={(ids) => onChange((current) => current && { ...current, pendingExplanations: current.pendingExplanations?.filter((entry) => !ids.includes(entry.id)) })}
                     onResponseAnnotationsStaged={onStaged}
                     onArchivedSideQuestion={(state) => onChange((current) => replaceArchivedSideQuestion(current, conversation.id, state))}
                     embeddedInTask
@@ -1683,7 +1719,15 @@ export interface SessionWorkspaceProps {
   /** 外部选区进入侧栏后聚焦该会话输入框，不影响主会话。 */
   focusComposerRequest?: string;
   /** 右侧会话复用上层客户端与会话创建能力。 */
-  renderSideQuestion?: (state: SideQuestionState, onChange: Dispatch<SetStateAction<SideQuestionState | null>>, visible: boolean, fullWidth: boolean, onFullWidthChange: (value: boolean) => void, onClose: () => void) => ReactNode;
+  renderSideQuestion?: (
+    state: SideQuestionState,
+    onChange: Dispatch<SetStateAction<SideQuestionState | null>>,
+    visible: boolean,
+    fullWidth: boolean,
+    onFullWidthChange: (value: boolean) => void,
+    onClose: () => void,
+    toolbarHost: HTMLElement | null,
+  ) => ReactNode;
   /** 仅主输入框消费这份独立建议设置。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   /** 客户端由真实会话身份绑定轮次请求，不接收任意预测材料。 */
@@ -2637,12 +2681,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
   }
 
-  /** 选中原文只加入右侧草稿，保留主会话输入和正在运行的轮次。 */
-  function askInSidebar(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAskInSidebar']>>[0]): void {
+  /** 侧栏聊天暂存原文，解释直接交付选区；两者保留主会话草稿和当前轮次。 */
+  function askInSidebar(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAskInSidebar']>>[0], sendImmediately = false): void {
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     /** 独立评论身份支持重复引用同一位置。 */
     const annotation = { id: crypto.randomUUID(), anchor };
-    setSideQuestionState((current) => (current ? { ...current, annotations: [...current.annotations, annotation] } : { id: crypto.randomUUID(), draft: '', annotations: [annotation], attachments: [], conversation: null }));
+    setSideQuestionState((current) => ({
+      ...(current ?? { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null }),
+      ...(sendImmediately ? { pendingExplanations: [...(current?.pendingExplanations ?? []), annotation] } : { annotations: [...(current?.annotations ?? []), annotation] }),
+    }));
     setContextFullWidth(false);
     setContextWorkspace({ kind: 'question' });
   }
@@ -2856,7 +2903,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       {displayedHeader ? (
         <header
           className="session-thread-header"
-          data-context-toolbar={(contextOpen && ['browser', 'source', 'file'].includes(contextWorkspace.kind)) || undefined}
+          data-context-toolbar={(contextOpen && ['browser', 'source', 'file', 'question'].includes(contextWorkspace.kind)) || undefined}
           data-context-full-width={contextFullWidth || browserLayoutWidth <= 840 || undefined}
           data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}
           style={{ '--session-context-width': `${resolvedBrowserTargetWidth}px` } as CSSProperties}
@@ -3223,7 +3270,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     />
                     <div className="session-browser-pane" data-environment-open={(browserOpen && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
                       {sideQuestionState && props.renderSideQuestion
-                        ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace)
+                        ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace, contextToolbarHost)
                         : null}
                       {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                       {contextWorkspace.kind === 'browser' ? (

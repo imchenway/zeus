@@ -157,8 +157,8 @@ export interface ThreadItemViewProps {
   onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
   onVisibleContentChange?: () => void;
   responseAnnotations?: ConversationResponseAnnotation[];
-  /** 选区作为右侧会话的评论引用，不写入主会话草稿。 */
-  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
+  /** 选区暂存或直接发送到右侧会话，不写入主会话草稿。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor, sendImmediately?: boolean) => void;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
