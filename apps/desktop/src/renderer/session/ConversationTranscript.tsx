@@ -45,6 +45,7 @@ import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscri
 import { selectPendingExecutionMessage } from './sessionSelectors.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
+import { ReadingStateScope, useReadingSnapshot, useReadingState } from '../ui/readingState.js';
 
 export interface ConversationTranscriptProps {
   /** 系统消息保存只写会话历史，不触发模型请求。 */
@@ -264,11 +265,31 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 
 /** 会话身份隔离滚动、展开和动效状态；主会话与子线程共用同一切换边界。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
-  return <ConversationTranscriptContent key={systemMessageScope(props.state.projectId ?? '', props.navigationId ?? props.state.conversationId)} {...props} />;
+  return (
+    <ReadingStateScope id={systemMessageScope(props.state.projectId ?? '', props.navigationId ?? props.state.conversationId)}>
+      <ConversationTranscriptContent {...props} />
+    </ReadingStateScope>
+  );
+}
+
+/** 离开会话时只记录阅读锚点和最新条目标识，不复制消息正文。 */
+interface TranscriptReadingPosition {
+  /** 可见条目在容器内的像素偏移。 */
+  anchor: TranscriptViewportAnchor;
+  /** 离开时最新消息的稳定身份。 */
+  latestItem: string;
+  /** 深历史锚点所属轮次，空值表示没有可补读轮次。 */
+  turnId: string | null;
+  /** 是否仍由最新内容跟随器控制滚动。 */
+  following: boolean;
 }
 
 /** 渲染会话正文、渐进资源、完整目录和历史定位。 */
 function ConversationTranscriptContent(props: ConversationTranscriptProps) {
+  /** 导航身份在临时会话接管后仍保持稳定。 */
+  const savedReading = useReadingSnapshot<TranscriptReadingPosition>('viewport');
+  /** 首次恢复的目标不随本次阅读过程中的保存而变化。 */
+  const initialReading = useRef(savedReading.current).current;
   /** 产品会话隔离待确认消息，子线程只读投影不接管主会话写入。 */
   const systemScope = systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
   /** 补写中的消息与权威回执共享身份。 */
@@ -315,12 +336,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
   const historyPrependAnchorRef = useRef<(TranscriptViewportAnchor & { frozenCursor: string }) | null>(null);
-  const staticReadingAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
+  const staticReadingAnchorRef = useRef<TranscriptViewportAnchor | null>(initialReading?.following === false ? initialReading.anchor : null);
   /** 展开状态提交后立即补偿入口本身，避免首帧先跳动再由测量器纠正。 */
   const pendingProcessAnchorRef = useRef<{ trigger: HTMLButtonElement; top: number } | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
-  const scrollController = useThreadScrollController();
+  const scrollController = useThreadScrollController(initialReading?.following === false ? 'static' : 'user_follow');
   const [returnToLatestVisible, setReturnToLatestVisible] = useState(false);
   const [historyPagingGate, setHistoryPagingGate] = useState<{ conversationId: string | null; positioned: boolean; userIntent: boolean }>({ conversationId: null, positioned: false, userIntent: false });
   const [historyPagingRequestedConversationId, setHistoryPagingRequestedConversationId] = useState<string | null>(null);
@@ -342,10 +363,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const userScrollPointerActiveRef = useRef(false);
   const userScrollIntentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const automaticResourceLoadAttemptRef = useRef<string | null>(null);
-  const [rowExpansionOverrides, setRowExpansionOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const [rowExpansionOverrides, setRowExpansionOverrides] = useReadingState<ReadonlyMap<string, boolean>>('expanded-rows', () => new Map());
   const [focusedRowKey, setFocusedRowKey] = useState<string | null>(null);
   const [historyAnchorRowKey, setHistoryAnchorRowKey] = useState<string | null>(null);
-  const [staticReadingAnchorRowKey, setStaticReadingAnchorRowKey] = useState<string | null>(null);
+  const [staticReadingAnchorRowKey, setStaticReadingAnchorRowKey] = useState<string | null>(initialReading?.anchor.rowKey ?? null);
   const historyPagingArmed = historyPagingGate.conversationId === props.state.conversationId && historyPagingGate.positioned && historyPagingGate.userIntent;
   const historyPagingRequested = historyPagingRequestedConversationId === props.state.conversationId;
   const historySentinelIntersecting = historySentinelIntersection.conversationId === props.state.conversationId && historySentinelIntersection.intersecting;
@@ -486,6 +507,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     [composerQueueClientUserMessageIds, composerQueueSubmissionIds, props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests],
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, transcriptQueuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, transcriptQueuedSubmissions]);
+  /** 历史补页、正文补载和连接状态变化不算新消息。 */
+  const latestReadingItem = persistedItems.at(-1);
+  /** 只比较最新消息身份，避免有界快照的文本长度影响位置恢复。 */
+  const latestReadingSignature = latestReadingItem?.key ?? '';
   const projectedItems = useMemo(() => {
     if (contentProjection) return contentProjection.items;
     // 已确认消息沿用历史时间；仍在排队的补充留在记录末尾，避免切换后藏到旧回复上方。
@@ -625,6 +650,48 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     return (previousTurnRowKeys.current = turnRows.map((row) => row.key));
   }, [turnRows]);
   const turnRowsByKey = useMemo(() => new Map(turnRows.map((row) => [row.key, row])), [turnRows]);
+  /** 深历史不一定在首屏快照中；按原轮次补回后才恢复锚点。 */
+  const [readingTurnLoaded, setReadingTurnLoaded] = useState(false);
+  /** 按需补读不随普通正文重绘重新发起。 */
+  const loadReadingTurn = useStableOptionalCallback(props.onLoadNavigationTurn);
+  /** 只在已水合且原锚点确实缺失时补读。 */
+  const readingTurnMissing = Boolean(
+    historyHydrated && initialReading?.turnId && initialReading.latestItem === latestReadingSignature && initialReading.anchor.rowKey && !turnRowsByKey.has(initialReading.anchor.rowKey) && !readingTurnLoaded,
+  );
+  // 原锚点补读完成前不展示错误的默认位置。
+  if (readingTurnMissing && loadReadingTurn && initialReading?.following === false) canRevealHistoryRef.current = false;
+  useEffect(() => {
+    if (!readingTurnMissing || !initialReading?.turnId || !loadReadingTurn) return;
+    /** 切走后不再把迟到回执写入已卸载视图。 */
+    let active = true;
+    void loadReadingTurn(initialReading.turnId)
+      .catch((error) => {
+        if (active) recordSystemMessage(systemScope, error, 'navigation', '阅读位置恢复失败。');
+      })
+      .finally(() => {
+        if (active) setReadingTurnLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [initialReading, loadReadingTurn, readingTurnMissing, systemScope]);
+  /** 卸载时读取最后一次已提交的正文与展开状态。 */
+  const readingCaptureRef = useRef({ historyPositioned, latestReadingSignature, turnRowsByKey });
+  useLayoutEffect(() => {
+    readingCaptureRef.current = { historyPositioned, latestReadingSignature, turnRowsByKey };
+  });
+  useLayoutEffect(() => {
+    /** 清理时 React 尚未移除正文，仍可读取可见条目的真实位置。 */
+    const container = containerRef.current;
+    return () => {
+      if (!container || !readingCaptureRef.current.historyPositioned) return;
+      /** 锚点同时记录内部条目和外层虚拟行。 */
+      const anchor = captureTranscriptViewportAnchor(container);
+      /** 轮次身份用于缓存失效后的按需补读。 */
+      const row = anchor.rowKey ? readingCaptureRef.current.turnRowsByKey.get(anchor.rowKey) : undefined;
+      savedReading.current = { anchor, latestItem: readingCaptureRef.current.latestReadingSignature, turnId: row ? transcriptTurnRowTurnId(row) : null, following: scrollController.getState().mode !== 'static' };
+    };
+  }, [savedReading, scrollController]);
   const activeTurnRowKeys = useMemo(() => new Set(turnRows.filter((row) => activeTurnId && transcriptTurnRowTurnId(row) === activeTurnId).map((row) => row.key)), [activeTurnId, turnRows]);
   const pinnedRowKeys = useMemo(() => {
     const pinned = new Set([...activeTurnRowKeys, ...expandedRowKeys]);
@@ -1049,19 +1116,46 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     const conversationId = props.state.conversationId;
     if (!container || !historyHydrated || !conversationId || positionedConversationIdRef.current === conversationId) return;
+    /** 没有新消息时恢复阅读点；首次打开和新消息仍沿用最新内容入口。 */
+    const restore = initialReading && initialReading.latestItem === latestReadingSignature && !initialReading.following;
+    if (restore && initialReading.anchor.rowKey && !turnRowsByKey.has(initialReading.anchor.rowKey) && initialReading.turnId && props.onLoadNavigationTurn && !readingTurnLoaded) return;
     positionedConversationIdRef.current = conversationId;
     clearUserScrollIntent();
     clearStaticReadingAnchor();
-    const effect = scrollController.onExplicitLatestRequest();
-    if (effect.type === 'scroll_to_bottom') positionLatest(container);
+    if (restore) {
+      scrollController.onExplicitHistoryRequest();
+      container.scrollTop = initialReading.anchor.scrollTop;
+      compensateTranscriptViewportAnchor(container, initialReading.anchor);
+      rememberStaticReadingAnchor(container);
+      synchronizeTranscriptViewport(container);
+    } else {
+      const effect = scrollController.onExplicitLatestRequest();
+      if (effect.type === 'scroll_to_bottom') positionLatest(container);
+    }
     // 已挂载的正文在绘制前完成首次贴底后立即显示，后续高度校正不能继续隐藏整块内容。
     setHistoryPositioned(true);
     maintainLatestPosition();
-    setReturnToLatestVisible(false);
+    setReturnToLatestVisible(Boolean(restore));
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
     setHistoryPagingRequestedConversationId(null);
     setHistorySentinelIntersection({ conversationId, intersecting: false });
-  }, [clearStaticReadingAnchor, clearUserScrollIntent, historyHydrated, maintainLatestPosition, positionLatest, props.state.conversationId, props.state.transcriptRevision, scrollController]);
+  }, [
+    clearStaticReadingAnchor,
+    clearUserScrollIntent,
+    historyHydrated,
+    initialReading,
+    latestReadingSignature,
+    maintainLatestPosition,
+    positionLatest,
+    props.onLoadNavigationTurn,
+    props.state.conversationId,
+    props.state.transcriptRevision,
+    readingTurnLoaded,
+    rememberStaticReadingAnchor,
+    scrollController,
+    synchronizeTranscriptViewport,
+    turnRowsByKey,
+  ]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;

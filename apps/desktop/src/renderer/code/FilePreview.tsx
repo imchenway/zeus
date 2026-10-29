@@ -1,5 +1,6 @@
 import { useWindowDocument } from '../ui/windowDocument.js';
 import { createContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { ReadingStateScope, useReadingScroll, useReadingState } from '../ui/readingState.js';
 import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
@@ -134,10 +135,12 @@ export function FileReviewContent(props: {
   children: ReactNode;
 }) {
   /** 文件内容是默认入口，只有用户主动查看改动才显示差异。 */
-  const [showDiff, setShowDiff] = useState(false);
+  const [showDiff, setShowDiff] = useReadingState(`review-diff:${JSON.stringify(props.review?.location)}`, false);
+  /** 恢复同一个行号入口时不覆盖之后手动选择的比较模式。 */
+  const initialLocation = useRef(props.review?.location).current;
   useEffect(() => {
     // 再次点击同一引用也回到源码，不能停留在上次切换的差异页。
-    if (props.review?.location?.line) setShowDiff(false);
+    if (props.review?.location?.line && props.review.location !== initialLocation) setShowDiff(false);
   }, [props.review?.location]);
   useEffect(() => {
     // 搜索当前文件必须挂载源码，不能继续停在差异编辑器。
@@ -218,20 +221,22 @@ export function FilePreview(props: {
   /** 序列化的请求避免父组件重渲染触发重复读取。 */
   const identity = JSON.stringify(props.request);
   return (
-    <FilePreviewBody
-      key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}
-      identity={identity}
-      location={props.location}
-      zh={props.zh}
-      actions={props.actions}
-      fileStatus={props.fileStatus}
-      commentPath={props.commentPath}
-      comments={props.comments}
-      onCommentsChange={props.onCommentsChange}
-      onSaved={props.onSaved}
-    >
-      {props.children}
-    </FilePreviewBody>
+    <ReadingStateScope id={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}>
+      <FilePreviewBody
+        key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}
+        identity={identity}
+        location={props.location}
+        zh={props.zh}
+        actions={props.actions}
+        fileStatus={props.fileStatus}
+        commentPath={props.commentPath}
+        comments={props.comments}
+        onCommentsChange={props.onCommentsChange}
+        onSaved={props.onSaved}
+      >
+        {props.children}
+      </FilePreviewBody>
+    </ReadingStateScope>
   );
 }
 
@@ -258,15 +263,15 @@ function FilePreviewBody(props: {
   /** 用户主动刷新次数。 */
   const [attempt, setAttempt] = useState(0);
   /** 编码选择仅重载只读预览，不影响源码保存。 */
-  const [textEncoding, setTextEncoding] = useState<FilePreviewTextEncoding | ''>(() => (JSON.parse(props.identity) as FilePreviewRequest).textEncoding ?? '');
+  const [textEncoding, setTextEncoding] = useReadingState<FilePreviewTextEncoding | ''>('encoding', () => (JSON.parse(props.identity) as FilePreviewRequest).textEncoding ?? '');
   /** 当前选择的版本侧。 */
-  const [selected, setSelected] = useState(1);
+  const [selected, setSelected] = useReadingState('version', 1);
   /** 当前差异或内容展示方式。 */
-  const [mode, setMode] = useState<'auto' | 'preview' | 'diff'>('auto');
+  const [mode, setMode] = useReadingState<'auto' | 'preview' | 'diff'>('mode', 'auto');
   /** 全文只改变显示范围，不改变 Git 比较端点。 */
-  const [full, setFull] = useState(false);
+  const [full, setFull] = useReadingState('full', false);
   /** 布局与全文范围独立，切换范围不会重置布局。 */
-  const [unified, setUnified] = useState(false);
+  const [unified, setUnified] = useReadingState('unified', false);
   /** 实际差异组件将公共控件挂到同一标题行。 */
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -473,25 +478,27 @@ function FilePreviewBody(props: {
         ) : (
           <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
             {(images ? items : current ? [current] : []).map((item, index) => (
-              <FilePreviewContent
-                onSaved={() => setAttempt((value) => value + 1)}
-                key={`${item.id}:${index}:${item.label}`}
-                item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
-                request={attachment}
-                zh={props.zh}
-                fileStatus={props.fileStatus}
-                commentPath={props.commentPath}
-                commentSide={items.length > 1 && current === items[0] ? 'left' : 'right'}
-                comments={props.comments}
-                onCommentsChange={props.onCommentsChange}
-                encoding={textEncoding}
-                onEncodingChange={(encoding) => {
-                  // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
-                  setMode('preview');
-                  setTextEncoding(encoding);
-                }}
-                toolbar={images ? undefined : toolbar}
-              />
+              <ReadingStateScope key={`${item.id}:${index}:${item.label}`} id={item.label}>
+                <FilePreviewContent
+                  onSaved={() => setAttempt((value) => value + 1)}
+                  key={`${item.id}:${index}:${item.label}`}
+                  item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
+                  request={attachment}
+                  zh={props.zh}
+                  fileStatus={props.fileStatus}
+                  commentPath={props.commentPath}
+                  commentSide={items.length > 1 && current === items[0] ? 'left' : 'right'}
+                  comments={props.comments}
+                  onCommentsChange={props.onCommentsChange}
+                  encoding={textEncoding}
+                  onEncodingChange={(encoding) => {
+                    // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
+                    setMode('preview');
+                    setTextEncoding(encoding);
+                  }}
+                  toolbar={images ? undefined : toolbar}
+                />
+              </ReadingStateScope>
             ))}
           </div>
         )}
@@ -502,8 +509,10 @@ function FilePreviewBody(props: {
 
 /** 可复用的透明背景图片视图，支持原尺寸与放大检查小图标。 */
 export function PreviewImage(props: { url: string; name: string; zh: boolean; onError?: () => void; /** 单图弹窗将尺寸和缩放收在底部一行。 */ compact?: boolean }) {
+  /** 图片原始尺寸和放大模式下保留画布内的位置。 */
+  const imageScroll = useReadingScroll('image');
   /** 零代表适应窗口，正值代表原尺寸倍率。 */
-  const [zoom, setZoom] = useState(0);
+  const [zoom, setZoom] = useReadingState('image-zoom', 0);
   /** 解码后的真实像素尺寸。 */
   const [dimensions, setDimensions] = useState('');
   /** 记录当前图片解码失败。 */
@@ -534,7 +543,7 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
         </PreviewIconButton>
         {zoom && !props.compact ? <span>{zoom * 100}%</span> : null}
       </div>
-      <div className="file-preview-checker">
+      <div ref={imageScroll} className="file-preview-checker">
         {failed ? (
           <p role="alert">{props.zh ? '图片已损坏或无法解码。请使用“打开文件”。' : 'The image could not be decoded. Use Open to view it in a system app.'}</p>
         ) : (
@@ -579,8 +588,10 @@ function FilePreviewContent(props: {
   /** 通用文本入口与会话源码使用同一行定位高亮，保留范围终点。 */
   const locationDecorations = useMemo(() => (item.review?.location?.line ? sourceLocationDecorations(() => item.review?.location) : []), [item.review?.location]);
   /** 自动识别可切换为已支持语法或纯文本，不改变文件正文。 */
-  const [language, setLanguage] = useState(() => detectSourceLanguage(item.name, item.content) ?? 'text'); /** 用户选择的源码展示状态。 */
-  const [source, setSource] = useState(Boolean(item.review?.location?.line));
+  const [language, setLanguage] = useReadingState('language', () => detectSourceLanguage(item.name, item.content) ?? 'text'); /** 用户选择的源码展示状态。 */
+  const [source, setSource] = useReadingState(`source:${item.label}`, Boolean(item.review?.location?.line));
+  /** Markdown 各版本分别恢复，不使用每次加载都会变化的资源令牌。 */
+  const markdownScroll = useReadingScroll(`markdown:${item.label}`);
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** Markdown 使用已有受限阅读组件。 */
@@ -692,7 +703,7 @@ function FilePreviewContent(props: {
         {(item.kind === 'text' || source) && item.content !== undefined ? (
           <Suspense fallback={null}>
             {markdown && !source ? (
-              <div className="file-preview-markdown">
+              <div ref={markdownScroll} className="file-preview-markdown">
                 <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} documentMode />
               </div>
             ) : (

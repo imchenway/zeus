@@ -1402,6 +1402,7 @@ function closeFocusedWindowOrContextTab(): void {
     window.webContents.send('zeus:terminal-close-active-tab');
     return;
   }
+  if (browserHost?.closeActiveContextTab(window, contextActivity?.active && contextActivity.kind === 'browser' ? contextActivity.ownerConversationId : undefined)) return;
   if (browserHost?.isVisibleTabFocused(window) || contextActivity?.active) {
     window.webContents.send('zeus:session-context-close-active-tab', contextActivity?.ownerConversationId);
     return;

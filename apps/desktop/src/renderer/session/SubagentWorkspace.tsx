@@ -13,6 +13,7 @@ import { ConversationTranscript, isSubagentCoordinationItem } from './Conversati
 import { RuntimeDetails } from './RuntimeDetails.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
+import { useReadingScroll, useReadingState } from '../ui/readingState.js';
 
 /** 子智能体工作面只提供原生线程的查看与刷新。 */
 interface SubagentWorkspaceProps {
@@ -33,9 +34,13 @@ const activeStatuses = new Set<NativeSubagentStatus>(['pending', 'running', 'wai
 
 /** 复用主会话消息与详情，面板只保留子线程导航。 */
 export function SubagentWorkspace(props: SubagentWorkspaceProps) {
+  /** 子线程列表和线程正文分别保存各自的位置。 */
+  const listScroll = useReadingScroll('subagent-list');
   const zh = props.language === 'zh-CN';
   const [snapshot, setSnapshot] = useState<NativeSubagentListSnapshot | null>(props.initialSnapshot ?? null);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useReadingState<string | null>(`subagent:${props.conversationId}`, null);
+  /** 只在重新挂载时补读已选择线程，点击入口仍负责自己的读取。 */
+  const initialThreadId = useRef(selectedThreadId).current;
   const [thread, setThread] = useState<NativeSubagentThreadSnapshot | null>(null);
   const [loadingList, setLoadingList] = useState(!props.initialSnapshot);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -93,6 +98,11 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   useEffect(() => {
     void refreshList(!props.initialSnapshot);
   }, [props.activityRevision, props.conversationId, props.initialSnapshot, refreshList]);
+
+  useEffect(() => {
+    // 重新挂载时读取上次选择的线程；正文位置由共享时间线恢复。
+    if (initialThreadId) void openThread(initialThreadId, true);
+  }, [initialThreadId, openThread]);
 
   // 活动通知仅刷新列表；只有切换会话或卸载才丢弃当前线程的在途读取。
   useEffect(() => {
@@ -241,7 +251,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           </section>
         </div>
       ) : (
-        <section className="session-subagent-list" aria-live="polite">
+        <section ref={listScroll} className="session-subagent-list" aria-live="polite">
           {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
           {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} description={zh ? '此对话尚未创建子智能体。' : 'This conversation has no subagents yet.'} /> : null}
           {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}

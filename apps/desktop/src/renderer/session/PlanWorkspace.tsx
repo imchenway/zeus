@@ -5,8 +5,11 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
+import { useReadingScroll } from '../ui/readingState.js';
 
 export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; fullWidth: boolean; onFullWidthChange: (fullWidth: boolean) => void; onClose: () => void }) {
+  /** 每份计划保存独立阅读位置。 */
+  const readingScroll = useReadingScroll(`plan:${props.item.key}`);
   const zh = props.language === 'zh-CN';
   const toggleLabel = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width';
   return (
@@ -25,7 +28,7 @@ export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: 
           </button>
         </nav>
       </header>
-      <section className="session-plan-workspace-content">
+      <section ref={readingScroll} className="session-plan-workspace-content">
         <ConversationMarkdown text={props.item.text} streamId={`plan-workspace:${props.item.itemId}`} phase={conversationMarkdownPhaseForStatus(props.item.status)} language={props.language} />
       </section>
     </aside>

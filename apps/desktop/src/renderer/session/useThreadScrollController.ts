@@ -27,9 +27,9 @@ export interface ThreadScrollController {
 
 const FOLLOW_DISTANCE_PX = 24;
 
-export function createThreadScrollController(): ThreadScrollController {
-  // 进入会话默认定位到最新内容；只有真实用户滚动离开底部后才切换为 static。
-  let state: ThreadScrollState = { mode: 'user_follow', suppressBounceUntil: 0 };
+/** 首次打开默认跟随最新内容；恢复历史阅读时从 static 状态开始。 */
+export function createThreadScrollController(initialMode: ThreadFollowMode = 'user_follow'): ThreadScrollController {
+  let state: ThreadScrollState = { mode: initialMode, suppressBounceUntil: 0 };
 
   return {
     getState: () => state,
@@ -65,9 +65,10 @@ export function createThreadScrollController(): ThreadScrollController {
   };
 }
 
-export function useThreadScrollController(): ThreadScrollController {
+/** 每个挂载周期只建立一个滚动控制器，后续变化由用户动作驱动。 */
+export function useThreadScrollController(initialMode: ThreadFollowMode = 'user_follow'): ThreadScrollController {
   const controller = useRef<ThreadScrollController | null>(null);
-  controller.current ??= createThreadScrollController();
+  controller.current ??= createThreadScrollController(initialMode);
   return controller.current;
 }
 

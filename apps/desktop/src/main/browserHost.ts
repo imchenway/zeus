@@ -279,6 +279,17 @@ export class BrowserHost implements BrowserAutomationPort {
     return Boolean(contents && !contents.isDestroyed() && contents.isFocused());
   }
 
+  /** 网页与浏览器工具栏共用原生标签状态，连续快捷键不等待 Renderer 换帧。 */
+  closeActiveContextTab(window: BrowserWindow, conversationId?: string): boolean {
+    /** 工具栏提供所属会话；网页焦点则直接定位该窗口的原生标签。 */
+    const tabId = this.isVisibleTabFocused(window) ? this.visibleTabByWindow.get(window.id) : conversationId ? this.activeTabByConversation.get(conversationId) : undefined;
+    /** 只关闭当前窗口拥有的存活标签。 */
+    const tab = tabId ? this.tabs.get(tabId) : undefined;
+    if (!tab || tab.ownerWindowId !== window.id) return false;
+    this.closeTab(window, tab.snapshot.conversationId, tab.snapshot.id);
+    return true;
+  }
+
   registerIpc(): void {
     if (this.ipcRegistered) return;
     this.ipcRegistered = true;
@@ -841,6 +852,8 @@ export class BrowserHost implements BrowserAutomationPort {
   /** 同步释放标签，批量关闭期间不让新标签穿插进入清理范围。 */
   private closeTab(window: BrowserWindow, conversationId: string, tabId: string): void {
     const tab = this.requireConversationTab(conversationId, tabId);
+    /** 只有被关闭网页持有焦点时才把焦点交给下一网页。 */
+    const focusedBounds = this.visibleTabByWindow.get(window.id) === tabId && this.isVisibleTabFocused(window) ? tab.view!.getBounds() : null;
     if (this.visibleTabByWindow.get(window.id) === tabId) this.detachTab(tabId);
     if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tabs.delete(tabId);
@@ -852,6 +865,12 @@ export class BrowserHost implements BrowserAutomationPort {
     const next = remaining.at(-1)?.snapshot.id ?? null;
     if (next) this.activeTabByConversation.set(conversationId, next);
     else this.activeTabByConversation.delete(conversationId);
+    if (next && focusedBounds) {
+      // 在本次原生命令内完成页面和焦点交接，下一次 Cmd/Ctrl+W 仍有标签目标。
+      // setLayout 在返回 Promise 前完成挂载；失败仍沿用浏览器的可见错误通道。
+      void this.setLayout(window, conversationId, next, focusedBounds, true).catch((error) => this.emitError(tab, error));
+      this.tabs.get(next)?.view?.webContents.focus();
+    }
     this.schedulePersist();
     this.emitSnapshot(conversationId);
   }

@@ -12,7 +12,7 @@ import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, FileSourceEditButton, PreviewImage } from '../code/FilePreview.js';
-import { Suspense, lazy, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState, type Dispatch, type SetStateAction, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
@@ -24,6 +24,7 @@ import type { ConversationResourcePreview } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
 import type { FilePreviewRequest, ConversationCodeComment } from '@zeus/shared';
+import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
 /** 与项目源码编辑器一样按需加载，避免会话首屏加载编辑器和评论运行时。 */
 const CommentableSourceCodePreview = lazy(() => import('./CommentableSourceCodePreview.js').then((module) => ({ default: module.CommentableSourceCodePreview })));
 
@@ -60,6 +61,8 @@ export function SourceWorkspace(
     onStateChange: Dispatch<SetStateAction<SourceWorkspaceState | null>>;
   },
 ) {
+  /** 隐藏的侧栏不接管其他工作面的关闭命令。 */
+  const workspaceRef = useRef<HTMLElement | null>(null);
   /** 首次打开可直接展示，后续挂载读取会话保存的选择。 */
   const { tabs, activeId } = props.state ?? { tabs: [{ preview: props.preview, mode: props.viewMode }], activeId: sourceWorkspaceTabId(props.preview) };
   useEffect(() => {
@@ -80,28 +83,55 @@ export function SourceWorkspace(
   }, [props.onStateChange, props.preview, props.viewMode]);
   /** 外部预览到达但状态尚未同步时仍显示真实文件。 */
   const active = tabs.find((tab) => sourceWorkspaceTabId(tab.preview) === activeId) ?? tabs[0]!;
+  /** 原生快捷键和关闭按钮共享同一标签更新，连续命令读取最新状态。 */
+  function closeTab(id?: string): void {
+    /** 仅最后一个标签需要关闭整个侧栏。 */
+    let closeWorkspace = false;
+    props.onStateChange((current) => {
+      if (!current) return current;
+      /** 快捷键在执行时确定当前标签，不捕获上一帧的标签。 */
+      const closingId = id ?? current.activeId;
+      /** 其他文件保留原顺序和各自的阅读状态。 */
+      const remaining = current.tabs.filter((tab) => sourceWorkspaceTabId(tab.preview) !== closingId);
+      if (!remaining.length) {
+        closeWorkspace = true;
+        return current;
+      }
+      return { ...current, tabs: remaining, activeId: closingId === current.activeId ? sourceWorkspaceTabId(remaining.at(-1)!.preview) : current.activeId };
+    });
+    if (closeWorkspace) props.onClose();
+  }
+  useEffect(
+    () =>
+      window.zeus?.onNativeCloseActiveContextTab?.((owner) => {
+        /** 以实际承载会话为准，资源引用可以来自另一条消息。 */
+        const workspace = workspaceRef.current;
+        if (!workspace?.getClientRects().length || workspace.closest('[hidden], [inert], [data-tool-covered="true"]')) return;
+        if (owner && owner !== (workspace.closest('[data-context-owner]')?.getAttribute('data-context-owner') ?? props.preview.resource.conversationId)) return;
+        closeTab();
+      }),
+    [props.onStateChange, props.onClose, props.preview.resource.conversationId],
+  );
   return (
-    <SourceWorkspaceView
-      {...props}
-      preview={active.preview}
-      viewMode={active.mode}
-      tabs={tabs.map((tab) => tab.preview)}
-      onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: sourceWorkspaceTabId(preview) } : current))}
-      onViewModeChange={(mode) => props.onStateChange((current) => (current ? { ...current, tabs: current.tabs.map((tab) => (sourceWorkspaceTabId(tab.preview) === current.activeId ? { ...tab, mode } : tab)) } : current))}
-      onCloseTab={(preview) => {
-        const remaining = tabs.filter((tab) => sourceWorkspaceTabId(tab.preview) !== sourceWorkspaceTabId(preview));
-        if (!remaining.length) {
-          props.onClose();
-          return;
-        }
-        props.onStateChange((current) => (current ? { ...current, tabs: remaining, activeId: sourceWorkspaceTabId(preview) === activeId ? sourceWorkspaceTabId(remaining.at(-1)!.preview) : activeId } : current));
-      }}
-    />
+    <ReadingStateScope id={`source:${sourceWorkspaceTabId(active.preview)}`}>
+      <SourceWorkspaceView
+        {...props}
+        workspaceRef={workspaceRef}
+        preview={active.preview}
+        viewMode={active.mode}
+        tabs={tabs.map((tab) => tab.preview)}
+        onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: sourceWorkspaceTabId(preview) } : current))}
+        onViewModeChange={(mode) => props.onStateChange((current) => (current ? { ...current, tabs: current.tabs.map((tab) => (sourceWorkspaceTabId(tab.preview) === current.activeId ? { ...tab, mode } : tab)) } : current))}
+        onCloseTab={(preview) => closeTab(sourceWorkspaceTabId(preview))}
+      />
+    </ReadingStateScope>
   );
 }
 
 /** 会话资源共用的预览入口，源码交给可视区域渲染，图片与 Markdown 保持原有展示。 */
 function SourceWorkspaceView(props: {
+  /** 原生快捷键根据真实工作面的可见性确认归属。 */
+  workspaceRef?: RefObject<HTMLElement | null>;
   /** 文件标题与浏览器标签共用会话顶栏位置。 */
   toolbarHost?: HTMLElement | null;
   preview: ConversationResourcePreview;
@@ -152,6 +182,8 @@ function SourceWorkspaceView(props: {
   }, [props.preview.resource.projectId, props.preview.resource.conversationId, props.preview.resource.id]);
   /** 文件标签与正文共用稳定身份，消息资源变化不重新挂载同一文件。 */
   const tabId = sourceWorkspaceTabId(props.preview);
+  /** Markdown 和图片正文沿用当前文件自己的阅读坐标。 */
+  const contentScroll = useReadingScroll(`content:${props.viewMode}`);
   /** 当前打开应用的真实图标与名称。 */
   const openApplication = openTargets.find((target) => target.id === openTarget);
   /** 展示宿主打开失败，不吞掉权限或应用错误。 */
@@ -311,6 +343,7 @@ function SourceWorkspaceView(props: {
 
   return (
     <section
+      ref={props.workspaceRef}
       className="session-context-workspace session-source-workspace"
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
@@ -420,7 +453,7 @@ function SourceWorkspaceView(props: {
           </>
         )}
       >
-        <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
+        <div ref={contentScroll} className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
           {props.preview.kind === 'image' ? (
             <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
           ) : renderedMarkdown ? (

@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, type RefObject } from 'react';
+import { useReadingScroll, useReadingSnapshot } from '../ui/readingState.js';
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
@@ -76,6 +77,18 @@ interface SourceCodePreviewProps {
 
 /** 复用 CodeMirror 的可视区域渲染和增量高亮，输入框更新不再遍历全文。 */
 export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCodePreviewProps) {
+  /** 同一路径共用已保存的代码滚动位置，行号跳转不重建编辑器。 */
+  const readingKey = `source:${props.path}`;
+  /** 已恢复的视图不再执行首次行号跳转。 */
+  const savedScroll = useReadingSnapshot(readingKey);
+  /** 不同的显式定位优先于上次阅读位置。 */
+  const savedLocation = useReadingSnapshot<string>(`${readingKey}:location`);
+  /** 定位签名只用于恢复判定，不参与编辑器生命周期。 */
+  const requestedLocation = JSON.stringify(props.location) ?? '';
+  /** 新的行号点击仍须执行，只有重新挂载时的同一定位可以跳过。 */
+  const initialLocation = useRef(props.location).current;
+  /** 编辑器建立后连接它实际拥有的滚动容器。 */
+  const readingScroll = useReadingScroll(readingKey);
   /** 当前预览的挂载节点与编辑器生命周期。 */
   const hostRef = useRef<HTMLDivElement>(null);
   /** 保存唯一编辑器实例，卸载时释放解析与事件资源。 */
@@ -142,13 +155,17 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
       }),
     });
     viewRef.current = view;
+    if (savedLocation.current !== requestedLocation) savedScroll.current = undefined;
+    /** 编辑器销毁前先保存位置，避免读到卸载后的零高度。 */
+    const releaseReading = readingScroll(view.scrollDOM);
     propsRef.current.onView?.(view);
     return () => {
+      releaseReading?.();
       propsRef.current.onView?.(null);
       viewRef.current = null;
       view.destroy();
     };
-  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, highlightSlot, languageSlot, widgetSlot]);
+  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, highlightSlot, languageSlot, widgetSlot, readingScroll]);
 
   useEffect(() => {
     /** Markdown 搜索切到源码后也查找完整文档，不受可视行范围限制。 */
@@ -237,7 +254,8 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     const view = viewRef.current;
     /** 外部定位输入先检查有限数值，再收敛到文档范围。 */
     const line = props.location?.line;
-    if (!view || !line || !Number.isFinite(line)) return;
+    savedLocation.current = requestedLocation;
+    if (!view || !line || !Number.isFinite(line) || (savedScroll.current && props.location === initialLocation)) return;
     /** 避免越界或小数行号导致编辑器抛错。 */
     const boundedLine = Math.max(1, Math.min(Math.trunc(line), view.state.doc.lines));
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(boundedLine).from, { y: 'center' }) });
