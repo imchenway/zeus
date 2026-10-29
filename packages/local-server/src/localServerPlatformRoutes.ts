@@ -4030,6 +4030,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const authorizationRevision = automationTasks.getRevision(run.automationRevisionId);
         if (snapshot.permissionMode === 'full-access' && (!authorizationRevision || !automationTasks.hasFullAccessGrant(run.automationId, authorizationRevision.revision)))
           throw nativeApiError('ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED', '原运行的完全访问授权已失效，请重新保存授权后运行。');
+        /** 创建任务可能让出控制权，实际接纳前再次读取整条自动化的当日用量。 */
+        automationRuns.assertDailyTokenBudget(run.automationId, automationNow());
         /** 项目任务复用项目流程；员工调研仍保留独立工作。 */
         const reference = await digitalEmployeeOrchestrator.queueAutomatedAssignment({
           projectId: project.id,
