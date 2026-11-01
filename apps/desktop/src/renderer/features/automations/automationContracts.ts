@@ -13,6 +13,7 @@ export interface AutomationTriggerConfig {
   beforeStatusId?: string;
   /** 事件发生后的真实项目状态条件。 */
   afterStatusId?: string;
+  /** 一次性执行的绝对时刻，使用带时区的 ISO 字符串。 */
   at?: string;
   everyMinutes?: number;
   localTime?: string;

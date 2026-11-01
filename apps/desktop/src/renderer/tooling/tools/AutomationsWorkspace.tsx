@@ -2,6 +2,7 @@ import { MotionPresence } from '../toolPageHost.js';
 import { formatVisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useState, type FormEvent } from 'react';
+import { formatAutomationOnceInput, parseAutomationOnceInput } from '@zeus/shared';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';
@@ -15,7 +16,8 @@ import { ZeusSelect } from '../toolPageHost.js';
 import type { AutomationBlockStrategy, AutomationPermissionMode, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from '../toolPageHost.js';
 import type { DigitalEmployeeTemplateRecord, AutomationActionKind } from '../toolPageHost.js';
 
-type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string; taskStatusesText: string; taskTypesText: string; requiredTagsText: string };
+/** 表单保留当地时间文本，避免输入过程中反复转换 UTC 并改变回显。 */
+type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { onceAtText: string; pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string; taskStatusesText: string; taskTypesText: string; requiredTagsText: string };
 const allProjectsValue = '__all_projects__';
 /** 无项目选项只改变用户目标范围，运行时目录由服务端托管。 */
 const noProjectValue = '__no_project__';
@@ -41,6 +43,10 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(props.projects));
+  /** 一次性输入按规则时区解析，未改动的已保存时间保留原精度。 */
+  const onceAt = draft.triggerKind === 'once' ? resolveDraftOnceAt(draft) : null;
+  /** 表单和提交入口共用校验，空时间不能创建已启用的规则。 */
+  const triggerValid = draft.triggerKind !== 'once' || onceAt !== null;
   const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
   /** 删除前保留任务，只有确认成功才关闭弹窗。 */
   const [pendingDelete, setPendingDelete] = useState<AutomationTaskRecord | null>(null);
@@ -148,6 +154,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       action: task.action.kind === 'conversation' ? { kind: 'employee_work', employeeId: null } : task.action,
       triggerKind: task.triggerKind,
       triggerConfig: task.triggerConfig,
+      onceAtText: formatAutomationOnceInput(task.triggerConfig.at, task.timezone),
       timezone: task.timezone,
       conversationMode: task.conversationMode,
       originalConversationId: task.originalConversationId,
@@ -175,11 +182,11 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   /** 保存期间锁定表单，权限确认仍按既有服务流程执行。 */
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (!props.client || !editingId || busyId || !actionValid) return;
+    if (!props.client || !editingId || busyId || !actionValid || !triggerValid) return;
     setBusyId(editingId);
     setError(null);
     try {
-      const input = normalizeDraft(draft);
+      const input = normalizeDraft(draft, onceAt);
       const saved = editingId === 'new' ? await props.client.createAutomation(input) : await props.client.updateAutomation(editingId, tasks.find((task) => task.id === editingId)!.revision, input);
       if (saved.permissionMode === 'full-access' && fullAccessAcknowledged) await props.client.setAutomationFullAccessGrant(saved.id, saved.revision, true);
       setEditingId(null);
@@ -309,7 +316,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             zh={zh}
             busy={Boolean(busyId)}
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
-            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !actionValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
+            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !actionValid || !triggerValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
             onClose={() => setEditingId(null)}
             onSubmit={(event) => void submit(event)}
           >
@@ -487,7 +494,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                       onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
                     />
                   </div>
-                  <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
+                  <TriggerFields draft={draft} setDraft={setDraft} triggerValid={triggerValid} zh={zh} />
                   <small>{zh ? `按 ${draft.timezone || 'UTC'} 时间运行` : `Runs in ${draft.timezone || 'UTC'}`}</small>
                 </fieldset>
                 <fieldset className="automation-form-section">
@@ -593,7 +600,8 @@ function SelectField(props: { label: string; value: string; options: Array<[stri
   );
 }
 
-function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; zh: boolean }) {
+/** 根据触发方式展示输入，一次性时间使用规则时区的原始表单文本。 */
+function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; triggerValid: boolean; zh: boolean }) {
   const { draft } = props;
   if (draft.triggerKind === 'interval')
     return (
@@ -606,11 +614,8 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; zh: 
     return (
       <label>
         <span>{props.zh ? '执行时间' : 'Run at'}</span>
-        <input
-          type="datetime-local"
-          value={draft.triggerConfig?.at?.slice(0, 16) ?? ''}
-          onChange={(event) => props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, at: event.currentTarget.value ? new Date(event.currentTarget.value).toISOString() : undefined } })}
-        />
+        <input type="datetime-local" required aria-invalid={Boolean(draft.onceAtText) && !props.triggerValid} value={draft.onceAtText} onChange={(event) => props.setDraft({ ...draft, onceAtText: event.currentTarget.value })} />
+        {draft.onceAtText && !props.triggerValid ? <small role="alert">{props.zh ? '执行时间或时区无效。' : 'The run time or time zone is invalid.'}</small> : null}
       </label>
     );
   if (draft.triggerKind === 'daily' || draft.triggerKind === 'weekly')
@@ -675,6 +680,7 @@ function emptyDraft(projects: ProjectRecord[]): Draft {
     projectIds: firstProject ? [firstProject.id] : [],
     triggerKind: 'manual',
     triggerConfig: {},
+    onceAtText: '',
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     conversationMode: 'independent',
     originalConversationId: null,
@@ -698,7 +704,7 @@ function emptyDraft(projects: ProjectRecord[]): Draft {
 }
 
 /** 只提交业务触发配置，执行参数由统一默认决定。 */
-function normalizeDraft(draft: Draft): AutomationTaskInput {
+function normalizeDraft(draft: Draft, onceAt: string | null): AutomationTaskInput {
   return {
     name: draft.name,
     description: draft.description,
@@ -713,7 +719,7 @@ function normalizeDraft(draft: Draft): AutomationTaskInput {
           }
         : draft.action,
     triggerKind: draft.triggerKind,
-    triggerConfig: draft.triggerConfig,
+    triggerConfig: draft.triggerKind === 'once' ? { ...draft.triggerConfig, at: onceAt ?? undefined } : draft.triggerConfig,
     timezone: draft.timezone,
     permissionMode: draft.permissionMode,
     blockStrategy: draft.blockStrategy,
@@ -721,6 +727,13 @@ function normalizeDraft(draft: Draft): AutomationTaskInput {
     maxRunsPerDay: draft.maxRunsPerDayText ? Number(draft.maxRunsPerDayText) : null,
     maxTokensPerDay: draft.maxTokensPerDayText ? Number(draft.maxTokensPerDayText) : null,
   };
+}
+
+/** 未改动当地时间时保留已保存的秒和毫秒，否则按当前规则时区转换。 */
+function resolveDraftOnceAt(draft: Draft): string | null {
+  if (!draft.onceAtText) return null;
+  if (draft.triggerConfig?.at && formatAutomationOnceInput(draft.triggerConfig.at, draft.timezone || 'UTC') === draft.onceAtText) return draft.triggerConfig.at;
+  return parseAutomationOnceInput(draft.onceAtText, draft.timezone || 'UTC');
 }
 
 /** 保存时解析筛选，输入过程中保留分隔符。 */

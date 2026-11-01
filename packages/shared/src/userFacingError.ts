@@ -565,6 +565,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['高级调度需要有效的重复规则，目前支持每分钟、每小时、每日和每周。', 'Advanced scheduling needs a valid recurrence rule. Minutely, hourly, daily, and weekly schedules are supported.'],
   ],
   [['ZEUS_AUTOMATION_CONFIG_LOCAL_TIME_INVALID'], ['请按“小时:分钟”填写时间，例如 09:30。', 'Enter the time as hours:minutes, for example 09:30.']],
+  [['ZEUS_AUTOMATION_CONFIG_ONCE_AT_INVALID'], ['请填写有效的一次性执行时间。', 'Enter a valid run time for this one-time automation.']],
   [['ZEUS_AUTOMATION_CONFIG_TIMEZONE_INVALID'], ['时区名称无效，请选择有效时区，例如 Asia/Shanghai。', 'The time zone is invalid. Select a valid time zone, such as Asia/Shanghai.']],
   [['ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_REQUIRED'], ['请先选择自动化要继续使用的对话。', 'Select the conversation that this automation should continue.']],
   [['ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_UNAVAILABLE'], ['原对话不存在或不属于所选项目。请重新选择对话。', 'The original conversation no longer exists or belongs to another project. Select a conversation again.']],

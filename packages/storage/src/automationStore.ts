@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
+import { parseAutomationOnceAt, temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
 import { randomId } from './randomId.js';
 import { migrateAutomationNotifications } from './automationNotificationStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -24,6 +24,7 @@ export type AutomationRunStatus = (typeof automationRunStatuses)[number];
 export type AutomationPermissionMode = (typeof automationPermissionModes)[number];
 
 export interface AutomationTriggerConfig {
+  /** 一次性执行的绝对时刻，使用带时区的 ISO 字符串。 */
   at?: string;
   everyMinutes?: number;
   localTime?: string;
@@ -316,6 +317,8 @@ function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAut
   if (action.taskFilter !== undefined && (!action.taskFilter || typeof action.taskFilter !== 'object' || Array.isArray(action.taskFilter))) throw new Error('ZEUS_AUTOMATION_TASK_FILTER_INVALID: 任务筛选必须是对象。');
   if (action.kind === 'project_task' && action.taskSelection === 'specified' && !action.taskId?.trim()) throw new Error('ZEUS_AUTOMATION_TASK_REQUIRED: 指定已有任务必须提供任务身份。');
   const triggerKind = enumValue(input.triggerKind ?? 'manual', automationTriggerKinds, '触发方式');
+  // 创建和编辑在写入配置前拒绝缺失或无效的一次性执行时间。
+  if (triggerKind === 'once') parseAutomationOnceAt(input.triggerConfig?.at);
   if (input.triggerConfig?.eventKinds?.includes('code_changed') && input.triggerConfig.eventKinds.length > 1) throw new Error('ZEUS_AUTOMATION_EVENT_STREAM_INVALID: 代码变化与任务状态使用不同事件流，请分别创建规则。');
   const timezone = requiredText(input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC', '时区', 128);
   try {
@@ -808,7 +811,12 @@ export class AutomationTaskRepository {
   }
 
   setStatus(id: string, status: Exclude<AutomationStatus, 'deleted'>): AutomationTaskRecord {
-    if (status === 'active' && this.getById(id)?.migrationIssue) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 请先核对旧规则目标选择并保存。');
+    if (status === 'active') {
+      /** 重新启用也校验存量规则，不能绕过创建和编辑时的检查。 */
+      const task = this.getById(id);
+      if (task?.migrationIssue) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 请先核对旧规则目标选择并保存。');
+      if (task?.triggerKind === 'once') parseAutomationOnceAt(task.triggerConfig.at);
+    }
     const timestamp = nowIso();
     this.db.execute(`UPDATE automation_tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, id]);
     const updated = this.getById(id);
