@@ -9,7 +9,7 @@ import type {
   ConversationSubmissionRepository,
   ZeusProjectRecord,
 } from '@zeus/storage';
-import { automationEventStatusId, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
+import { automationEventStatusId, localParts, parseAutomationOnceAt, zonedLocalToUtc, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
 
 export interface AutomationDispatchResult {
   conversationId: string;
@@ -456,8 +456,9 @@ function errorCode(error: unknown): string {
 export function computeNextRun(task: AutomationTaskRecord, from: Date): string | null {
   if (task.triggerKind === 'manual' || task.triggerKind === 'event') return null;
   if (task.triggerKind === 'once') {
-    const at = task.triggerConfig.at ? new Date(task.triggerConfig.at) : null;
-    return at && Number.isFinite(at.getTime()) && at > from ? at.toISOString() : null;
+    /** 无效配置必须报错；空排程只表示有效的一次性时间已经结束。 */
+    const at = parseAutomationOnceAt(task.triggerConfig.at);
+    return at > from ? at.toISOString() : null;
   }
   if (task.triggerKind === 'interval') {
     const minutes = Number(task.triggerConfig.everyMinutes ?? 60);
@@ -668,24 +669,4 @@ function parseLocalTime(value: string): [number, number] {
   const minute = Number(match?.[2]);
   if (!match || hour < 0 || hour > 23 || minute < 0 || minute > 59) throw new Error('ZEUS_AUTOMATION_CONFIG_LOCAL_TIME_INVALID: 时间必须为 HH:mm。');
   return [hour, minute];
-}
-
-/** 读取规则时区的日历与钟表字段，小时固定使用 00 至 23。 */
-function localParts(date: Date, timeZone: string): { year: number; month: number; day: number; hour: number; minute: number } {
-  /** 显式时区避免依赖 macOS 或 Windows 的系统默认时区。 */
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  /** 格式片段按名称读取，不依赖平台的日期排列顺序。 */
-  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day), hour: Number(parts.hour), minute: Number(parts.minute) };
-}
-
-function zonedLocalToUtc(local: Date, timeZone: string): Date {
-  let candidate = new Date(local.getTime());
-  for (let index = 0; index < 3; index += 1) {
-    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-    const parts = Object.fromEntries(formatter.formatToParts(candidate).map((part) => [part.type, part.value]));
-    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute));
-    candidate = new Date(candidate.getTime() + (local.getTime() - represented));
-  }
-  return candidate;
 }

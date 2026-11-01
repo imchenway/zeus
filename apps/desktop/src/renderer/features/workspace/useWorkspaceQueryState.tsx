@@ -1151,22 +1151,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const selectedTaskModelPushOperation = Object.values(taskModelPushPendingByTask).find((pending) => pending.navigationId === selectedNativeConversationId);
   const selectedTaskModelPushOptimisticState = selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice.id === selectedNativeConversation?.id ? selectedTaskModelPushOperation.session : undefined;
   useEffect(() => {
-    function onCommitShortcut(event: globalThis.KeyboardEvent): void {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
-      const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return;
-      if (!selectedNativeConversation?.taskId || !selectedNativeConversation.workspaceId) return;
-      event.preventDefault();
-      setTaskGitReviewState({
-        taskId: selectedNativeConversation.taskId,
-        workspaceId: selectedNativeConversation.workspaceId,
-        mode: 'commit',
-      });
-    }
-    window.addEventListener('keydown', onCommitShortcut);
-    return () => window.removeEventListener('keydown', onCommitShortcut);
-  }, [selectedNativeConversation?.taskId, selectedNativeConversation?.workspaceId]);
-  useEffect(() => {
     selectedNativeConversationIdRef.current = selectedNativeConversationId;
   }, [selectedNativeConversationId]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
