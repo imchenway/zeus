@@ -51,10 +51,16 @@ function excerpt(text: string, limit: number): string {
 function readMessage(repository: SuggestionRepository, conversationId: string, item: ConversationModelHistoryPageItem, limit: number): string {
   if (!item.content.truncated || !item.content.contentHandle) return excerpt(item.content.preview, limit);
   /** 字节预算涵盖中文和表情，内容页仍由仓库限制最大值。 */
-  const head = repository.readContentPage({ conversationId, handle: item.content.contentHandle, byteLimit: Math.max(1024, Math.min(32_768, limit * 4)) });
+  const head = repository.readContentPage({ conversationId, handle: item.content.contentHandle, byteLimit: Math.max(1024, Math.min(32_768, limit * 4)), dialogueOnly: true });
   if (head.nextOffset === null) return excerpt(head.text, limit);
   /** 偏移使用正文页提供的字符位置，不从预览字符串或句柄猜测。 */
-  const tail = repository.readContentPage({ conversationId, handle: item.content.contentHandle, offset: Math.max(head.nextOffset, head.totalCharacters - Math.floor(limit / 2)), byteLimit: Math.max(1024, Math.min(32_768, limit * 4)) });
+  const tail = repository.readContentPage({
+    conversationId,
+    handle: item.content.contentHandle,
+    offset: Math.max(head.nextOffset, head.totalCharacters - Math.floor(limit / 2)),
+    byteLimit: Math.max(1024, Math.min(32_768, limit * 4)),
+    dialogueOnly: true,
+  });
   return excerpt(`${head.text}\n[中间内容已裁剪]\n${tail.text}`, limit);
 }
 

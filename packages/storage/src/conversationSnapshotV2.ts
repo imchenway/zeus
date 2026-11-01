@@ -173,6 +173,8 @@ const modelHistoryReasoningSummarySql = `CASE
     THEN 1
   ELSE 0
 END`;
+/** 对话列表、引用正文和正文句柄共用的可见对话边界，排除工具配对与思考摘要。 */
+const modelHistoryDialogueSql = `role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`;
 // 历史元数据按 Provider 消息身份取回；正文和时间只参与已有消息身份映射，不用于猜测问题。
 const modelHistoryAssistantMetadataSql = `COALESCE(
   CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.assistantMessage') ELSE NULL END,
@@ -1380,11 +1382,7 @@ export class ConversationSnapshotV2Repository {
     direction?: 'forward' | 'tail';
   }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     /** 角色是内部枚举，SQL 仍使用参数绑定，不拼接外部文本。 */
-    const dialogueWhere = input.dialogueRole
-      ? ` AND role = ? AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`
-      : input.dialogueOnly
-        ? ` AND role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`
-        : '';
+    const dialogueWhere = input.dialogueRole ? ` AND ${modelHistoryDialogueSql} AND role = ?` : input.dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : '';
     /** 游标绑定过滤条件，不能把用户页游标用于助手正文。 */
     const context = this.sequencePageContext(
       input,
@@ -1423,7 +1421,7 @@ export class ConversationSnapshotV2Repository {
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?${dialogueWhere}
-          ${input.assistantOutputOnly ? `AND role = 'assistant' AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : ''}
+          ${input.assistantOutputOnly ? `AND ${modelHistoryDialogueSql} AND role = 'assistant'` : ''}
         ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
       [previewCharacterLimit, context.conversationId, context.afterSequence, context.throughSequence, ...(input.dialogueRole ? [input.dialogueRole] : []), context.entryLimit + 1],
@@ -1448,7 +1446,7 @@ export class ConversationSnapshotV2Repository {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const turnId = this.requireTurn(conversationId, input.turnId);
     /** 查询和游标高水位使用相同过滤条件，不扫描工具正文后再丢弃。 */
-    const dialogueWhere = input.dialogueOnly ? ` AND role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : '';
+    const dialogueWhere = input.dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : '';
     const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}${input.dialogueOnly ? ':dialogue' : ''}`, {
       table: 'conversation_model_history',
       column: 'sequence',
@@ -1979,12 +1977,39 @@ export class ConversationSnapshotV2Repository {
     });
   }
 
-  readContentPage(input: { conversationId: string; handle: string; offset?: number; byteLimit?: number }): ConversationContentPage {
+  /** 按来源会话、轮次和回答身份读取完整可见正文；缺少已确认正文时返回空值，不使用截断预览。 */
+  readAssistantMessageText(input: { conversationId: string; turnId: string; providerItemId: string }): string | null {
+    /** 轮次与回答必须同时属于来源会话，不能凭原生条目身份跨会话取文。 */
+    const conversationId = requiredIdentity(input.conversationId, 'conversationId');
+    /** 轮次身份沿用历史查询的归属校验。 */
+    const turnId = this.requireTurn(conversationId, input.turnId);
+    /** 只查询目标回答，避免将整轮历史加载到发送链路。 */
+    const row = this.db.get<{ content: string }>(
+      `SELECT ${modelHistoryVisibleContentSql} AS content
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND turn_id = ? AND ${modelHistoryDialogueSql} AND role = 'assistant'
+          AND ${modelHistoryProviderItemSql} = ?
+        ORDER BY sequence DESC
+        LIMIT 1`,
+      [conversationId, turnId, requiredIdentity(input.providerItemId, 'providerItemId')],
+    );
+    return row ? redactSensitivePreview(row.content).text : null;
+  }
+
+  /** 正文分页保持句柄身份、修订与脱敏校验；对话调用方可收紧内容类型。 */
+  readContentPage(input: {
+    conversationId: string;
+    handle: string;
+    offset?: number;
+    byteLimit?: number;
+    /** 与对话列表使用相同过滤条件，并拒绝事件、过程和文件差异句柄。 */
+    dialogueOnly?: boolean;
+  }): ConversationContentPage {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const payload = requireContentHandle(decodeCursor(input.handle), conversationId);
     const offset = boundedInteger(input.offset ?? 0, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const byteLimit = boundedInteger(input.byteLimit ?? conversationSnapshotV2Limits.content.defaultByteLimit, 'byteLimit', conversationSnapshotV2Limits.content.minimumByteLimit, conversationSnapshotV2Limits.content.maximumByteLimit);
-    const row = this.readContentSlice(payload, offset, byteLimit);
+    const row = this.readContentSlice(payload, offset, byteLimit, input.dialogueOnly);
     if (!row) throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_CONTENT_NOT_FOUND', '正文句柄指向的内容不存在或不属于当前会话。', 404);
     if (row.total_characters !== payload.totalCharacters || row.total_bytes !== payload.totalBytes || row.revision !== payload.revision) {
       throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_CONTENT_CHANGED', '正文在分页期间发生变化，请刷新摘要并使用新句柄读取。', 409);
@@ -2521,7 +2546,14 @@ export class ConversationSnapshotV2Repository {
     );
   }
 
-  private readContentSlice(payload: ContentHandlePayload, offset: number, byteLimit: number): { content_slice: string; total_characters: number; total_bytes: number; revision: string; transitioning: number } | undefined {
+  /** 内容范围在数据库读取前收紧，非对话句柄不进入其他正文分支。 */
+  private readContentSlice(
+    payload: ContentHandlePayload,
+    offset: number,
+    byteLimit: number,
+    dialogueOnly = false,
+  ): { content_slice: string; total_characters: number; total_bytes: number; revision: string; transitioning: number } | undefined {
+    if (dialogueOnly && payload.kind !== 'model_content') return undefined;
     const sliceStart = offset + 1;
     const sliceCharacters = byteLimit + 1;
     if (payload.kind === 'timeline_payload') {
@@ -2544,7 +2576,7 @@ export class ConversationSnapshotV2Repository {
                 confirmed_at AS revision,
                 0 AS transitioning
            FROM conversation_model_history
-          WHERE conversation_id = ? AND sequence = ?`,
+          WHERE conversation_id = ? AND sequence = ?${dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : ''}`,
         [sliceStart, sliceCharacters, payload.conversationId, numericIdentity(payload.identity)],
       );
     }

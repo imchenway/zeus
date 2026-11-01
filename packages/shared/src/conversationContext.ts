@@ -49,7 +49,7 @@ export interface ConversationContextDraft {
       itemId: string;
       /** 来源回答所属的产品轮次。 */
       turnId: string;
-      /** 引用附近原文，不代表完整历史。 */
+      /** 引用附近原文，不代表完整历史；空串表示本次未附带原文窗口。 */
       excerpt: string;
       /** 原回答是否还有未包含的内容。 */
       truncated: boolean;
@@ -81,7 +81,7 @@ export function serializeConversationContext(draft: ConversationContextDraft): s
         ...draft.sourceConversation.references.flatMap((reference) => [
           `来源回答：${reference.itemId}`,
           `来源轮次：${reference.turnId}`,
-          ...(reference.excerpt ? [`引用附近原文${reference.truncated ? '（节选）' : ''}：\n${reference.excerpt}`] : []),
+          reference.excerpt ? `引用附近原文${reference.truncated ? '（节选）' : ''}：\n${reference.excerpt}` : '本次未附带引用附近原文，可按来源回答 ID 读取。',
         ]),
       ].join('\n'),
     );
