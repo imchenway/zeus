@@ -45,22 +45,25 @@ export class ConversationSourceContextReader {
     const references = draft.responseAnnotations.map((annotation) => {
       /** 回答定位同时接受产品身份和已有客户端使用的原生条目身份。 */
       const item = this.sourceAnswer(source.id, annotation.anchor.itemId);
+      /** 预览只用于显示身份；引用定位使用已保存的完整正文，预算耗尽时不再读取。 */
+      const text = remainingCharacters > 0 ? this.snapshots.readAssistantMessageText({ conversationId: source.id, turnId: item.turnId, providerItemId: item.providerItemId }) : null;
+      if (!text) return { itemId: item.id, turnId: item.turnId, excerpt: '', truncated: true };
       /** 同一短语重复出现时，优先匹配选区偏移附近的原文。 */
-      const before = item.textContent.lastIndexOf(annotation.anchor.selectedText, annotation.anchor.startOffset);
+      const before = text.lastIndexOf(annotation.anchor.selectedText, annotation.anchor.startOffset);
       /** 后方的匹配用于处理原文含有 Markdown 标记的偏移差异。 */
-      const after = item.textContent.indexOf(annotation.anchor.selectedText, annotation.anchor.startOffset);
+      const after = text.indexOf(annotation.anchor.selectedText, annotation.anchor.startOffset);
       /** 两侧匹配都存在时取最近位置，不固定引用第一次出现的短语。 */
       const found = before < 0 ? after : after < 0 || annotation.anchor.startOffset - before <= after - annotation.anchor.startOffset ? before : after;
-      /** 原文窗口以引用为中心，避免短选区失去前后语义。 */
-      const anchorOffset = found >= 0 ? found : Math.min(annotation.anchor.startOffset, item.textContent.length);
+      /** 渲染选文无法对应原文时只保留来源身份，不能用偏移猜测并附上其他段落。 */
+      if (found < 0) return { itemId: item.id, turnId: item.turnId, excerpt: '', truncated: true };
       /** 总预算耗尽后仍保留来源身份，正文通过读取工具取得。 */
       const length = Math.min(excerptCharacterLimit, remainingCharacters);
       /** 靠近末尾的引用仍尽量保留完整的前文窗口。 */
-      const start = Math.max(0, Math.min(anchorOffset - Math.floor(length / 2), item.textContent.length - length));
+      const start = Math.max(0, Math.min(found - Math.floor(length / 2), text.length - length));
       /** 快照只包含当前预算内的原文，不生成摘要或推测内容。 */
-      const excerpt = item.textContent.slice(start, start + length);
+      const excerpt = text.slice(start, start + length);
       remainingCharacters -= excerpt.length;
-      return { itemId: item.id, turnId: item.turnId, excerpt, truncated: start > 0 || start + length < item.textContent.length };
+      return { itemId: item.id, turnId: item.turnId, excerpt, truncated: start > 0 || start + length < text.length };
     });
     /** 补充原文后仍遵守公开上下文的总字节上限。 */
     const enriched = { ...context, sourceConversation: { id: source.id, title: source.title, references } };
@@ -89,7 +92,7 @@ export class ConversationSourceContextReader {
     const source = this.requireSource(owner, metadata.id);
     /** 正文句柄由已有历史查询生成，并继续绑定来源会话身份。 */
     const page = args.handle
-      ? this.snapshots.readContentPage({ conversationId: source.id, handle: args.handle as string, offset: args.offset as number | undefined, byteLimit: sourcePageByteLimit })
+      ? this.snapshots.readContentPage({ conversationId: source.id, handle: args.handle as string, offset: args.offset as number | undefined, byteLimit: sourcePageByteLimit, dialogueOnly: true })
       : args.scope === 'history'
         ? this.snapshots.listModelHistoryPage({ conversationId: source.id, cursor: args.cursor as string | undefined, dialogueOnly: true, direction: 'tail', entryLimit: 8, byteLimit: sourcePageByteLimit })
         : this.snapshots.listTurnModelHistoryPage({
