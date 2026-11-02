@@ -322,7 +322,9 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
 }
 
 /** 清单与安装包共用 Electron 网络，系统代理和应用代理在两个阶段保持一致。 */
-export async function readDesktopReleaseUpdateStatus(options: Pick<CreateReleaseUpdateServiceOptions, 'currentAppVersion' | 'localServerConfig' | 'testMode' | 'allowUntrustedTestUpdate' | 'releaseUpdateManifestUrl'>): Promise<DesktopReleaseUpdateStatus> {
+export async function readDesktopReleaseUpdateStatus(
+  options: Pick<CreateReleaseUpdateServiceOptions, 'currentAppVersion' | 'localServerConfig' | 'testMode' | 'allowUntrustedTestUpdate' | 'releaseUpdateManifestUrl'>,
+): Promise<DesktopReleaseUpdateStatus> {
   /** 本机宿主状态沿用认证连接，不经过外部更新服务。 */
   const config = options.localServerConfig();
   /** 保留实际宿主协议与工作状态，不能用当前 Main 版本推断旧宿主身份。 */

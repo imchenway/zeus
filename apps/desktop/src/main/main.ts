@@ -1247,9 +1247,7 @@ async function createWindow(): Promise<void> {
       title: desktopDisplayName(),
       // 透明窗口不支持可靠缩放；主工作区使用不透明底板，macOS 保留交通灯，Windows 保留系统标题栏。
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#f5f5f7',
-      ...(process.platform === 'darwin'
-        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
-        : { titleBarStyle: 'default' as const }),
+      ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } } : { titleBarStyle: 'default' as const }),
       show: false,
       webPreferences: {
         preload: join(desktopRoot(), 'dist/preload/index.cjs'),
