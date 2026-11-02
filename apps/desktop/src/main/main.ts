@@ -3597,22 +3597,38 @@ async function readSystemClipboardFileReferences(): Promise<string[]> {
     const { stdout } = await execFile(
       '/usr/bin/osascript',
       [
+        '-l',
+        'JavaScript',
         '-e',
-        `try
-  set fileReference to the clipboard as «class furl»
-  return POSIX path of fileReference
-on error
-  return ""
-end try`,
+        `ObjC.import('AppKit');
+// 只读取原生文件格式，不能把普通文本强制转换成文件 URL。
+const pasteboard = $.NSPasteboard.generalPasteboard;
+// Finder 多选文件分别保存在各个剪贴板条目中。
+const items = pasteboard.pasteboardItems;
+// URL 交给已有附件解析器解码和校验，不读取剪贴板正文。
+const references = [];
+if (!items.isNil()) {
+  for (let index = 0; index < items.count; index++) {
+    // 缺少文件格式的文本或图片条目不提供文件授权。
+    const fileUrl = items.objectAtIndex(index).stringForType('public.file-url');
+    if (!fileUrl.isNil()) references.push(ObjC.unwrap(fileUrl));
+  }
+}
+if (references.length === 0) {
+  // 旧文件列表仍是明确的文件格式，不从字符串或 HTML 推断路径。
+  const filenames = pasteboard.propertyListForType('NSFilenamesPboardType');
+  if (!filenames.isNil()) references.push(...ObjC.deepUnwrap(filenames));
+}
+JSON.stringify(references);`,
       ],
       { timeout: 1000, maxBuffer: 64 * 1024 },
     );
-    return stdout
-      .split(/\r?\n/gu)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('/'));
+    /** 系统进程只返回有界文件引用，具体路径沿用共享解析与授权检查。 */
+    const references: unknown = JSON.parse(stdout);
+    if (!Array.isArray(references) || references.length > 128 || references.some((reference) => typeof reference !== 'string')) throw new Error('macOS 文件剪贴板返回了无效引用。');
+    return references;
   } catch {
-    // Finder 复制文件时 Electron 可能只暴露文件图标；osascript 读不到 furl 时继续走 bitmap 回退。
+    // 原生文件格式不可读时继续已有图片回退，不从普通文本猜测文件路径。
     return [];
   }
 }

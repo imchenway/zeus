@@ -1599,13 +1599,17 @@
 }
 
 .session-codex-parity-v1 .session-turn-failure-icon {
+  align-items: center;
   block-size: 20px;
+  display: flex;
   flex: 0 0 20px;
   inline-size: 20px;
+  justify-content: center;
 }
 
 .session-codex-parity-v1 .session-turn-failure-icon svg {
   block-size: 100%;
+  display: block;
   fill: none;
   inline-size: 100%;
   stroke: currentColor;
@@ -1624,6 +1628,18 @@
   font-size: 14px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* 前缀、摘要和详情图标共用居中行，避免行内基线与不同字号造成上下偏移。 */
+.session-codex-parity-v1 .session-turn-failure-message > span:not(.session-message-delivery-actions) {
+  align-items: center;
+  display: flex;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-turn-failure-message .application-error-inline {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 /* 消息状态的操作行跟在正文右侧，位置与同族的传输失败提示保持一致。 */
