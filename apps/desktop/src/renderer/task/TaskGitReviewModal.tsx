@@ -383,7 +383,14 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                             disabled={busy}
                           />
                         ) : null}
-                        <button type="button" data-icon-tooltip={`${file.path} · ${fileStatusLabel(file.category, zh)}`} aria-label={`${file.path} · ${fileStatusLabel(file.category, zh)}`} onClick={() => setSelectedFile(file.path)}>
+                        <button
+                          type="button"
+                          data-file-root={activeWorkspace?.worktreePath ?? activeWorkspace?.repositoryPath}
+                          data-file-path={file.path}
+                          data-icon-tooltip={file.path}
+                          aria-label={`${file.path} · ${fileStatusLabel(file.category, zh)}`}
+                          onClick={() => setSelectedFile(file.path)}
+                        >
                           <FileTypeIcon name={file.path} />
                           <span data-file-status={file.category}>{file.path}</span>
                         </button>

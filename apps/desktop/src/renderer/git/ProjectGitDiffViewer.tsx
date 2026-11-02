@@ -159,7 +159,7 @@ export function ProjectGitDiffWindow(props: {
               </header>
               <div>
                 {props.source.path && !diff.fileDiffs.some((file) => file.newPath === props.source.path || file.oldPath === props.source.path) ? (
-                  <button type="button" className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
+                  <button type="button" data-file-path={props.source.path} className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
                     <FileTypeIcon name={props.source.path} />
                     <span data-file-status={fileStatuses[props.source.path]}>{props.source.path}</span>
                   </button>
@@ -167,7 +167,7 @@ export function ProjectGitDiffWindow(props: {
                 {diff.fileDiffs.map((file) => {
                   const path = file.newPath || file.oldPath;
                   return (
-                    <button key={`${file.oldPath}:${file.newPath}`} type="button" className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
+                    <button key={`${file.oldPath}:${file.newPath}`} type="button" data-file-path={path} className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
                       <FileTypeIcon name={path} />
                       <span data-icon-tooltip={path} data-file-status={fileStatuses[path] ?? file.changeType}>
                         {path}
@@ -229,7 +229,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
         <FileTypeIcon name={file.newPath || file.oldPath} />
-        <strong data-icon-tooltip={props.title ?? (file.newPath || file.oldPath)} data-file-status={props.fileStatus ?? file.changeType}>
+        <strong tabIndex={0} data-file-path={file.newPath || file.oldPath} data-icon-tooltip={props.title ?? (file.newPath || file.oldPath)} data-file-status={props.fileStatus ?? file.changeType}>
           {props.title ?? (file.newPath || file.oldPath)}
         </strong>
         {props.toolbar ? (
@@ -243,8 +243,12 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
       <div className="project-git-diff-side-by-side">
         {!unified ? (
           <div className="project-git-diff-side-head">
-            <span data-icon-tooltip={oldPath}>{oldPath}</span>
-            <span data-icon-tooltip={newPath}>{newPath}</span>
+            <span tabIndex={0} data-file-path={oldPath} data-icon-tooltip={oldPath}>
+              {oldPath}
+            </span>
+            <span tabIndex={0} data-file-path={newPath} data-icon-tooltip={newPath}>
+              {newPath}
+            </span>
           </div>
         ) : null}
         {props.items?.some((item) => item.blameError) ? (

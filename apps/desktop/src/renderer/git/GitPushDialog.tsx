@@ -40,6 +40,10 @@ interface PushDialogProps {
   repositories: ProjectGitRepositoryWorkbenchItem[];
   /** 打开弹窗时的当前仓库。 */
   selectedRepository: ProjectGitRepositoryWorkbenchItem | null;
+  /** 交付入口保留用户已勾选的仓库与分支。 */
+  initialSelections?: PushSelection[];
+  /** 任务成果只能推送既有合入目标，不提供换分支、标签或强制覆盖。 */
+  fixedTargets?: boolean;
   /** 与工作区操作共享忙碌锁。 */
   busy: BusyState;
   /** 原推送执行器返回的逐分支结果。 */
@@ -72,14 +76,16 @@ function createEntry(repository: ProjectGitRepositoryWorkbenchItem, sourceBranch
 /** 推送确认以仓库和提交为中心，文件树只负责审阅，不改变推送范围。 */
 export function PushDialog(props: PushDialogProps) {
   /** 默认只勾选入口对应的仓库，避免扩大原有推送范围。 */
-  const [entries, setEntries] = useState<PushEntry[]>(() =>
-    props.repositories.map((repository) =>
-      createEntry(
-        repository,
-        repository.snapshot.detached ? '' : repository.snapshot.branch,
-        repository.id === (props.selectedRepository?.id ?? props.repositories[0]?.id) && !repository.snapshot.detached && !!repository.snapshot.remotes.length && repository.snapshot.localBranches.includes(repository.snapshot.branch),
+  const [entries, setEntries] = useState<PushEntry[]>(
+    () =>
+      props.initialSelections?.map((selection) => ({ ...selection, checked: true })) ??
+      props.repositories.map((repository) =>
+        createEntry(
+          repository,
+          repository.snapshot.detached ? '' : repository.snapshot.branch,
+          repository.id === (props.selectedRepository?.id ?? props.repositories[0]?.id) && !repository.snapshot.detached && !!repository.snapshot.remotes.length && repository.snapshot.localBranches.includes(repository.snapshot.branch),
+        ),
       ),
-    ),
   );
   /** 当前行决定右侧预览，与其他仓库的勾选无关。 */
   const [activeKey, setActiveKey] = useState(() => (entries.length ? entryKey(entries.find((entry) => entry.checked) ?? entries[0]!) : ''));
@@ -341,7 +347,7 @@ export function PushDialog(props: PushDialogProps) {
                         <button
                           type="button"
                           className="git-push-target"
-                          disabled={locked}
+                          disabled={locked || props.fixedTargets}
                           onClick={() => {
                             inspect(entry);
                             setEditingTargets(true);
@@ -396,9 +402,11 @@ export function PushDialog(props: PushDialogProps) {
                 >
                   {props.zh ? '刷新预览' : 'Refresh preview'}
                 </button>
-                <button type="button" className="git-push-link" disabled={locked} onClick={() => setEditingTargets(true)}>
-                  {props.zh ? '编辑所有目标' : 'Edit all targets'}
-                </button>
+                {!props.fixedTargets ? (
+                  <button type="button" className="git-push-link" disabled={locked} onClick={() => setEditingTargets(true)}>
+                    {props.zh ? '编辑所有目标' : 'Edit all targets'}
+                  </button>
+                ) : null}
               </div>
             </section>
             <GitPaneSeparator name="push-sidebar" label={props.zh ? '调整仓库与文件面板宽度' : 'Resize repository and file panels'} initial={54} min={30} max={72} />
@@ -451,10 +459,12 @@ export function PushDialog(props: PushDialogProps) {
         <footer className="git-push-footer">
           {!resultMode ? (
             <>
-              <label>
-                <input type="checkbox" checked={pushTags} disabled={locked} onChange={(event) => setPushTags(event.currentTarget.checked)} />
-                {props.zh ? '推送所有标签' : 'Push all tags'}
-              </label>
+              {!props.fixedTargets ? (
+                <label>
+                  <input type="checkbox" checked={pushTags} disabled={locked} onChange={(event) => setPushTags(event.currentTarget.checked)} />
+                  {props.zh ? '推送所有标签' : 'Push all tags'}
+                </label>
+              ) : null}
               <small>
                 {props.zh ? `已选 ${new Set(selected.map((entry) => entry.repositoryId)).size} 个仓库 · ${selected.length} 个分支` : `${new Set(selected.map((entry) => entry.repositoryId)).size} repositories · ${selected.length} branches`}
               </small>
@@ -469,44 +479,46 @@ export function PushDialog(props: PushDialogProps) {
                 <Button variant="primary" busy={submitting} disabled={pushDisabled} onClick={() => void submit(false)}>
                   {props.zh ? '推送' : 'Push'}
                 </Button>
-                <details
-                  className="git-push-more"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && event.currentTarget.open) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      event.currentTarget.open = false;
-                      event.currentTarget.querySelector('summary')?.focus();
-                    }
-                  }}
-                  onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
-                  }}
-                >
-                  <summary
-                    aria-label={props.zh ? '更多推送选项' : 'More push options'}
-                    aria-disabled={locked}
-                    onClick={(event) => {
-                      if (locked) event.preventDefault();
+                {!props.fixedTargets ? (
+                  <details
+                    className="git-push-more"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape' && event.currentTarget.open) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.currentTarget.open = false;
+                        event.currentTarget.querySelector('summary')?.focus();
+                      }
+                    }}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
                     }}
                   >
-                    <CaretDownIcon aria-hidden="true" />
-                  </summary>
-                  <div>
-                    <Button
-                      className="git-push-force-action"
-                      disabled={pushDisabled}
+                    <summary
+                      aria-label={props.zh ? '更多推送选项' : 'More push options'}
+                      aria-disabled={locked}
                       onClick={(event) => {
-                        event.currentTarget.closest('details')?.querySelector('summary')?.focus();
-                        event.currentTarget.closest('details')?.removeAttribute('open');
-                        void submit(true);
+                        if (locked) event.preventDefault();
                       }}
                     >
-                      {props.zh ? '强制推送' : 'Force push'}
-                    </Button>
-                    <small>{props.zh ? '仅当远端仍与本地记录一致时覆盖目标。' : 'Replace the target only if it still matches the local tracking ref.'}</small>
-                  </div>
-                </details>
+                      <CaretDownIcon aria-hidden="true" />
+                    </summary>
+                    <div>
+                      <Button
+                        className="git-push-force-action"
+                        disabled={pushDisabled}
+                        onClick={(event) => {
+                          event.currentTarget.closest('details')?.querySelector('summary')?.focus();
+                          event.currentTarget.closest('details')?.removeAttribute('open');
+                          void submit(true);
+                        }}
+                      >
+                        {props.zh ? '强制推送' : 'Force push'}
+                      </Button>
+                      <small>{props.zh ? '仅当远端仍与本地记录一致时覆盖目标。' : 'Replace the target only if it still matches the local tracking ref.'}</small>
+                    </div>
+                  </details>
+                ) : null}
               </span>
             ) : null}
           </span>
@@ -556,7 +568,8 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
               type="button"
               data-active={props.selectedPath === children[0]!.path}
               aria-pressed={props.selectedPath === children[0]!.path}
-              data-icon-tooltip={`${children[0]!.path} · ${fileStatusLabel(children[0]!.file.changeType, props.zh)}`}
+              data-file-path={children[0]!.path}
+              data-icon-tooltip={name}
               aria-label={`${children[0]!.path} · ${fileStatusLabel(children[0]!.file.changeType, props.zh)}`}
               onClick={() => props.onSelect(children[0]!.path)}
               onDoubleClick={() => props.onOpen(children[0]!.path)}

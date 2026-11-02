@@ -13,7 +13,6 @@ import { MotionPresence } from '../ui/MotionPresence.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
-import { fileStatusLabel } from './fileStatus.js';
 import './projectCodeSearch.css';
 
 /** 内容分类与项目范围独立，全部分类保留各类结果的来源。 */
@@ -473,7 +472,7 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                     {fileStart && selection.kind === 'source' ? (
                       <div className="project-code-search-file" role="presentation">
                         <FileTypeIcon path={selection.match.relativePath} />
-                        <span data-file-status={fileStatus} data-icon-tooltip={fileStatus ? `${selection.match.relativePath} · ${fileStatusLabel(fileStatus, zh)}` : selection.match.relativePath}>
+                        <span tabIndex={0} data-file-root={selection.project.localPath} data-file-path={selection.match.relativePath} data-file-status={fileStatus} data-icon-tooltip={`${projectName} · ${selection.match.relativePath}`}>
                           {projectName} · {selection.match.relativePath}
                         </span>
                       </div>
@@ -481,6 +480,8 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                     <button
                       type="button"
                       id={`${id}-match-${index}`}
+                      data-file-root={selection.kind === 'source' ? selection.project.localPath : undefined}
+                      data-file-path={selection.kind === 'source' ? selection.match.relativePath : undefined}
                       className={`project-code-search-match${selection.kind !== 'source' ? ' workspace-search-item' : ''}`}
                       role="option"
                       aria-label={selection.kind === 'source' ? `${projectName} · ${selection.match.relativePath}:${selection.match.line}:${selection.match.column} ${selection.match.preview}` : undefined}

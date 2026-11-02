@@ -367,7 +367,7 @@ function SourceWorkspaceView(props: {
         toolbar={(reviewActions) => (
           <>
             <div className="session-source-toolbar">
-              <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} data-icon-tooltip={displayPath}>
+              <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} tabIndex={0} data-file-path={displayPath} data-icon-tooltip={displayPath.split('/').join('›')}>
                 {displayPath.split('/').map((part, index) => (
                   <span key={index}>
                     {index > 0 ? <span aria-hidden="true">›</span> : null}

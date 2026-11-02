@@ -619,7 +619,13 @@ function FilePreviewContent(props: {
             <header>
               <FileTypeIcon name={item.name} size={20} />
               <div className="file-preview-identity">
-                <strong data-icon-tooltip={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}>
+                <strong
+                  tabIndex={0}
+                  data-file-path={item.path ?? ('path' in props.request ? props.request.path : undefined)}
+                  data-file-name={item.name}
+                  data-icon-tooltip={item.kind === 'image' ? undefined : item.name}
+                  data-file-status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}
+                >
                   {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
                 </strong>
                 <small>

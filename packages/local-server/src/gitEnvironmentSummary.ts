@@ -6,8 +6,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { deliveryWorkspacesForConversationBranch, type GitEnvironmentScope, type GitEnvironmentSummary } from '@zeus/shared';
-import { discoverGitRepositories, getGitCommonDirectory, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
-import type { ProjectRepository, TaskRepository, TaskWorkspaceRepository, ConversationRepository, ConversationSubmissionRepository, ZeusTaskWorkspaceRecord } from '@zeus/storage';
+import { buildTaskEnvironmentRootPath, discoverGitRepositories, getGitCommonDirectory, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
+import type { ProjectRepository, TaskRepository, TaskEnvironmentRepository, TaskWorkspaceRepository, ConversationRepository, ConversationSubmissionRepository, ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import type { ConversationRealtimeSocket } from './conversationSyncRoutes.js';
 
@@ -66,6 +66,8 @@ export class GitEnvironmentSummaryService {
       projects: ProjectRepository;
       /** 核验任务所属项目。 */
       tasks: TaskRepository;
+      /** 任务环境根目录包含整次工作涉及的仓库，不能用首仓目录代替。 */
+      environments: TaskEnvironmentRepository;
       /** 任务环境、冲突工作区及生命周期的权威记录。 */
       workspaces: TaskWorkspaceRepository;
       /** 独立会话的归属与绑定身份。 */
@@ -202,7 +204,13 @@ export class GitEnvironmentSummaryService {
             if (!item.worktreePath) throw new Error('任务工作目录丢失，请在代码交付页检查。');
             return [{ id: item.id, path: item.worktreePath, ignoredPaths: this.options.ignoredPaths(item) }];
           });
-          cwd = workspace.worktreePath ?? workspace.repositoryPath ?? project.localPath;
+          /** 工作目录沿用执行上下文的环境根；冲突工作区保留自身隔离目录。 */
+          const environment = workspace.environmentId ? this.options.environments.getById(workspace.environmentId) : undefined;
+          if (environment && (environment.projectId !== projectId || environment.taskId !== task.id)) throw new Error('任务环境不属于当前任务。');
+          cwd =
+            workspace.kind === 'conflict'
+              ? (workspace.worktreePath ?? workspace.repositoryPath ?? project.localPath)
+              : resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
         } else {
           if (scope.conversationId) {
             /** 独立普通会话沿用交付页的单工作树权限，不因嵌套仓库而扩大统计范围。 */

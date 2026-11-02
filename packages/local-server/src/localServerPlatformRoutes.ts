@@ -3717,6 +3717,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     server,
     projects,
     tasks,
+    environments: taskEnvironments,
     workspaces: taskWorkspaces,
     conversations,
     submissions: conversationSubmissions,

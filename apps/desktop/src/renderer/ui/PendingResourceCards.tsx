@@ -136,6 +136,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   return (
     <li
       className="pending-resource-card"
+      data-file-name={props.resource.name}
       data-resource-kind={props.resource.kind}
       aria-busy={busy || undefined}
       aria-label={

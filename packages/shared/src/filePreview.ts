@@ -103,6 +103,8 @@ export interface FilePreviewIntent {
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */
 export interface FilePreviewItem {
+  /** 已解析文件的显示路径，仅供复制；打开和读写继续使用资源身份。 */
+  path?: string;
   /** 当前文本可按同次预览的旧侧恢复区块；历史副本和只读编码不提供此能力。 */
   canRevert?: boolean;
   /** 当前预览就是可写工作区正文，历史快照不授予此能力。 */

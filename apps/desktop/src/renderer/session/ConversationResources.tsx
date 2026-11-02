@@ -203,7 +203,8 @@ export function ConversationInlineResource(
       <button
         type="button"
         className="session-inline-resource"
-        data-icon-tooltip={title}
+        data-file-path={props.resource.kind === 'file' ? props.resource.projectRelativePath : undefined}
+        data-icon-tooltip={props.resource.kind === 'file' ? label : title}
         aria-label={`${label}${location ? ` ${location}` : ''}`}
         aria-busy={busy || undefined}
         data-error={Boolean(error) || undefined}
@@ -497,7 +498,7 @@ function ConversationResourceCard(
 
   return (
     <article className="session-resource-card" data-resource-kind={props.resource.kind} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
-      <button type="button" className="session-resource-card-main" data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
+      <button type="button" className="session-resource-card-main" data-file-name={props.resource.displayName} data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
         <span className="session-resource-card-icon">
           <ResourceIcon resource={props.resource} />
         </span>

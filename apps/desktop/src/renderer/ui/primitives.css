@@ -152,6 +152,35 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 }
 
+/* 文件复制菜单沿用应用色板，使用顶层浮层避免被文件树和独立弹窗裁切。 */
+.zeus-file-copy-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  min-width: 150px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 7px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+}
+.zeus-file-copy-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.zeus-file-copy-menu button:is(:hover, :focus-visible) {
+  background: var(--zeus-interaction-hover);
+  outline: 2px solid var(--zeus-product-line);
+}
+
 @keyframes zeus-panel-focus-enter {
   from {
     opacity: 0.58;

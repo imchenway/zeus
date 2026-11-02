@@ -70,6 +70,8 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     sync();
     /** 工具提示复用主应用管理器，并监听子窗口自己的键盘与鼠标事件。 */
     const disposeTooltips = installIconTooltips(targetDocument);
+    /** 门户事件来自子文档，文件复制必须在同一文档接收。 */
+    const disposeFilePathActions = installFilePathActions(targetDocument);
     /** 同源系统窗口使用自己的原生编辑与撤销历史。 */
     const disposeListInput = installMarkdownListInput(targetDocument);
     /** 动态主题与懒加载组件样式继续使用原应用规则。 */
@@ -90,6 +92,7 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       disposeTooltips();
+      disposeFilePathActions();
       disposeListInput();
       unsubscribe();
       systemWindowDocuments.delete(targetDocument);
@@ -113,3 +116,4 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     );
   return target ? <WindowDocumentContext.Provider value={target}>{props.children}</WindowDocumentContext.Provider> : null;
 }
+import { installFilePathActions } from './filePathActions.js';

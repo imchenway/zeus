@@ -1436,7 +1436,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
   if (!props.node.stats) {
     return (
       <details className="project-git-commit-file-folder" open>
-        <summary style={{ paddingLeft: `${props.depth * 12 + 5}px` }}>
+        <summary data-file-path={props.node.path} style={{ paddingLeft: `${props.depth * 12 + 5}px` }}>
           <CaretRight aria-hidden="true" />
           <Folder weight="regular" aria-hidden="true" />
           <span>{props.node.name}</span>
@@ -1450,13 +1450,14 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
   return (
     <button
       type="button"
+      data-file-path={props.node.path}
       className={props.node.path === props.selectedPath ? 'is-current' : ''}
       style={{ paddingLeft: `${props.depth * 12 + 7}px` }}
       onClick={() => props.onSelect(props.node.path)}
       onDoubleClick={() => props.onOpen(props.node.path)}
     >
       <FileTypeIcon name={props.node.path} />
-      <span data-icon-tooltip={props.node.path} data-file-status={props.node.stats.changeType}>
+      <span data-icon-tooltip={props.node.name} data-file-status={props.node.stats.changeType}>
         {props.node.name}
       </span>
       <em>+{props.node.stats.additions}</em>

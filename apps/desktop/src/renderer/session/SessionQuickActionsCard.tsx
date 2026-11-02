@@ -98,9 +98,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   /** 审查入口核对原工作区身份，不借用其他仓库。 */
   const workspace = summary?.workspace ?? null;
   const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
-  /** 首次摘要到达前使用最近命令事实作为目录展示。 */
-  const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
-  const cwd = summary?.cwd ?? executionContext?.cwd ?? null;
+  /** 首次摘要到达前显示会话根目录；单次命令进入子仓库不改变工作区身份。 */
+  const executionContext = props.state.snapshot?.executionContext;
+  /** 执行上下文保留只读审查、冲突处理等精确范围；Git 聚合摘要只补充尚未加载的目录。 */
+  const cwd = executionContext?.cwd ?? summary?.cwd ?? null;
   /** 普通目录有多个仓库时不把首仓分支冒充整个项目分支。 */
   const branch = directWorkspace && (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
   /** 摘要覆盖同一交付范围的全部活动仓库。 */

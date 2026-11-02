@@ -2,7 +2,7 @@ import { MotionPresence } from '../toolPageHost.js';
 import { formatVisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useState, type FormEvent } from 'react';
-import { formatAutomationOnceInput, parseAutomationOnceInput } from '@zeus/shared';
+import { formatAutomationOnceInput, parseAutomationOnceInput } from '../toolPageHost.js';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';

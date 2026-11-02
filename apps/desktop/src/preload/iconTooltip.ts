@@ -105,6 +105,10 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
   /** 提示跟随当前模态或菜单，并使用顶层浮层避免裁切。 */
   function show(trigger: HTMLElement, focused?: HTMLElement): void {
     if (!trigger.getAttribute('data-icon-tooltip')) return;
+    if (labelFullyVisible(trigger)) {
+      hide();
+      return;
+    }
     cancelClose();
     /** 文本可能位于按钮内部；键盘入口始终关联实际获得焦点的控件。 */
     const control = focused ?? trigger.closest<HTMLElement>('button, input, select, [tabindex]') ?? trigger.querySelector<HTMLElement>('button, input, select, [tabindex]');
@@ -125,6 +129,40 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
     update();
     observer.observe(root, { childList: true, subtree: true });
     observer.observe(trigger, { attributes: true, attributeFilter: ['data-icon-tooltip'] });
+  }
+
+  /** 已完整展示的同文提示没有补充信息；图标说明和被裁切的文字继续保留。 */
+  function labelFullyVisible(trigger: HTMLElement): boolean {
+    /** 忽略布局换行与空白，不改变提示的实际文字。 */
+    const label = trigger.getAttribute('data-icon-tooltip')?.replace(/\s+/gu, ' ').trim();
+    if (!label) return false;
+    /** 同时检查完整标签与文字节点，兼容高亮片段、状态图标和计数。 */
+    const walker = document.createTreeWalker(trigger, window.NodeFilter.SHOW_ELEMENT | window.NodeFilter.SHOW_TEXT);
+    for (let node: Node | null = trigger; node; node = walker.nextNode()) {
+      if (node.textContent?.replace(/\s+/gu, ' ').trim() !== label) continue;
+      // 以实际文字容器判断裁切，不能把图标旁的读屏专用标签当成可见标题。
+      if (node instanceof HTMLElement && [...node.children].some((child) => child.textContent?.replace(/\s+/gu, ' ').trim() === label)) continue;
+      /** Range 保留被 ellipsis 裁掉的文字宽度，用于判断全文是否可见。 */
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const bounds = range.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) continue;
+      let visible = true;
+      for (let parent = node instanceof HTMLElement ? node : node.parentElement; parent; parent = parent.parentElement) {
+        const style = window.getComputedStyle(parent);
+        const rect = parent.getBoundingClientRect();
+        if (
+          style.visibility !== 'visible' ||
+          (style.overflowX !== 'visible' && (bounds.left < rect.left - 1 || bounds.right > rect.right + 1)) ||
+          (style.overflowY !== 'visible' && (bounds.top < rect.top - 1 || bounds.bottom > rect.bottom + 1))
+        ) {
+          visible = false;
+          break;
+        }
+      }
+      if (visible) return true;
+    }
+    return false;
   }
 
   /** 事件路径支持 SVG 和 ShadowRoot 内动态生成的控件。 */

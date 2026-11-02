@@ -8,6 +8,7 @@ import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
 import { installIconTooltips } from '../preload/iconTooltip.js';
+import { installFilePathActions } from './ui/filePathActions.js';
 import { installMarkdownListInput } from '../preload/markdownListInput.js';
 // 启动失败可能早于工作台模块加载，恢复页样式必须随入口就绪。
 import './styles.css';
@@ -19,6 +20,9 @@ initializeNativeCloseLayerRouting();
 /** 所有独立窗口共享提示机制；页面退出时移除监听。 */
 const disposeIconTooltips = installIconTooltips(document);
 window.addEventListener('pagehide', disposeIconTooltips, { once: true });
+/** 主页面和独立文件窗口共用文件名与路径复制。 */
+const disposeFilePathActions = installFilePathActions(document);
+window.addEventListener('pagehide', disposeFilePathActions, { once: true });
 /** 主窗口与各独立窗口统一支持多行列表编辑，随文档关闭释放。 */
 const disposeMarkdownListInput = installMarkdownListInput(document);
 window.addEventListener('pagehide', disposeMarkdownListInput, { once: true });

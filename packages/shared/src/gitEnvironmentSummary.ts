@@ -28,7 +28,7 @@ export interface GitEnvironmentWorkspace {
 export interface GitEnvironmentSummary {
   /** 已核验的项目身份。 */
   projectId: string;
-  /** 当前实际读取的工作目录。 */
+  /** 项目、会话或任务环境的根目录，不以其中某个 Git 仓库目录代替。 */
   cwd: string;
   /** 当前工作树分支，多仓普通目录由界面显示仓库数量。 */
   branch: string | null;

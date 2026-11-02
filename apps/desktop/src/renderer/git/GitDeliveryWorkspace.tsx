@@ -60,6 +60,8 @@ export interface BatchDeliveryResult {
 
 /** 交付视图只消费显示事实，不要求普通目录伪造任务工作区。 */
 export interface DeliveryRepositoryGroup {
+  /** 文件复制沿用实际工作目录；缺省仍提供原始相对路径。 */
+  localPath?: string;
   workspace: Pick<TaskWorkspaceIndexSnapshot, 'id' | 'branchName' | 'state' | 'repositoryName' | 'repositoryRelativePath'>;
   detail: Pick<TaskWorkspaceSnapshot, 'review'> | undefined;
   files: DeliveryFile[];
@@ -198,7 +200,7 @@ export function DeliveryRepositoryFileTree(props: {
                 /** 本仓库选中路径供目录与文件共用。 */
                 const selectedPaths = new Set(props.selectedPathsByWorkspace[workspaceId] ?? []);
                 return (
-                  <details open key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
+                  <details open data-file-root={group.localPath} key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
                     <summary>
                       <label>
                         <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
@@ -342,7 +344,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
           <li key={path}>
             {directory ? (
               <details open className="task-git-delivery-directory">
-                <summary data-icon-tooltip={path}>
+                <summary data-file-path={path} data-icon-tooltip={name.slice(0, -1)}>
                   {checkbox}
                   <DeliveryEntryIcon />
                   <span>{name.slice(0, -1)}</span>
@@ -355,7 +357,8 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                 {checkbox}
                 <button
                   type="button"
-                  data-icon-tooltip={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
+                  data-file-path={path}
+                  data-icon-tooltip={name}
                   aria-label={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
                   aria-pressed={props.selectedFile === path}
                   onClick={() => props.onSelect(path)}
@@ -548,7 +551,7 @@ export function GitDeliveryWorkspace(props: {
         <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={25} max={65} />
         <main className="task-git-review-main task-git-delivery-diff-main">
           <header className="task-git-review-pane-title">
-            <strong data-icon-tooltip={props.selectedFile} data-file-status={props.fileStatus}>
+            <strong tabIndex={0} data-file-path={props.selectedFile || undefined} data-icon-tooltip={props.diffTitle} data-file-status={props.fileStatus}>
               {props.diffTitle}
             </strong>
           </header>

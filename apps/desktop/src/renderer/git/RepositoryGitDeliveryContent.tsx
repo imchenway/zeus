@@ -1,3 +1,7 @@
+import { displayedFilePath } from '../ui/filePathActions.js';
+import { PushDialog } from './GitPushDialog.js';
+import { defaultPushTarget } from './GitRepositoryControls.js';
+import type { PushSelection, OperationTone } from './gitWorkbenchTypes.js';
 import { GitDeliveryRunControl, type GitDeliveryClient } from './GitDeliveryRunControl.js';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
@@ -24,7 +28,10 @@ import {
 } from './GitDeliveryWorkspace.js';
 
 /** 项目与会话仓库共用交付读取和写入能力，不要求项目伪造会话身份。 */
-export type RepositoryGitDeliveryClient = Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels'>;
+export type RepositoryGitDeliveryClient = Pick<
+  DashboardClient,
+  'loadProjectGitWorkbench' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectGitPushPreview' | 'loadProjectGitCommit'
+>;
 
 /** 展示范围与操作权限来自入口已有的项目、仓库或会话。 */
 interface RepositoryGitDeliveryContentProps {
@@ -204,6 +211,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => ({ path: file.path, status: file.category, additions: 0, deletions: 0 }));
         return {
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
+          localPath: repository.localPath ?? displayedFilePath(repository.relativePath, props.project.localPath),
           detail: undefined,
           files,
           loadState: scope === 'committed' ? (comparisonErrors[repository.id] ? 'error' : comparisonLoading ? 'loading' : undefined) : undefined,
@@ -214,7 +222,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             : ((scope === 'committed' ? comparisonErrors[repository.id] : undefined) ?? (repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
         };
       }),
-    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh],
+    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh, props.project.localPath],
   );
 
   useEffect(() => {
@@ -252,6 +260,45 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       repository.snapshot.branch !== mergeBranch &&
       repository.snapshot.localBranches.includes(mergeBranch),
   );
+  /** 推送沿用 Git 工作区弹窗，入口只初始化当前勾选范围。 */
+  const [pushSelections, setPushSelections] = useState<PushSelection[] | null>(null);
+  /** 逐仓结果保留在推送弹窗，失败后可审阅原目标。 */
+  const [pushResults, setPushResults] = useState<Array<{ repositoryId: string; repositoryName: string; tone: OperationTone; message: string }>>([]);
+
+  /** 共享弹窗确认后才执行推送，权限仍来自当前项目或绑定会话客户端。 */
+  async function pushSelected(selections: PushSelection[], forceWithLease: boolean, pushTags: boolean): Promise<void> {
+    if (busyRef.current) return;
+    busyRef.current = 'push';
+    setBusyAction('push');
+    const results: typeof pushResults = [];
+    try {
+      for (const selection of selections) {
+        const repository = snapshot?.repositories.find((item) => item.id === selection.repositoryId);
+        if (!repository) throw new Error(zh ? '推送仓库不在当前交付范围内。' : 'The repository is outside this delivery scope.');
+        try {
+          await props.client.executeProjectGitAction(props.project.id, repository.id, {
+            type: 'push',
+            remote: selection.remote,
+            sourceBranch: selection.sourceBranch,
+            targetBranch: selection.targetBranch,
+            setUpstream: selection.setUpstream,
+            forceWithLease,
+            pushAllTags: pushTags,
+          });
+          results.push({ repositoryId: repository.id, repositoryName: `${repository.name} · ${selection.sourceBranch}`, tone: 'success', message: `${zh ? '已推送到' : 'Pushed to'} ${selection.remote}/${selection.targetBranch}` });
+        } catch (reason) {
+          results.push({ repositoryId: repository.id, repositoryName: `${repository.name} · ${selection.sourceBranch}`, tone: 'error', message: formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en') });
+        }
+      }
+      setPushResults(results);
+      notifyProjectGitChanged(props.project.id);
+      await refresh();
+    } finally {
+      busyRef.current = null;
+      setBusyAction(null);
+    }
+  }
+
   /** 未配置远端或没有待推送提交时，界面不能宣称可以推送。 */
   const pushCandidates = selected.filter(
     (repository) =>
@@ -284,7 +331,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   }
 
   /** 批量操作复用现有命令入口，分别显示成功、冲突和失败。 */
-  async function execute(action: 'commit' | 'merge' | 'push', repositories: ProjectGitRepositoryWorkbenchItem[]): Promise<void> {
+  async function execute(action: 'commit' | 'merge', repositories: ProjectGitRepositoryWorkbenchItem[]): Promise<void> {
     if (busyRef.current) return;
     busyRef.current = action;
     setBusyAction(action);
@@ -298,15 +345,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             const input: ProjectGitAction =
               action === 'commit'
                 ? { type: 'commit', message, paths: selection[repository.id] ?? [], expectedBranch: repository.snapshot.branch, expectedHeadSha: repository.snapshot.headSha }
-                : action === 'merge'
-                  ? createProjectGitMergeAction(repository, mergeBranch)
-                  : {
-                      type: 'push',
-                      remote: repository.snapshot.upstream?.split('/')[0] ?? repository.snapshot.remotes[0],
-                      sourceBranch: repository.snapshot.branch,
-                      targetBranch: repository.snapshot.upstream?.split('/').slice(1).join('/') || repository.snapshot.branch,
-                      setUpstream: !repository.snapshot.upstream,
-                    };
+                : createProjectGitMergeAction(repository, mergeBranch);
             /** 接口继续验证真实仓库范围及已有命令幂等身份。 */
             const response = await props.client.executeProjectGitAction(props.project.id, repository.id, input);
             return {
@@ -533,13 +572,31 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                   ) : undefined
                 }
                 pushCount={pushCandidates.length}
-                onPush={() => void execute('push', pushCandidates)}
-                pushFeedback={feedback?.action === 'push' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
+                onPush={() => {
+                  setPushResults([]);
+                  setPushSelections(pushCandidates.map((repository) => ({ repositoryId: repository.id, sourceBranch: repository.snapshot.branch, ...defaultPushTarget(repository), setUpstream: !repository.snapshot.upstream })));
+                }}
               />
             }
           />
         )}
       </div>
+      {pushSelections && snapshot ? (
+        <PushDialog
+          open
+          zh={zh}
+          projectId={props.project.id}
+          client={props.client}
+          revision={snapshot.refreshedAt}
+          repositories={snapshot.repositories}
+          selectedRepository={snapshot.repositories.find((repository) => repository.id === focus.repositoryId) ?? null}
+          initialSelections={pushSelections}
+          busy={busyAction === 'push' ? { repositoryId: '', action: 'push' } : null}
+          results={pushResults}
+          onClose={() => setPushSelections(null)}
+          onPush={pushSelected}
+        />
+      ) : null}
     </>
   );
   return (

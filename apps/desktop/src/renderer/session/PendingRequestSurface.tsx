@@ -553,7 +553,7 @@ function FileApprovalTargetList(props: { paths: readonly string[]; moreLabel: (c
           const parts = approvalPathParts(path);
           return (
             <li key={path}>
-              <code data-icon-tooltip={path}>
+              <code tabIndex={0} data-file-path={path} data-icon-tooltip={path}>
                 <span className="session-file-approval-directory">{parts.directory}</span>
                 <span className="session-file-approval-name">{parts.name}</span>
               </code>

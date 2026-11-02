@@ -1245,10 +1245,11 @@ async function createWindow(): Promise<void> {
       minWidth: 640,
       minHeight: 560,
       title: desktopDisplayName(),
-      // macOS 保留交通灯与玻璃材质；Windows 采用系统标题栏，复用最大化、贴靠和辅助功能。
+      // 透明窗口不支持可靠缩放；主工作区使用不透明底板，macOS 保留交通灯，Windows 保留系统标题栏。
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#f5f5f7',
       ...(process.platform === 'darwin'
-        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 }, transparent: true, vibrancy: 'under-window' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000' }
-        : { titleBarStyle: 'default' as const, backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#f5f5f7' }),
+        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
+        : { titleBarStyle: 'default' as const }),
       show: false,
       webPreferences: {
         preload: join(desktopRoot(), 'dist/preload/index.cjs'),
