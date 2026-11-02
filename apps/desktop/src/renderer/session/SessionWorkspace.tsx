@@ -2343,6 +2343,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.target instanceof Element && event.target.closest('.session-workspace-root') !== event.currentTarget) return;
     if (event.key !== 'Escape') return;
+    // 原生屏幕控制详情先处理 Esc，不能同时关闭工作面或触发会话中断。
+    if (event.currentTarget.querySelector('.session-computer-preview-info:popover-open')) return;
     // 终端搜索先消费 Escape，不能触发工作区关闭或会话操作。
     if (event.target instanceof Element && event.target.closest('[data-terminal-search-open="true"]')) return;
     // 格式预览先退出阅读状态，避免编辑草稿时触发中断确认。

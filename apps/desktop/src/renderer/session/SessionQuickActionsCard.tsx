@@ -236,6 +236,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     };
     const closeFromKeyboard = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
+      // 原生屏幕控制详情先处理 Esc，保留下面的环境信息卡。
+      if (cardRef.current?.querySelector('.session-computer-preview-info:popover-open')) return;
       event.preventDefault();
       event.stopPropagation();
       setOpen(false);

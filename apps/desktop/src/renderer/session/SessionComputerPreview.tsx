@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ZeusComputerPreview } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -6,10 +6,12 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { HandPalmIcon as HandPalm } from '@phosphor-icons/react/dist/csr/HandPalm';
 import { PreviewImage } from '../code/FilePreview.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { MotionPresence } from '../ui/MotionPresence.js';
+import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 
 /** 会话环境信息下展示最近一次观察，更新不触发整个会话重新渲染。 */
 export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean }) {
+  /** 每个预览独立关联原生详情浮层，浏览器以触发按钮作为定位锚点。 */
+  const infoId = useId();
   /** 仅保留本会话最新的有界缩略图。 */
   const [preview, setPreview] = useState<ZeusComputerPreview | null>(null);
   /** 完整预览固定用户点击时的画面，后续观察不会替换正在审阅的图片。 */
@@ -160,22 +162,20 @@ export function SessionComputerPreview(props: { conversationId: string; language
               >
                 <X aria-hidden="true" />
               </button>
-              <details className="session-computer-preview-info">
-                <summary aria-label={zh ? '屏幕控制详情' : 'Screen control details'} data-icon-tooltip={zh ? '屏幕控制详情' : 'Screen control details'}>
-                  <HandPalm aria-hidden="true" />
-                </summary>
-                <div>
-                  <strong>{preview.appName}</strong>
-                  <span>{preview.windowTitle || preview.appName}</span>
-                  <span>
-                    {status} · {preview.action}
-                  </span>
-                  {preview.capturedAt ? <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time> : null}
-                  {errorMessage ? <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} summary={zh ? '未能停止屏幕控制。' : 'Screen control could not be stopped.'} /> : null}
-                  {/* 失败诊断按需打开；用户接管等正常说明保留原意，不误报成错误。 */}
-                  {preview.detail ? preview.state === 'error' ? <VisibleApplicationError error={preview.detail} language={zh ? 'zh-CN' : 'en'} summary={zh ? '控制说明' : 'Control information'} /> : <span>{preview.detail}</span> : null}
-                </div>
-              </details>
+              <button type="button" popoverTarget={infoId} aria-haspopup="dialog" aria-label={zh ? '屏幕控制详情' : 'Screen control details'} data-icon-tooltip={zh ? '屏幕控制详情' : 'Screen control details'}>
+                <HandPalm aria-hidden="true" />
+              </button>
+              <PopoverSurface id={infoId} popover="auto" role="dialog" aria-label={zh ? '屏幕控制详情' : 'Screen control details'} className="session-computer-preview-info">
+                <strong>{preview.appName}</strong>
+                <span>{preview.windowTitle || preview.appName}</span>
+                <span>
+                  {status} · {preview.action}
+                </span>
+                {preview.capturedAt ? <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time> : null}
+                {errorMessage ? <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} summary={zh ? '未能停止屏幕控制。' : 'Screen control could not be stopped.'} /> : null}
+                {/* 失败诊断按需打开；用户接管等正常说明保留原意，不误报成错误。 */}
+                {preview.detail ? preview.state === 'error' ? <VisibleApplicationError error={preview.detail} language={zh ? 'zh-CN' : 'en'} summary={zh ? '控制说明' : 'Control information'} /> : <span>{preview.detail}</span> : null}
+              </PopoverSurface>
             </div>
           </div>
           <p className="visually-hidden" role="status">

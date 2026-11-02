@@ -64,11 +64,10 @@
   z-index: 3;
   transition: opacity 160ms ease;
 }
-.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]), :not(:has(img))) .session-computer-preview-controls {
+.session-computer-preview-image:is(:hover, :focus-within, :has(:popover-open), :not(:has(img))) .session-computer-preview-controls {
   opacity: 1;
 }
-.session-computer-preview-controls > button,
-.session-computer-preview-info > summary {
+.session-computer-preview-controls > button {
   align-items: center;
   display: flex;
   justify-content: center;
@@ -84,9 +83,6 @@
   padding: 0;
   list-style: none;
 }
-.session-computer-preview-info > summary::-webkit-details-marker {
-  display: none;
-}
 /* 操作仍可点击，空白操作行不阻挡用户打开完整画面。 */
 .session-computer-preview-controls > button,
 .session-computer-preview-info {
@@ -96,8 +92,7 @@
   inline-size: 16px;
   block-size: 16px;
 }
-.session-computer-preview-controls > button:hover,
-.session-computer-preview-info > summary:hover {
+.session-computer-preview-controls > button:hover {
   background: var(--session-control-hover);
 }
 /* 焦点环和禁用反馈不能被悬浮遮罩隐藏。 */
@@ -109,23 +104,34 @@
   cursor: default;
   opacity: 0.5;
 }
-/* 状态详情在画面内展开，不暴露内部进程编号。 */
-.session-computer-preview-info > div {
-  position: absolute;
-  inset: 34px 0 auto auto;
-  inline-size: min(240px, 100%);
-  max-block-size: 200px;
+/* 原生顶层详情不增加侧栏滚动范围，靠近窗口边缘时向可用方向展开。 */
+.session-computer-preview-info {
+  position: fixed;
+  inset: auto;
+  position-area: bottom span-left;
+  position-try-fallbacks:
+    flip-block,
+    flip-inline,
+    flip-block flip-inline;
+  margin: 8px 0;
+  inline-size: min(240px, calc(100vw - 32px));
+  max-block-size: min(200px, calc(100dvh - 32px));
   overflow: auto;
-  display: grid;
+  overscroll-behavior: contain;
   gap: 6px;
   box-sizing: border-box;
   padding: 12px;
   background: var(--session-canvas);
+  color: var(--session-text);
   border: 1px solid var(--session-line);
   border-radius: 12px;
   box-shadow: 0 8px 24px var(--session-shadow);
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+/* 仅在打开时布局，保留浏览器对关闭浮层的隐藏规则。 */
+.session-computer-preview-info:popover-open {
+  display: grid;
 }
 @media (hover: none) {
   /* 触屏没有悬停，始终展示停止和详情操作。 */
