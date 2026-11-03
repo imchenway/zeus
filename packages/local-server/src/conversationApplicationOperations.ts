@@ -2290,9 +2290,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
         !entry.id.trim() ||
         entry.id.length > 200 ||
         typeof entry.body !== 'string' ||
-        !entry.body.trim() ||
+        // 文件选区可以只引用原文；空评论且没有原文仍拒绝发送。
+        (!entry.body.trim() && !(typeof position?.selectedText === 'string' && position.selectedText.trim())) ||
         entry.body.length > 20_000 ||
         !position ||
+        (position.selectedText !== undefined && (typeof position.selectedText !== 'string' || position.selectedText.length > 20_000)) ||
         typeof position.path !== 'string' ||
         !position.path.trim() ||
         position.path.length > 20_000 ||

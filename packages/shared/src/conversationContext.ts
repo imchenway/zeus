@@ -31,6 +31,7 @@ export interface ConversationCodeCommentPosition {
 
 export interface ConversationCodeComment {
   id: string;
+  /** 用户评论；仅引用文件原文时为空，position.selectedText 保留引用。 */
   body: string;
   position: ConversationCodeCommentPosition;
   diffHunk?: string;

@@ -325,7 +325,8 @@ export class GitEnvironmentSummaryService {
             summary.deletions += diff.deletedLines;
           }
         }
-        send('git.summary.updated', { summary });
+        /** 文件内容或路径变化也要通知交付页，不能只按文件数及增删行数去重。 */
+        send('git.summary.updated', { summary, revisions: sources.map((source) => [source.id, repositories.get(source.id)?.loadedRevision]) });
         failureCount = 0;
       } catch (error) {
         send('git.summary.error', { message: error instanceof Error ? error.message : 'Git 状态读取失败。' });

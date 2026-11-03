@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FileSelectionQuestionContext } from './sideQuestionContext.js';
+import { SelectionQuestionActions } from './SelectionQuestionActions.js';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
 import type { EditorView } from '@codemirror/view';
@@ -75,8 +77,10 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
   const zh = props.locale === 'zh-CN';
   /** 单文件预览缺省属于变更后的右侧。 */
   const side = props.side ?? 'right';
-  /** 监听器只依赖评论权限，避免会话刷新更换回调时丢失正在拖选的状态。 */
-  const commentsEnabled = Boolean(props.onCommentsChange);
+  /** 从当前会话取得侧栏入口，独立窗口不猜测目标会话。 */
+  const onAskInSidebar = useContext(FileSelectionQuestionContext);
+  /** 评论权限与侧栏提问相互独立，只读文件也可以引用原文。 */
+  const selectionEnabled = Boolean(props.onCommentsChange || onAskInSidebar);
   /** 当前只读编辑器提供文档偏移和视口坐标。 */
   const [view, setView] = useState<EditorView | null>(null);
   /** 拖选后尚未确认创建的评论锚点。 */
@@ -133,7 +137,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
   }, [candidate, view]);
 
   useEffect(() => {
-    if (!view || !commentsEnabled) return;
+    if (!view || !selectionEnabled) return;
     /** 只有从当前代码正文开始的拖选才生成评论入口。 */
     let selecting = false;
     /** 开始新选区时关闭旧入口，评论浮层上的操作不改变代码选区。 */
@@ -178,7 +182,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
       view.dom.ownerDocument.removeEventListener('pointerdown', handlePointerDown, true);
       view.dom.ownerDocument.removeEventListener('pointerup', handlePointerUp, true);
     };
-  }, [commentsEnabled, props.path, side, view]);
+  }, [selectionEnabled, props.path, side, view]);
 
   useEffect(() => {
     if (!view) return;
@@ -261,7 +265,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
     : [];
   void layoutRevision;
   /** 浮层离开代码滚动区但保留应用主题祖先，避免裁剪和样式丢失。 */
-  const portalRoot = view?.dom.closest<HTMLElement>('.macos-ai-app.zeus-shell') ?? view?.dom.ownerDocument.body ?? document.body;
+  const portalRoot = view?.dom.closest<HTMLElement>('[aria-modal="true"]') ?? view?.dom.closest<HTMLElement>('.macos-ai-app.zeus-shell') ?? view?.dom.ownerDocument.body ?? document.body;
 
   return (
     <>
@@ -333,15 +337,26 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
                 role="toolbar"
                 aria-label={zh ? '选中文字操作' : 'Selected text actions'}
               >
-                <button
-                  type="button"
-                  aria-label={zh ? '评论选中文字' : 'Comment on selected text'}
-                  data-icon-tooltip={zh ? '评论' : 'Comment'}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => addSelectionComment(candidate.position)}
-                >
-                  <ChatTeardropDots aria-hidden="true" weight="regular" />
-                </button>
+                {props.onCommentsChange ? (
+                  <button
+                    type="button"
+                    aria-label={zh ? '评论选中文字' : 'Comment on selected text'}
+                    data-icon-tooltip={zh ? '评论' : 'Comment'}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => addSelectionComment(candidate.position)}
+                  >
+                    <ChatTeardropDots aria-hidden="true" weight="regular" />
+                  </button>
+                ) : null}
+                {onAskInSidebar ? (
+                  <SelectionQuestionActions
+                    language={props.locale}
+                    onAsk={(sendImmediately) => {
+                      setCandidate(null);
+                      onAskInSidebar(candidate.position, sendImmediately);
+                    }}
+                  />
+                ) : null}
               </PopoverSurface>
             ) : null}
           </MotionPresence>

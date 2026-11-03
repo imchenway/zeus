@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
-import { defaultGitDeliverySettings, defaultTaskManagementStatusLabels, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { GitDeliveryCombinationContext } from './gitDeliverySettings.js';
+import { defaultTaskManagementStatusLabels, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
-import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
@@ -29,24 +28,7 @@ export type GitDeliveryClient = Pick<
   | 'subscribeEvents'
 >;
 
-/** 本机项目偏好只保存操作选择，不保存文件或分支。 */
-export function readGitDeliverySettings(projectId: string): GitDeliverySettings {
-  try {
-    const value = JSON.parse(localStorage.getItem(`zeus.git-delivery.settings:${projectId}`) ?? 'null') as Partial<GitDeliverySettings> | null;
-    if (
-      !value ||
-      ['commit', 'merge', 'push', 'resolveConflicts'].some((key) => typeof value[key as 'commit'] !== 'boolean') ||
-      (value.generateCommitMessage !== undefined && typeof value.generateCommitMessage !== 'boolean') ||
-      !['auto', 'full-access'].includes(value.permissionMode ?? '') ||
-      (value.skillId !== null && typeof value.skillId !== 'string') ||
-      (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')
-    )
-      return { ...defaultGitDeliverySettings };
-    return { ...defaultGitDeliverySettings, ...value };
-  } catch {
-    return { ...defaultGitDeliverySettings };
-  }
-}
+export { readGitDeliverySettings } from './gitDeliverySettings.js';
 
 /** 固定步骤的用户文案同时用于摘要和运行进度。 */
 function actionLabel(action: GitDeliveryStep['action'], zh: boolean): string {
@@ -68,8 +50,10 @@ export function GitDeliveryRunControl(props: {
   /** 只有服务端持久接纳后才关闭原窗口。 */
   onAccepted(): void;
 }) {
-  /** 已保存设置与表单草稿分离。 */
-  const [settings, setSettings] = useState(() => readGitDeliverySettings(props.projectId));
+  /** 功能区与底部按钮读取同一份组合，避免勾选和执行不一致。 */
+  const combination = useContext(GitDeliveryCombinationContext);
+  if (!combination) throw new Error('代码交付运行按钮必须位于交付操作栏。');
+  const { settings, setSettings, settingsOpen, setSettingsOpen, setRunning } = combination;
   /** 设置弹窗草稿。 */
   const [draft, setDraft] = useState<GitDeliverySettings | null>(null);
   /** 项目当前真实状态定义。 */
@@ -140,16 +124,33 @@ export function GitDeliveryRunControl(props: {
     };
   }, [props.client, props.projectId, scopeId, props.zh]);
 
-  /** 设置打开时读取项目状态，不用全局默认代替真实定义。 */
-  async function openSettings(): Promise<void> {
+  /** 功能区的设置按钮只在打开时读取当前项目状态。 */
+  useEffect(() => {
+    if (!settingsOpen) {
+      setDraft(null);
+      return;
+    }
+    let active = true;
     setError(null);
     setDraft({ ...settings });
-    try {
-      setStatuses((await props.client.loadGitDeliveryOptions(props.projectId)).statuses);
-    } catch (reason) {
-      setError(reason);
-    }
-  }
+    void props.client
+      .loadGitDeliveryOptions(props.projectId)
+      .then((result) => {
+        if (active) setStatuses(result.statuses);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason);
+      });
+    return () => {
+      active = false;
+    };
+  }, [settingsOpen, props.client, props.projectId]);
+
+  /** 接纳与后台运行期间，功能旁的复选框不能改变正在执行的组合。 */
+  useEffect(() => {
+    setRunning(busy || running);
+    return () => setRunning(false);
+  }, [busy, running, setRunning]);
 
   /** 将固定快照交给后台；成功后不等待任何 Git 或 AI 步骤。 */
   async function start(): Promise<void> {
@@ -171,8 +172,18 @@ export function GitDeliveryRunControl(props: {
         }
         request.current = { json: JSON.stringify(input), sourceJson, key: crypto.randomUUID() };
       }
-      await props.client.startGitDeliveryRun(props.projectId, JSON.parse(request.current.json) as GitDeliveryInput, request.current.key);
+      /** 接纳结果立即进入本地运行列表，偏好写入失败也不会允许重复启动。 */
+      const acceptedRun = await props.client.startGitDeliveryRun(props.projectId, JSON.parse(request.current.json) as GitDeliveryInput, request.current.key);
+      setRuns((current) => [acceptedRun, ...current.filter((run) => run.id !== acceptedRun.id)]);
+      /** 只记录后台实际接纳的固定组合，失败请求和临时勾选不覆盖上次运行。 */
+      const acceptedSettings = (JSON.parse(request.current.json) as GitDeliveryInput).settings;
       request.current = null;
+      try {
+        localStorage.setItem(`zeus.git-delivery.settings:${props.projectId}`, JSON.stringify(acceptedSettings));
+      } catch {
+        setError(props.zh ? '组合已开始运行，但项目偏好保存失败。' : 'The combination started, but its project preference could not be saved.');
+        return;
+      }
       props.onAccepted();
     } catch (reason) {
       setError(reason);
@@ -264,9 +275,6 @@ export function GitDeliveryRunControl(props: {
         >
           {props.zh ? '全部仓库：' : 'All repositories: '}
           {summary || (props.zh ? '执行交付' : 'Run delivery')}
-        </Button>
-        <Button variant="secondary" size="compact" disabled={busy} aria-label={props.zh ? '组合操作设置' : 'Combination settings'} data-icon-tooltip={props.zh ? '组合操作设置' : 'Combination settings'} onClick={() => void openSettings()}>
-          <GearSixIcon aria-hidden="true" />
         </Button>
       </div>
       {error ? (
@@ -362,45 +370,21 @@ export function GitDeliveryRunControl(props: {
       {draft ? (
         <FormDialog
           title={props.zh ? '组合操作设置' : 'Combination settings'}
-          description={props.zh ? '按项目保存。各仓库独立执行，只有全部成功才更新任务状态。' : 'Saved for this project. Repositories run independently; task status changes only after all succeed.'}
           zh={props.zh}
           busy={busy}
           submitLabel={props.zh ? '保存' : 'Save'}
-          submitDisabled={!draft.commit && !draft.merge && !draft.push}
-          onClose={() => setDraft(null)}
+          onClose={() => {
+            setDraft(null);
+            setSettingsOpen(false);
+          }}
           onSubmit={(event) => {
             event.preventDefault();
-            try {
-              localStorage.setItem(`zeus.git-delivery.settings:${props.projectId}`, JSON.stringify(draft));
-              setSettings(draft);
-              setDraft(null);
-            } catch {
-              setError(props.zh ? '设置保存失败，请重试。' : 'Could not save settings.');
-            }
+            setSettings(draft);
+            setDraft(null);
+            setSettingsOpen(false);
           }}
         >
           {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
-          {(['commit', 'merge', 'push'] as const).map((action, index) => (
-            <div key={action} className="git-delivery-operation-row">
-              <label className="git-delivery-checkbox">
-                <input type="checkbox" checked={draft[action]} onChange={(event) => setDraft({ ...draft, [action]: event.target.checked })} />
-                {index + 1}. {actionLabel(action, props.zh)}
-              </label>
-              {action === 'commit' ? (
-                <>
-                  <label className="git-delivery-checkbox" aria-disabled={!draft.commit}>
-                    <input type="checkbox" checked={draft.generateCommitMessage} disabled={!draft.commit || busy} onChange={(event) => setDraft({ ...draft, generateCommitMessage: event.target.checked })} />
-                    {props.zh ? 'AI 生成提交信息' : 'Generate commit messages with AI'}
-                  </label>
-                  <GitCommitGenerationSettingsButton client={props.client} projectId={props.projectId} zh={props.zh} disabled={busy} />
-                </>
-              ) : null}
-            </div>
-          ))}
-          <label className="git-delivery-checkbox">
-            <input type="checkbox" checked={draft.resolveConflicts} onChange={(event) => setDraft({ ...draft, resolveConflicts: event.target.checked })} />
-            {props.zh ? '出现合入冲突时自动交给 AI，成功后继续' : 'Automatically resolve merge conflicts with AI and continue'}
-          </label>
           {draft.resolveConflicts ? (
             <>
               <ConflictAiPermissions zh={props.zh} value={draft.permissionMode} disabled={busy} onChange={(value) => setDraft({ ...draft, permissionMode: value })} />

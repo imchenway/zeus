@@ -1,3 +1,4 @@
+import { FileSelectionQuestionContext, sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
 import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
 import { createInitialSessionState } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
@@ -38,6 +39,8 @@ import {
   type FilePreviewRequest,
   type ConversationContextDraft,
   type ConversationResponseAnnotation,
+  type ConversationCodeComment,
+  type ConversationCodeCommentPosition,
   type ConversationFileLocation,
   type ConversationOpenTarget,
   type TurnChangeFile,
@@ -381,7 +384,11 @@ export interface ConnectedSessionWorkspaceProps {
   /** 从主会话交付的原文评论，只加入本会话待发送区。 */
   pendingResponseAnnotations?: ConversationResponseAnnotation[];
   /** 解释选区直接进入本会话发送队列，不改写输入框。 */
-  pendingExplanations?: ConversationResponseAnnotation[];
+  pendingExplanations?: SideQuestionReference[];
+  /** 文件选区与回答引用分别加入侧栏草稿。 */
+  pendingCodeComments?: ConversationCodeComment[];
+  /** 交付成功后移除父页面暂存的文件选区。 */
+  onCodeCommentsStaged?: (ids: string[]) => void;
   /** 发送链路接管选区后释放父页面的交付记录。 */
   onExplanationsHandled?: (ids: string[]) => void;
   /** 完成草稿交付后从父页面释放待交付记录。 */
@@ -564,6 +571,15 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     if (incoming.length) controller.setContextDraft({ ...current, responseAnnotations: [...current.responseAnnotations, ...incoming] });
     props.onResponseAnnotationsStaged?.(props.pendingResponseAnnotations.map((entry) => entry.id));
   }, [controller, controllerEnabled, props.pendingResponseAnnotations, props.onResponseAnnotationsStaged]);
+  useEffect(() => {
+    if (!controllerEnabled || !props.pendingCodeComments?.length) return;
+    /** 读取实时草稿，保留用户已经输入的问题和其他引用。 */
+    const current = controller.getState().contextDraft;
+    /** 控制器已经保存的文件引用不重复暂存。 */
+    const incoming = props.pendingCodeComments.filter((entry) => !current.codeComments.some((saved) => saved.id === entry.id));
+    if (incoming.length) controller.setContextDraft({ ...current, codeComments: [...current.codeComments, ...incoming] });
+    props.onCodeCommentsStaged?.(props.pendingCodeComments.map((entry) => entry.id));
+  }, [controller, controllerEnabled, props.pendingCodeComments, props.onCodeCommentsStaged]);
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
   /** 同一选区交给控制器后，父页面刷新不能再次派发。 */
@@ -576,14 +592,16 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     void controller
       .send('queue', undefined, undefined, {
         content: props.language === 'zh-CN' ? '请解释引用的内容。' : 'Please explain the quoted text.',
-        conversationContext: { responseAnnotations: [explanation], codeComments: [] },
+        conversationContext: sideQuestionReferenceContext(explanation),
       })
       .catch((error) => {
         // 已进入持久发送链路的失败由原消息展示，只为前置拒绝补充系统消息。
         if (error && typeof error === 'object' && handledMessageDeliveryErrors.has(error)) return;
         /** 前置拒绝没有发送记录，选区退回待发送区，保留其他草稿内容。 */
         const current = controller.getState().contextDraft;
-        controller.setContextDraft({ ...current, responseAnnotations: [...current.responseAnnotations, explanation] });
+        /** 按原引用类型退回草稿，文件选区不进入回答引用列表。 */
+        const context = sideQuestionReferenceContext(explanation);
+        controller.setContextDraft({ ...current, responseAnnotations: [...current.responseAnnotations, ...context.responseAnnotations], codeComments: [...current.codeComments, ...context.codeComments] });
         recordSystemMessage(systemMessageScope(props.conversation.projectId, props.conversation.id), error, 'message_send', props.language === 'zh-CN' ? '解释未能发送。' : 'Could not send the explanation.');
       });
     // 控制器接管后立即释放父页面引用，切换会话时不重新派发同一选区。
@@ -948,6 +966,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     suppressComposer={false}
                     terminalClient={undefined}
                     pendingResponseAnnotations={annotations}
+                    pendingCodeComments={question.codeComments}
+                    onCodeCommentsStaged={(ids) => onChange((current) => current && { ...current, codeComments: current.codeComments?.filter((entry) => !ids.includes(entry.id)) })}
                     pendingExplanations={question.pendingExplanations}
                     onExplanationsHandled={(ids) => onChange((current) => current && { ...current, pendingExplanations: current.pendingExplanations?.filter((entry) => !ids.includes(entry.id)) })}
                     onResponseAnnotationsStaged={onStaged}
@@ -961,7 +981,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
             )
           : undefined
       }
-      focusComposerRequest={props.sideQuestionDisabled ? (props.pendingResponseAnnotations?.at(-1)?.id ?? props.conversation.id) : undefined}
+      focusComposerRequest={props.sideQuestionDisabled ? (props.pendingCodeComments?.at(-1)?.id ?? props.pendingResponseAnnotations?.at(-1)?.id ?? props.conversation.id) : undefined}
       language={props.language}
       inputSuggestionSettings={props.inputSuggestionSettings}
       onGenerateInputSuggestion={props.client.generateInputSuggestion}
@@ -2708,6 +2728,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setContextWorkspace({ kind: 'question' });
   }
 
+  /** 文件引用沿用代码评论结构，保留当前版本的选区快照和准确行号。 */
+  function askAboutFileInSidebar(position: ConversationCodeCommentPosition, sendImmediately: boolean): void {
+    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    /** 每次引用单独标识，重复选择同一片段也不会覆盖草稿。 */
+    const reference: ConversationCodeComment = { id: crypto.randomUUID(), body: '', position };
+    setSideQuestionState((current) => ({
+      ...(current ?? { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null }),
+      ...(sendImmediately ? { pendingExplanations: [...(current?.pendingExplanations ?? []), reference] } : { codeComments: [...(current?.codeComments ?? []), reference] }),
+    }));
+    setContextFullWidth(false);
+    setContextWorkspace({ kind: 'question' });
+  }
+
   function addResponseAnnotation(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAddResponseAnnotation']>>[0]): string {
     const id = crypto.randomUUID();
     const current = props.state?.contextDraft;
@@ -3487,7 +3520,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   );
   return (
     <ActivitySkillCatalogContext.Provider value={actions.onLoadSkills}>
-      <FilePreviewOpenContext.Provider value={props.conversation ? openFilePreview : null}>{workspace}</FilePreviewOpenContext.Provider>
+      <FilePreviewOpenContext.Provider value={props.conversation ? openFilePreview : null}>
+        <FileSelectionQuestionContext.Provider value={props.renderSideQuestion ? askAboutFileInSidebar : null}>{workspace}</FileSelectionQuestionContext.Provider>
+      </FilePreviewOpenContext.Provider>
     </ActivitySkillCatalogContext.Provider>
   );
 }

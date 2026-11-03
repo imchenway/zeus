@@ -62,7 +62,7 @@ export function replaceArchivedSideQuestion(current: SideQuestionState | null, c
     draft: state.draft || current.draft,
     attachments: [...new Map([...state.attachments, ...current.attachments].map((attachment) => [attachment.localPath ?? attachment.uploadRef, attachment])).values()],
     annotations: [...new Map([...state.contextDraft.responseAnnotations, ...current.annotations].map((annotation) => [annotation.id, annotation])).values()],
-    codeComments: state.contextDraft.codeComments,
+    codeComments: [...new Map([...state.contextDraft.codeComments, ...(current.codeComments ?? [])].map((comment) => [comment.id, comment])).values()],
   };
 }
 

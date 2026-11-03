@@ -38,6 +38,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { loadGitCommitModelOptions } from '../git/gitCommitModels.js';
+import { useGitDeliveryRefresh } from '../git/useGitDeliveryRefresh.js';
 import { deliveryWorkspacesForConversationBranch } from './taskGitWorkspaceScope.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
@@ -45,6 +46,7 @@ type DeliveryClient = GitDeliveryClient &
   Pick<
     DashboardClient,
     | 'loadTaskGitWorkspaceIndex'
+    | 'subscribeEvents'
     | 'loadTaskGitWorkspaceSnapshot'
     | 'loadTaskWorkspaceFileDiff'
     | 'commitTaskWorkspace'
@@ -189,6 +191,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [loadRevision, setLoadRevision] = useState(0);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
+  /** 保存后的读取优先于更早的后台刷新，关闭后禁止旧结果回写。 */
+  const reloadRevision = useRef(0);
   /** React 状态刷新前也阻止重复点击；跨窗口重复请求仍由既有消息身份保护。 */
   const continuingConflictRef = useRef(false);
   /** 弹窗只包含已合入成果及其真实项目仓库，不扩大任务推送权限。 */
@@ -399,6 +403,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       });
     return () => {
       cancelled = true;
+      reloadRevision.current += 1;
     };
   }, [interactionOpen, props.task?.id, props.client, zh, loadRevision]);
 
@@ -486,12 +491,15 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     };
   }, [interactionOpen, props.task?.id, props.client, activeConflict?.id, conflictPath, zh]);
 
-  async function reload(preferredWorkspaceId = workspaceId): Promise<void> {
+  /** 后台刷新保留当前差异页签和焦点，显式操作仍切回本机改动。 */
+  async function reload(preferredWorkspaceId = workspaceId, background = false): Promise<void> {
     if (!props.task || !props.client) return;
-    setDiffScope('working');
+    /** 仅最新读取能发布文件列表，防止保存前的结果让文件重新出现。 */
+    const revision = ++reloadRevision.current;
+    if (!background) setDiffScope('working');
     const [workspaceSnapshot, integrationSnapshot] = await Promise.all([props.client.loadTaskGitWorkspaceIndex(props.task.id), props.client.loadTaskIntegrations(props.task.id)]);
-    setDetailStates(Object.fromEntries(workspaceSnapshot.items.map((workspace) => [workspace.id, 'loading' as const])));
     const { details, states } = await loadWorkspaceDetailCollection(props.client, props.task.id, workspaceSnapshot.items);
+    if (revision !== reloadRevision.current) return;
     setWorkspaceIndex(workspaceSnapshot);
     setWorkspaceDetails(details);
     setDetailStates(states);
@@ -503,8 +511,22 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setSnapshotRevision((current) => current + 1);
     /** 同分支内刷新保留用户审阅焦点，失效时才选择首个修改仓库。 */
     const visibleWorkspaces = deliveryWorkspacesForConversationBranch(workspaceSnapshot.items, initialConversationWorkspaceIdRef.current);
-    setWorkspaceId(visibleWorkspaces.find((workspace) => workspace.id === preferredWorkspaceId)?.id ?? initialDeliveryReviewWorkspaceId(details, workspaceSnapshot.items, initialConversationWorkspaceIdRef.current, preferredWorkspaceId));
+    setWorkspaceId((current) => {
+      /** 等待读取时用户可能已选择另一个仓库，后台结果不抢回焦点。 */
+      const preferred = background ? current : preferredWorkspaceId;
+      return visibleWorkspaces.find((workspace) => workspace.id === preferred)?.id ?? initialDeliveryReviewWorkspaceId(details, workspaceSnapshot.items, initialConversationWorkspaceIdRef.current, preferred);
+    });
   }
+
+  useGitDeliveryRefresh({
+    client: props.client,
+    open: interactionOpen && Boolean(workspaceIndex?.items.length),
+    blocked: busy || conflictWorkspaceOpen || Object.values(detailStates).includes('loading'),
+    projectId: props.task.projectId,
+    scope: { taskId: props.task.id, workspaceId: props.currentConversationWorkspaceId || workspaceId || undefined },
+    refresh: () => reload(workspaceId, true),
+    onError: setError,
+  });
 
   useEffect(() => {
     if (!props.refreshRevision || !props.task || !props.client) return;

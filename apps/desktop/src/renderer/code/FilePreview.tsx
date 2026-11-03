@@ -1,5 +1,6 @@
+import { FileSelectionQuestionContext } from '../session/sideQuestionContext.js';
 import { useWindowDocument } from '../ui/windowDocument.js';
-import { createContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createContext, useContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ReadingStateScope, useReadingScroll, useReadingState } from '../ui/readingState.js';
 import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -596,8 +597,10 @@ function FilePreviewContent(props: {
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** Markdown 使用已有受限阅读组件。 */
   const markdown = /\.(md|markdown)$/iu.test(item.name);
-  /** 只读会话仍展示已保存评论，可写会话同时提供评论入口。 */
-  const commentsVisible = props.comments !== undefined || props.onCommentsChange !== undefined;
+  /** 文件选区交付给所属会话的侧栏。 */
+  const onAskInSidebar = useContext(FileSelectionQuestionContext);
+  /** 文件阅览在有侧栏时共用选区工具栏，不要求评论可写。 */
+  const selectionPreviewVisible = props.comments !== undefined || props.onCommentsChange !== undefined || Boolean(onAskInSidebar);
   /** 用户动作只发送资源令牌，主进程再次检查所属窗口与文件身份。 */
   async function action(value: 'quick-look' | 'open' | 'reveal' | 'export') {
     setError('');
@@ -714,7 +717,7 @@ function FilePreviewContent(props: {
               </div>
             ) : (
               <div className="file-preview-text">
-                {commentsVisible ? (
+                {selectionPreviewVisible ? (
                   <CommentableSourceCodePreview
                     key={item.id}
                     identity={`${item.id}:${item.label}`}
@@ -772,6 +775,8 @@ function FilePreviewContent(props: {
 export function FilePreviewDialog(props: { request: FilePreviewRequest; zh: boolean; onClose(): void }) {
   /** 弹窗与嵌入视图共用加载和释放流程，以请求身份隔离异步结果。 */
   const identity = JSON.stringify(props.request);
+  /** 弹窗引用交付后关闭阅览窗口，让所属会话的侧栏接管焦点。 */
+  const onAskInSidebar = useContext(FileSelectionQuestionContext);
   return (
     <ModalPortal
       systemWindow="file-preview"
@@ -783,7 +788,18 @@ export function FilePreviewDialog(props: { request: FilePreviewRequest; zh: bool
       aria-label={props.zh ? '文件预览' : 'File preview'}
     >
       <section className="file-preview-dialog" data-modal-surface="dialog">
-        <FilePreviewBody key={identity} identity={identity} zh={props.zh} onClose={props.onClose} />
+        <FileSelectionQuestionContext.Provider
+          value={
+            onAskInSidebar
+              ? (position, sendImmediately) => {
+                  props.onClose();
+                  onAskInSidebar(position, sendImmediately);
+                }
+              : null
+          }
+        >
+          <FilePreviewBody key={identity} identity={identity} zh={props.zh} onClose={props.onClose} />
+        </FileSelectionQuestionContext.Provider>
       </section>
     </ModalPortal>
   );

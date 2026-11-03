@@ -1,7 +1,6 @@
+import { SelectionQuestionActions } from './SelectionQuestionActions.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
-import { LightbulbIcon as Lightbulb } from '@phosphor-icons/react/dist/csr/Lightbulb';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
@@ -227,34 +226,14 @@ export function ResponseSelectionActions(props: {
               <ChatTeardropDots aria-hidden="true" weight="regular" />
             </button>
             {props.onAskInSidebar ? (
-              <>
-                <button
-                  type="button"
-                  aria-label={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
-                  data-icon-tooltip={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    props.onAskInSidebar?.(candidate.anchor);
-                    setCandidate(null);
-                    view?.getSelection()?.removeAllRanges();
-                  }}
-                >
-                  <SidebarSimple aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={props.language === 'zh-CN' ? '解释选中文字' : 'Explain selected text'}
-                  data-icon-tooltip={props.language === 'zh-CN' ? '解释' : 'Explain'}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    props.onAskInSidebar?.(candidate.anchor, true);
-                    setCandidate(null);
-                    view?.getSelection()?.removeAllRanges();
-                  }}
-                >
-                  <Lightbulb aria-hidden="true" />
-                </button>
-              </>
+              <SelectionQuestionActions
+                language={props.language}
+                onAsk={(sendImmediately) => {
+                  props.onAskInSidebar?.(candidate.anchor, sendImmediately);
+                  setCandidate(null);
+                  view?.getSelection()?.removeAllRanges();
+                }}
+              />
             ) : null}
           </PopoverSurface>
         ) : null}

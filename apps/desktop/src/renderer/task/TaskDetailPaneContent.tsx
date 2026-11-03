@@ -4,24 +4,15 @@ import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
-import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition, type UserFacingErrorCause } from '@zeus/shared';
+import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
-import type { CodexTaskPushCapabilities, NativeConversationChoice } from '../session/sessionTypes.js';
-import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
-import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
-import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
-import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
-import type { DigitalTeamProgressSubscription } from '../features/digital-teams/TaskDigitalTeamProgress.js';
-import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
-import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
-import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
   mergeTaskAttachments,
   parseTaskAttachments,
@@ -44,16 +35,6 @@ export interface TaskDetailPaneCopy {
   noRequest: string;
   eventsTitle: string;
   noEvents: string;
-  pushNewConversation: string;
-  conversationsTitle: string;
-  conversationEmptyTitle: string;
-  conversationEmptyHelp: string;
-  conversationLoading: string;
-  conversationError: string;
-  openConversation: string;
-  archivedConversation: string;
-  terminalConversationHelp: string;
-  retryConversationLoad: string;
   detailStatusSelectAria: string;
   primaryActionsTitle: string;
   metadataTitle: string;
@@ -96,36 +77,7 @@ export interface TaskDetailPaneContentProps {
   statusDefinitions: readonly TaskManagementStatusDefinition[];
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
-  terminalReadOnly: boolean;
-  digitalEmployeeClient?: DigitalEmployeeApiClient | null;
-  conversations?: NativeConversationChoice[];
-  conversationsLoading?: boolean;
-  conversationsError?: string | null;
-  modelPushOperation?: { errorCause?: UserFacingErrorCause; canRetry?: boolean; status: 'submitting' | 'failed' | 'accepted'; error: string | null; conversationId?: string };
-  /** 接入检查保留在原推送按钮，读取失败可按原任务阶段重查。 */
-  modelPushEntry?: { checking: boolean; error: string | null; onRetry: () => void };
-  onOpenConversation: (taskId: string, conversationId: string) => void;
-  /** 选择原会话时保留任务详情。 */
-  onSelectConversation?(taskId: string, conversationId: string): Promise<void>;
-  /** 当前唯一会话控制器身份。 */
-  activeConversationId?: string | null;
-  /** 同源会话阅读和发送组件。 */
-  conversationWorkspace?: ReactNode;
-  /** 首次讨论复用原新建会话输入与耐久接纳。 */
-  newConversationWorkspace?: ReactNode;
-  /** 从任务详情选择已保存流程、既有运行或管理入口。 */
-  onUseDigitalTeam?(selection: DigitalTeamEntrySelection): void;
-  /** 任务详情只读取数字团队模板和当前任务运行。 */
-  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns' | 'loadDigitalTeamRun'> | null;
-  /** 团队和员工工作使用已有实时订阅校准。 */
-  onSubscribeRealtimeEvents?: DigitalTeamProgressSubscription;
-  /** 打开当前项目员工管理，补齐可指派员工。 */
-  onManageEmployees?(): void;
-  onPushNewConversation: (taskId: string) => void;
-  onRetryModelPush?: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
-  onCommitCode?: (taskId: string) => void;
-  onPushCode?: (taskId: string) => void;
   onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
   onUpdateRelationships: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<TaskEditResult>;
   onCreateChild: (taskId: string) => void;
@@ -136,12 +88,8 @@ export interface TaskDetailPaneContentProps {
   onAuthorizeFiles?: (files: File[], source: 'paste') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources?: (resources: TaskResourcePayload[]) => Promise<TaskAttachmentCandidate[]>;
   onReadClipboardResources?: () => Promise<{ resources: TaskAttachmentCandidate[]; text: string }>;
-  onReloadConversations?: (taskId: string) => void;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
-  workflowClient?: TaskWorkflowClient;
-  onLoadWorkflowCapabilities?: () => Promise<CodexTaskPushCapabilities>;
-  onStartTaskStage?: (stage: TaskStageRecord) => Promise<void>;
 }
 
 export type TaskEditResult = { kind: 'updated'; task: TaskRecord } | { kind: 'conflict'; latest: TaskRecord };
@@ -827,8 +775,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const latestTask = useRef(props.task);
   latestTask.current = props.task;
 
-  const modelPushCreating = props.modelPushOperation?.status === 'submitting';
-  const modelPushFailed = props.modelPushOperation?.status === 'failed';
   const attachmentStatusId = `${useId()}-status`;
   /** 原生弹出层自动处理点击外部和 Escape，标识在多个详情入口间保持独立。 */
   const moreActionsId = useId();
@@ -845,14 +791,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   /** 提示归属对应操作，避免长列表把反馈推离按钮。 */
   const [relationshipHintTarget, setRelationshipHintTarget] = useState<'child' | 'relation'>('child');
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
-  const digitalEmployeeManagement = useTaskDigitalEmployeeManagement({
-    taskId: props.task.id,
-    projectId: props.task.projectId,
-    client: props.digitalEmployeeClient ?? null,
-    teamClient: props.digitalTeamClient,
-    subscribe: props.onSubscribeRealtimeEvents,
-    language: props.language,
-  });
   /** Escape 优先关闭当前操作层，避免外层任务弹窗同时关闭。 */
   function closeMoreActionsOnEscape(event: ReactKeyboardEvent<HTMLDivElement>): void {
     if (event.key !== 'Escape' || !moreActionsRef.current?.matches(':popover-open')) return;
@@ -880,11 +818,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     },
     [],
   );
-  const conversations = [...(props.conversations ?? [])].sort(compareConversationCreatedAsc);
-  /** 真实工作接纳后才展开协作布局，读取失败不会被猜成任务结束。 */
-  const hasTaskWork = Boolean(digitalEmployeeManagement.teams.length || digitalEmployeeManagement.projection?.workItems.length || digitalEmployeeManagement.pendingAssignment);
-  /** 有原会话时提供稳定阅读高度，空任务输入紧接任务说明。 */
-  const hasTaskActivity = hasTaskWork || conversations.length > 0;
   const taskById = new Map(props.allTasks.map((task) => [task.id, task]));
   const directChildren = props.allTasks.filter((task) => task.parentTaskId === props.task.id).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
   const relatedTasks = (props.task.relatedTaskIds ?? [])
@@ -1248,46 +1181,25 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
           />
         </span>
+        <span className="task-detail-summary-row task-detail-header-status">
+          <small>{zh ? '状态' : 'Status'}</small>
+          <TaskImmediateSelect
+            task={props.task}
+            value={managementStatus}
+            options={props.statusDefinitions.map((status) => ({
+              value: status.id,
+              label: props.statusLabels[status.id] ?? status.id,
+              color: status.color,
+            }))}
+            colorized
+            showSaveSpinner={false}
+            ariaLabel={props.copy.detailStatusSelectAria}
+            copy={editCopy}
+            disabled={props.busy}
+            onSave={(status, expectedUpdatedAt) => props.onManagementStatusChange(props.task.id, status, expectedUpdatedAt)}
+          />
+        </span>
         <div className="task-detail-header-actions" aria-label={props.copy.primaryActionsTitle} onKeyDown={closeMoreActionsOnEscape}>
-          {/* 保留创建进度的读屏播报，视觉反馈由操作按钮承担。 */}
-          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-            {modelPushCreating ? (zh ? '正在后台创建会话' : 'Creating conversation in the background') : props.modelPushOperation?.status === 'accepted' ? (zh ? '会话已创建' : 'Conversation created') : ''}
-          </span>
-          {props.terminalReadOnly ? (
-            <span className="task-detail-closed-note">{zh ? '调整任务状态后可继续协作' : 'Change task status to resume collaboration'}</span>
-          ) : (
-            <Button
-              variant="primary"
-              size="regular"
-              className="task-detail-primary-action"
-              onClick={() => (props.modelPushEntry?.error ? props.modelPushEntry.onRetry() : props.onPushNewConversation(props.task.id))}
-              busy={props.busy || modelPushCreating || props.modelPushEntry?.checking}
-            >
-              {props.modelPushEntry?.checking
-                ? zh
-                  ? '正在检查模型…'
-                  : 'Checking models…'
-                : props.modelPushEntry?.error
-                  ? zh
-                    ? '重新检查'
-                    : 'Check again'
-                  : modelPushCreating
-                    ? zh
-                      ? '正在创建会话…'
-                      : 'Creating conversation…'
-                    : props.copy.pushNewConversation}
-            </Button>
-          )}
-          {/* 创建结果的操作与推送按钮共用标题栏，不为成功状态另占一行。 */}
-          {modelPushFailed && props.modelPushOperation?.canRetry && props.onRetryModelPush ? (
-            <Button variant="secondary" size="regular" onClick={() => props.onRetryModelPush?.(props.task.id)}>
-              {zh ? '重试创建' : 'Retry creation'}
-            </Button>
-          ) : props.modelPushOperation?.status === 'accepted' && props.modelPushOperation.conversationId && !conversations.some((conversation) => conversation.id === props.modelPushOperation?.conversationId) ? (
-            <Button variant="secondary" size="regular" onClick={() => props.onOpenConversation(props.task.id, props.modelPushOperation?.conversationId ?? '')}>
-              {zh ? '打开会话' : 'Open conversation'}
-            </Button>
-          ) : null}
           <Button variant="secondary" size="regular" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} data-icon-tooltip={zh ? '更多任务操作' : 'More task actions'}>
             {zh ? '任务操作' : 'Task actions'}
             <CaretDownIcon size={14} aria-hidden="true" />
@@ -1359,194 +1271,11 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </div>
       </header>
 
-      {props.modelPushEntry?.error || modelPushFailed ? (
-        <section className="task-detail-feedback-rail" aria-label={zh ? '创建会话进度' : 'Conversation creation status'}>
-          {props.modelPushEntry?.error ? (
-            <span className="task-detail-model-push-feedback is-failed" role="status">
-              <VisibleApplicationError error={props.modelPushEntry.error} language={zh ? 'zh-CN' : 'en'} />
-            </span>
-          ) : null}
-          {modelPushFailed && props.modelPushOperation ? (
-            <span className="task-detail-model-push-feedback is-failed" role="alert" aria-live="assertive" aria-atomic="true">
-              <span>
-                <strong>
-                  <VisibleApplicationError error={props.modelPushOperation.errorCause ?? props.modelPushOperation.error} language={zh ? 'zh-CN' : 'en'} />
-                </strong>
-              </span>
-            </span>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* 高频管理项共用一行并允许自然换行，避免数字团队单独占用整行。 */}
-      <div className="task-detail-arrangement" aria-label={zh ? '状态、执行人与数字团队' : 'Status, employees, and digital team'}>
-        <span className="task-detail-summary-row">
-          <small>{zh ? '状态' : 'Status'}</small>
-          <TaskImmediateSelect
-            task={props.task}
-            value={managementStatus}
-            options={props.statusDefinitions.map((status) => ({
-              value: status.id,
-              label: props.statusLabels[status.id] ?? status.id,
-              color: status.color,
-            }))}
-            colorized
-            showSaveSpinner={false}
-            ariaLabel={props.copy.detailStatusSelectAria}
-            copy={editCopy}
-            disabled={props.busy}
-            onSave={(status, expectedUpdatedAt) => props.onManagementStatusChange(props.task.id, status, expectedUpdatedAt)}
-          />
-        </span>
-        {!props.terminalReadOnly ? (
-          <span className="task-detail-summary-row task-detail-executor-row">
-            {!hasTaskWork && props.onUseDigitalTeam ? (
-              <Button variant="secondary" size="compact" onClick={() => props.onUseDigitalTeam!({ kind: 'manage' })}>
-                {zh ? '使用数字团队' : 'Use a digital team'}
-              </Button>
-            ) : null}
-            <TaskDigitalEmployeeExecutor
-              taskId={props.task.id}
-              activeConversationId={props.activeConversationId}
-              projectId={props.task.projectId}
-              terminalReadOnly={props.terminalReadOnly}
-              client={props.digitalEmployeeClient ?? null}
-              language={props.language}
-              management={digitalEmployeeManagement}
-              onManageEmployees={props.onManageEmployees}
-              onLoadCapabilities={props.onLoadWorkflowCapabilities}
-            />
-          </span>
-        ) : null}
-      </div>
-      <div className="task-detail-workspace" data-has-activity={hasTaskActivity}>
-        {/* 主区连续展示说明与会话，信息列直接展开；断点只改布局，不重建编辑和会话组件。 */}
+      <div className="task-detail-workspace">
+        {/* 任务说明、关系和历史构成主阅读区；属性列沿用即时编辑，窄窗口顺排。 */}
         <div className="task-detail-reading">
           <section className="task-detail-requirements" aria-label={zh ? '任务说明' : 'Requirements'}>
             {taskOverview}
-          </section>
-          <div className="task-detail-main">
-            <TaskDigitalEmployeePanel
-              onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
-              onOpenTeamRun={props.onUseDigitalTeam ? (runId) => props.onUseDigitalTeam!({ kind: 'run', runId }) : undefined}
-              key={props.task.id}
-              taskId={props.task.id}
-              projectId={props.task.projectId}
-              terminalReadOnly={props.terminalReadOnly}
-              client={props.digitalEmployeeClient ?? null}
-              management={digitalEmployeeManagement}
-              language={props.language}
-              conversations={conversations}
-              conversationsLoading={props.conversationsLoading}
-              conversationsError={props.conversationsError}
-              activeConversationId={props.activeConversationId}
-              conversationWorkspace={props.conversationWorkspace}
-              newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
-              onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
-              onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
-              onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
-            />
-          </div>
-        </div>
-        <aside className="task-detail-properties" aria-label={zh ? '任务信息' : 'Task information'}>
-          <section className="task-detail-metadata-section" aria-label={props.copy.metadataTitle}>
-            <h2 className="task-detail-information-heading">{zh ? '任务属性' : 'Task properties'}</h2>
-            <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
-              <span className="task-detail-summary-row">
-                <small>{zh ? '类型' : 'Type'}</small>
-                <TaskImmediateSelect
-                  task={props.task}
-                  value={props.task.taskType}
-                  options={taskTypeOptions}
-                  ariaLabel={zh ? '修改任务类型' : 'Change task type'}
-                  copy={editCopy}
-                  disabled={props.busy}
-                  onSave={(taskType, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, taskType })}
-                />
-              </span>
-              <span className="task-detail-summary-row">
-                <small>{props.copy.priorityLabel ?? (zh ? '优先级' : 'Priority')}</small>
-                <TaskImmediateSelect
-                  task={props.task}
-                  value={taskPriority}
-                  options={priorityOptions}
-                  ariaLabel={zh ? '修改任务优先级' : 'Change task priority'}
-                  copy={editCopy}
-                  disabled={props.busy}
-                  onSave={(priority, expectedUpdatedAt) =>
-                    isTaskPriority(priority) ? props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, priority }) : Promise.reject(new Error(zh ? '无效的任务优先级。' : 'Invalid task priority.'))
-                  }
-                />
-              </span>
-              <div className="task-detail-summary-row">
-                <small>{zh ? '截止时间' : 'Deadline'}</small>
-                <TaskDeadlineEditor key={props.task.id} task={props.task} language={props.language} disabled={props.busy} onSave={(deadline, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { deadline, expectedUpdatedAt })} />
-              </div>
-              <span className="task-detail-summary-row">
-                <small>{props.copy.sourceLabel ?? (zh ? '上下文来源' : 'Context source')}</small>
-                <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>
-              </span>
-              <span className="task-detail-summary-row">
-                <small>{props.copy.updatedAtLabel ?? (zh ? '更新时间' : 'Updated')}</small>
-                <strong>{formatTaskUpdatedAt(props.task.updatedAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</strong>
-              </span>
-              <span className="task-detail-summary-row task-detail-evidence-row">
-                <small>{props.copy.latestEvidenceLabel ?? (zh ? '最近事件' : 'Latest event')}</small>
-                <strong>
-                  {latestEvent ? (
-                    <>
-                      {formatTaskEventTitle(latestEvent, props.language)}
-                      <small>{formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</small>
-                    </>
-                  ) : (
-                    (props.copy.noEvidence ?? (zh ? '暂无执行证据' : 'No task events yet'))
-                  )}
-                </strong>
-              </span>
-            </section>
-
-            <section className="task-detail-block task-detail-tags" aria-label={zh ? '任务标签' : 'Task tags'}>
-              <span className="task-detail-section-heading">
-                <strong>{zh ? '标签' : 'Tags'}</strong>
-                <small>{props.task.tags?.length ?? 0}</small>
-              </span>
-              <TaskDetailFieldAttachments
-                zh={zh}
-                field="tags"
-                attachments={taskAttachments}
-                pendingResources={previews.pendingResources}
-                copy={props.copy}
-                editCopy={editCopy}
-                disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
-                onRemove={(path) => void removeAttachment(path)}
-                onLoadPreview={props.onLoadAttachmentPreview}
-                onOpenAttachment={props.onOpenAttachment}
-              />
-              <InlineTaskTextField
-                resourcesProcessing={resourcesProcessing}
-                task={props.task}
-                label={editCopy.editTags}
-                value={taskTagsDraft(props.task.tags)}
-                display={
-                  props.task.tags && props.task.tags.length > 0 ? (
-                    <span className="task-detail-tag-list">
-                      {props.task.tags.map((tag) => (
-                        <span key={tag}>{tag}</span>
-                      ))}
-                    </span>
-                  ) : (
-                    <span className="task-inline-edit-empty">{editCopy.noTags}</span>
-                  )
-                }
-                copy={editCopy}
-                disabled={props.busy}
-                enterSeparates
-                buildPatch={(tags) => ({ tags: normalizeTaskTagsInput(tags) })}
-                valueFromTask={(task) => taskTagsDraft(task.tags)}
-                onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
-                onPasteResources={(request) => pasteTaskDetailResources('tags', request)}
-              />
-            </section>
           </section>
           <section className="task-detail-block task-detail-relationships" aria-label={zh ? '任务关系' : 'Task relationships'}>
             <header className="task-detail-section-heading">
@@ -1682,6 +1411,107 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 ))}
               </ol>
             )}
+          </section>
+        </div>
+        <aside className="task-detail-properties" aria-label={zh ? '任务信息' : 'Task information'}>
+          <section className="task-detail-metadata-section" aria-label={props.copy.metadataTitle}>
+            <h2 className="task-detail-information-heading">{zh ? '任务属性' : 'Task properties'}</h2>
+            <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
+              <span className="task-detail-summary-row">
+                <small>{zh ? '类型' : 'Type'}</small>
+                <TaskImmediateSelect
+                  task={props.task}
+                  value={props.task.taskType}
+                  options={taskTypeOptions}
+                  ariaLabel={zh ? '修改任务类型' : 'Change task type'}
+                  copy={editCopy}
+                  disabled={props.busy}
+                  onSave={(taskType, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, taskType })}
+                />
+              </span>
+              <span className="task-detail-summary-row">
+                <small>{props.copy.priorityLabel ?? (zh ? '优先级' : 'Priority')}</small>
+                <TaskImmediateSelect
+                  task={props.task}
+                  value={taskPriority}
+                  options={priorityOptions}
+                  ariaLabel={zh ? '修改任务优先级' : 'Change task priority'}
+                  copy={editCopy}
+                  disabled={props.busy}
+                  onSave={(priority, expectedUpdatedAt) =>
+                    isTaskPriority(priority) ? props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, priority }) : Promise.reject(new Error(zh ? '无效的任务优先级。' : 'Invalid task priority.'))
+                  }
+                />
+              </span>
+              <div className="task-detail-summary-row">
+                <small>{zh ? '截止时间' : 'Deadline'}</small>
+                <TaskDeadlineEditor key={props.task.id} task={props.task} language={props.language} disabled={props.busy} onSave={(deadline, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { deadline, expectedUpdatedAt })} />
+              </div>
+              <span className="task-detail-summary-row">
+                <small>{props.copy.sourceLabel ?? (zh ? '上下文来源' : 'Context source')}</small>
+                <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>
+              </span>
+              <span className="task-detail-summary-row">
+                <small>{props.copy.updatedAtLabel ?? (zh ? '更新时间' : 'Updated')}</small>
+                <strong>{formatTaskUpdatedAt(props.task.updatedAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</strong>
+              </span>
+              <span className="task-detail-summary-row task-detail-evidence-row">
+                <small>{props.copy.latestEvidenceLabel ?? (zh ? '最近事件' : 'Latest event')}</small>
+                <strong>
+                  {latestEvent ? (
+                    <>
+                      {formatTaskEventTitle(latestEvent, props.language)}
+                      <small>{formatTaskUpdatedAt(latestEvent.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</small>
+                    </>
+                  ) : (
+                    (props.copy.noEvidence ?? (zh ? '暂无执行证据' : 'No task events yet'))
+                  )}
+                </strong>
+              </span>
+            </section>
+
+            <section className="task-detail-block task-detail-tags" aria-label={zh ? '任务标签' : 'Task tags'}>
+              <span className="task-detail-section-heading">
+                <strong>{zh ? '标签' : 'Tags'}</strong>
+                <small>{props.task.tags?.length ?? 0}</small>
+              </span>
+              <TaskDetailFieldAttachments
+                zh={zh}
+                field="tags"
+                attachments={taskAttachments}
+                pendingResources={previews.pendingResources}
+                copy={props.copy}
+                editCopy={editCopy}
+                disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
+                onRemove={(path) => void removeAttachment(path)}
+                onLoadPreview={props.onLoadAttachmentPreview}
+                onOpenAttachment={props.onOpenAttachment}
+              />
+              <InlineTaskTextField
+                resourcesProcessing={resourcesProcessing}
+                task={props.task}
+                label={editCopy.editTags}
+                value={taskTagsDraft(props.task.tags)}
+                display={
+                  props.task.tags && props.task.tags.length > 0 ? (
+                    <span className="task-detail-tag-list">
+                      {props.task.tags.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="task-inline-edit-empty">{editCopy.noTags}</span>
+                  )
+                }
+                copy={editCopy}
+                disabled={props.busy}
+                enterSeparates
+                buildPatch={(tags) => ({ tags: normalizeTaskTagsInput(tags) })}
+                valueFromTask={(task) => taskTagsDraft(task.tags)}
+                onSave={(input) => props.onUpdateTaskContent(props.task.id, input)}
+                onPasteResources={(request) => pasteTaskDetailResources('tags', request)}
+              />
+            </section>
           </section>
           <TaskProjectActions
             key={`${props.task.id}:${props.task.projectId}`}

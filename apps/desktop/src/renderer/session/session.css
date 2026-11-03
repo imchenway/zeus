@@ -854,6 +854,12 @@
   margin: 0 0 8px;
 }
 
+/* 编辑态只在队列外沿标明焦点，避免表单和正文叠加多层输入边框。 */
+.session-codex-parity-v1 .session-queued-messages:has(.session-queued-message-editor textarea:focus-visible) {
+  border-color: var(--zeus-field-focus-line);
+  box-shadow: var(--zeus-field-focus);
+}
+
 .session-codex-parity-v1 .session-queued-messages-header {
   align-items: baseline;
   border-block-end: 0;
@@ -1090,15 +1096,16 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-editor {
-  background: light-dark(color-mix(in srgb, var(--session-text) 1.5%, var(--session-canvas)), var(--zeus-dark-surface));
-  border: 1px solid var(--session-line-soft);
-  border-radius: 12px;
+  /* 外层队列已提供边界；表单仅负责附件、正文和操作的排布。 */
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   display: grid;
   gap: 9px;
   grid-column: 1 / -1;
   inline-size: 100%;
   max-inline-size: 100%;
-  padding: 10px;
+  padding: 0;
   position: relative;
 }
 
@@ -1106,9 +1113,9 @@
   /* 原生内容测量保留编辑区高度，不在输入时临时收缩外层滚动区域。 */
   field-sizing: content;
   appearance: none;
-  background: var(--session-canvas);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
   color: var(--session-text);
   font: inherit;
@@ -1125,9 +1132,8 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
-  /* 排队消息编辑与其他输入共用焦点，不保留额外灰白外圈。 */
-  border-color: var(--zeus-field-focus-line);
-  box-shadow: var(--zeus-field-focus);
+  /* 焦点由队列外沿统一呈现，正文不再生成内圈。 */
+  box-shadow: none;
   outline: 0;
 }
 
@@ -1157,10 +1163,10 @@
 
 .session-codex-parity-v1 .session-queued-message-editor > footer {
   align-items: center;
-  bottom: 16px;
+  bottom: 6px;
   display: flex;
   gap: 6px;
-  inset-inline: 20px;
+  inset-inline: 10px;
   justify-content: flex-end;
   position: absolute;
 }

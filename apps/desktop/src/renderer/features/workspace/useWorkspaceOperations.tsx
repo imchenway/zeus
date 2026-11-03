@@ -3,7 +3,7 @@ import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../u
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
-import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
@@ -96,7 +96,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     nativeSessionTask,
     nativeSessionTaskReadOnly,
     newConversationFocusRequest,
-    optimisticTerminalTaskStatuses,
     pendingSourceWorkspaceLeaveCancelRef,
     pendingSourceWorkspaceLeaveRef,
     pendingTaskTableLayoutLeaveCancelRef,
@@ -203,9 +202,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setProjectCommandsProjectId,
     settingsWorkspaceCopy,
     snapshot,
-    taskModelPushEntry,
-    taskModelPushError,
-    taskModelPushTaskId,
     sourceWorkspaceDirty,
     sourceWorkspaceTarget,
     setSourceWorkspaceTarget,
@@ -309,16 +305,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   const {
     chooseNativeConversationAttachments,
     executeNewConversationProjectGit,
-    openTaskConversation,
-    openTaskConversationInline,
     openTaskCreateModal,
     openTaskCopyModal,
     openTaskGitDelivery,
-    openTaskModelPush,
-    retryTaskModelPushEntry,
     recordLocalError,
     recordTaskMutationVersion,
-    refreshNativeConversationChoices,
     refreshOpenTaskEvents,
     reopenTaskFromConversation,
     requestTaskTerminalCleanupConfirmation,
@@ -326,9 +317,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     selectNewConversationProject,
     startNativeConversation,
     startProjectConversation,
-    taskDetailPaneConversationState,
-    taskDetailPaneConversations,
-    taskDetailPaneModelPushView,
     taskDetailPaneTask,
     taskModelPushWorkspaceActions,
     updateTaskContent,
@@ -2012,72 +2000,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         statusDefinitions={activeTaskManagementStatusConfig.statuses}
         priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
         busy={updatingTaskBusy}
-        terminalReadOnly={
-          Boolean(optimisticTerminalTaskStatuses[taskDetailPaneTask.id]) ||
-          resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
-          resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
-        }
-        onUseDigitalTeam={(selection) => {
-          setDigitalTeamTask(taskDetailPaneTask);
-          setDigitalTeamEntrySelection(selection);
-          closeTaskDetail();
-          setActiveNavTarget('digital-teams');
-        }}
-        digitalTeamClient={props.commandClient ?? null}
-        onSubscribeRealtimeEvents={props.onSubscribeRealtimeEvents}
-        digitalEmployeeClient={props.commandClient ?? null}
-        conversations={taskDetailPaneConversations}
-        conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
-        conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
-        modelPushOperation={taskDetailPaneModelPushView}
-        modelPushEntry={
-          taskModelPushTaskId === taskDetailPaneTask.id && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')
-            ? { checking: taskModelPushEntry === 'checking', error: taskModelPushEntry === 'error' ? taskModelPushError : null, onRetry: retryTaskModelPushEntry }
-            : undefined
-        }
-        onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
-        onManageEmployees={() => {
-          /** 员工统一维护，任务指派自动建立项目参与关系。 */
-          closeTaskDetail();
-          handleMainNavigate('digital-employees');
-        }}
-        onSelectConversation={openTaskConversationInline}
-        activeConversationId={selectedNativeConversation?.taskId === taskDetailPaneTask.id ? selectedNativeConversation.id : null}
-        conversationWorkspace={selectedNativeConversation?.taskId === taskDetailPaneTask.id && !state.sessionDrawerTarget ? renderNativeConversationWorkspace((taskId) => setTaskDetailPaneTaskId(taskId), true) : null}
-        newConversationWorkspace={
-          props.nativeConversationClient ? (
-            <NewConversationComposer
-              key={`task-discussion-${taskDetailPaneTask.id}`}
-              inputSuggestionSettings={appShellSettings.inputSuggestions}
-              onGenerateInputSuggestion={props.nativeConversationClient.generateInputSuggestion}
-              docked
-              drafts={newConversationDrafts}
-              language={appShellSettings.appLanguage}
-              owner={{
-                kind: 'task',
-                projectId: taskDetailPaneTask.projectId,
-                projectName: snapshot.projects.find((project) => project.id === taskDetailPaneTask.projectId)?.name ?? '',
-                taskId: taskDetailPaneTask.id,
-                taskTitle: taskDetailPaneTask.title,
-              }}
-              task={createSessionWorkspaceTask(taskDetailPaneTask, appShellSettings, appShellSettings.appLanguage)}
-              onStartTask={startNativeConversation}
-              onLoadCapabilities={props.nativeConversationClient.loadCodexConversationCapabilities}
-              onLoadSkills={props.nativeConversationClient.loadSkills}
-              onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
-              onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
-              onOpenComputerSettings={() => {
-                setSettingsCategory('browser');
-                handleMainNavigate('settings');
-              }}
-            />
-          ) : null
-        }
-        onPushNewConversation={(taskId) => void openTaskModelPush(taskId)}
-        onRetryModelPush={retryTaskModelPush}
         onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
-        onCommitCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'commit-only' })}
-        onPushCode={(taskId) => setTaskGitReviewState({ taskId, mode: 'push-only' })}
         onUpdateTaskContent={updateTaskContent}
         onUpdateRelationships={updateTaskRelationships}
         onCreateChild={(taskId) => openTaskCreateModal(taskId)}
@@ -2087,42 +2010,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         onAuthorizeFiles={props.onAuthorizeTaskFiles}
         onMaterializeResources={props.onMaterializeTaskResources}
         onReadClipboardResources={props.onReadTaskClipboardResources}
-        onReloadConversations={(taskId) => void refreshNativeConversationChoices(taskId)}
         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
         onOpenAttachment={props.onOpenTaskAttachment}
-        workflowClient={props.nativeConversationClient?.tasks}
-        onLoadWorkflowCapabilities={props.nativeConversationClient ? () => props.nativeConversationClient!.loadCodexTaskPushCapabilities(taskDetailPaneTask.projectId, taskDetailPaneTask.id) : undefined}
-        onStartTaskStage={
-          props.nativeConversationClient
-            ? async (stage) => {
-                if (stage.kind === 'plan' || stage.kind === 'implementation') {
-                  await openTaskModelPush(taskDetailPaneTask.id, stage);
-                  return;
-                }
-                if (stage.kind !== 'code_review') throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '当前版本尚不支持启动自定义阶段。' : 'Custom stages cannot be started in this version.');
-                const workflow = await props.nativeConversationClient!.tasks.loadTaskWorkflow(taskDetailPaneTask.id);
-                const implementation = workflow?.stages.filter((candidate) => candidate.sequence < stage.sequence && candidate.kind === 'implementation').sort((left, right) => right.sequence - left.sequence)[0];
-                const accepted = implementation?.deliverables.filter((deliverable) => deliverable.status === 'accepted').sort((left, right) => right.version - left.version)[0];
-                const sourceAttempt = accepted ? implementation?.attempts.find((attempt) => attempt.id === accepted.attemptId) : null;
-                if (!sourceAttempt?.conversationId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '找不到已验收交付物所属的对话。' : 'The conversation associated with the accepted deliverable could not be found.');
-                const result = await startNativeConversation({
-                  mode: 'create',
-                  source: 'code_review',
-                  stageId: stage.id,
-                  task: { id: taskDetailPaneTask.id, projectId: taskDetailPaneTask.projectId, title: taskDetailPaneTask.title },
-                  inheritConversationId: sourceAttempt.conversationId,
-                  content: stage.prompt || (appShellSettings.appLanguage === 'zh-CN' ? '执行当前任务的独立代码审查阶段。' : 'Run the independent code review stage for this task.'),
-                  permissionMode: 'read-only',
-                  collaborationMode: 'default',
-                  serviceTierSelection: stage.serviceTier ? { type: 'catalog', id: stage.serviceTier } : { type: 'standard' },
-                  model: stage.modelRef,
-                  ...(stage.effort ? { effort: stage.effort } : {}),
-                  agentKind: stage.agentKind,
-                });
-                if (typeof result === 'object' && result.state === 'failed') throw new Error(result.message);
-              }
-            : undefined
-        }
       />
     );
   }

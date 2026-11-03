@@ -1,3 +1,4 @@
+import { sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
 import { ZeusApiError } from '../transport/localApiTransport.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
@@ -38,8 +39,8 @@ export interface SideQuestionState {
   /** 未交给右侧会话输入框的选区评论。 */
   annotations: ConversationResponseAnnotation[];
   /** 按点击顺序交给正式发送链路的解释选区。 */
-  pendingExplanations?: ConversationResponseAnnotation[];
-  /** 归档切换时保留原输入框尚未发送的代码评论。 */
+  pendingExplanations?: SideQuestionReference[];
+  /** 待交付的文件选区，以及归档后保留的未发送代码评论。 */
   codeComments?: ConversationContextDraft['codeComments'];
   /** 尚未发送的附件。 */
   attachments: NativeConversationAttachment[];
@@ -110,17 +111,17 @@ export function SideQuestionWorkspace(props: {
   );
   useEffect(() => {
     if (props.visible && !props.state.conversation) inputRef.current?.focus();
-  }, [props.visible, props.state.annotations.length, props.state.conversation]);
+  }, [props.visible, props.state.annotations.length, props.state.codeComments?.length, props.state.conversation]);
 
   /** 成功回执立即切换真实会话；刷新失败不能触发第二次创建。 */
   const submit = useCallback(
-    async (selected = settings, explanation?: ConversationResponseAnnotation): Promise<void> => {
+    async (selected = settings, explanation?: SideQuestionReference): Promise<void> => {
       if (sending.current) return;
       /** 首次发送后冻结输入，手动核对仍使用原始内容及身份。 */
       const input = props.state.attempt ?? {
         id: explanation?.id ?? props.state.id,
         content: (!explanation && props.state.draft.trim()) || (zh ? '请解释引用的内容。' : 'Please explain the quoted text.'),
-        conversationContext: explanation ? { responseAnnotations: [explanation], codeComments: [] } : state.contextDraft,
+        conversationContext: explanation ? sideQuestionReferenceContext(explanation) : state.contextDraft,
         attachments: explanation ? [] : props.state.attachments,
         settings: selected,
         ...(explanation ? { preserveDraft: true } : {}),
@@ -138,7 +139,7 @@ export function SideQuestionWorkspace(props: {
                 conversation,
                 draft: input.preserveDraft ? current.draft : '',
                 attachments: input.preserveDraft ? current.attachments : [],
-                codeComments: input.preserveDraft ? current.codeComments : [],
+                codeComments: input.preserveDraft ? current.codeComments : current.codeComments?.filter((comment) => !input.conversationContext.codeComments.some((sent) => sent.id === comment.id)),
                 attempt: undefined,
                 annotations: current.annotations.filter((annotation) => !input.conversationContext.responseAnnotations.some((sent) => sent.id === annotation.id)),
               },
@@ -167,6 +168,7 @@ export function SideQuestionWorkspace(props: {
                 attempt: undefined,
                 // 明确拒绝后把解释选区留在待发送区，调整设置时仍能查看和移除。
                 annotations: input.preserveDraft ? [...current.annotations, ...input.conversationContext.responseAnnotations] : current.annotations,
+                codeComments: input.preserveDraft ? [...(current.codeComments ?? []), ...input.conversationContext.codeComments] : current.codeComments,
               },
           );
         }

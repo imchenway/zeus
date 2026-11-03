@@ -13,7 +13,8 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
-import { notifyProjectGitChanged, subscribeProjectGitRefresh, requestProjectGitWorkbench, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
+import { notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
+import { useGitDeliveryRefresh } from './useGitDeliveryRefresh.js';
 import {
   DeliveryFeedbackNotice,
   DeliveryRepositoryFileTree,
@@ -30,7 +31,7 @@ import {
 /** 项目与会话仓库共用交付读取和写入能力，不要求项目伪造会话身份。 */
 export type RepositoryGitDeliveryClient = Pick<
   DashboardClient,
-  'loadProjectGitWorkbench' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectGitPushPreview' | 'loadProjectGitCommit'
+  'subscribeEvents' | 'loadProjectGitWorkbench' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels' | 'loadProjectGitPushPreview' | 'loadProjectGitCommit'
 >;
 
 /** 展示范围与操作权限来自入口已有的项目、仓库或会话。 */
@@ -49,6 +50,8 @@ interface RepositoryGitDeliveryContentProps {
   onClearPathPrefix?(): void;
   /** 后台组合只接受真实会话范围及其客户端。 */
   conversation?: { id: string; title: string; client: GitDeliveryClient };
+  /** 普通目录会话监听项目；独立工作树会话监听绑定目录。 */
+  conversationWorkspaceMode?: 'direct' | 'worktree' | null;
   /** 项目与会话交付弹窗共用关闭生命周期。 */
   onClose?(): void;
 }
@@ -127,19 +130,22 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const initialized = useRef(false);
 
   /** 仓库及文件读取完成后一次发布，差异直接来自同一快照。 */
-  async function refresh(): Promise<void> {
+  async function refresh(background = false): Promise<void> {
     /** 本轮身份在任何 await 之前固定。 */
     const revision = ++readRevision.current;
     try {
-      /** 只使用传入的范围客户端；普通项目与绑定会话不会互相回退。 */
-      const complete = await requestProjectGitWorkbench(props.client, props.project.id);
+      /** 保存后必须重新读取，不能复用写入前发起的共享请求。 */
+      const complete = await props.client.loadProjectGitWorkbench(props.project.id);
       if (revision !== readRevision.current) return;
       /** 写入与展示仅使用入口限定后的真实仓库。 */
       const next = scopedSnapshot(complete);
       setSnapshot(next);
-      setCommitted({});
-      setComparisonLoading(true);
-      setComparisonErrors({});
+      /** 文件事件不清空已提交页签，保留选中文件直到新比较结果到达。 */
+      if (!background) {
+        setCommitted({});
+        setComparisonLoading(true);
+        setComparisonErrors({});
+      }
       if (busyRef.current === 'loading') {
         busyRef.current = null;
         setBusyAction(null);
@@ -189,16 +195,21 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   useEffect(() => {
     if (!open) return;
     void refresh();
-    /** 外部变化只在没有本页操作时刷新，避免提交前覆盖所选快照。 */
-    const unsubscribe = subscribeProjectGitRefresh(props.project.id, () => {
-      if (!busyRef.current) void refresh();
-    });
     return () => {
-      unsubscribe();
       ++readRevision.current;
       generation.current?.abort();
     };
   }, [open, props.client, props.project.id, props.repositoryId, props.pathPrefix]);
+
+  useGitDeliveryRefresh({
+    client: props.client,
+    open,
+    blocked: busyAction !== null,
+    projectId: props.project.id,
+    scope: props.conversation && props.conversationWorkspaceMode !== 'direct' ? { conversationId: props.conversation.id } : {},
+    refresh: () => refresh(true),
+    onError: setError,
+  });
 
   /** 同一仓库文件树用于文件选择、计数和差异定位。 */
   const groups = useMemo<DeliveryRepositoryGroup[]>(

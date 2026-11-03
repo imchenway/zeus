@@ -56,7 +56,7 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
   /** 两侧编辑器读取同一快照，菜单切换不会重建文档。 */
   const options = useCodeReadingPreferences();
   /** 菜单只从行号及其左侧打开，正文保留原生选择和右键行为。 */
-  const [point, setPoint] = useState<{ x: number; y: number; document: Document } | null>(null);
+  const [point, setPoint] = useState<{ x: number; y: number; portalHost: Element } | null>(null);
   /** 当前文案语言。 */
   const zh = locale.startsWith('zh');
   /** 原始归属由调用方映射，空白补位不会借用相邻作者。 */
@@ -89,7 +89,9 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
       if (typeof target.closest !== 'function' || !target.closest('.cm-gutters')) return;
       event.preventDefault();
       event.stopPropagation();
-      setPoint({ x: event.clientX, y: event.clientY, document: host.ownerDocument });
+      /** 菜单属于触发编辑器的模态层；页面首个应用容器可能已被弹窗设为 inert。 */
+      const portalHost = host.closest('[aria-modal="true"]') ?? host.closest('.macos-ai-app') ?? host.ownerDocument.body;
+      setPoint({ x: event.clientX, y: event.clientY, portalHost });
     };
     host.addEventListener('contextmenu', onContextMenu);
     return () => host.removeEventListener('contextmenu', onContextMenu);
@@ -121,7 +123,7 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
             </button>
           ))}
         </MenuSurface>,
-        point.document.querySelector('.macos-ai-app') ?? point.document.body,
+        point.portalHost,
       )
     : null;
   return { extension, menu };

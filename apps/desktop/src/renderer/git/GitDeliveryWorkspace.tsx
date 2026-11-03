@@ -1,3 +1,5 @@
+import { GitDeliveryCombinationContext, readGitDeliverySettings } from './gitDeliverySettings.js';
+import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
 import type { TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
@@ -614,117 +616,167 @@ export function GitDeliveryActions(props: {
   /** 两种交付入口共用后台运行入口。 */
   combination?: ReactNode;
 }) {
+  /** 每个项目恢复最近一次被后台接纳的组合，临时勾选仅属于当前操作栏。 */
+  const [settings, setSettings] = useState(() => readGitDeliverySettings(props.projectId));
+  /** 详细设置保留权限、技能及最终任务状态，步骤选择直接放在功能旁。 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 后台运行与单步操作共用组合选择锁。 */
+  const [combinationRunning, setCombinationRunning] = useState(false);
+  useEffect(() => {
+    setSettings(readGitDeliverySettings(props.projectId));
+    setSettingsOpen(false);
+  }, [props.projectId]);
   /** 两种入口都在操作期间锁定文件选择。 */
-  const busy = props.busyAction !== null;
+  const busy = props.busyAction !== null || combinationRunning;
+  /** 复用现有标题位置，勾选只控制组合，不触发旁边的单步操作。 */
+  function stepTitle(action: 'commit' | 'merge' | 'push', label: string): ReactNode {
+    return props.combination ? (
+      <label className="git-delivery-checkbox">
+        <input
+          type="checkbox"
+          checked={settings[action]}
+          disabled={busy}
+          aria-label={props.zh ? `组合包含${label}` : `Include ${label} in combination`}
+          onChange={(event) => setSettings((current) => ({ ...current, [action]: event.target.checked }))}
+        />
+        <strong>{label}</strong>
+      </label>
+    ) : (
+      <strong>{label}</strong>
+    );
+  }
   return (
-    <aside className="task-git-review-options task-git-delivery-actions">
-      <section className="task-git-delivery-action-step">
-        <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '提交文件' : 'Commit files'}</strong>
-          <span className="task-git-generation-controls">
+    <GitDeliveryCombinationContext.Provider value={{ settings, setSettings, settingsOpen, setSettingsOpen, setRunning: setCombinationRunning }}>
+      <aside className="task-git-review-options task-git-delivery-actions">
+        <section className="task-git-delivery-action-step">
+          <div className="task-git-delivery-step-heading">
+            {stepTitle('commit', props.zh ? '提交文件' : 'Commit files')}
+            <span className="task-git-generation-controls">
+              {props.combination ? (
+                <input
+                  type="checkbox"
+                  checked={settings.generateCommitMessage}
+                  disabled={busy || !settings.commit}
+                  aria-label={props.zh ? '组合中 AI 生成提交说明' : 'Generate commit messages with AI in combination'}
+                  title={props.zh ? '组合中 AI 生成提交说明' : 'Generate commit messages with AI in combination'}
+                  onChange={(event) => setSettings((current) => ({ ...current, generateCommitMessage: event.target.checked }))}
+                />
+              ) : null}
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={props.busyAction === 'commit-message' ? (props.zh ? '停止生成提交说明' : 'Stop generating commit message') : props.zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
+                title={props.zh ? '根据勾选文件生成提交说明' : 'Generate a commit message from selected files'}
+                disabled={props.busyAction !== 'commit-message' && (busy || !props.generationClient || !props.canGenerate)}
+                onClick={props.onGenerate}
+              >
+                {props.busyAction === 'commit-message' ? (props.zh ? '停止生成' : 'Stop generating') : props.zh ? 'AI 生成' : 'AI Generate'}
+              </Button>
+              <GitCommitGenerationSettingsButton client={props.generationClient} projectId={props.projectId} zh={props.zh} disabled={busy} />
+            </span>
+          </div>
+          {props.beforeCommit}
+          {props.commitCount > 0 ? (
+            <textarea rows={3} value={props.message} onChange={(event) => props.onMessageChange(event.target.value)} disabled={busy && props.busyAction !== 'commit-message'} aria-label={props.zh ? '提交说明' : 'Commit message'} />
+          ) : null}
+          {props.generationFeedback ? <small role="status">{props.generationFeedback}</small> : null}
+          <Button
+            variant={props.combination ? 'secondary' : 'primary'}
+            size="compact"
+            aria-label={props.zh ? `提交所选文件（${props.commitCount}）` : `Commit selected files (${props.commitCount})`}
+            busy={props.busyAction === 'commit'}
+            onClick={props.onCommit}
+            disabled={busy || props.commitCount === 0}
+          >
+            {props.zh ? '提交' : 'Commit'}
+            {props.commitCount > 0 ? `（${props.commitCount}）` : ''}
+          </Button>
+          {props.commitFeedback}
+        </section>
+        <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
+          <div className="task-git-delivery-step-heading">
+            {stepTitle('merge', props.zh ? '合入分支' : 'Merge branch')}
+            {props.combination ? (
+              <Button variant="secondary" size="compact" disabled={busy} aria-label={props.zh ? '交付设置' : 'Delivery settings'} data-icon-tooltip={props.zh ? '交付设置' : 'Delivery settings'} onClick={() => setSettingsOpen(true)}>
+                <GearSixIcon aria-hidden="true" />
+              </Button>
+            ) : null}
+          </div>
+          <div className="task-git-delivery-merge-row">
+            {props.onMergeTargetChange ? (
+              <ZeusSelect
+                size="compact"
+                ariaLabel={props.mergeLabel ?? (props.zh ? '合入目标分支' : 'Target branch')}
+                value={props.mergeTarget ?? ''}
+                options={props.mergeOptions ?? []}
+                onChange={props.onMergeTargetChange}
+                disabled={busy || props.mergeDisabled}
+                searchPlaceholder={props.zh ? '搜索本地分支' : 'Search local branches'}
+              />
+            ) : null}
             <Button
               variant="secondary"
               size="compact"
-              aria-label={props.busyAction === 'commit-message' ? (props.zh ? '停止生成提交说明' : 'Stop generating commit message') : props.zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
-              title={props.zh ? '根据勾选文件生成提交说明' : 'Generate a commit message from selected files'}
-              disabled={props.busyAction !== 'commit-message' && (busy || !props.generationClient || !props.canGenerate)}
-              onClick={props.onGenerate}
+              aria-label={
+                props.mergeAll
+                  ? props.zh
+                    ? `全部合入各自来源分支（${props.mergeCount} 个仓库）`
+                    : `Merge all ${props.mergeCount} repositories into their source branches`
+                  : props.zh
+                    ? `合入所选仓库（${props.mergeCount}）`
+                    : `Merge selected repositories (${props.mergeCount})`
+              }
+              busy={props.busyAction === 'merge'}
+              onClick={props.onMerge}
+              disabled={busy || props.mergeCount === 0}
             >
-              {props.busyAction === 'commit-message' ? (props.zh ? '停止生成' : 'Stop generating') : props.zh ? 'AI 生成' : 'AI Generate'}
+              {props.zh ? (props.mergeAll ? '全部合入来源分支' : '合入') : props.mergeAll ? 'Merge all into source branches' : 'Merge'}
+              {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
             </Button>
-            <GitCommitGenerationSettingsButton client={props.generationClient} projectId={props.projectId} zh={props.zh} disabled={busy} />
-          </span>
-        </div>
-        {props.beforeCommit}
-        {props.commitCount > 0 ? (
-          <textarea rows={3} value={props.message} onChange={(event) => props.onMessageChange(event.target.value)} disabled={busy && props.busyAction !== 'commit-message'} aria-label={props.zh ? '提交说明' : 'Commit message'} />
-        ) : null}
-        {props.generationFeedback ? <small role="status">{props.generationFeedback}</small> : null}
-        <Button
-          variant={props.combination ? 'secondary' : 'primary'}
-          size="compact"
-          aria-label={props.zh ? `提交所选文件（${props.commitCount}）` : `Commit selected files (${props.commitCount})`}
-          busy={props.busyAction === 'commit'}
-          onClick={props.onCommit}
-          disabled={busy || props.commitCount === 0}
-        >
-          {props.zh ? '提交' : 'Commit'}
-          {props.commitCount > 0 ? `（${props.commitCount}）` : ''}
-        </Button>
-        {props.commitFeedback}
-      </section>
-      <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
-        <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '合入分支' : 'Merge branch'}</strong>
-        </div>
-        <div className="task-git-delivery-merge-row">
-          {props.onMergeTargetChange ? (
+          </div>
+          {props.onModeChange ? (
             <ZeusSelect
               size="compact"
-              ariaLabel={props.mergeLabel ?? (props.zh ? '合入目标分支' : 'Target branch')}
-              value={props.mergeTarget ?? ''}
-              options={props.mergeOptions ?? []}
-              onChange={props.onMergeTargetChange}
-              disabled={busy || props.mergeDisabled}
-              searchPlaceholder={props.zh ? '搜索本地分支' : 'Search local branches'}
+              ariaLabel={props.zh ? '合入方式' : 'Merge method'}
+              value={props.mode}
+              options={[
+                { value: 'merge', label: props.zh ? 'Merge · 保留提交历史' : 'Merge · preserve commits' },
+                { value: 'squash', label: props.zh ? 'Squash · 合成一个提交' : 'Squash · one commit' },
+              ]}
+              onChange={props.onModeChange}
+              disabled={busy}
+              searchable={false}
             />
           ) : null}
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label={
-              props.mergeAll
-                ? props.zh
-                  ? `全部合入各自来源分支（${props.mergeCount} 个仓库）`
-                  : `Merge all ${props.mergeCount} repositories into their source branches`
-                : props.zh
-                  ? `合入所选仓库（${props.mergeCount}）`
-                  : `Merge selected repositories (${props.mergeCount})`
-            }
-            busy={props.busyAction === 'merge'}
-            onClick={props.onMerge}
-            disabled={busy || props.mergeCount === 0}
-          >
-            {props.zh ? (props.mergeAll ? '全部合入来源分支' : '合入') : props.mergeAll ? 'Merge all into source branches' : 'Merge'}
-            {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
-          </Button>
-        </div>
-        {props.onModeChange ? (
-          <ZeusSelect
-            size="compact"
-            ariaLabel={props.zh ? '合入方式' : 'Merge method'}
-            value={props.mode}
-            options={[
-              { value: 'merge', label: props.zh ? 'Merge · 保留提交历史' : 'Merge · preserve commits' },
-              { value: 'squash', label: props.zh ? 'Squash · 合成一个提交' : 'Squash · one commit' },
-            ]}
-            onChange={props.onModeChange}
-            disabled={busy}
-            searchable={false}
-          />
-        ) : null}
-        {props.mergeIssues}
-        {props.mergeFeedback}
-      </section>
-      <section className="task-git-delivery-action-step">
-        <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '推送到远端' : 'Push to remote'}</strong>
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label={props.zh ? `推送到远端（${props.pushCount}）` : `Push to remote (${props.pushCount})`}
-            busy={props.busyAction === 'push'}
-            onClick={props.onPush}
-            disabled={busy || props.pushCount === 0}
-          >
-            {props.zh ? '推送' : 'Push'}
-            {props.pushCount > 0 ? `（${props.pushCount}）` : ''}
-          </Button>
-        </div>
-        {props.pushFeedback}
-      </section>
-      {props.combination}
-    </aside>
+          {props.combination ? (
+            <label className="git-delivery-checkbox" aria-disabled={!settings.merge}>
+              <input type="checkbox" checked={settings.resolveConflicts} disabled={busy || !settings.merge} onChange={(event) => setSettings((current) => ({ ...current, resolveConflicts: event.target.checked }))} />
+              {props.zh ? 'AI 处理合入冲突' : 'Resolve merge conflicts with AI'}
+            </label>
+          ) : null}
+          {props.mergeIssues}
+          {props.mergeFeedback}
+        </section>
+        <section className="task-git-delivery-action-step">
+          <div className="task-git-delivery-step-heading">
+            {stepTitle('push', props.zh ? '推送到远端' : 'Push to remote')}
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={props.zh ? `推送到远端（${props.pushCount}）` : `Push to remote (${props.pushCount})`}
+              busy={props.busyAction === 'push'}
+              onClick={props.onPush}
+              disabled={busy || props.pushCount === 0}
+            >
+              {props.zh ? '推送' : 'Push'}
+              {props.pushCount > 0 ? `（${props.pushCount}）` : ''}
+            </Button>
+          </div>
+          {props.pushFeedback}
+        </section>
+        {props.combination}
+      </aside>
+    </GitDeliveryCombinationContext.Provider>
   );
 }
 import { useHoverIntent } from '../ui/useHoverIntent.js';

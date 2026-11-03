@@ -16285,9 +16285,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-size: 13px;
 }
 
-/* 标题与即时操作共用一行，右侧只保留必要控件和异常摘要。 */
+/* 标题、组合勾选与即时操作同行；窄窗口允许控件自然换行。 */
 .macos-ai-app .task-git-delivery-step-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -16299,6 +16300,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 组合中的 AI 勾选保持原生尺寸，不受通用输入框宽度影响。 */
+.macos-ai-app .task-git-generation-controls > input[type='checkbox'] {
+  flex: none;
+  inline-size: auto;
+  margin: 0;
 }
 
 /* 合入参数与动作同行，功能标题在上方保留，说明文字不重复展示。 */
@@ -19428,10 +19436,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block-end: 0;
 }
 
-/* 主阅读区与常显信息列共用页面滚动，长说明不再截断在独立折叠区内。 */
+/* 任务正文、关系和历史共用主阅读列，属性列保持紧凑并共用页面滚动。 */
 .macos-ai-app .task-detail-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 292px;
+  grid-template-columns: minmax(0, 1fr) 280px;
   align-items: start;
   flex: 1;
   min-block-size: 0;
@@ -19513,13 +19521,41 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   position: relative;
 }
 
+/* 标题、任务状态与任务操作构成固定头部，正文滚动不遮挡编辑入口。 */
 .macos-ai-app .task-detail-pane-header.task-detail-summary-row {
   align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   background: var(--zeus-product-panel);
-  border-block-end: 0;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
   flex-shrink: 0;
   margin-inline: 0;
-  padding: 6px 24px 8px;
+  padding: 18px 24px;
+}
+
+/* 状态紧随标题，使用原即时保存控件和错误反馈。 */
+.macos-ai-app .task-detail-header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+/* 任务关系与历史离开窄侧栏，沿用正文列的对齐和分隔线。 */
+.macos-ai-app .task-detail-reading > .task-detail-block {
+  margin: 0;
+  padding: 20px 28px;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+}
+
+.macos-ai-app .task-detail-reading .task-detail-event-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 16px;
+}
+
+.macos-ai-app .task-detail-reading .task-detail-event-row strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .macos-ai-app .task-detail-pane-title .task-inline-edit-trigger strong {
@@ -19529,7 +19565,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: normal;
 }
 
-/* 会话入口与主操作集中在标题右侧，空间不足时在同一操作区内自然换行。 */
+/* 任务操作集中在标题右侧，空间不足时自然换行。 */
 .macos-ai-app .task-detail-header-actions {
   align-items: center;
   display: flex;
@@ -20129,39 +20165,19 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-direction: column;
 }
 
-/* 空任务把信息平铺到输入框下，避免长信息列旁出现没有内容的阅读画布。 */
-.macos-ai-app .task-detail-workspace[data-has-activity='false'] {
-  display: block;
-}
-.macos-ai-app .task-detail-workspace[data-has-activity='false'] .task-detail-properties {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
-  align-items: start;
-  gap: 28px;
-  border-inline-start: 0;
-  border-block-start: 1px solid var(--zeus-product-line-soft);
-  padding: 24px;
-}
-.macos-ai-app .task-detail-workspace[data-has-activity='false'] .task-detail-properties > .task-detail-block {
-  border-block-start: 0;
-  margin: 0;
-  padding: 0;
-}
-.macos-ai-app .task-detail-workspace[data-has-activity='false'] .task-detail-task-facts {
-  grid-template-columns: minmax(0, 1fr);
-}
 .macos-ai-app .task-detail-properties .task-detail-tags {
   margin-block-start: 14px;
 }
 
 /* 窄面板完整顺排信息，宽度变化只改排版，不把内容藏进抽屉。 */
-@container task-detail (max-width: 1040px) {
+@container task-detail (max-width: 800px) {
   .macos-ai-app .task-detail-workspace {
     grid-template-columns: minmax(0, 1fr);
   }
   .macos-ai-app .task-detail-properties {
     border-inline-start: 0;
-    border-block-start: 1px solid var(--zeus-product-line-soft);
+    border-block-start: 0;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
     padding: 24px;
   }
   .macos-ai-app .task-detail-summary-grid.task-detail-task-facts {
@@ -20174,7 +20190,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 @container task-detail (max-width: 560px) {
   .macos-ai-app .task-detail-pane-header.task-detail-summary-row,
   .macos-ai-app .task-detail-summary-grid.task-detail-task-facts,
-  .macos-ai-app .task-detail-conversation-row {
+  .macos-ai-app .task-detail-reading .task-detail-event-row {
     grid-template-columns: minmax(0, 1fr);
   }
   .macos-ai-app .task-detail-header-actions {
@@ -20182,6 +20198,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
   .macos-ai-app .task-detail-pane-header.task-detail-summary-row,
   .macos-ai-app .task-detail-requirements,
+  .macos-ai-app .task-detail-reading > .task-detail-block,
   .macos-ai-app .task-detail-properties,
   .macos-ai-app .task-detail-arrangement,
   .macos-ai-app .task-detail-feedback-rail {

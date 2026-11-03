@@ -28,6 +28,7 @@ import { VisibleApplicationError, reportApplicationError } from '../ui/Applicati
 import type { DashboardClient, ProjectRecord } from '../apiClient.js';
 import type { GitEnvironmentSummary, GitEnvironmentWorkspace } from '@zeus/shared';
 import { platformShortcutLabel } from '../platform.js';
+import { conversationGitDeliveryTarget } from '../git/conversationGitDeliveryTarget.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -304,19 +305,21 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   /** 同一个按钮统一打开原生交付窗口，任务范围保留现有工作区定位。 */
   async function openDelivery(): Promise<void> {
+    /** 与快捷键共用目录模式，摘要只补充尚未带回的任务工作区身份。 */
+    const target = conversationGitDeliveryTarget({ ...props.conversation, taskId }, props.conversation.workspaceId ?? workspace?.id ?? null);
     if (conversationGitClient) {
       setOpen(false);
       try {
         if (!window.zeus?.openTaskGitDeliveryWindow) throw new Error(zh ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.');
-        await window.zeus.openTaskGitDeliveryWindow(directWorkspace && taskId ? { projectId: props.conversation.projectId } : { projectId: props.conversation.projectId, conversationId: props.conversation.id });
+        await window.zeus.openTaskGitDeliveryWindow(target);
       } catch (error) {
         reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
       }
       return;
     }
-    if (!taskId || !props.onOpenGitDelivery) return;
+    if (!target.taskId || !props.onOpenGitDelivery) return;
     setOpen(false);
-    props.onOpenGitDelivery(taskId, props.conversation.workspaceId ?? workspace?.id ?? null);
+    props.onOpenGitDelivery(target.taskId, target.workspaceId ?? null);
   }
 
   /** 浮层关闭后使用环境入口恢复焦点，避免引用已经卸载的工具行。 */
