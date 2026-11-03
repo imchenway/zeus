@@ -201,6 +201,9 @@ declare global {
       showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
       openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
+      /** 只读取项目已有的 worktree，切换结果复用源码工作区身份。 */
+      listProjectSourceWorktrees: (projectId: string) => Promise<import('@zeus/shared').ProjectSourceWorktree[]>;
+      selectProjectSourceWorktree: (input: { projectId: string; worktreeId: string }) => Promise<import('@zeus/shared').FilePreviewSourceWorkspace>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
       searchProjectSourceContent: (input: { projectId: string; query: string } & ProjectSourceContentSearchOptions) => Promise<ProjectSourceContentSearchResult>;

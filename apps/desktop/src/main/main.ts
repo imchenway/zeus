@@ -1,3 +1,4 @@
+import { listProjectSourceWorktrees } from './projectSourceWorktrees.js';
 import { registerFilePreview } from './filePreview.js';
 import { getApplicationIcon } from './applicationIcon.js';
 import {
@@ -976,6 +977,15 @@ async function openFileSourceWorkspace(parent: BrowserWindow, target: { root: st
   const project = await loadProjectIdentity(projectId);
   /** 路径使用源码页的跨平台相对格式。 */
   const relativePath = relative(target.root, target.path).split(sep).join('/');
+  const workspace = await registerSourceWorkspace(owner, project, target.root, relativePath);
+  if (owner.isDestroyed()) throw new Error('主窗口已关闭。');
+  owner.webContents.send('zeus:file-preview:source-open-workspace', workspace);
+  owner.show();
+  owner.focus();
+}
+
+/** 预览编辑与 worktree 选择共用窗口内目录授权，旧草稿保存期间仍保留旧目录。 */
+async function registerSourceWorkspace(owner: BrowserWindow, project: ProjectGitProjectIdentity, root: string, relativePath: string): Promise<FilePreviewSourceWorkspace> {
   /** 同一主窗口复用服务，原项目与多个工作树可以独立保存草稿。 */
   let scope = fileSourceWorkspaces.get(owner);
   if (!scope) {
@@ -997,18 +1007,15 @@ async function openFileSourceWorkspace(parent: BrowserWindow, target: { root: st
     });
   }
   /** 项目目录复用原项目身份；任务工作树按准确根目录复用临时身份。 */
-  const existing = [...scope.workspaces.values()].find((entry) => entry.ownerProjectId === projectId && entry.project.localPath === target.root);
+  const existing = [...scope.workspaces.values()].find((entry) => entry.ownerProjectId === project.id && entry.project.localPath === root);
   /** 文件定位与目录身份分开，重复编辑复用同一个目录作用域。 */
   const workspace: FilePreviewSourceWorkspace = {
-    ownerProjectId: projectId,
-    project: existing?.project ?? ((await realpath(project.localPath)) === target.root ? project : { id: `file-source:${randomUUID()}`, name: `${project.name} · ${basename(target.root)}`, localPath: target.root }),
+    ownerProjectId: project.id,
+    project: existing?.project ?? ((await realpath(project.localPath)) === root ? project : { id: `file-source:${randomUUID()}`, name: `${project.name} · ${basename(root)}`, localPath: root }),
     relativePath,
   };
   scope.workspaces.set(workspace.project.id, workspace);
-  if (owner.isDestroyed()) throw new Error('主窗口已关闭。');
-  owner.webContents.send('zeus:file-preview:source-open-workspace', workspace);
-  owner.show();
-  owner.focus();
+  return workspace;
 }
 
 /** 项目与任务文件共用原生差异窗口，读取身份通过参数明确区分。 */
@@ -2224,6 +2231,29 @@ function setupIpc(): void {
     hideMenuBarUsageWindow();
     app.quit();
     return { quitting: true };
+  });
+  /** 工作树清单来自实际 Git 登记；只允许主窗口使用项目源码入口。 */
+  ipcMain.handle('zeus:project-source:list-worktrees', async (event, projectId: unknown) => {
+    requireProjectSourceWorkspace(event);
+    if (typeof projectId !== 'string' || !projectId.trim()) throw new TypeError('项目身份无效。');
+    return listProjectSourceWorktrees(await loadProjectIdentity(projectId));
+  });
+  /** 切换只登记目录身份，不产生文件修改或 Git checkout。 */
+  ipcMain.handle('zeus:project-source:select-worktree', async (event, input: { projectId?: unknown; worktreeId?: unknown }) => {
+    requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.worktreeId !== 'string') throw new TypeError('工作树选择无效。');
+    /** 目录授权始终属于发起选择的主窗口。 */
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || owner.isDestroyed() || !windows.has(owner) || event.senderFrame !== event.sender.mainFrame) throw new Error('工作树选择来自不可用的源码窗口。');
+    /** 返回项目目录不依赖其他工作树是否仍可读取。 */
+    const project = await loadProjectIdentity(input.projectId);
+    if (input.worktreeId === 'project') return registerSourceWorkspace(owner, project, await realpath(project.localPath), '');
+    /** 点击时重新确认登记和目录仍存在，不使用 Renderer 提交的路径。 */
+    const choices = await listProjectSourceWorktrees(project);
+    const choice = choices.find((entry) => entry.id === input.worktreeId);
+    if (!choice) throw new Error('工作树已不存在，请刷新后重新选择。');
+    if (owner.isDestroyed()) throw new Error('源码窗口已关闭。');
+    return registerSourceWorkspace(owner, project, choice.localPath, '');
   });
   ipcMain.handle('zeus:project-source:list-directory', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);

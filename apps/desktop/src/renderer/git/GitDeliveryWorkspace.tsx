@@ -1,3 +1,4 @@
+import { groupRepositoriesByBranch } from './repositoryBranchGroups.js';
 import { GitDeliveryCombinationContext, readGitDeliverySettings } from './gitDeliverySettings.js';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
@@ -124,7 +125,7 @@ export function DeliveryRepositoryFileTree(props: {
   /** 同一任务分支下的仓库保持现有排序与交付范围。 */
   const visibleGroups = props.groups.filter((group) => group.files.length > 0 || group.loadState || props.detailStates[group.workspace.id]);
   /** 分支全选只作用于当前文件范围中的可见仓库。 */
-  const branchGroups = groupDeliveryRepositoriesByBranch(visibleGroups);
+  const branchGroups = groupRepositoriesByBranch(visibleGroups, (group) => group.workspace.branchName);
   return (
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
@@ -507,19 +508,6 @@ function BatchDeliveryResults(props: { results: BatchDeliveryResult[]; zh: boole
       </ol>
     </section>
   );
-}
-
-/** 按真实分支分组，不为普通目录制造任务分支。 */
-function groupDeliveryRepositoriesByBranch(groups: DeliveryRepositoryGroup[]): Array<{ branchName: string; repositories: DeliveryRepositoryGroup[] }> {
-  /** 按首次出现顺序保留现有仓库顺序。 */
-  const byBranch = new Map<string, DeliveryRepositoryGroup[]>();
-  for (const group of groups) {
-    /** 同分支仓库复用同一组，不重新排序。 */
-    const existing = byBranch.get(group.workspace.branchName);
-    if (existing) existing.push(group);
-    else byBranch.set(group.workspace.branchName, [group]);
-  }
-  return [...byBranch].map(([branchName, repositories]) => ({ branchName, repositories }));
 }
 
 /** 仓库名称来自服务端登记事实。 */

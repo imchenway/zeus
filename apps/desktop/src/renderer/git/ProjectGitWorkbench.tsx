@@ -65,8 +65,6 @@ export interface ProjectGitWorkbenchProps {
   toolbarActions?: ReactNode;
   /** 主工作区的更新快捷键请求，允许 Git 尚未加载或处于收起状态。 */
   updateRequest?: number;
-  /** 源码目录顶行提供挂载位置，分支控件仍使用本工作台的仓库和操作状态。 */
-  branchToolbarContainer?: HTMLElement | null;
   /** 顶部分支菜单发起操作时展开底栏，使提交表单和操作反馈可见。 */
   onOpenPanel?(): void;
   /** 将工作台快照同步给源码文件树，保持状态标记一致。 */
@@ -611,7 +609,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     });
   }
 
-  /** 只改变现有分支控件的显示位置，不创建第二份仓库选择或执行状态。 */
+  /** 分支检出与 Git 操作保留在项目工作台内。 */
   const branchSwitcher = selectedRepository ? (
     <BranchSwitcher
       cascadeRepositories
@@ -680,7 +678,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       }}
       aria-label={zh ? '项目 Git 工作台' : 'Project Git workbench'}
     >
-      {props.branchToolbarContainer ? createPortal(branchSwitcher, props.branchToolbarContainer) : null}
       {error ? (
         <section className="project-git-workbench-state" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
@@ -879,7 +876,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       </header>
       <div className="project-git-browser-layout">
         <aside className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
-          {!props.branchToolbarContainer ? <div className="git-toolbar-identity">{branchSwitcher}</div> : null}
+          <div className="git-toolbar-identity">{branchSwitcher}</div>
           {selectedRepository?.snapshot.submodules?.length ? (
             <details>
               <summary className="project-git-reference-section-heading">

@@ -166,7 +166,7 @@ export interface FilePreviewSourceWorkspace {
   ownerProjectId: string;
   /** 临时作用域身份只在所属窗口内有效。 */
   project: { id: string; name: string; localPath: string };
-  /** 第一次打开的工作区相对文件路径。 */
+  /** 需要打开的工作区相对文件路径；仅切换目录时为空字符串。 */
   relativePath: string;
 }
 

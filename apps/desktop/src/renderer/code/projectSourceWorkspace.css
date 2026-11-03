@@ -183,13 +183,14 @@
   align-items: center;
   gap: 4px;
   font-weight: 600;
-  height: var(--source-module-header-height);
+  /* 工作目录错误按实际内容展开，不能被固定标题栏高度裁掉。 */
+  height: auto;
   min-height: var(--source-module-header-height);
   padding: 5px 12px;
   font-size: 12px;
   line-height: 20px;
 }
-.project-source-module-header > .project-source-branch-slot {
+.project-source-module-header > .project-source-worktree-slot {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -663,11 +664,11 @@
 }
 
 /* 分支控件沿用原有逻辑，宽度跟随目录栏并保留工作区入口。 */
-.project-source-branch-slot {
+.project-source-worktree-slot {
   display: flex;
   min-width: 0;
 }
-.macos-ai-app .project-source-branch-slot > .project-git-branch-trigger {
+.macos-ai-app .project-source-worktree-select .zeus-select-trigger {
   margin: 0;
   min-inline-size: 0;
   inline-size: 100%;
@@ -800,4 +801,21 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
+}
+
+/* 工作树选择跟随文件树宽度，长分支和目录由统一选择器截断。 */
+.project-source-worktree-control {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  inline-size: 100%;
+}
+.project-source-worktree-select {
+  min-inline-size: 0;
+  inline-size: 100%;
+}
+.project-source-worktree-control > [role='alert'] {
+  white-space: normal;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }

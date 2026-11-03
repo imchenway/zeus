@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -94,8 +95,8 @@ export interface ProjectSourceWorkspaceHandle {
 }
 
 export interface ProjectSourceWorkspaceProps {
-  /** 分支下拉框挂到目录顶行，替代重复的源码标题。 */
-  branchToolbarRef?(element: HTMLSpanElement | null): void;
+  /** 顶部目录选择由所属项目提供，编辑根目录仍来自受信工作区身份。 */
+  workspaceSelector?: ReactNode;
   /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
   gitSnapshot?: ProjectGitWorkbenchSnapshot | null;
   project: { id: string; name: string; localPath: string };
@@ -797,12 +798,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
           <div className="project-source-module">
             <div className="project-source-module-header">
-              <span className="project-source-branch-slot" ref={props.branchToolbarRef}>
-                {/* 占位文字有独立节点，刷新快照时不清空外部挂载的分支控件。 */}
-                <span hidden={props.gitSnapshot?.projectId === props.project.id} title={props.project.localPath}>
-                  {props.project.name}
-                </span>
-              </span>
+              <span className="project-source-worktree-slot">{props.workspaceSelector ?? <span title={props.project.localPath}>{props.project.name}</span>}</span>
             </div>
             <div className="project-source-search-row">
               <label className="project-source-search">

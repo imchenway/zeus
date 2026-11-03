@@ -310,6 +310,9 @@ contextBridge.exposeInMainWorld('zeus', {
   showMainWindowFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:show-main'),
   openMenuBarUsageSettings: (category: 'usage' | 'runtime') => ipcRenderer.invoke('zeus:menu-bar-usage:open-settings', category),
   quitFromMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:quit'),
+  /** 源码工作目录由 Main 查询并校验，不接受任意绝对路径。 */
+  listProjectSourceWorktrees: (projectId: string) => ipcRenderer.invoke('zeus:project-source:list-worktrees', projectId),
+  selectProjectSourceWorktree: (input: { projectId: string; worktreeId: string }) => ipcRenderer.invoke('zeus:project-source:select-worktree', input),
   listProjectSourceDirectory: (input: unknown) => ipcRenderer.invoke('zeus:project-source:list-directory', input),
   searchProjectSourceEntries: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search', input),
   searchProjectSourceContent: (input: unknown) => ipcRenderer.invoke('zeus:project-source:search-content', input),

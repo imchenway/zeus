@@ -1,3 +1,4 @@
+import { ProjectSourceWorktreeSelect } from '../../code/ProjectSourceWorktreeSelect.js';
 import { ProjectTerminalPanel } from '../runtime/ProjectTerminalPanel.js';
 import { WorkspaceSearch } from '../../code/WorkspaceSearch.js';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
@@ -539,7 +540,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   );
   /** 源码页挂载后消费准确文件位置，重复打开保留其他标签草稿。 */
   useEffect(() => {
-    if (sourceReady && sourceWorkspaceTarget && sourceWorkspaceTarget.ownerProjectId === activeProjectId && activeProjectSection === 'code') {
+    if (sourceReady && sourceWorkspaceTarget?.relativePath && sourceWorkspaceTarget.ownerProjectId === activeProjectId && activeProjectSection === 'code') {
       void projectSourceWorkspaceRef.current?.openFile(sourceWorkspaceTarget.relativePath, 1);
     }
   }, [sourceReady, sourceWorkspaceTarget, activeProjectId, activeProjectSection, projectSourceWorkspaceRef]);
@@ -737,8 +738,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   }, []);
   /** 源码继续占用主页面；Git 打开不影响此页面的挂载状态。 */
   const sourceVisible = (activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'code';
-  /** 源码分支控件由侧栏中的唯一 Git 实例提供。 */
-  const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLSpanElement | null>(null);
   /** 源码目录沿用 Git 工作台的文件状态快照。 */
   const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 项目终端独立于命令弹窗，项目变化后不会自动开启新 shell。 */
@@ -1151,7 +1150,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           mainRef={workspaceScrollRef}
           gitClient={props.nativeConversationClient}
           language={appShellSettings.appLanguage}
-          branchToolbarContainer={projectCodeBranchContainer}
           onSnapshot={setProjectCodeGitSnapshot}
           onOpenGit={() => {
             if (selectedProject) openProjectSection(selectedProject, 'code', 'git');
@@ -1170,10 +1168,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       language={appShellSettings.appLanguage}
                       preference={
                         activeSourceTarget?.project.id.startsWith('file-source:')
-                          ? { activeFile: activeSourceTarget.relativePath, openFiles: [activeSourceTarget.relativePath], expandedDirectories: [], treeWidth: 240 }
+                          ? { activeFile: activeSourceTarget.relativePath || null, openFiles: activeSourceTarget.relativePath ? [activeSourceTarget.relativePath] : [], expandedDirectories: [], treeWidth: 240 }
                           : appShellSettings.codeWorkspaceByProject?.[selectedProject.id]
                       }
-                      branchToolbarRef={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : setProjectCodeBranchContainer}
+                      workspaceSelector={
+                        <ProjectSourceWorktreeSelect
+                          projectId={selectedProject.id}
+                          currentRoot={activeSourceTarget?.project.id.startsWith('file-source:') ? activeSourceTarget.project.localPath : undefined}
+                          language={appShellSettings.appLanguage}
+                          onSelect={(workspace) => openProjectSection(selectedProject, 'code', 'source', workspace.project.id === selectedProject.id ? null : workspace)}
+                        />
+                      }
                       gitSnapshot={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : projectCodeGitSnapshot}
                       onPreferenceChange={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : (preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                       onDirtyChange={setSourceWorkspaceDirty}

@@ -142,3 +142,19 @@ export interface TrashProjectSourceEntryInput {
   projectId: string;
   relativePath: string;
 }
+
+/** 源码目录选择只展示 Main 从项目及 Git 登记读取的现有工作树。 */
+export interface ProjectSourceWorktree {
+  /** 选择时重新查询此身份，不接受页面提交磁盘路径。 */
+  id: string;
+  /** 项目目录与额外工作树分别展示。 */
+  kind: 'project' | 'worktree';
+  /** 所属仓库名称；项目目录没有单独仓库归属。 */
+  repositoryName: string;
+  /** 当前分支；游离 HEAD 或非 Git 项目为 null。 */
+  branch: string | null;
+  /** 游离工作树用短提交标识区分。 */
+  headSha: string;
+  /** 展示实际目录，并用于匹配当前已授权源码工作区。 */
+  localPath: string;
+}

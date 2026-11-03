@@ -10,7 +10,7 @@ import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import { ProjectToolContext } from './projectToolContext.js';
 import './projectToolsWorkspace.css';
 
-/** Git 与源码的分支控件复用同一个工作台实例。 */
+/** 项目 Git 保留唯一工作台实例，源码目录选择独立使用现有 worktree。 */
 const ProjectGitWorkbench = lazy(() => import('../../git/ProjectGitWorkbench.js').then((module) => ({ default: module.ProjectGitWorkbench })));
 
 /** 工具和底层页面共用当前项目身份，不保存任务工作区的替代身份。 */
@@ -23,7 +23,7 @@ interface ProjectToolsWorkspaceProps {
   project?: ProjectRecord;
   /** Git 底栏覆盖当前页面，源码和命令保留原展示方式。 */
   open: boolean;
-  /** 源码可见时加载 Git，为目录提供分支控件和文件状态。 */
+  /** 源码可见时加载 Git，为项目目录提供文件状态。 */
   sourceVisible: boolean;
   /** 全文搜索也需要文件状态，复用同一 Git 实例和刷新订阅。 */
   fileSearchOpen: boolean;
@@ -31,8 +31,6 @@ interface ProjectToolsWorkspaceProps {
   gitClient?: ProjectGitWorkbenchProps['client'];
   /** 控件文案跟随应用语言。 */
   language: 'zh-CN' | 'en-US';
-  /** 源码整页提供分支控件挂载位置。 */
-  branchToolbarContainer: HTMLElement | null;
   /** 源码文件状态继续读取同一 Git 快照。 */
   onSnapshot(snapshot: ProjectGitWorkbenchSnapshot | null): void;
   /** 分支操作需要显示 Git 时只打开底栏。 */
@@ -162,15 +160,7 @@ function ProjectGitPanel(props: ProjectToolsWorkspaceProps) {
     <div className="project-tool-content">
       <Suspense fallback={null}>
         {props.gitClient ? (
-          <ProjectGitWorkbench
-            project={props.project}
-            client={props.gitClient}
-            language={props.language}
-            updateRequest={updateRequest}
-            branchToolbarContainer={props.sourceVisible && !props.open ? props.branchToolbarContainer : null}
-            onSnapshot={props.onSnapshot}
-            onOpenPanel={props.onOpenGit}
-          />
+          <ProjectGitWorkbench project={props.project} client={props.gitClient} language={props.language} updateRequest={updateRequest} onSnapshot={props.onSnapshot} onOpenPanel={props.onOpenGit} />
         ) : (
           <p role="status">{props.language === 'zh-CN' ? 'Git 服务尚未连接。' : 'The Git service is not connected.'}</p>
         )}

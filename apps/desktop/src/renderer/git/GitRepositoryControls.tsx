@@ -1,3 +1,4 @@
+import { executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from './repositoryBranchGroups.js';
 import './gitWorkspace.css';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { repositoryColor } from './repositoryColor.js';
@@ -65,7 +66,7 @@ export function BranchSwitcher(props: {
     : props.selectedRepository
       ? [props.selectedRepository]
       : props.repositories.slice(0, 1);
-  const commonLocalBranches = useMemo(() => intersectRepositoryValues(props.repositories, (repository) => repository.snapshot.localBranches), [props.repositories]);
+  const commonLocalBranches = useMemo(() => intersectRepositoryValues(props.repositories, repositoryLocalBranches), [props.repositories]);
 
   const closeMenus = () => {
     setReferenceMenu(null);
@@ -172,7 +173,7 @@ export function BranchSwitcher(props: {
               ))}
             </section>
           ) : null}
-          {!props.cascadeRepositories && normalizedQuery && props.repositories.length > 1 && commonLocalBranches.some(matches) ? (
+          {props.repositories.length > 1 && commonLocalBranches.some(matches) ? (
             <section className="project-git-branch-group">
               <strong>{props.zh ? '共同本地分支' : 'Common local branches'}</strong>
               {commonLocalBranches.filter(matches).map((branch) => (
@@ -186,12 +187,12 @@ export function BranchSwitcher(props: {
                     <span className="project-git-common-branch-actions">
                       <button
                         type="button"
-                        disabled={props.busy !== null || props.repositories.some((repository) => repository.snapshot.detached)}
+                        disabled={props.busy !== null || props.repositories.some((repository) => (repository.snapshot.detached || repository.snapshot.branch !== branch) && repository.snapshot.checkedOutBranches?.includes(branch))}
                         onClick={async () => {
-                          for (const repository of props.repositories) {
-                            if (repository.snapshot.branch === branch && !repository.snapshot.detached) continue;
-                            if ((await props.onExecute(repository, { type: 'checkout', branchName: branch }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`)) !== 'completed') break;
-                          }
+                          await executeRepositoryBatch(
+                            props.repositories.filter((repository) => repository.snapshot.detached || repository.snapshot.branch !== branch),
+                            (repository) => props.onExecute(repository, { type: 'checkout', branchName: branch }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`),
+                          );
                           setOpen(false);
                         }}
                       >
@@ -201,9 +202,10 @@ export function BranchSwitcher(props: {
                         type="button"
                         disabled={props.busy !== null}
                         onClick={async () => {
-                          for (const repository of props.repositories.filter((candidate) => candidate.snapshot.branch !== branch)) {
-                            if ((await props.onExecute(repository, createProjectGitMergeAction(repository, branch), props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`)) !== 'completed') break;
-                          }
+                          await executeRepositoryBatch(
+                            props.repositories.filter((repository) => repository.snapshot.branch !== branch),
+                            (repository) => props.onExecute(repository, createProjectGitMergeAction(repository, branch), props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`),
+                          );
                           setOpen(false);
                         }}
                       >
@@ -870,12 +872,6 @@ export function currentRepositoryRefLabel(repository: ProjectGitRepositoryWorkbe
 
 export function shortRef(ref: string): string {
   return /^[0-9a-f]{40}$/iu.test(ref) ? ref.slice(0, 8) : ref;
-}
-
-export function intersectRepositoryValues(repositories: ProjectGitRepositoryWorkbenchItem[], read: (repository: ProjectGitRepositoryWorkbenchItem) => string[]): string[] {
-  if (repositories.length === 0) return [];
-  const [first, ...rest] = repositories;
-  return [...new Set(read(first!))].filter((value) => rest.every((repository) => read(repository).includes(value))).sort((left, right) => left.localeCompare(right));
 }
 
 export function repositoryHasMatchingReference(repository: ProjectGitRepositoryWorkbenchItem, query: string): boolean {
