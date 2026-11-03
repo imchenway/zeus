@@ -22,6 +22,8 @@ interface ProjectGitQueryPorts {
   repositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
   effects: ProjectGitReadEffectPort;
   now(): Date;
+  /** 会话工作区可能包含多个仓库，查询列表保留完整成员。 */
+  resolveConversationWorkspace(project: ZeusProjectRecord, conversationId: string): Promise<{ repositories: Array<{ id: string; name: string; relativePath: string; localPath: string }> }>;
   resolveConversationRepository(project: ZeusProjectRecord, conversationId: string): Promise<{ id: string; name: string; relativePath: string; localPath: string }>;
 }
 
@@ -44,7 +46,7 @@ export class ProjectGitQueryApplication {
 
   async readWorkbench(projectId: string, conversationId?: string): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
     const project = this.requireProject(projectId);
-    const repositories = conversationId ? [await this.ports.resolveConversationRepository(project, conversationId)] : this.ports.repositories.listByProject(project.id);
+    const repositories = conversationId ? (await this.ports.resolveConversationWorkspace(project, conversationId)).repositories : this.ports.repositories.listByProject(project.id);
     const items = await mapWithConcurrency(repositories, async (repository) => ({
       id: repository.id,
       name: repository.name,

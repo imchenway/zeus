@@ -419,53 +419,6 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     return Array.from(new Set(workspaces.length === 0 ? [project.localPath, ...sharedRoots] : [...repositoryRoots, ...sharedRoots]));
   }
 
-  /**
-   * 在任务环境中保留项目容器的相对布局：仓库位置留给 Git worktree，
-   * 共享可写目录和其他非 Git 内容使用符号链接保持单一真实来源。
-   */
-  function mirrorTaskEnvironmentContainer(project: ZeusProjectRecord, environmentRoot: string, repositories: ZeusProjectRepositoryRecord[], sharedPaths: ZeusProjectSharedPathRecord[]): void {
-    const repositoryPaths = new Set(repositories.map((entry) => entry.relativePath));
-    const sharedByPath = new Map(sharedPaths.map((entry) => [entry.relativePath, entry]));
-    const memberPaths = [...repositoryPaths, ...sharedByPath.keys()];
-
-    const visit = (sourcePath: string, targetPath: string, relativePath: string): void => {
-      const normalizedRelativePath = relativePath.split(sep).join('/') || '.';
-      if (repositoryPaths.has(normalizedRelativePath)) return;
-      const shared = sharedByPath.get(normalizedRelativePath);
-      if (shared) {
-        mkdirSync(dirname(targetPath), { recursive: true });
-        symlinkSync(shared.localPath, targetPath, 'dir');
-        return;
-      }
-      const prefix = normalizedRelativePath === '.' ? '' : `${normalizedRelativePath}/`;
-      const containsMember = memberPaths.some((memberPath) => prefix === '' || memberPath.startsWith(prefix));
-      if (normalizedRelativePath !== '.' && !containsMember) {
-        mkdirSync(dirname(targetPath), { recursive: true });
-        const entry = lstatSync(sourcePath);
-        symlinkSync(sourcePath, targetPath, entry.isDirectory() ? 'dir' : 'file');
-        return;
-      }
-      mkdirSync(targetPath, { recursive: true });
-      for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
-        if (entry.name === '.git' || entry.name === '.zeus-worktrees') continue;
-        const childRelativePath = normalizedRelativePath === '.' ? entry.name : `${normalizedRelativePath}/${entry.name}`;
-        visit(join(sourcePath, entry.name), join(targetPath, entry.name), childRelativePath);
-      }
-    };
-
-    visit(project.localPath, environmentRoot, '.');
-  }
-
-  /** 共享目录覆盖任务 worktree 中的同名路径，始终指向项目里的持久真实目录。 */
-  function overlayTaskEnvironmentSharedPaths(environmentRoot: string, sharedPaths: ZeusProjectSharedPathRecord[]): void {
-    for (const sharedPath of sharedPaths) {
-      const targetPath = join(environmentRoot, sharedPath.relativePath);
-      rmSync(targetPath, { recursive: true, force: true });
-      mkdirSync(dirname(targetPath), { recursive: true });
-      symlinkSync(sharedPath.localPath, targetPath, 'dir');
-    }
-  }
-
   return {
     resolveTaskEnvironmentWritableRoots,
     mirrorTaskEnvironmentContainer,
@@ -476,4 +429,51 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     resolveNativeConversationExecutionRoot,
     ensureNativeConversationExecutionContext,
   };
+}
+
+/**
+ * 在任务环境中保留项目容器的相对布局：仓库位置留给 Git worktree，
+ * 共享可写目录和其他非 Git 内容使用符号链接保持单一真实来源。
+ */
+export function mirrorTaskEnvironmentContainer(project: ZeusProjectRecord, environmentRoot: string, repositories: ZeusProjectRepositoryRecord[], sharedPaths: ZeusProjectSharedPathRecord[]): void {
+  const repositoryPaths = new Set(repositories.map((entry) => entry.relativePath));
+  const sharedByPath = new Map(sharedPaths.map((entry) => [entry.relativePath, entry]));
+  const memberPaths = [...repositoryPaths, ...sharedByPath.keys()];
+
+  const visit = (sourcePath: string, targetPath: string, relativePath: string): void => {
+    const normalizedRelativePath = relativePath.split(sep).join('/') || '.';
+    if (repositoryPaths.has(normalizedRelativePath)) return;
+    const shared = sharedByPath.get(normalizedRelativePath);
+    if (shared) {
+      mkdirSync(dirname(targetPath), { recursive: true });
+      symlinkSync(shared.localPath, targetPath, 'dir');
+      return;
+    }
+    const prefix = normalizedRelativePath === '.' ? '' : `${normalizedRelativePath}/`;
+    const containsMember = memberPaths.some((memberPath) => prefix === '' || memberPath.startsWith(prefix));
+    if (normalizedRelativePath !== '.' && !containsMember) {
+      mkdirSync(dirname(targetPath), { recursive: true });
+      const entry = lstatSync(sourcePath);
+      symlinkSync(sourcePath, targetPath, entry.isDirectory() ? 'dir' : 'file');
+      return;
+    }
+    mkdirSync(targetPath, { recursive: true });
+    for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === '.zeus-worktrees') continue;
+      const childRelativePath = normalizedRelativePath === '.' ? entry.name : `${normalizedRelativePath}/${entry.name}`;
+      visit(join(sourcePath, entry.name), join(targetPath, entry.name), childRelativePath);
+    }
+  };
+
+  visit(project.localPath, environmentRoot, '.');
+}
+
+/** 共享目录覆盖任务 worktree 中的同名路径，始终指向项目里的持久真实目录。 */
+export function overlayTaskEnvironmentSharedPaths(environmentRoot: string, sharedPaths: ZeusProjectSharedPathRecord[]): void {
+  for (const sharedPath of sharedPaths) {
+    const targetPath = join(environmentRoot, sharedPath.relativePath);
+    rmSync(targetPath, { recursive: true, force: true });
+    mkdirSync(dirname(targetPath), { recursive: true });
+    symlinkSync(sharedPath.localPath, targetPath, 'dir');
+  }
 }

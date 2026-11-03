@@ -501,7 +501,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ? resolveNativeConversationExecutionRoot(input.conversation)
       : input.task
         ? input.project.localPath
-        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree, platformMutableState.appShellSettings.taskBranchPrefix);
+        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree, platformMutableState.appShellSettings.taskBranchPrefix, {
+            repositories: dependencies.projectRepositories.listByProject(input.project.id),
+            sharedPaths: dependencies.projectSharedPaths.listByProject(input.project.id),
+          });
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
     const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : undefined;
     if (!executionRoot || (input.task && !executionWorkspaceMode)) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '讨论会话的工作目录身份不可用。');
@@ -2610,7 +2613,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const executionRoot =
       deliveryWorkspace?.localPath ??
       inheritedWorkspace?.localPath ??
-      (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
+      (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix, {
+        repositories: dependencies.projectRepositories.listByProject(project.id),
+        sharedPaths: dependencies.projectSharedPaths.listByProject(project.id),
+      }));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
     const executionRoots = inheritedWorkspace || deliveryWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
     /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */

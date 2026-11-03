@@ -1,9 +1,21 @@
 /** 新建会话工作树的来源和目标分支；项目目录模式不消费此配置。 */
-export interface ConversationWorktreeOptions {
+export interface ConversationWorktreeBranchOptions {
+  /** 来源属于本地分支或已获取的远端跟踪分支。 */
   sourceKind: 'local' | 'remote';
+  /** 来源分支引用，远端引用包含 remote 名称。 */
   sourceRef: string;
+  /** 新建或重用的会话工作树分支名。 */
   branchName: string;
 }
+
+/** 多仓库配置使用登记身份绑定各自来源，路径由服务端解析。 */
+export interface ConversationRepositoryWorktreeOptions extends ConversationWorktreeBranchOptions {
+  /** 项目仓库登记身份。 */
+  repositoryId: string;
+}
+
+/** 根仓单独工作树与完整项目工作树共用发送入口。 */
+export type ConversationWorktreeOptions = ConversationWorktreeBranchOptions | { repositories: ConversationRepositoryWorktreeOptions[] };
 
 /** 新安装与旧设置缺省时使用的任务分支命名空间。 */
 export const defaultTaskBranchPrefix = 'zeus';
@@ -33,6 +45,22 @@ export function normalizeTaskBranchPrefix(value: unknown): string | null {
 /** 只接受包含来源、目标分支的完整工作树配置。 */
 export function isConversationWorktreeOptions(value: unknown): value is ConversationWorktreeOptions {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  /** 输入边界先检查成员结构，避免把混合的单仓与多仓配置接受为有效值。 */
   const entry = value as Record<string, unknown>;
+  if ('repositories' in entry) {
+    if (!Array.isArray(entry.repositories) || !entry.repositories.length || 'sourceKind' in entry || 'sourceRef' in entry || 'branchName' in entry) return false;
+    /** 仓库登记身份在一次请求内只能出现一次。 */
+    const identities = new Set<string>();
+    return entry.repositories.every((member: unknown) => {
+      if (typeof member !== 'object' || member === null || Array.isArray(member) || 'repositories' in member) return false;
+      /** 路径不接受客户端指定，只保留登记身份与分支配置。 */
+      const repository = member as Record<string, unknown>;
+      /** 先保存身份，分支类型校验不会改变该身份的类型。 */
+      const repositoryId = repository.repositoryId;
+      if (typeof repositoryId !== 'string' || !repositoryId.trim() || identities.has(repositoryId) || !isConversationWorktreeOptions(repository)) return false;
+      identities.add(repositoryId);
+      return true;
+    });
+  }
   return (entry.sourceKind === 'local' || entry.sourceKind === 'remote') && typeof entry.sourceRef === 'string' && Boolean(entry.sourceRef.trim()) && typeof entry.branchName === 'string' && Boolean(entry.branchName.trim());
 }

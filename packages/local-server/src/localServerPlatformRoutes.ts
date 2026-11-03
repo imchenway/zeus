@@ -5,7 +5,7 @@ import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
-import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { resolveConversationGitRepository, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
@@ -912,7 +912,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerStorageRecoveryPreflightApi({ server, db, artifacts: artifactStore });
 
   const projectGitQueries = new ProjectGitQueryApplication({
-    resolveConversationRepository: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
+    resolveConversationWorkspace: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
+    resolveConversationRepository: (project, repositoryKey) => resolveConversationGitRepository(project, repositoryKey, conversations, conversationSubmissions),
     projects,
     repositories: projectRepositories,
     effects: {
@@ -1058,7 +1059,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         typeof body.taskId === 'string'
           ? resolveTaskCommitRepository(project, body.taskId, taskWorkspaces.getById(target.repositoryId))
           : target.repositoryId.startsWith('conversation:')
-            ? resolveConversationGitWorkspace(project, target.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
+            ? resolveConversationGitRepository(project, target.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
             : resolveCommitRepository(project, target.repositoryId, target.relativePath);
       const controller = new AbortController();
       const stream = body.stream === true ? new PassThrough() : null;
@@ -2830,7 +2831,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (!project || typeof input.repositoryId !== 'string' || !input.repositoryId.startsWith('conversation:')) throw new Error('会话工作树预览身份无效。');
         if (input.stage !== undefined && !['combined', 'staged', 'unstaged'].includes(input.stage)) throw new Error('文件预览暂存范围无效。');
         if (input.comparisonMode !== undefined && !['current', 'working-tree'].includes(input.comparisonMode)) throw new Error('文件预览比较范围无效。');
-        const repository = await resolveConversationGitWorkspace(project, input.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions);
+        const repository = await resolveConversationGitRepository(project, input.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions);
         intent = { sides: await getGitFilePreviewSources(repository.localPath, input) };
       } else if (input.kind === 'task-git') {
         if (!['working', 'committed'].includes(input.scope)) throw new Error('交付预览范围无效。');

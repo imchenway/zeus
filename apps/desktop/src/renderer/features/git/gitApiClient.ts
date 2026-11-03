@@ -100,7 +100,7 @@ export interface GitApiClient {
 
 export function createGitApiClient(transport: LocalApiTransport, bridge: () => ProjectGitWorkbenchBridge | undefined, conversationId?: string): GitApiClient {
   const scopedRepositoryId = (repositoryId: string): string => {
-    if (conversationId && repositoryId !== `conversation:${conversationId}`) throw new Error('会话工作树身份不匹配，请重新打开代码交付。');
+    if (conversationId && repositoryId !== `conversation:${conversationId}` && !repositoryId.startsWith(`conversation:${conversationId}:`)) throw new Error('会话工作树身份不匹配，请重新打开代码交付。');
     return encodeURIComponent(repositoryId);
   };
   const projectOperation = async (projectId: string, operation: string, commandType: Parameters<typeof buildGitCommandRequest>[0]['commandType'], input: object) => {
@@ -157,7 +157,8 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
     loadProjectGitWorkbench: async (projectId) => {
       const snapshot = await (bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ''}`));
-      if (conversationId && (snapshot.repositories.length !== 1 || snapshot.repositories[0]?.id !== `conversation:${conversationId}`)) throw new Error('当前执行宿主尚不支持会话工作树交付，请更新后重试。');
+      /** 列表可包含多个仓库，但每一项必须属于请求中的会话。 */
+      if (conversationId) snapshot.repositories.forEach((repository) => scopedRepositoryId(repository.id));
       return snapshot;
     },
     loadConversationGitHistory: async (projectId, repositoryId, offset, ref) =>

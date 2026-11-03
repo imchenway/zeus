@@ -1042,7 +1042,7 @@ export class GitDeliveryExecution {
     const generation = run.input.commitMessageGeneration;
     if (!generation) throw deliveryError('本次运行缺少 AI 提交信息模型设置，请重新运行。');
     /** 普通项目仓库转换为原生成接口的稳定身份；任务与会话工作树沿用自身身份。 */
-    const isolated = run.scope.kind === 'task' || selection.repositoryId === `conversation:${run.scope.conversationId}`;
+    const isolated = run.scope.kind === 'task' || selection.repositoryId === `conversation:${run.scope.conversationId}` || selection.repositoryId.startsWith(`conversation:${run.scope.conversationId}:`);
     /** 目录来自本次已经核验的仓库，客户端不能指定任意绝对路径。 */
     const relativePath = isolated
       ? '.'
@@ -1098,7 +1098,8 @@ export class GitDeliveryExecution {
       };
     }
     const workspace = await resolveConversationGitWorkspace(project, input.scope.conversationId, this.options.conversations, this.options.conversationSubmissions);
-    if (selection.repositoryId === workspace.id) return { path: workspace.localPath, name: workspace.name };
+    const member = workspace.repositories.find((repository) => repository.id === selection.repositoryId);
+    if (member) return { path: member.localPath, name: member.name };
     if (workspace.workspaceMode !== 'direct') throw deliveryError('不能扩大会话工作树的交付范围。');
     const repositories = await discoverGitRepositories(workspace.localPath);
     const registered = this.options.projectRepositories.getById(selection.repositoryId);

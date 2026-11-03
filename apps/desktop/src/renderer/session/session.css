@@ -2330,6 +2330,8 @@
 /* ZEUS-0236：新会话执行上下文位于输入正文上方，项目目录显示当前分支，工作树单独配置来源和新分支。 */
 .session-codex-parity-v1 .session-new-conversation-context {
   align-items: center;
+  /* 仓库选择加入工作位置栏后，窄工作面按控件换行。 */
+  flex-wrap: wrap;
   background: color-mix(in srgb, var(--session-line-soft) 58%, transparent);
   border-radius: 13px 13px 0 0;
   display: flex;
@@ -3020,6 +3022,9 @@
 
 /* 原文固定参与排版；扫光只移动一层遮罩，不再依赖正反图层同步复位。 */
 .session-codex-parity-v1 .session-sweep-text {
+  /* 持续移动的文字遮罩只在自身范围内绘制，不与会话的大面积表面共用绘制边界。 */
+  contain: paint;
+  isolation: isolate;
   /* 单行与多行文字均以每秒 120 像素扫过，换行不改变活动提示样式。 */
   --session-text-sweep-width: 120px;
   display: inline-block;

@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { deliveryWorkspacesForConversationBranch, type GitEnvironmentScope, type GitEnvironmentSummary } from '@zeus/shared';
 import { buildTaskEnvironmentRootPath, discoverGitRepositories, getGitCommonDirectory, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
 import type { ProjectRepository, TaskRepository, TaskEnvironmentRepository, TaskWorkspaceRepository, ConversationRepository, ConversationSubmissionRepository, ZeusTaskWorkspaceRecord } from '@zeus/storage';
-import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { conversationRepositoryId, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import type { ConversationRealtimeSocket } from './conversationSyncRoutes.js';
 
 /** Git 目录由 Git 自身解析，支持普通仓库、独立 worktree 和路径别名。 */
@@ -213,14 +213,14 @@ export class GitEnvironmentSummaryService {
               : resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
         } else {
           if (scope.conversationId) {
-            /** 独立普通会话沿用交付页的单工作树权限，不因嵌套仓库而扩大统计范围。 */
+            /** 会话摘要与代码交付使用同一组已核验仓库。 */
             const repository = await resolveConversationGitWorkspace(project, scope.conversationId, this.options.conversations, this.options.submissions);
             cwd = repository.localPath;
-            discovered = [{ localPath: cwd, relativePath: '.', name: repository.name }];
+            discovered = repository.repositories;
           } else discovered ??= await discoverGitRepositories(cwd);
           repositoryCount = discovered.length;
           sources = discovered.map((repository) => ({
-            id: scope.conversationId ? `conversation:${scope.conversationId}` : `project_git_repository_${createHash('sha256').update(`${projectId}\0${repository.relativePath}`).digest('hex').slice(0, 24)}`,
+            id: scope.conversationId ? conversationRepositoryId(scope.conversationId, repository.relativePath) : `project_git_repository_${createHash('sha256').update(`${projectId}\0${repository.relativePath}`).digest('hex').slice(0, 24)}`,
             path: repository.localPath,
             ignoredPaths: [],
             nestedPaths: discovered!
