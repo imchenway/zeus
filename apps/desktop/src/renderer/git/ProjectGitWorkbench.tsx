@@ -7,7 +7,20 @@ import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/Arrow
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
-import { BranchSwitcher, MergeBranchDialog, UpdateProjectDialog, readUpdateStrategy, readSkipUpdateDialog, NewBranchDialog, RemoteBranchCheckoutDialog, CheckoutRevisionDialog, BranchDirectoryTree, BranchContextMenu, StashDialog, PullDialog } from './GitRepositoryControls.js';
+import {
+  BranchSwitcher,
+  MergeBranchDialog,
+  UpdateProjectDialog,
+  readUpdateStrategy,
+  readSkipUpdateDialog,
+  NewBranchDialog,
+  RemoteBranchCheckoutDialog,
+  CheckoutRevisionDialog,
+  BranchDirectoryTree,
+  BranchContextMenu,
+  StashDialog,
+  PullDialog,
+} from './GitRepositoryControls.js';
 import type { ProjectGitUpdateStrategy } from './gitWorkbenchTypes.js';
 import type { ExecutionOutcome } from './gitWorkbenchTypes.js';
 import type { BranchKind } from './gitWorkbenchTypes.js';
@@ -1087,16 +1100,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
       <MotionPresence>{stashRepository ? <StashDialog key={stashRepository.id} repository={stashRepository} zh={zh} busy={busy} onClose={() => setStashRepositoryId(null)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>
-        {updateOpen ? (
-          <UpdateProjectDialog
-            key={props.project.id}
-            projectId={props.project.id}
-            zh={zh}
-            busy={busy}
-            onClose={() => setUpdateOpen(false)}
-            onUpdate={(strategy) => void updateProject(strategy)}
-          />
-        ) : null}
+        {updateOpen ? <UpdateProjectDialog key={props.project.id} projectId={props.project.id} zh={zh} busy={busy} onClose={() => setUpdateOpen(false)} onUpdate={(strategy) => void updateProject(strategy)} /> : null}
       </MotionPresence>
       <MotionPresence>
         {newBranchOpen ? (

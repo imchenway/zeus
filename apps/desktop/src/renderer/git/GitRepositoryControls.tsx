@@ -549,13 +549,7 @@ export function RevisionContextMenu(props: {
 }
 
 /** 更新项目只选择整合策略；执行进度与冲突由共享工作台显示。 */
-export function UpdateProjectDialog(props: {
-  projectId: string;
-  zh: boolean;
-  busy: BusyState;
-  onClose: () => void;
-  onUpdate: (strategy: ProjectGitUpdateStrategy) => void;
-}) {
+export function UpdateProjectDialog(props: { projectId: string; zh: boolean; busy: BusyState; onClose: () => void; onUpdate: (strategy: ProjectGitUpdateStrategy) => void }) {
   /** 更新方式按项目保存，取消不写入。 */
   const [strategy, setStrategy] = useState(() => readUpdateStrategy(props.projectId));
   /** 勾选后，后续快捷键直接使用已保存的更新方式。 */
@@ -573,7 +567,9 @@ export function UpdateProjectDialog(props: {
           props.onUpdate(strategy);
         }}
       >
-        <header><strong>{props.zh ? '更新项目' : 'Update Project'}</strong></header>
+        <header>
+          <strong>{props.zh ? '更新项目' : 'Update Project'}</strong>
+        </header>
         <main>
           <fieldset className="project-git-update-strategies" aria-label={props.zh ? '更新方式' : 'Update method'} disabled={props.busy !== null}>
             <label>
@@ -591,9 +587,20 @@ export function UpdateProjectDialog(props: {
             <input type="checkbox" checked={skipDialog} disabled={props.busy !== null} onChange={(event) => setSkipDialog(event.currentTarget.checked)} />
             <span>{props.zh ? '不再显示' : "Don't show again"}</span>
           </label>
-          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>{props.zh ? '取消' : 'Cancel'}</Button>
+          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
+            {props.zh ? '取消' : 'Cancel'}
+          </Button>
           {/* 共享焦点管理器读取原生 autofocus 属性，并在关闭后恢复原焦点。 */}
-          <Button type="submit" variant="primary" ref={(button) => { button?.setAttribute('autofocus', ''); }} disabled={props.busy !== null}>{props.zh ? '确定' : 'OK'}</Button>
+          <Button
+            type="submit"
+            variant="primary"
+            ref={(button) => {
+              button?.setAttribute('autofocus', '');
+            }}
+            disabled={props.busy !== null}
+          >
+            {props.zh ? '确定' : 'OK'}
+          </Button>
         </footer>
       </form>
     </ModalPortal>

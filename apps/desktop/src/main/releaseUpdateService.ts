@@ -404,7 +404,11 @@ async function openReleaseDownload(source: URL, testMode: boolean): Promise<Read
     });
     request.once('response', (response) => {
       if (response.statusCode < 200 || response.statusCode >= 300 || response.statusCode === 204 || response.statusCode === 205) {
-        reject(new Error(`更新下载失败：HTTP ${response.statusCode}`, { cause: { code: response.statusCode === 408 || response.statusCode === 429 || response.statusCode >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' } }));
+        reject(
+          new Error(`更新下载失败：HTTP ${response.statusCode}`, {
+            cause: { code: response.statusCode === 408 || response.statusCode === 429 || response.statusCode >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' },
+          }),
+        );
         request.abort();
         return;
       }

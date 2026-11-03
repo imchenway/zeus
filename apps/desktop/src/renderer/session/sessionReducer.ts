@@ -1193,9 +1193,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       if (event.type === 'conversation.turn.retrying') return { ...nextState, conversationState: 'active_prework' };
       /** 只关闭本轮活动状态；同一终态中的队列保留其他未送达或暂停的提交。 */
       const completedState: NativeSessionState =
-        !base.activeTurnId || !turnIdentities.has(base.activeTurnId)
-          ? nextState
-          : { ...nextState, activeTurnId: null, currentReasoningItem: null, conversationState: status === 'failed' && !warning ? 'turn_failed' : 'native_idle' };
+        !base.activeTurnId || !turnIdentities.has(base.activeTurnId) ? nextState : { ...nextState, activeTurnId: null, currentReasoningItem: null, conversationState: status === 'failed' && !warning ? 'turn_failed' : 'native_idle' };
       return event.payload.queue ? projectQueueSubmissionMessages(completedState, { ...event.payload.queue, throughEventSeq: payload.sequence }) : completedState;
     }
     case 'conversation.turn.plan.updated': {
