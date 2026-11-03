@@ -141,6 +141,11 @@ export interface GitRepositoryContext {
   worktrees: GitWorktreeEntry[];
 }
 
+/** 桌面发现目录与会话工作树准备共用仓库身份，绑定项目及仓库相对位置。 */
+export function projectGitRepositoryId(projectId: string, relativePath: string): string {
+  return `project_git_repository_${createHash('sha256').update(`${projectId}\0${relativePath}`).digest('hex').slice(0, 24)}`;
+}
+
 export interface DiscoveredGitRepository {
   name: string;
   relativePath: string;
@@ -467,6 +472,8 @@ export interface ProjectGitRepositorySnapshot {
 
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
+  /** 回滚所选文件的暂存与未暂存修改；未跟踪文件不参与。 */
+  | { type: 'rollback'; paths: string[] }
   | { type: 'rename_branch'; branchName: string; newName: string }
   | { type: 'create_tag'; tagName: string; revision: string; message?: string }
   | { type: 'push_tag'; tagName: string; remote: string }
@@ -3203,6 +3210,30 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
     case 'fetch': {
       const remote = requireKnownRemote(context, action.remote);
       args = ['fetch', '--prune', remote];
+      break;
+    }
+    case 'rollback': {
+      /** 实际状态决定重命名关联，调用方不能额外指定旧路径。 */
+      const selected = requireRepositoryPaths(repositoryPath, action.paths);
+      const status = await getGitStatus(repositoryPath);
+      const entries = selected.map((path) => status.fileStatuses.find((file) => file.path === path));
+      if (status.conflictFiles.length || entries.some((file) => !file || file.indexStatus === '?')) throw gitCoreError('ZEUS_GIT_ROLLBACK_INVALID', '文件状态已变化或存在冲突，请刷新后回滚已跟踪文件。');
+      /** 恢复重命名的旧路径之前，不覆盖该位置重新出现的文件。 */
+      for (const file of entries) {
+        if (file?.originalPath && file.indexStatus === 'R') {
+          const present = await lstat(resolve(repositoryPath, file.originalPath)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (present) throw gitCoreError('ZEUS_GIT_ROLLBACK_INVALID', `重命名来源位置已有文件：${file.originalPath}`);
+        }
+      }
+      const paths = requireRepositoryPaths(
+        repositoryPath,
+        entries.flatMap((file) => (file!.originalPath && file!.indexStatus === 'R' ? [file!.originalPath, file!.path] : [file!.path])),
+      );
+      // 首次提交前只移除索引记录；--cached 保留工作区，包括暂存后继续编辑的内容。
+      args = context.headSha ? ['--literal-pathspecs', 'restore', '--source=HEAD', '--staged', '--worktree', '--', ...paths] : ['--literal-pathspecs', 'rm', '--cached', '--force', '--', ...paths];
       break;
     }
     case 'discard': {

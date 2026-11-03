@@ -1854,6 +1854,7 @@ function ConsoleSurface(props: { zh: boolean; history: ReturnType<typeof useGitO
 /** 动作名称只按已保存的类型翻译，不从 Git 输出猜测操作。 */
 const operationActionLabels: Record<ProjectGitAction['type'], [string, string]> = {
   discard: ['放弃修改', 'Discard changes'],
+  rollback: ['回滚文件', 'Rollback files'],
   rename_branch: ['重命名分支', 'Rename branch'],
   create_tag: ['创建标签', 'Create tag'],
   push_tag: ['推送标签', 'Push tag'],

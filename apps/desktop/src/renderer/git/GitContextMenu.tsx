@@ -9,9 +9,11 @@ export interface GitMenuItem {
   label: string;
   disabled?: boolean;
   danger?: boolean;
+  /** 快捷键提示只显示调用方实际支持的组合。 */
+  shortcut?: string;
   run: () => void | Promise<void>;
 }
-export function GitContextMenu(props: { x: number; y: number; title: string; items: GitMenuItem[]; onClose: () => void; onError: (error: unknown) => void }) {
+export function GitContextMenu(props: { x: number; y: number; title: string; items: GitMenuItem[]; anchor?: HTMLElement; onClose: () => void; onError: (error: unknown) => void }) {
   const ref = useRef<HTMLDivElement>(null);
 
   return createPortal(
@@ -33,11 +35,12 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
             }
           }}
         >
-          {item.label}
+          <span>{item.label}</span>
+          {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
         </button>
       ))}
     </MenuSurface>,
-    document.querySelector('.macos-ai-app') ?? document.body,
+    props.anchor?.closest('[data-zeus-primitive=modal]') ?? document.querySelector('.macos-ai-app') ?? document.body,
   );
 }
 
@@ -61,7 +64,7 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
       <section className="project-git-menu-action-dialog" data-modal-surface="alertdialog">
         <header>
           <strong>{props.value.title}</strong>
-          <p>{props.value.description}</p>
+          <p style={{ whiteSpace: 'pre-wrap', maxHeight: '40vh', overflowY: 'auto', overflowWrap: 'anywhere' }}>{props.value.description}</p>
         </header>
         {props.value.field ? (
           <label>

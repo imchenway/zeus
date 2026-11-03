@@ -20,10 +20,11 @@ import {
   type FilePreviewSource,
   type FilePreviewRevertInput,
   type FilePreviewSaveInput,
+  type GitDeliveryFileActionInput,
 } from '@zeus/shared';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
-import { getFilePreviewBlame } from '@zeus/git-core';
+import { executeProjectGitAction, getFilePreviewBlame, getGitStatus, withGitRepositoryOperation } from '@zeus/git-core';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
 protocol.registerSchemesAsPrivileged([
@@ -445,6 +446,69 @@ export function registerFilePreview(services: {
   }
 
   ipcMain.handle('zeus:file-preview:load', (event, input: FilePreviewRequest) => loadPreview(input, services.requireWindow(event)));
+
+  // 三种交付入口共用身份解析、命令回执和 Git 仓库锁。
+  ipcMain.handle('zeus:git-delivery:file-action', (event, request: MainCommandRequest<GitDeliveryFileActionInput>) => {
+    /** 授权固定在发起操作的窗口。 */
+    const window = services.requireWindow(event);
+    return services.commandLedger().execute(request, 'desktop.git_delivery.file_action', async (input, command) => {
+      if (!input || !['stage', 'rollback', 'trash', 'source'].includes(input.action) || !Array.isArray(input.requests) || !input.requests.length) throw new Error('交付文件操作无效。');
+      /** 所有文件先解析完成，避免后续无效身份造成部分写入。 */
+      const targets: Array<{ root: string; path: string; request: FilePreviewRequest }> = [];
+      for (const item of input.requests) {
+        if (!item || !['project-git', 'task-git'].includes(item.kind)) throw new Error('文件不属于代码交付范围。');
+        if (
+          input.action !== 'source' &&
+          ((item.kind === 'task-git' && item.scope !== 'working') || (item.kind === 'project-git' && (item.commitHash || item.comparisonRef || item.comparisonMode || (item.stage && item.stage !== 'combined'))))
+        )
+          throw new Error('已提交成果不能执行工作区操作。');
+        /** 仓库或任务身份由既有预览解析器授权，历史重命名也返回当前编辑目标。 */
+        const intent = await services.resolve(item, window);
+        /** 已丢弃或没有工作树的任务不授予文件修改目标。 */
+        const edit = intent.sides.find((side) => side.edit)?.edit;
+        if (!edit) throw new Error('当前文件没有可操作的工作区。');
+        /** 操作锁和路径检查使用同一真实目录。 */
+        const root = await realpath(edit.root);
+        /** 保留授权解析器返回的当前文件，不能从历史路径猜测编辑目标。 */
+        const path = relative(edit.root, edit.path).split(sep).join('/');
+        if (!path || path.startsWith('../') || isAbsolute(path) || path.split('/').includes('.git')) throw new Error('文件超出仓库范围。');
+        if (targets.length && targets[0]!.root !== root) throw new Error('一次文件操作不能跨越仓库。');
+        if (!targets.some((target) => target.path === path)) targets.push({ root, path, request: item });
+      }
+      /** 所有目标已确认属于同一工作目录。 */
+      const root = targets[0]!.root;
+      if (input.action === 'source') {
+        if (targets.length !== 1) throw new Error('请选择一个文件查看源码。');
+        /** 源码导航仅接受仍存在的普通文件。 */
+        const path = await authorizedPath({ root, path: resolve(root, targets[0]!.path), name: targets[0]!.path, label: '源码' });
+        await command.markWriteStarted();
+        await services.openSource(window, { root, path }, targets[0]!.request);
+        return { completed: true };
+      }
+      return withGitRepositoryOperation(root, async () => {
+        /** 防止旧菜单对已经提交或消失的文件执行操作。 */
+        const status = await getGitStatus(root);
+        if (targets.some((target) => !status.fileStatuses.some((file) => file.path === target.path && (input.action !== 'stage' || file.indexStatus === '?')))) throw new Error('所选文件状态已变化，请刷新后重试。');
+        if (input.action === 'trash') {
+          /** 删除复用源码的路径边界与系统回收站。 */
+          const workspace = new ProjectSourceWorkspaceService({ loadProjectRoot: async () => root, trashItem: (path) => shell.trashItem(path) });
+          // 文件菜单不递归删除目录或嵌套仓库。
+          for (const target of targets) {
+            /** 先校验全部目标，目录不能借文件菜单被递归删除。 */
+            const path = await workspace.revealPath('delivery', target.path);
+            if (!(await lstat(path)).isFile()) throw new Error('只能删除普通文件，不能删除目录或子仓库。');
+          }
+          for (const target of targets) await workspace.trashEntry('delivery', target.path, () => command.markWriteStarted());
+        } else if (input.action === 'stage' || input.action === 'rollback') {
+          await executeProjectGitAction(root, { type: input.action, paths: targets.map((target) => target.path) }, undefined, undefined, async (text) => {
+            await command.recordExecutionCommand(text);
+            await command.markWriteStarted();
+          });
+        }
+        return { completed: true };
+      });
+    });
+  });
 
   /** 同一文件的页内保存和区块恢复共用写锁，跨窗口也不能并发覆盖。 */
   const reverting = new Set<string>();

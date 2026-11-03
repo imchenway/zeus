@@ -435,7 +435,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
  * 在任务环境中保留项目容器的相对布局：仓库位置留给 Git worktree，
  * 共享可写目录和其他非 Git 内容使用符号链接保持单一真实来源。
  */
-export function mirrorTaskEnvironmentContainer(project: ZeusProjectRecord, environmentRoot: string, repositories: ZeusProjectRepositoryRecord[], sharedPaths: ZeusProjectSharedPathRecord[]): void {
+export function mirrorTaskEnvironmentContainer(project: ZeusProjectRecord, environmentRoot: string, repositories: ReadonlyArray<Pick<ZeusProjectRepositoryRecord, 'relativePath'>>, sharedPaths: ZeusProjectSharedPathRecord[]): void {
   const repositoryPaths = new Set(repositories.map((entry) => entry.relativePath));
   const sharedByPath = new Map(sharedPaths.map((entry) => [entry.relativePath, entry]));
   const memberPaths = [...repositoryPaths, ...sharedByPath.keys()];

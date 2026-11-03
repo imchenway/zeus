@@ -4219,8 +4219,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     switch (value.type) {
       case 'fetch':
         return { type: 'fetch', remote: stringValue('remote') };
+      case 'rollback':
       case 'discard':
-        return { type: 'discard', paths: paths() };
+        return { type: value.type, paths: paths() };
       case 'rename_branch':
         return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
       case 'create_tag':

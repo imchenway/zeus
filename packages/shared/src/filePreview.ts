@@ -240,3 +240,11 @@ export interface FilePreviewSaveInput {
   /** 完整 UTF-8 正文，换行和 BOM 由源码保存服务保留。 */
   content: string;
 }
+
+/** 交付文件操作沿用预览身份，不接收渲染层指定的本地目录。 */
+export interface GitDeliveryFileActionInput {
+  /** 一次操作只包含同一实际仓库的文件。 */
+  requests: FilePreviewRequest[];
+  /** 删除进入系统回收站，源码导航不改写内容。 */
+  action: 'stage' | 'rollback' | 'trash' | 'source';
+}

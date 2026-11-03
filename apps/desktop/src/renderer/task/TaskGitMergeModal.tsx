@@ -279,6 +279,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           workspace,
           localPath: detail?.worktreePath ?? detail?.repositoryPath,
           detail,
+          workingPaths: detail && !detail.reviewError && !detailStates[workspace.id] ? collectWorkingFiles(detail).map((file) => file.path) : undefined,
           loadState: detailStates[workspace.id] ?? ((diffScope === 'committed' ? detail?.comparisonError : detail?.reviewError) ? ('error' as const) : undefined),
           statusLabel: workspaceStateLabel(workspace, detail, detailStates[workspace.id], zh, integrations, targetBranchesByWorkspace[workspace.id]),
           files: diffScope === 'committed' ? (detail?.branchComparison?.files ?? []).map(toCommittedDeliveryFile) : collectWorkingFiles(detail).map(toWorkingDeliveryFile),
@@ -1083,6 +1084,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               zh={zh}
               fileBrowser={
                 <DeliveryRepositoryFileTree
+                  projectId={props.task.projectId}
+                  fileRequest={(workspaceId, path) => ({ kind: 'task-git', taskId: props.task.id, workspaceId, path, scope: diffScope })}
+                  onRefresh={() => reload(workspaceId, true)}
+                  onBusyChange={(busy) => setBusyAction(busy ? 'files' : null)}
                   groups={repositoryGroups}
                   detailStates={detailStates}
                   diffScope={diffScope}

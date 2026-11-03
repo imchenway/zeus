@@ -224,6 +224,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
           localPath: repository.localPath ?? displayedFilePath(repository.relativePath, props.project.localPath),
           detail: undefined,
+          workingPaths: props.pathPrefix ? undefined : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => file.path),
           files,
           loadState: scope === 'committed' ? (comparisonErrors[repository.id] ? 'error' : comparisonLoading ? 'loading' : undefined) : undefined,
           statusLabel: repository.snapshot.conflictFiles.length
@@ -233,7 +234,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             : ((scope === 'committed' ? comparisonErrors[repository.id] : undefined) ?? (repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
         };
       }),
-    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh, props.project.localPath],
+    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh, props.project.localPath, props.pathPrefix],
   );
 
   useEffect(() => {
@@ -480,6 +481,19 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             onShowCommitted={scope === 'working' && Object.values(committed).some((value) => value.files.length) ? () => setScope('committed') : undefined}
             fileBrowser={
               <DeliveryRepositoryFileTree
+                projectId={props.project.id}
+                fileRequest={(repositoryId, path) => ({
+                  kind: 'project-git',
+                  projectId: props.project.id,
+                  repositoryId,
+                  path,
+                  ...(scope === 'committed' ? { comparisonRef: snapshot.repositories.find((repository) => repository.id === repositoryId)?.snapshot.upstream ?? undefined, comparisonMode: 'current' as const } : {}),
+                })}
+                onRefresh={() => refresh()}
+                onBusyChange={(busy) => {
+                  busyRef.current = busy ? 'files' : null;
+                  setBusyAction(busyRef.current);
+                }}
                 groups={groups}
                 detailStates={{}}
                 diffScope={scope}

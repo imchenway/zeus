@@ -8,9 +8,9 @@ export interface ConversationWorktreeBranchOptions {
   branchName: string;
 }
 
-/** 多仓库配置使用登记身份绑定各自来源，路径由服务端解析。 */
+/** 多仓库配置使用 Git 工作台返回的身份绑定各自来源，路径由宿主解析。 */
 export interface ConversationRepositoryWorktreeOptions extends ConversationWorktreeBranchOptions {
-  /** 项目仓库登记身份。 */
+  /** 桌面发现身份或网页登记身份；均须在所属项目内重新核对。 */
   repositoryId: string;
 }
 

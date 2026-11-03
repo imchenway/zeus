@@ -326,6 +326,15 @@ contextBridge.exposeInMainWorld('zeus', {
   saveFilePreview: (input: { id: string; content: string }) => invokeMainCommand('zeus:file-preview:save', 'desktop.file_preview.save', 'artifact', input.id, input),
   revertFilePreviewBlock: (input: { afterId: string }) => invokeMainCommand('zeus:file-preview:revert-block', 'desktop.file_preview.revert_block', 'artifact', input.afterId, input),
   releaseFilePreview: (ids: string[]) => ipcRenderer.invoke('zeus:file-preview:release', ids),
+  /** 交付文件操作通过固定业务身份执行，保留命令回执。 */
+  actOnGitDeliveryFiles: (input: import('@zeus/shared').GitDeliveryFileActionInput) =>
+    invokeMainCommand(
+      'zeus:git-delivery:file-action',
+      'desktop.git_delivery.file_action',
+      'artifact',
+      input.requests[0]?.kind === 'task-git' ? input.requests[0].workspaceId : input.requests[0]?.kind === 'project-git' ? input.requests[0].repositoryId : 'delivery',
+      input,
+    ),
   actOnFilePreview: (id: string, action: string) => ipcRenderer.invoke('zeus:file-preview:action', id, action),
   /** 按当前窗口的预览令牌读取准确版本归属。 */
   loadFilePreviewBlame: (id: string) => ipcRenderer.invoke('zeus:file-preview:blame', id),

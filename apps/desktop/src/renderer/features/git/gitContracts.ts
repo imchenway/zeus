@@ -152,6 +152,8 @@ export interface ProjectGitWorkbenchSnapshot {
 
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
+  /** 恢复所选文件的暂存与工作区版本。 */
+  | { type: 'rollback'; paths: string[] }
   | { type: 'rename_branch'; branchName: string; newName: string }
   | { type: 'create_tag'; tagName: string; revision: string; message?: string }
   | { type: 'push_tag'; tagName: string; remote: string }

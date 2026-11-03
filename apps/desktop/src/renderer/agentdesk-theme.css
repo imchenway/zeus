@@ -2151,6 +2151,10 @@ body:has(.macos-ai-app.zeus-shell) {
   margin-bottom: 4px;
 }
 .project-git-context-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
   border: 0;
   border-radius: 4px;
   padding: 7px 9px;
@@ -2160,6 +2164,11 @@ body:has(.macos-ai-app.zeus-shell) {
   font: inherit;
   font-size: 12px;
   box-shadow: none;
+}
+.project-git-context-menu > button > kbd {
+  flex: none;
+  color: var(--zeus-product-muted);
+  font: inherit;
 }
 .project-git-context-menu > button:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-context-menu > button:focus-visible {

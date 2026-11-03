@@ -1,3 +1,5 @@
+import { useDeliveryFileMenu } from './DeliveryFileMenu.js';
+import type { FilePreviewRequest } from '@zeus/shared';
 import { groupRepositoriesByBranch } from './repositoryBranchGroups.js';
 import { GitDeliveryCombinationContext, readGitDeliverySettings } from './gitDeliverySettings.js';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
@@ -21,7 +23,7 @@ import type { GitCommitModelsClient } from './gitCommitModels.js';
 /** 两种交付入口共用文件范围。 */
 export type DiffScope = 'committed' | 'working';
 /** 操作期间锁定交付范围。 */
-export type BusyAction = 'loading' | 'commit' | 'commit-message' | 'push' | 'merge' | 'conflict' | 'ai' | null;
+export type BusyAction = 'loading' | 'files' | 'commit' | 'commit-message' | 'push' | 'merge' | 'conflict' | 'ai' | null;
 
 /** 文件树保留真实仓库相对路径。 */
 export interface DeliveryFile {
@@ -68,6 +70,8 @@ export interface DeliveryRepositoryGroup {
   workspace: Pick<TaskWorkspaceIndexSnapshot, 'id' | 'branchName' | 'state' | 'repositoryName' | 'repositoryRelativePath'>;
   detail: Pick<TaskWorkspaceSnapshot, 'review'> | undefined;
   files: DeliveryFile[];
+  /** 完整工作区路径用于清除已提交或已还原文件的分组归属。 */
+  workingPaths?: string[];
   statusLabel: string;
   /** 未完成或失败的读取不能被当成空目录。 */
   loadState?: 'loading' | 'error';
@@ -90,6 +94,14 @@ export function InitialLoadState(props: { zh: boolean; error?: unknown; onRetry?
 
 /** 按任务分支、仓库与目录组织交付范围，审阅操作不改变勾选。 */
 export function DeliveryRepositoryFileTree(props: {
+  /** 本机变更列表归属当前项目。 */
+  projectId: string;
+  /** 文件操作复用调用方的仓库或任务身份。 */
+  fileRequest: (workspaceId: string, path: string) => FilePreviewRequest;
+  /** 文件写入完成或失败后重新读取真实状态。 */
+  onRefresh: () => Promise<void>;
+  /** 文件操作期间锁定提交等动作。 */
+  onBusyChange: (busy: boolean) => void;
   groups: DeliveryRepositoryGroup[];
   detailStates: Record<string, 'loading' | 'error'>;
   diffScope: DiffScope;
@@ -113,6 +125,16 @@ export function DeliveryRepositoryFileTree(props: {
   /** 只有剪贴板写入成功才返回 true，避免把错误回报成已复制。 */
   onCopyBranch: (branchName: string) => boolean | Promise<boolean>;
 }) {
+  /** 文件菜单在所有交付入口保持同一可用状态和范围。 */
+  const fileMenu = useDeliveryFileMenu({ ...props, working: props.diffScope === 'working', request: props.fileRequest });
+  // 仅完整读取的仓库清除过期归属，筛选视图和加载失败不删除其他文件的分组。
+  useEffect(() => {
+    try {
+      fileMenu.lists.prune(props.groups.flatMap((group) => (group.localPath && group.workingPaths ? [{ root: group.localPath, paths: group.workingPaths }] : [])));
+    } catch (error) {
+      fileMenu.onError(error);
+    }
+  }, [props.groups, fileMenu.lists.prune, fileMenu.onError]);
   /** 复制反馈只属于成功写入的分支。 */
   const [copiedBranch, setCopiedBranch] = useState<string | null>(null);
   // 短暂确认后恢复原操作名称，组件退出时释放定时器。
@@ -204,7 +226,7 @@ export function DeliveryRepositoryFileTree(props: {
                 const selectedPaths = new Set(props.selectedPathsByWorkspace[workspaceId] ?? []);
                 return (
                   <details open data-file-root={group.localPath} key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
-                    <summary>
+                    <summary onContextMenu={(event) => fileMenu.openMenu(event, group, group.files)} onKeyDown={(event) => fileMenu.onKeyDown(event, group, group.files)}>
                       <label>
                         <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
                         <DeliveryEntryIcon />
@@ -219,7 +241,10 @@ export function DeliveryRepositoryFileTree(props: {
                     </summary>
                     {(group.loadState ?? props.detailStates[workspaceId]) === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
                     {group.files.length > 0 ? (
-                      <DeliveryDirectoryFiles
+                      <DeliveryChangelistFiles
+                        listName={(path) => (group.localPath ? fileMenu.lists.name(group.localPath, path) : '')}
+                        onContextMenu={(event, files) => fileMenu.openMenu(event, group, files)}
+                        onKeyDown={(event, files) => fileMenu.onKeyDown(event, group, files)}
                         files={group.files}
                         prefix=""
                         selectedPaths={workspaceSelected ? selectedPaths : new Set()}
@@ -241,7 +266,62 @@ export function DeliveryRepositoryFileTree(props: {
           );
         })}
       </div>
+      {fileMenu.dialogs}
     </aside>
+  );
+}
+
+/** 只有自定义列表存在时才显示列表层级，未跟踪文件保持独立分组。 */
+function DeliveryChangelistFiles(props: Parameters<typeof DeliveryDirectoryFiles>[0] & { listName(path: string): string }) {
+  /** 每个文件只属于一个本机列表，历史成果不参与分组。 */
+  const groups = new Map<string, DeliveryFile[]>();
+  for (const file of props.files) {
+    const name = props.working && file.status !== 'untracked' ? props.listName(file.path) : '';
+    /** 同组按现有文件顺序收集，避免反复复制大目录列表。 */
+    const members = groups.get(name);
+    if (members) members.push(file);
+    else groups.set(name, [file]);
+  }
+  if (![...groups.keys()].some(Boolean)) return <DeliveryDirectoryFiles {...props} />;
+  return (
+    <>
+      {[...groups].map(([name, files]) => {
+        /** 默认组的未跟踪文件继续复用现有目录树。 */
+        const tracked = files.filter((file) => file.status !== 'untracked');
+        const untracked = files.filter((file) => file.status === 'untracked');
+        const selectedCount = tracked.filter((file) => props.selectedPaths.has(file.path)).length;
+        return (
+          <div key={name}>
+            {tracked.length ? (
+              <details open className="task-git-delivery-directory">
+                <summary onContextMenu={(event) => props.onContextMenu(event, tracked)} onKeyDown={(event) => props.onKeyDown(event, tracked)}>
+                  <input
+                    type="checkbox"
+                    checked={selectedCount === tracked.length}
+                    ref={(element) => {
+                      if (element) element.indeterminate = selectedCount > 0 && selectedCount < tracked.length;
+                    }}
+                    aria-checked={selectedCount > 0 && selectedCount < tracked.length ? 'mixed' : selectedCount === tracked.length}
+                    aria-label={name || (props.zh ? '默认变更列表' : 'Default Changelist')}
+                    disabled={props.disabled}
+                    onChange={(event) =>
+                      props.onToggle(
+                        tracked.map((file) => file.path),
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span>{name || (props.zh ? '默认变更列表' : 'Default Changelist')}</span>
+                  <small>{tracked.length}</small>
+                </summary>
+                <DeliveryDirectoryFiles {...props} files={tracked} />
+              </details>
+            ) : null}
+            {untracked.length ? <DeliveryDirectoryFiles {...props} files={untracked} /> : null}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -267,6 +347,10 @@ function DeliveryDirectoryFiles(props: {
   onSelect: (path: string) => void;
   /** 双击打开独立窗口。 */
   onOpen: (path: string) => void;
+  /** 点击节点决定上下文动作范围。 */
+  onContextMenu: (event: React.MouseEvent<HTMLElement>, files: DeliveryFile[]) => void;
+  /** 文件树焦点内支持菜单与 Git 快捷键。 */
+  onKeyDown: (event: React.KeyboardEvent<HTMLElement>, files: DeliveryFile[]) => void;
 }) {
   // 仓库根目录将未跟踪文件排在已有版本控制文件之后，复用目录勾选与展开行为。
   if (!props.prefix && props.files.some((file) => file.status === 'untracked')) {
@@ -280,7 +364,7 @@ function DeliveryDirectoryFiles(props: {
       <>
         <DeliveryDirectoryFiles {...props} files={tracked} />
         <details open className="task-git-delivery-directory">
-          <summary>
+          <summary onContextMenu={(event) => props.onContextMenu(event, untracked)} onKeyDown={(event) => props.onKeyDown(event, untracked)}>
             {props.working ? (
               <input
                 type="checkbox"
@@ -347,7 +431,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
           <li key={path}>
             {directory ? (
               <details open className="task-git-delivery-directory">
-                <summary data-file-path={path} data-icon-tooltip={name.slice(0, -1)}>
+                <summary data-file-path={path} data-icon-tooltip={name.slice(0, -1)} onContextMenu={(event) => props.onContextMenu(event, files)} onKeyDown={(event) => props.onKeyDown(event, files)}>
                   {checkbox}
                   <DeliveryEntryIcon />
                   <span>{name.slice(0, -1)}</span>
@@ -356,7 +440,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                 <DeliveryDirectoryFiles {...props} files={files} prefix={path} />
               </details>
             ) : (
-              <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`}>
+              <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`} onContextMenu={(event) => props.onContextMenu(event, files)} onKeyDown={(event) => props.onKeyDown(event, files)}>
                 {checkbox}
                 <button
                   type="button"

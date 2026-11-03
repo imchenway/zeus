@@ -1,4 +1,4 @@
-import { assertValidGitBranchName, buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, getGitRepositoryContext, prepareTaskWorktree, type GitRepositoryContext } from '@zeus/git-core';
+import { assertValidGitBranchName, buildTaskEnvironmentRootPath, discoverGitRepositories, projectGitRepositoryId, cleanupPreparedTaskWorktree, getGitRepositoryContext, prepareTaskWorktree, type GitRepositoryContext } from '@zeus/git-core';
 import { defaultTaskBranchPrefix, isConversationWorktreeOptions, type ConversationWorktreeBranchOptions } from '@zeus/shared';
 import type { ZeusProjectRecord, ZeusProjectRepositoryRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
 import { createHash } from 'node:crypto';
@@ -43,11 +43,17 @@ export async function prepareProjectConversationWorkspace(
   const selections = isConversationWorktreeOptions(options) && 'repositories' in options ? options.repositories : null;
   /** 所有分支检查完成前不创建任何工作树。 */
   const preparations: ConversationRepositoryPreparation[] = [];
+  /** 准备和镜像容器必须使用同一份已核对目录。 */
+  let repositories: Array<Pick<ZeusProjectRepositoryRecord, 'id' | 'localPath' | 'relativePath'>> = [];
   if (selections) {
-    if (!members?.repositories.length || selections.length !== members.repositories.length || members.repositories.some((repository) => !selections.some((selection) => selection.repositoryId === repository.id)))
+    /** 桌面 Git 直接发现仓库，不要求先登记为任务仓库。 */
+    const discovered = (await discoverGitRepositories(project.localPath)).map((repository) => ({ ...repository, id: projectGitRepositoryId(project.id, repository.relativePath) }));
+    /** 桌面发现身份和网页登记身份是两个现有入口，不能将前者与数据库 ID 比较。 */
+    repositories = selections.some((selection) => discovered.some((repository) => repository.id === selection.repositoryId)) ? discovered : (members?.repositories ?? []);
+    if (!repositories.length || selections.length !== repositories.length || repositories.some((repository) => !selections.some((selection) => selection.repositoryId === repository.id)))
       throw workspaceError('项目仓库已变化，请刷新并为每个仓库选择来源分支。');
-    for (const repository of [...members.repositories].sort((left, right) => left.relativePath.split('/').length - right.relativePath.split('/').length || left.relativePath.localeCompare(right.relativePath))) {
-      /** 仓库登记路径只允许落在当前环境内部。 */
+    for (const repository of [...repositories].sort((left, right) => left.relativePath.split('/').length - right.relativePath.split('/').length || left.relativePath.localeCompare(right.relativePath))) {
+      /** 仓库相对路径只允许落在当前环境内部。 */
       const target = resolve(environmentRoot, repository.relativePath);
       const child = relative(environmentRoot, target);
       if (isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`)) throw workspaceError('仓库相对路径不属于当前项目。');
@@ -74,7 +80,7 @@ export async function prepareProjectConversationWorkspace(
   /** 底层创建中断时核对 Git 登记，避免其清理失败后误删整个环境。 */
   let preparing: ConversationRepositoryPreparation | undefined;
   try {
-    if (selections && members && newEnvironment) mirrorTaskEnvironmentContainer(project, environmentRoot, members.repositories, members.sharedPaths);
+    if (selections && newEnvironment) mirrorTaskEnvironmentContainer(project, environmentRoot, repositories, members?.sharedPaths ?? []);
     for (const preparation of preparations) {
       const { context, selection, existingBranch, sourceUnborn, worktreePath, repositoryPath } = preparation;
       /** 新父仓可能带有嵌套仓占位；恢复已有环境时不能删除该目录中的用户文件。 */

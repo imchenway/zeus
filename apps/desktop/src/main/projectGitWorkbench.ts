@@ -1,10 +1,10 @@
 import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createHash } from 'node:crypto';
 import type { MainCommandHistoryCursor, MainCommandLedger, MainCommandOutcome } from './mainCommandLedger.js';
 import {
   discoverGitRepositories,
+  projectGitRepositoryId,
   executeProjectGitAction,
   getProjectGitCommitDetail,
   getProjectGitPushPreview,
@@ -77,7 +77,7 @@ export class ProjectGitWorkbenchService {
       refreshedAt: new Date().toISOString(),
       repositories: await mapWithConcurrency(repositories, async (repository) => ({
         ...(await loadNavigationMetadata(repository.localPath)),
-        id: stableRepositoryId(project.id, repository.relativePath),
+        id: projectGitRepositoryId(project.id, repository.relativePath),
         name: repository.name,
         relativePath: repository.relativePath,
         snapshot: await getProjectGitRepositorySnapshot(repository.localPath),
@@ -95,7 +95,7 @@ export class ProjectGitWorkbenchService {
     /** 项目身份与正常工作台入口共用校验。 */
     const project = await this.requireProject(projectId);
     /** 仓库名称从当前发现结果取得，不信任历史输出内的名称或路径。 */
-    const repositories = new Map((await discoverGitRepositories(project.localPath)).map((repository) => [stableRepositoryId(project.id, repository.relativePath), repository.name]));
+    const repositories = new Map((await discoverGitRepositories(project.localPath)).map((repository) => [projectGitRepositoryId(project.id, repository.relativePath), repository.name]));
     /** 游标与项目绑定，禁止拿另一项目的分页位置混合记录。 */
     const position = parseOperationCursor(project.id, cursor);
     /** 账本只读取本页结果，投影之后不把仓库快照传到页面。 */
@@ -195,7 +195,7 @@ export class ProjectGitWorkbenchService {
     const normalizedRepositoryId = repositoryId.trim();
     if (!normalizedRepositoryId) throw projectGitError('ZEUS_GIT_REPOSITORY_REQUIRED', '必须选择一个项目仓库。');
     const repositories = await discoverGitRepositories(project.localPath);
-    const repository = repositories.find((candidate) => stableRepositoryId(project.id, candidate.relativePath) === normalizedRepositoryId);
+    const repository = repositories.find((candidate) => projectGitRepositoryId(project.id, candidate.relativePath) === normalizedRepositoryId);
     if (!repository) throw projectGitError('ZEUS_GIT_REPOSITORY_NOT_FOUND', '所选仓库已不属于当前项目，请刷新 Git 工作台。');
     return { id: normalizedRepositoryId, project, repository };
   }
@@ -266,10 +266,6 @@ function projectOperationRecord(projectId: string, repositoryId: string, reposit
   };
 }
 
-function stableRepositoryId(projectId: string, relativePath: string): string {
-  return `project_git_repository_${createHash('sha256').update(`${projectId}\0${relativePath}`).digest('hex').slice(0, 24)}`;
-}
-
 /** 解析桌面动作白名单，并保留用户确认的目标快照供共享 Git 层核验。 */
 function parseProjectGitAction(value: unknown): ProjectGitAction {
   if (!isRecord(value) || typeof value.type !== 'string') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '必须选择受支持的 Git 动作。');
@@ -291,8 +287,9 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       return { type: value.type, kind: value.kind };
     case 'fetch':
       return { type: 'fetch', remote: stringValue('remote') };
+    case 'rollback':
     case 'discard':
-      return { type: 'discard', paths: paths() };
+      return { type: value.type, paths: paths() };
     case 'rename_branch':
       return { type: 'rename_branch', branchName: stringValue('branchName') ?? '', newName: stringValue('newName') ?? '' };
     case 'create_tag':
