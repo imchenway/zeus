@@ -107,13 +107,11 @@
     radial-gradient(circle at 12% 108%, color-mix(in srgb, var(--agentdesk-accent) 10%, transparent), transparent 36%), var(--agentdesk-page-bg);
 }
 
-/* 壳层和主要工作面：使用 AgentDesk 的轻量玻璃材质，保留原有网格和滚动边界。 */
+/* 侧栏的最终主题为不透明底色，无需对背后画面做模糊采样。 */
 .macos-ai-app.zeus-shell :where(.ai-sidebar, .zeus-sidebar) {
   background: light-dark(color-mix(in srgb, var(--agentdesk-surface) 88%, transparent), var(--zeus-dark-surface));
   border-color: var(--agentdesk-border);
   box-shadow: 8px 0 30px -24px rgb(31 41 55 / 0.42);
-  -webkit-backdrop-filter: saturate(150%) blur(22px);
-  backdrop-filter: saturate(150%) blur(22px);
 }
 
 .macos-ai-app.zeus-shell :where(.ai-workspace, .workspace) {
