@@ -8,6 +8,7 @@ export type BranchKind = 'local' | 'remote';
 
 export type ExecutionOutcome = 'completed' | 'conflict' | null;
 
-export type ProjectGitUpdateStrategy = 'merge' | 'rebase' | 'reset';
+/** 更新项目提供保留本地提交的合并和变基策略。 */
+export type ProjectGitUpdateStrategy = 'merge' | 'rebase';
 
 export type PushSelection = { repositoryId: string; remote: string; sourceBranch: string; targetBranch: string; setUpstream: boolean };

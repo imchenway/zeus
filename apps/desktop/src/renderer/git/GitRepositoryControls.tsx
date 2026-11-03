@@ -1,7 +1,6 @@
 import './gitWorkspace.css';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { repositoryColor } from './repositoryColor.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { MenuSurface, type MenuSubmenuAnchor } from '../ui/MenuSurface.js';
@@ -549,111 +548,54 @@ export function RevisionContextMenu(props: {
   );
 }
 
+/** 更新项目只选择整合策略；执行进度与冲突由共享工作台显示。 */
 export function UpdateProjectDialog(props: {
-  open: boolean;
   projectId: string;
   zh: boolean;
-  repositories: ProjectGitRepositoryWorkbenchItem[];
   busy: BusyState;
-  errorsByRepository: Readonly<Record<string, string>>;
   onClose: () => void;
-  onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
+  onUpdate: (strategy: ProjectGitUpdateStrategy) => void;
 }) {
-  const [strategy, setStrategy] = useState<ProjectGitUpdateStrategy>('merge');
-  const [resetConfirmed, setResetConfirmed] = useState(false);
-  const [results, setResults] = useState<Array<{ id: string; outcome: ExecutionOutcome }>>([]);
-  useEffect(() => {
-    if (!props.open) return;
-    setStrategy(readUpdateStrategy(props.projectId));
-    setResetConfirmed(false);
-    setResults([]);
-  }, [props.open, props.projectId]);
-  if (!props.open) return null;
-  const localCommitCount = props.repositories.reduce((total, repository) => total + repository.snapshot.outgoingCommits.length, 0);
-  const resetNeedsConfirmation = strategy === 'reset' && localCommitCount > 0;
+  /** 更新方式按项目保存，取消不写入。 */
+  const [strategy, setStrategy] = useState(() => readUpdateStrategy(props.projectId));
+  /** 勾选后，后续快捷键直接使用已保存的更新方式。 */
+  const [skipDialog, setSkipDialog] = useState(() => readSkipUpdateDialog(props.projectId));
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '更新项目' : 'Update project'}>
-      <section className="project-git-update-dialog" data-modal-surface="dialog">
-        <header>
-          <strong>{props.zh ? '更新项目' : 'Update Project'}</strong>
-          <small>
-            {props.zh
-              ? '获取所有仓库的远端变化，并按所选方式更新当前分支。未提交的文件会先备份，更新后再恢复。'
-              : 'Fetch remote changes for all repositories and update their current branches using the selected method. Uncommitted files are backed up first and restored afterward.'}
-          </small>
-        </header>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '更新项目' : 'Update Project'}>
+      <form
+        className="project-git-update-dialog"
+        data-modal-surface="dialog"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (props.busy !== null) return;
+          window.localStorage.setItem(`zeus.project-git-update-strategy:${props.projectId}`, strategy);
+          window.localStorage.setItem(`zeus.project-git-update-skip-dialog:${props.projectId}`, String(skipDialog));
+          props.onUpdate(strategy);
+        }}
+      >
+        <header><strong>{props.zh ? '更新项目' : 'Update Project'}</strong></header>
         <main>
-          <fieldset className="project-git-update-strategies">
-            <legend>{props.zh ? '更新方式' : 'Update method'}</legend>
-            {(
-              [
-                ['merge', props.zh ? '合并远端变化' : 'Merge incoming changes', props.zh ? '保留本地提交历史，可能产生合并提交。' : 'Keep local commit history; may create a merge commit.'],
-                ['rebase', props.zh ? '将当前分支变基到远端之上' : 'Rebase current branch onto incoming changes', props.zh ? '把本地提交重放到最新上游之后。' : 'Replay local commits on top of the updated upstream.'],
-                ['reset', props.zh ? '重置到远端分支' : 'Reset to the remote branch', props.zh ? '丢弃本地分支尚未包含在远端中的提交。' : 'Drop local commits that are not present in the tracked remote branch.'],
-              ] as const
-            ).map(([value, title, description]) => (
-              <label key={value} className={strategy === value ? 'is-current' : ''}>
-                <input type="radio" name="project-git-update-strategy" value={value} checked={strategy === value} onChange={() => setStrategy(value)} />
-                <span>
-                  <strong>{title}</strong>
-                  <small>{description}</small>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-          <section className="project-git-update-repositories">
-            <strong>{props.zh ? `仓库 (${props.repositories.length})` : `Repositories (${props.repositories.length})`}</strong>
-            {props.repositories.map((repository) => {
-              const result = results.find((item) => item.id === repository.id)?.outcome;
-              return (
-                <span key={repository.id}>
-                  <GitBranch aria-hidden="true" />
-                  <b>{repository.name}</b>
-                  <small>{repository.snapshot.detached ? (props.zh ? '游离提交状态，无法更新' : 'Detached HEAD; cannot update') : (repository.snapshot.upstream ?? (props.zh ? '没有跟踪远端' : 'No tracked remote'))}</small>
-                  {repository.snapshot.fileStatuses.length > 0 ? <em>{props.zh ? `Smart Stash · ${repository.snapshot.fileStatuses.length} 个变化` : `Smart Stash · ${repository.snapshot.fileStatuses.length} changes`}</em> : null}
-                  {result ? <i className={`is-${result}`}>{result === 'completed' ? (props.zh ? '已完成' : 'Completed') : props.zh ? '存在冲突' : 'Conflicts'}</i> : null}
-                  {result === null && results.some((item) => item.id === repository.id) ? (
-                    <i className="is-error">
-                      <VisibleApplicationError error={props.errorsByRepository[repository.id]} language={props.zh ? 'zh-CN' : 'en'} />
-                    </i>
-                  ) : null}
-                </span>
-              );
-            })}
-          </section>
-          {resetNeedsConfirmation ? (
-            <label className="project-git-update-reset-confirm">
-              <input type="checkbox" checked={resetConfirmed} onChange={(event) => setResetConfirmed(event.currentTarget.checked)} />
-              <span>
-                {props.zh
-                  ? `我确认丢弃全部仓库中共 ${localCommitCount} 个尚未进入跟踪远端的本地提交。未提交文件会通过 Smart Stash 恢复。`
-                  : `I confirm dropping ${localCommitCount} local commits not present in tracked remotes. Uncommitted files will be restored through Smart Stash.`}
-              </span>
+          <fieldset className="project-git-update-strategies" aria-label={props.zh ? '更新方式' : 'Update method'} disabled={props.busy !== null}>
+            <label>
+              <input type="radio" name="project-git-update-strategy" value="merge" checked={strategy === 'merge'} onChange={() => setStrategy('merge')} />
+              <span>{props.zh ? '将传入的更改合并到当前分支' : 'Merge incoming changes into the current branch'}</span>
             </label>
-          ) : null}
+            <label>
+              <input type="radio" name="project-git-update-strategy" value="rebase" checked={strategy === 'rebase'} onChange={() => setStrategy('rebase')} />
+              <span>{props.zh ? '将当前分支变基到传入的更改之上' : 'Rebase the current branch on top of incoming changes'}</span>
+            </label>
+          </fieldset>
         </main>
         <footer>
-          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
-            {props.zh ? '关闭' : 'Close'}
-          </Button>
-          <Button
-            variant={strategy === 'reset' ? 'danger' : 'primary'}
-            busy={props.busy?.action === 'update'}
-            disabled={props.busy !== null || (resetNeedsConfirmation && !resetConfirmed)}
-            onClick={async () => {
-              window.localStorage.setItem(`zeus.project-git-update-strategy:${props.projectId}`, strategy);
-              const nextResults: Array<{ id: string; outcome: ExecutionOutcome }> = [];
-              for (const repository of props.repositories) {
-                const outcome = await props.onExecute(repository, { type: 'update', strategy, smart: true }, props.zh ? '更新项目' : 'Update project');
-                nextResults.push({ id: repository.id, outcome });
-                setResults([...nextResults]);
-              }
-            }}
-          >
-            {strategy === 'reset' ? (props.zh ? '重置全部仓库' : 'Reset all repositories') : props.zh ? '更新全部仓库' : 'Update all repositories'}
-          </Button>
+          <label className="project-git-update-remember">
+            <input type="checkbox" checked={skipDialog} disabled={props.busy !== null} onChange={(event) => setSkipDialog(event.currentTarget.checked)} />
+            <span>{props.zh ? '不再显示' : "Don't show again"}</span>
+          </label>
+          <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>{props.zh ? '取消' : 'Cancel'}</Button>
+          {/* 共享焦点管理器读取原生 autofocus 属性，并在关闭后恢复原焦点。 */}
+          <Button type="submit" variant="primary" ref={(button) => { button?.setAttribute('autofocus', ''); }} disabled={props.busy !== null}>{props.zh ? '确定' : 'OK'}</Button>
         </footer>
-      </section>
+      </form>
     </ModalPortal>
   );
 }
@@ -934,9 +876,16 @@ export function repositoryHasMatchingReference(repository: ProjectGitRepositoryW
   return [...repository.snapshot.localBranches, ...repository.snapshot.remoteBranches, ...repository.snapshot.tags, ...repository.snapshot.recentRefs.map((item) => item.ref)].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
+/** 旧的重置偏好不用于快捷键更新，默认保留当前分支历史。 */
 export function readUpdateStrategy(projectId: string): ProjectGitUpdateStrategy {
+  /** 仅变基需要显式保留，其余值使用合并。 */
   const value = typeof window === 'undefined' ? null : window.localStorage.getItem(`zeus.project-git-update-strategy:${projectId}`);
-  return value === 'merge' || value === 'rebase' || value === 'reset' ? value : 'merge';
+  return value === 'rebase' ? 'rebase' : 'merge';
+}
+
+/** 仅快捷键使用免提示偏好；分支菜单始终允许重新选择。 */
+export function readSkipUpdateDialog(projectId: string): boolean {
+  return typeof window !== 'undefined' && window.localStorage.getItem(`zeus.project-git-update-skip-dialog:${projectId}`) === 'true';
 }
 
 export function BranchDirectoryTree(props: {

@@ -276,9 +276,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (current && options.conversations.getRecordById(current.conversationId)?.archived) {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     }
-
+    if (current?.status === 'paused') {
+      /** 恢复核对可能已暂停本次提交，派发检查必须保留真实原因和恢复属性。 */
+      const failure = submissionErrorSnapshot(current.errorJson);
+      if (failure) throw Object.assign(new Error(failure.message), failure);
+    }
     if (!current || current.providerTurnId || (current.status !== 'queued' && current.status !== 'dispatching')) {
-      throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '这条消息已取消、替换或离开待发送状态，不会再次发送。');
+      throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '消息状态已更新，请重新检查发送结果。');
     }
   }
   async function persist(): Promise<void> {

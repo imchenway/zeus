@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { addAbortSignal, type Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-security';
@@ -372,6 +373,52 @@ function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: Creat
   }
 }
 
+/** Chromium 的重定向事件提供真实地址，避免依赖 net.fetch 不可靠的 Response.url。 */
+async function openReleaseDownload(source: URL, testMode: boolean): Promise<Readable> {
+  /** 保留系统及应用代理；安装辅助进程仅导入校验能力时不加载 Electron。 */
+  const { net } = await import('electron');
+  return new Promise((resolve, reject) => {
+    /** 逐次确认目标后才允许 Chromium 继续跳转。 */
+    const request = net.request({ url: source.href, redirect: 'manual' });
+    /** 请求和响应正文共用十分钟下载期限。 */
+    const signal = AbortSignal.timeout(10 * 60_000);
+    /** 尚未收到响应时，超时必须同时结束等待和网络请求。 */
+    const abortRequest = () => {
+      reject(signal.reason);
+      request.abort();
+    };
+    signal.addEventListener('abort', abortRequest, { once: true });
+    request.once('close', () => signal.removeEventListener('abort', abortRequest));
+    request.on('error', reject);
+    request.on('redirect', (_status, _method, target) => {
+      try {
+        /** 仅显式隔离模式允许跳转到本机 HTTP 服务。 */
+        const url = new URL(target);
+        const loopbackTestResponse = testMode && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port);
+        if (!loopbackTestResponse && !isTrustedGithubResponseUrl(url)) throw new Error('更新下载重定向离开了受信任的 GitHub 产物域名。');
+        request.followRedirect();
+      } catch (error) {
+        reject(error);
+        request.abort();
+      }
+    });
+    request.once('response', (response) => {
+      if (response.statusCode < 200 || response.statusCode >= 300 || response.statusCode === 204 || response.statusCode === 205) {
+        reject(new Error(`更新下载失败：HTTP ${response.statusCode}`, { cause: { code: response.statusCode === 408 || response.statusCode === 429 || response.statusCode >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' } }));
+        request.abort();
+        return;
+      }
+      signal.removeEventListener('abort', abortRequest);
+      /** Electron 正文是 Node Readable，使用标准流处理背压、超时和提前终止。 */
+      const body = response as unknown as Readable;
+      body.once('error', reject);
+      body.once('close', () => request.abort());
+      resolve(addAbortSignal(signal, body));
+    });
+    request.end();
+  });
+}
+
 /** 流式下载并校验大小和摘要，完整校验通过后才公开缓存文件。 */
 async function downloadVerifiedArtifact(input: { url: string; targetPath: string; expectedSha256: string; expectedSizeBytes: number | null; testMode: boolean; onProgress?: (progress: ReleaseDownloadProgress) => void }): Promise<void> {
   /** 即使命中缓存，也必须先确认本次发布的下载来源可信。 */
@@ -394,15 +441,9 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
       await output.writeFile(bytes);
     } else {
       input.onProgress?.({ phase: 'downloading', ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
-      /** 下载沿用系统及应用代理；安装辅助进程仅导入校验能力时无需加载 Electron。 */
-      const { net } = await import('electron');
-      const response = await net.fetch(source.href, { redirect: 'follow', signal: AbortSignal.timeout(10 * 60_000) });
-      if (!response.ok || !response.body)
-        throw new Error(`更新下载失败：HTTP ${response.status}`, { cause: { code: response.status === 408 || response.status === 429 || response.status >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' } });
-      const responseUrl = new URL(response.url);
-      const loopbackTestResponse = input.testMode && responseUrl.protocol === 'http:' && responseUrl.hostname === '127.0.0.1' && Boolean(responseUrl.port);
-      if (!loopbackTestResponse && !isTrustedGithubResponseUrl(responseUrl)) throw new Error('更新下载重定向离开了受信任的 GitHub 产物域名。');
-      for await (const chunk of response.body) {
+      /** 两个平台共用受信任的重定向和下载流。 */
+      const response = await openReleaseDownload(source, input.testMode);
+      for await (const chunk of response) {
         const bytes = Buffer.from(chunk);
         receivedBytes += bytes.length;
         if (receivedBytes > maximumUpdateBytes || (input.expectedSizeBytes !== null && receivedBytes > input.expectedSizeBytes)) throw new Error('更新包超过允许大小。');

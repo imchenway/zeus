@@ -7,7 +7,8 @@ import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/Arrow
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
-import { BranchSwitcher, MergeBranchDialog, UpdateProjectDialog, NewBranchDialog, RemoteBranchCheckoutDialog, CheckoutRevisionDialog, BranchDirectoryTree, BranchContextMenu, StashDialog, PullDialog } from './GitRepositoryControls.js';
+import { BranchSwitcher, MergeBranchDialog, UpdateProjectDialog, readUpdateStrategy, readSkipUpdateDialog, NewBranchDialog, RemoteBranchCheckoutDialog, CheckoutRevisionDialog, BranchDirectoryTree, BranchContextMenu, StashDialog, PullDialog } from './GitRepositoryControls.js';
+import type { ProjectGitUpdateStrategy } from './gitWorkbenchTypes.js';
 import type { ExecutionOutcome } from './gitWorkbenchTypes.js';
 import type { BranchKind } from './gitWorkbenchTypes.js';
 import type { OperationTone } from './gitWorkbenchTypes.js';
@@ -49,6 +50,8 @@ interface GitContextTarget {
 export interface ProjectGitWorkbenchProps {
   /** 嵌入工作区提供额外工具入口。 */
   toolbarActions?: ReactNode;
+  /** 主工作区的更新快捷键请求，允许 Git 尚未加载或处于收起状态。 */
+  updateRequest?: number;
   /** 源码目录顶行提供挂载位置，分支控件仍使用本工作台的仓库和操作状态。 */
   branchToolbarContainer?: HTMLElement | null;
   /** 顶部分支菜单发起操作时展开底栏，使提交表单和操作反馈可见。 */
@@ -131,6 +134,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
   const [menuConfirmation, setMenuConfirmation] = useState<GitMenuConfirmation | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
+  /** 同一快捷键请求只消费一次，加载期间保留最后一次请求。 */
+  const handledUpdateRequest = useRef(0);
+  /** 多仓库更新期间不接受第二轮更新。 */
+  const updatingProject = useRef(false);
   const [newBranchOpen, setNewBranchOpen] = useState(false);
   const [newBranchBase, setNewBranchBase] = useState('');
   const [remoteCheckoutTarget, setRemoteCheckoutTarget] = useState<{ repositoryId: string; remoteRef: string } | null>(null);
@@ -156,6 +163,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     return items.map((repository) => ({ ...repository, snapshot: { ...repository.snapshot, fileStatuses: visibleRepositoryFiles(repository, items) } }));
   }, [snapshot]);
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
+  useEffect(() => {
+    if (!props.updateRequest || handledUpdateRequest.current === props.updateRequest || loadState === 'loading') return;
+    handledUpdateRequest.current = props.updateRequest;
+    if (actionBusyRef.current || updatingProject.current) return;
+    if (loadState === 'error' || !repositories.length) {
+      props.onOpenPanel?.();
+      return;
+    }
+    if (readSkipUpdateDialog(props.project.id)) void updateProject(readUpdateStrategy(props.project.id));
+    else setUpdateOpen(true);
+  }, [props.updateRequest, loadState]);
   const stashRepository = repositories.find((repository) => repository.id === stashRepositoryId) ?? null;
   const remoteCheckoutRepository = repositories.find((repository) => repository.id === remoteCheckoutTarget?.repositoryId) ?? null;
   const activeStash = selectedRepository?.snapshot.stashes.find((stash) => stash.ref === selectedStashRef) ?? selectedRepository?.snapshot.stashes[0] ?? null;
@@ -283,6 +301,20 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       if (version !== requestVersionRef.current) return;
       setLoadState('error');
       setError(errorMessage(reason, zh));
+    }
+  }
+
+  /** 更新当前项目的全部仓库；失败或冲突后停止，保留原执行链的恢复入口。 */
+  async function updateProject(strategy: ProjectGitUpdateStrategy): Promise<void> {
+    if (actionBusyRef.current || updatingProject.current) return;
+    updatingProject.current = true;
+    setUpdateOpen(false);
+    try {
+      for (const repository of repositories) {
+        if ((await execute(repository, { type: 'update', strategy, smart: true }, zh ? '更新项目' : 'Update project')) !== 'completed') break;
+      }
+    } finally {
+      updatingProject.current = false;
     }
   }
 
@@ -1057,14 +1089,12 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>
         {updateOpen ? (
           <UpdateProjectDialog
-            open={updateOpen}
+            key={props.project.id}
             projectId={props.project.id}
             zh={zh}
-            repositories={repositories}
             busy={busy}
-            errorsByRepository={operationErrorsByRepositoryRef.current}
             onClose={() => setUpdateOpen(false)}
-            onExecute={execute}
+            onUpdate={(strategy) => void updateProject(strategy)}
           />
         ) : null}
       </MotionPresence>

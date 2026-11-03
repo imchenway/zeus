@@ -1,4 +1,5 @@
-import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { isMacOSPlatform } from '../../platform.js';
 import { ArrowsInSimpleIcon } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
 import { ArrowsOutSimpleIcon } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
 import { MinusIcon } from '@phosphor-icons/react/dist/csr/Minus';
@@ -138,9 +139,24 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
 
 /** 每个项目只有一个 Git 实例，收起保留提交草稿和工作台位置。 */
 function ProjectGitPanel(props: ProjectToolsWorkspaceProps) {
+  /** 更新请求保留到 Git 懒加载结束，切换项目时随实例清空。 */
+  const [updateRequest, setUpdateRequest] = useState(0);
+  useEffect(() => {
+    /** 项目快捷键在编辑器和终端之前处理；已有模态窗口继续独占键盘。 */
+    function onUpdateShortcut(event: KeyboardEvent): void {
+      if (!props.gitClient || event.defaultPrevented || event.repeat || event.isComposing || event.altKey || event.shiftKey) return;
+      if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) || event.key.toLowerCase() !== 't') return;
+      if (document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setUpdateRequest((request) => request + 1);
+    }
+    window.addEventListener('keydown', onUpdateShortcut, true);
+    return () => window.removeEventListener('keydown', onUpdateShortcut, true);
+  }, [props.gitClient]);
   /** 首次打开 Git、源码或文件搜索时加载，随后保留到切换项目。 */
   const [mounted, setMounted] = useState(props.open || props.sourceVisible || props.fileSearchOpen);
-  if (!mounted && (props.open || props.sourceVisible || props.fileSearchOpen)) setMounted(true);
+  if (!mounted && (props.open || props.sourceVisible || props.fileSearchOpen || updateRequest > 0)) setMounted(true);
   if (!props.project || !mounted) return null;
   return (
     <div className="project-tool-content">
@@ -150,6 +166,7 @@ function ProjectGitPanel(props: ProjectToolsWorkspaceProps) {
             project={props.project}
             client={props.gitClient}
             language={props.language}
+            updateRequest={updateRequest}
             branchToolbarContainer={props.sourceVisible && !props.open ? props.branchToolbarContainer : null}
             onSnapshot={props.onSnapshot}
             onOpenPanel={props.onOpenGit}

@@ -4227,84 +4227,62 @@ a {
     margin-left: 0;
   }
 }
+.project-git-update-dialog {
+  width: min(560px, calc(100vw - 40px));
+}
+.project-git-update-dialog > header {
+  text-align: center;
+}
+.project-git-update-dialog > main {
+  padding-block: 18px 24px;
+}
 .project-git-update-strategies {
   border: 0;
   display: grid;
-  gap: 6px;
+  gap: 14px;
   margin: 0;
+  min-width: 0;
   padding: 0;
 }
-.project-git-update-strategies legend,
-.project-git-update-repositories > strong {
-  font-size: 11px;
-  font-weight: 680;
-  padding: 0 0 5px;
-}
-.project-git-update-strategies > label {
-  align-items: start;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 8px;
+.project-git-update-strategies > label,
+.project-git-update-remember {
+  align-items: center;
   display: flex;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: 10px;
+  line-height: 1.5;
 }
-.project-git-update-strategies > label.is-current {
-  background: var(--zeus-source-list-selected);
-  border-color: color-mix(in srgb, var(--zeus-product-accent) 48%, var(--zeus-product-line));
+.project-git-update-dialog input {
+  accent-color: var(--zeus-product-accent);
+  flex: 0 0 auto;
+  margin: 0;
 }
-.project-git-update-strategies > label span,
+/* 原生单选框覆盖全局文本框样式，保留方向键切换和系统选中状态。 */
+.macos-ai-app .project-git-update-strategies input[type='radio'] {
+  appearance: auto;
+  background: transparent;
+  block-size: 16px;
+  border: 0;
+  box-shadow: none;
+  inline-size: 16px;
+  min-block-size: 16px;
+  padding: 0;
+}
+.project-git-update-remember {
+  margin-inline-end: auto;
+}
+.project-git-update-dialog > footer {
+  flex-wrap: wrap;
+}
 .project-git-reference-dialog main > label {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 4px;
 }
-.project-git-update-strategies small,
-.project-git-update-repositories small {
-  color: var(--zeus-product-muted);
-}
-.project-git-update-repositories {
-  display: flex;
-  flex-direction: column;
-}
-.project-git-update-repositories > span {
-  align-items: center;
-  border-bottom: 0;
-  display: grid;
-  gap: 3px 8px;
-  grid-template-columns: 18px minmax(120px, 0.7fr) minmax(150px, 1fr) auto auto;
-  min-height: 40px;
-}
-.project-git-update-repositories > span > svg {
-  color: var(--zeus-product-muted);
-  height: 14px;
-  width: 14px;
-}
-.project-git-update-repositories em,
-.project-git-update-repositories i {
-  font-size: 10px;
-  font-style: normal;
-}
-.project-git-update-repositories em {
-  color: var(--zeus-product-muted);
-}
-.project-git-update-repositories i.is-completed {
-  color: var(--zeus-status-success-text);
-}
-.project-git-update-repositories i.is-conflict,
-.project-git-update-repositories i.is-error {
-  color: var(--zeus-control-danger-text);
-}
-.project-git-update-reset-confirm {
-  align-items: start;
-  background: var(--zeus-control-danger-bg);
-  border: 1px solid var(--zeus-control-danger-line);
-  border-radius: 8px;
-  color: var(--zeus-control-danger-text);
-  display: flex;
-  gap: 8px;
-  line-height: 1.45;
-  padding: 10px;
+@media (max-width: 440px) {
+  .project-git-update-remember {
+    flex-basis: 100%;
+  }
 }
 .project-git-reference-dialog {
   width: min(520px, calc(100vw - 48px));
@@ -4455,14 +4433,6 @@ a {
   .project-git-branch-trigger {
     flex: 1;
     margin-left: 0;
-  }
-  .project-git-update-repositories > span {
-    align-items: start;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
-    padding: 7px 0;
-  }
-  .project-git-update-repositories > span :where(small, em) {
-    grid-column: 2;
   }
 }
 @media (prefers-reduced-motion: reduce) {

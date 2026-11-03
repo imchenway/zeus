@@ -1706,6 +1706,8 @@ type NativeTurnEventPayload = NativeEventIdentity & {
   startedAt?: string;
   completedAt?: string;
   hasUnreadAttention?: boolean;
+  /** 轮次终态携带结算后的权威队列，与失败状态同时接管界面。 */
+  queue?: NativeQueueSnapshot;
 };
 type NativeItemEventPayload = NativeEventIdentity & {
   turnId: string;

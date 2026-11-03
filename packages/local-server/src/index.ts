@@ -2943,7 +2943,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         ...(transcript ? { transcript } : {}),
         ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.usageSnapshot(conversationId) } : {}),
         ...(mappedType === 'conversation.sessionMetrics.changed' ? { sessionMetrics: conversationExecution.sessionMetrics(conversationId) } : {}),
-        ...(mappedType === 'conversation.queue.changed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
+        // 轮次终态同时交付结算后的队列，避免失败卡仍被已结束的提交阻止重试。
+        ...(mappedType === 'conversation.queue.changed' || mappedType === 'conversation.turn.completed' ? { queue: toNativeQueueApiSnapshot(conversation) } : {}),
         ...(mappedType === 'conversation.submission.steering' && steeringSubmission
           ? {
               submission: toNativeSubmission(steeringSubmission),
