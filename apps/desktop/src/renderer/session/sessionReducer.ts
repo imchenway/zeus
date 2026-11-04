@@ -29,6 +29,7 @@ import type {
 } from './sessionTypes.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { hasUnfinishedConversationTurn } from './conversationQueuePresentation.js';
+import { selectPendingExecutionMessage } from './sessionSelectors.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
@@ -1724,8 +1725,11 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const key = existingOptimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
   const conversationId = state.conversationId ?? 'pending-conversation';
   const threadId = state.providerThreadId ?? 'pending-thread';
-  /** 只在首次提交时判断等待关系；任务首发和已在正文中的输入不因自身派发改到排队区。 */
-  const queuedForActiveTurn = !action.taskPushLayout && action.delivery === 'queue' && (existingOptimisticEntry ? existingOptimisticEntry[1].payload.queuedForActiveTurn === true : hasUnfinishedConversationTurn(state));
+  /** 首次提交即承认前序待接纳消息；同一消息续发时保留原等待关系，避免正文与队列来回切换。 */
+  const queuedForActiveTurn =
+    !action.taskPushLayout &&
+    action.delivery === 'queue' &&
+    (existingOptimisticEntry ? existingOptimisticEntry[1].payload.queuedForActiveTurn === true : hasUnfinishedConversationTurn(state) || Boolean(selectPendingExecutionMessage(state)));
   const item: NativeSessionItemBuffer = {
     key,
     conversationId,

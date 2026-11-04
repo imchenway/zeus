@@ -439,10 +439,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     [props.state.turnsByProviderId],
   );
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
-  /** 输入框卡片接管的提交不能同时出现在会话时间线。 */
+  /** 正文与排队卡片使用同一轮次状态；接管的提交不能同时出现在会话时间线。 */
   const composerQueue = useMemo(
     () => (props.composerQueueVisible === false ? [] : composerQueuedSubmissions(props.state)),
-    [props.composerQueueVisible, props.state.itemOrder, props.state.items, props.state.queue, props.state.snapshot?.providerState],
+    [props.composerQueueVisible, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.queue, props.state.snapshot?.providerState, props.state.terminalTurnIds],
   );
   /** 稳定提交身份覆盖冷开时由持久 submission 重建的本地消息。 */
   const composerQueueSubmissionIds = useMemo(() => new Set(composerQueue.map((submission) => submission.id)), [composerQueue]);
