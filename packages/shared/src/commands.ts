@@ -208,3 +208,34 @@ export function commandParameterValueMatchesType(value: unknown, type: CommandPa
   if (type === 'number') return typeof value === 'number' && Number.isFinite(value);
   return typeof value === 'boolean';
 }
+
+/** 命令中心与代码交付共用参数类型、必填项和默认值校验。 */
+export function normalizeCommandRunParameters(definitions: CommandParameterDefinition[], rawValues: Record<string, unknown>): { values: Record<string, string | number | boolean> } | { issues: Array<{ field: string; message: string }> } {
+  if (!rawValues || typeof rawValues !== 'object' || Array.isArray(rawValues)) {
+    return { issues: [{ field: 'parameters', message: '参数必须是对象。' }] };
+  }
+  /** 只接收命令明确声明的参数。 */
+  const declaredKeys = new Set(definitions.map((definition) => definition.key));
+  /** 多余字段作为校验问题返回。 */
+  const unknownKeys = Object.keys(rawValues).filter((key) => !declaredKeys.has(key));
+  /** 汇总参数缺失和类型不符。 */
+  const issues = unknownKeys.map((key) => ({ field: key, message: '参数未在命令中声明。' }));
+  /** 完整值优先使用本次输入，其次使用定义的默认值。 */
+  const values: Record<string, string | number | boolean> = {};
+  for (const definition of definitions) {
+    /** 空值沿用既有默认参数语义。 */
+    const rawValue = rawValues[definition.key] ?? definition.defaultValue;
+    /** 必填空字符串与未提供值均拒绝。 */
+    const missing = rawValue === undefined || rawValue === '';
+    if (missing) {
+      if (definition.required) issues.push({ field: definition.key, message: '参数为必填项。' });
+      continue;
+    }
+    if (!commandParameterValueMatchesType(rawValue, definition.type)) {
+      issues.push({ field: definition.key, message: `参数类型必须是 ${definition.type}。` });
+      continue;
+    }
+    values[definition.key] = rawValue;
+  }
+  return issues.length > 0 ? { issues } : { values };
+}

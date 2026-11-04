@@ -3684,6 +3684,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     commands: workspaceGitCommands,
     publish: publishRealtimeEvent,
     statusOptions: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).statuses,
+    commandSecurity: (projectId) => readProjectConfig(projectId).security,
     finalizeTaskConflict: async (integrationId, conversationId) => {
       /** 使用当前会话的原尝试，不另建冲突任务或改变固定目标。 */
       const attempt = taskIntegrationAttempts.getByConversationId(conversationId);
@@ -3728,6 +3729,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   gitSummaries.register();
   /** 接收提交后的领域事件，进度消息不再冒充 Git 文件变化。 */
   const unsubscribeGitEvents = subscribeRealtimeEvents((event: import('./index.js').ZeusRealtimeEvent) => {
+    if (event.type.startsWith('command.run.')) gitDelivery.wakeWaiting();
     if (
       ['conversation.thread.changed', 'conversation.turn.completed', 'conversation.request.created', 'conversation.request.changed', 'conversation.request.resolved', 'conversation.queue.changed'].includes(event.type) &&
       typeof event.payload.conversationId === 'string'

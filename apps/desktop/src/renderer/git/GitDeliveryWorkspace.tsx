@@ -820,9 +820,10 @@ export function GitDeliveryActions(props: {
               searchable={false}
             />
           ) : null}
-          {props.combination ? (
-            <label className="git-delivery-checkbox" aria-disabled={!settings.merge}>
-              <input type="checkbox" checked={settings.resolveConflicts} disabled={busy || !settings.merge} onChange={(event) => setSettings((current) => ({ ...current, resolveConflicts: event.target.checked }))} />
+          {/* 合入未启用或来源分支未选择时移除整行，保留已记住的 AI 偏好；任务入口沿用各仓库来源分支。 */}
+          {props.combination && settings.merge && (!props.onMergeTargetChange || Boolean(props.mergeTarget)) ? (
+            <label className="git-delivery-checkbox">
+              <input type="checkbox" checked={settings.resolveConflicts} disabled={busy} onChange={(event) => setSettings((current) => ({ ...current, resolveConflicts: event.target.checked }))} />
               {props.zh ? 'AI 处理合入冲突' : 'Resolve merge conflicts with AI'}
             </label>
           ) : null}

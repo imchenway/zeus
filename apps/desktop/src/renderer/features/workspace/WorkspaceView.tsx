@@ -1458,7 +1458,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       <WorkspaceDrawer
                         presentation="floating"
                         backdrop="dimmed"
-                        size="wide"
+                        size="standard"
                         label={taskDetailPresentationLabel}
                         backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
                         closeLabel={taskWorkspaceCopy.detailPaneClose}

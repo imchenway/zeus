@@ -9,6 +9,11 @@ export function readGitDeliverySettings(projectId: string): GitDeliverySettings 
       !value ||
       ['commit', 'merge', 'push', 'resolveConflicts'].some((key) => typeof value[key as 'commit'] !== 'boolean') ||
       (value.generateCommitMessage !== undefined && typeof value.generateCommitMessage !== 'boolean') ||
+      (value.postPushCommandIds !== undefined &&
+        (!Array.isArray(value.postPushCommandIds) ||
+          value.postPushCommandIds.length > 50 ||
+          value.postPushCommandIds.some((id) => typeof id !== 'string' || !id || id.length > 256) ||
+          new Set(value.postPushCommandIds).size !== value.postPushCommandIds.length)) ||
       !['auto', 'full-access'].includes(value.permissionMode ?? '') ||
       (value.skillId !== null && typeof value.skillId !== 'string') ||
       (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')

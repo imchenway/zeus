@@ -29,7 +29,7 @@ export interface GitApiClient {
   /** 后台交付查询只返回同一真实入口的记录。 */
   loadGitDeliveryRuns(projectId: string, scopeId: string): Promise<{ items: GitDeliveryRun[] }>;
   /** 读取真实项目管理状态。 */
-  loadGitDeliveryOptions(projectId: string): Promise<{ statuses: TaskManagementStatusDefinition[] }>;
+  loadGitDeliveryOptions(projectId: string): Promise<{ statuses: TaskManagementStatusDefinition[]; commands: import('@zeus/shared').CommandDefinition[] }>;
   /** 接纳时使用稳定用户动作身份。 */
   startGitDeliveryRun(projectId: string, input: GitDeliveryInput, key: string): Promise<GitDeliveryRun>;
   /** 手动继续不重新执行已成功步骤。 */

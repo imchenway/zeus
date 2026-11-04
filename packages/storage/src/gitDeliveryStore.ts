@@ -85,6 +85,45 @@ export function migrateGitDelivery(db: ZeusDatabasePort): void {
   });
 }
 
+/** 为全局命令步骤扩展动作约束，事务内保留现有步骤身份、顺序及运行事实。 */
+export function migrateGitDeliveryCommands(db: ZeusDatabasePort): void {
+  /** 与旧交付表迁移分开登记，已有数据库只执行一次。 */
+  const migrationId = '20261104_git_delivery_commands';
+  if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute(`CREATE TABLE git_delivery_steps_with_commands (
+      id TEXT PRIMARY KEY, -- 稳定步骤身份
+      run_id TEXT NOT NULL REFERENCES git_delivery_runs(id) ON DELETE CASCADE, -- 所属交付
+      repository_id TEXT, -- 仓库身份，全局命令及任务状态为空
+      repository_name TEXT NOT NULL, -- 仓库名或命令标题快照
+      action TEXT NOT NULL CHECK(action IN ('commit','merge','push','command','task_status')), -- 步骤操作
+      command_definition_id TEXT, -- 接纳时的命令身份，删除定义后仍保留历史
+      state TEXT NOT NULL CHECK(state IN ('pending','running','waiting','attention','unknown','succeeded')), -- 步骤进度
+      attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0), -- 手动重试次数
+      command_id TEXT, -- 最近执行命令的回执身份
+      message TEXT, -- 待处理原因
+      conversation_id TEXT, -- 冲突会话身份
+      integration_id TEXT, -- 任务合入身份
+      result_json TEXT, -- 已执行阶段的固定回执
+      CHECK((action IN ('task_status','command')) = (repository_id IS NULL)),
+      CHECK((action = 'command') = (command_definition_id IS NOT NULL))
+    )`);
+    db.execute(`INSERT INTO git_delivery_steps_with_commands(id,run_id,repository_id,repository_name,action,state,attempt,command_id,message,conversation_id,integration_id,result_json)
+      SELECT id,run_id,repository_id,repository_name,action,state,attempt,command_id,message,conversation_id,integration_id,result_json FROM git_delivery_steps ORDER BY rowid`);
+    db.execute('DROP TABLE git_delivery_steps');
+    db.execute('ALTER TABLE git_delivery_steps_with_commands RENAME TO git_delivery_steps');
+    db.execute('CREATE UNIQUE INDEX git_delivery_steps_repository ON git_delivery_steps(run_id, repository_id, action) WHERE repository_id IS NOT NULL');
+    db.execute("CREATE UNIQUE INDEX git_delivery_steps_status ON git_delivery_steps(run_id) WHERE action = 'task_status'");
+    db.execute("CREATE UNIQUE INDEX git_delivery_steps_command ON git_delivery_steps(run_id, command_definition_id) WHERE action = 'command'");
+    db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '代码交付的推送后命令步骤',
+      createHash('sha256').update(migrationId).digest('hex'),
+      new Date().toISOString(),
+    ]);
+  });
+}
+
 /** 运行仓库不执行 Git，只通过已有耐久事务提交进度。 */
 export class GitDeliveryRepository {
   /** 共用应用数据库。 */
@@ -114,16 +153,20 @@ export class GitDeliveryRepository {
       for (const repository of input.repositories) {
         for (const action of ['commit', 'merge', 'push'] as const) if (input.settings[action]) this.addStep(id, repository.repositoryId, names[repository.repositoryId] ?? repository.repositoryId, action);
       }
+      for (const command of input.postPushCommands ?? []) this.addStep(id, null, names[command.commandId] ?? command.commandId, 'command', command.commandId);
       if (input.settings.finalTaskStatus) this.addStep(id, null, '任务状态', 'task_status');
     });
     return this.get(id)!;
   }
 
   /** 顺序由固定动作定义，身份不依赖数组排序。 */
-  private addStep(runId: string, repositoryId: string | null, name: string, action: GitDeliveryAction): void {
+  private addStep(runId: string, repositoryId: string | null, name: string, action: GitDeliveryAction, commandDefinitionId: string | null = null): void {
     /** 稳定哈希避免名称或路径进入命令身份。 */
-    const id = `delivery_step_${createHash('sha256').update(`${runId}\0${repositoryId}\0${action}`).digest('hex').slice(0, 32)}`;
-    this.db.execute('INSERT INTO git_delivery_steps(id, run_id, repository_id, repository_name, action, state) VALUES(?,?,?,?,?,?)', [id, runId, repositoryId, name, action, 'pending']);
+    const id = `delivery_step_${createHash('sha256')
+      .update(`${runId}\0${repositoryId}\0${action}${commandDefinitionId ? `\0${commandDefinitionId}` : ''}`)
+      .digest('hex')
+      .slice(0, 32)}`;
+    this.db.execute('INSERT INTO git_delivery_steps(id, run_id, repository_id, repository_name, action, command_definition_id, state) VALUES(?,?,?,?,?,?,?)', [id, runId, repositoryId, name, action, commandDefinitionId, 'pending']);
   }
 
   /** 读取同一运行的固定输入与实时进度。 */
@@ -160,7 +203,7 @@ export class GitDeliveryRepository {
   private steps(runId: string): GitDeliveryStepRecord[] {
     return this.db
       .select<Omit<GitDeliveryStepRecord, 'result'> & { resultJson: string | null }>(
-        `SELECT id, run_id AS runId, repository_id AS repositoryId, repository_name AS repositoryName, action, state, attempt, command_id AS commandId, message, conversation_id AS conversationId, integration_id AS integrationId, result_json AS resultJson FROM git_delivery_steps WHERE run_id = ? ORDER BY rowid`,
+        `SELECT id, run_id AS runId, repository_id AS repositoryId, repository_name AS repositoryName, action, command_definition_id AS commandDefinitionId, state, attempt, command_id AS commandId, message, conversation_id AS conversationId, integration_id AS integrationId, result_json AS resultJson FROM git_delivery_steps WHERE run_id = ? ORDER BY rowid`,
         [runId],
       )
       .map(({ resultJson, ...row }) => ({ ...row, result: resultJson ? JSON.parse(resultJson) : null }));
@@ -199,11 +242,12 @@ export class GitDeliveryRepository {
       state: run.state,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
-      steps: run.steps.map(({ id, repositoryId, repositoryName, action, state, message, conversationId, integrationId, result, commandId }) => ({
+      steps: run.steps.map(({ id, repositoryId, repositoryName, action, commandDefinitionId, state, message, conversationId, integrationId, result, commandId }) => ({
         id,
         repositoryId,
         repositoryName,
         action,
+        commandDefinitionId,
         state,
         message,
         error: state === 'attention' || state === 'unknown' ? this.commandError(commandId) : undefined,

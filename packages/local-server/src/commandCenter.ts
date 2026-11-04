@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   assertExpectedRevision,
   commandNeedsHighRiskConfirmation,
-  commandParameterValueMatchesType,
+  normalizeCommandRunParameters,
   defaultCommandRiskFlags,
   isCommandShell,
   validateCommandDefinitionInput,
@@ -81,6 +81,8 @@ interface StoredCommandConfirmation extends CommandConfirmation {
 }
 
 interface CommandConfirmationBody {
+  /** 后台组合冻结审阅版本；普通直接运行不提供此约束。 */
+  expectedRevision?: number;
   parameters?: Record<string, unknown>;
   trigger?: CommandRunTrigger;
 }
@@ -406,9 +408,10 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       return notFound(reply, 'ZEUS_COMMAND_NOT_FOUND', 'Command definition not found');
     }
     if (!command.enabled) return reply.code(409).send({ error: 'ZEUS_COMMAND_DISABLED', message: 'Command is disabled' });
+    if (parsed.input.expectedRevision !== undefined && parsed.input.expectedRevision !== command.revision) return reply.code(409).send({ error: 'ZEUS_COMMAND_REVISION_CHANGED', message: '命令已修改，请重新审阅后运行。' });
     const permissionError = commandPermissionError(projectId, command);
     if (permissionError) return reply.code(403).send(permissionError);
-    const parameters = normalizeRunParameters(command.parameters, parsed.input.parameters ?? {});
+    const parameters = normalizeCommandRunParameters(command.parameters, parsed.input.parameters ?? {});
     if ('issues' in parameters) return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_PARAMETERS', message: 'Command parameters are invalid', issues: parameters.issues });
     const riskLevel = commandNeedsHighRiskConfirmation(command.riskFlags) ? 'high' : 'normal';
     const trigger = parsed.input.trigger === 'telegram' ? 'telegram' : 'desktop';
@@ -536,7 +539,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         reply,
       });
     }
-    const parameters = normalizeRunParameters(command.parameters, parsed.input.parameters ?? {});
+    const parameters = normalizeCommandRunParameters(command.parameters, parsed.input.parameters ?? {});
     if ('issues' in parameters) {
       return rejectRunStart({
         parsed,
@@ -1268,30 +1271,6 @@ function isCommandParameterDefinition(value: unknown): value is CommandParameter
     typeof parameter.required === 'boolean' &&
     typeof parameter.sensitive === 'boolean'
   );
-}
-
-function normalizeRunParameters(definitions: CommandParameterDefinition[], rawValues: Record<string, unknown>): { values: Record<string, string | number | boolean> } | { issues: Array<{ field: string; message: string }> } {
-  if (!rawValues || typeof rawValues !== 'object' || Array.isArray(rawValues)) {
-    return { issues: [{ field: 'parameters', message: '参数必须是对象。' }] };
-  }
-  const declaredKeys = new Set(definitions.map((definition) => definition.key));
-  const unknownKeys = Object.keys(rawValues).filter((key) => !declaredKeys.has(key));
-  const issues = unknownKeys.map((key) => ({ field: key, message: '参数未在命令中声明。' }));
-  const values: Record<string, string | number | boolean> = {};
-  for (const definition of definitions) {
-    const rawValue = rawValues[definition.key] ?? definition.defaultValue;
-    const missing = rawValue === undefined || rawValue === '';
-    if (missing) {
-      if (definition.required) issues.push({ field: definition.key, message: '参数为必填项。' });
-      continue;
-    }
-    if (!commandParameterValueMatchesType(rawValue, definition.type)) {
-      issues.push({ field: definition.key, message: `参数类型必须是 ${definition.type}。` });
-      continue;
-    }
-    values[definition.key] = rawValue;
-  }
-  return issues.length > 0 ? { issues } : { values };
 }
 
 function nonSensitiveParameterSnapshot(definitions: CommandParameterDefinition[], values: Record<string, string | number | boolean>): Record<string, string | number | boolean> {

@@ -13,6 +13,8 @@ export interface GitDeliverySettings {
   merge: boolean;
   /** 是否推送对应分支。 */
   push: boolean;
+  /** 推送成功后按此顺序执行的已配置命令；旧偏好缺项表示不运行命令。 */
+  postPushCommandIds?: string[];
   /** 合入冲突是否自动启动 AI。 */
   resolveConflicts: boolean;
   /** AI 使用用户明确选择的现有权限。 */
@@ -24,7 +26,17 @@ export interface GitDeliverySettings {
 }
 
 /** 初次交付默认处理全部仓库的合入冲突，避免停在首个冲突仓库；已保存的用户设置仍优先。 */
-export const defaultGitDeliverySettings: GitDeliverySettings = { commit: true, generateCommitMessage: false, merge: true, push: true, resolveConflicts: true, permissionMode: 'auto', skillId: null, finalTaskStatus: null };
+export const defaultGitDeliverySettings: GitDeliverySettings = {
+  commit: true,
+  generateCommitMessage: false,
+  merge: true,
+  push: true,
+  postPushCommandIds: [],
+  resolveConflicts: true,
+  permissionMode: 'auto',
+  skillId: null,
+  finalTaskStatus: null,
+};
 
 /** 一次运行固定的仓库及相对路径。 */
 export interface GitDeliverySelection {
@@ -46,6 +58,8 @@ export interface GitDeliveryInput {
   scope: GitDeliveryScope;
   /** 本次操作选择。 */
   settings: GitDeliverySettings;
+  /** 所选命令的审阅版本，只在启用推送时冻结；不复制脚本或参数。 */
+  postPushCommands?: Array<{ commandId: string; expectedRevision: number }>;
   /** 现有提交说明。 */
   message: string;
   /** AI 提交使用点击运行时的模型设置；未启用时不读取模型。 */
@@ -66,7 +80,7 @@ export interface GitDeliveryInput {
 }
 
 /** AI 是合入的条件处理，任务状态是全局最后一步。 */
-export type GitDeliveryAction = 'commit' | 'merge' | 'push' | 'task_status';
+export type GitDeliveryAction = 'commit' | 'merge' | 'push' | 'command' | 'task_status';
 /** 未知结果与确定失败分开，不能直接重放。 */
 export type GitDeliveryStepState = 'pending' | 'running' | 'waiting' | 'attention' | 'unknown' | 'succeeded';
 
@@ -76,7 +90,9 @@ export interface GitDeliveryStep {
   id: string;
   /** 任务状态步骤为空，其余为本次选择身份。 */
   repositoryId: string | null;
-  /** 可读仓库名。 */
+  /** 命令步骤绑定定义身份，其他步骤为空或缺项。 */
+  commandDefinitionId?: string | null;
+  /** 可读仓库名；命令步骤使用命令标题。 */
   repositoryName: string;
   /** 固定操作类型。 */
   action: GitDeliveryAction;
