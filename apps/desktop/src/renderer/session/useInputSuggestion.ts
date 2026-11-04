@@ -2,9 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import type { InputSuggestionRequest, InputSuggestionResult, InputSuggestionSettings } from '@zeus/shared';
 import type { NativeSessionState } from './sessionTypes.js';
 import { getInputSuggestionSession, inputSuggestionIdentity, synchronizeInputSuggestionSettings } from './inputSuggestionStore.js';
+import { useDraftCompletion } from './useDraftCompletion.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 
-/** 空输入和已有草稿共用输入建议，编辑即失效，明确采用才替换草稿。 */
+/** 空输入建议在编辑时隐藏，草稿润色随原文失效；明确采用才替换正文。 */
 export function useInputSuggestion(options: {
   /** 已建立的会话提供归属，生成材料由服务端读取当前权威状态。 */
   state?: NativeSessionState;
@@ -14,12 +15,14 @@ export function useInputSuggestion(options: {
   projectId?: string;
   /** 当前输入框模型供新草稿跟随；已有会话仍由服务端核对实际模型。 */
   conversationModelRef?: string;
-  /** 当前可见原文用于请求绑定，未主动润色时不发送。 */
+  /** 当前原文绑定润色与补全请求，自动补全受输入建议开关控制。 */
   draft: string;
-  /** 只读、组合输入和目标输入限制主动操作及采用，编辑事件另行取消请求。 */
+  /** 只读、组合输入和目标输入限制主动操作及采用。 */
   eligible: boolean;
-  /** 输入框报告草稿、附件、评论、目标和组合输入限制；服务端交互另行核对。 */
+  /** 空草稿和可编辑状态决定自动建议是否可以展示及采用。 */
   automaticEligible?: boolean;
+  /** 附件、评论、目标和权限限制后台生成；普通文字和组合输入仅影响展示。 */
+  automaticGenerationEligible?: boolean;
   /** 自动开关、深度和速度独立配置，模型可显式跟随当前会话。 */
   settings?: InputSuggestionSettings;
   /** 同一次请求始终使用捕获的操作身份。 */
@@ -44,13 +47,11 @@ export function useInputSuggestion(options: {
   const previewRef = useRef<HTMLDivElement>(null);
   /** 多处输入框可以共用会话，但即时输入限制各自登记和释放。 */
   const eligibilityOwner = useRef(Symbol('input-suggestion-composer'));
-  useLayoutEffect(() => session.observeAutomaticEligibility(eligibilityOwner.current, options.automaticEligible === true && options.draft.length === 0), [session, options.automaticEligible, options.draft]);
-  /** 外部恢复或切换草稿也核对原文；直接编辑由事件入口在状态更新前取消。 */
+  useLayoutEffect(() => session.observeAutomaticEligibility(eligibilityOwner.current, options.automaticGenerationEligible === true), [session, options.automaticGenerationEligible]);
+  /** 外部恢复草稿同样使旧润色失效，空输入建议继续由原文匹配控制显示。 */
   useLayoutEffect(() => {
-    if (result && result.sourceDraft !== options.draft) session.dismiss(result.requestId);
+    if (result && result.sourceDraft !== options.draft) session.invalidateDraft();
   }, [session, result, options.draft]);
-  /** 文字变化和组合输入开始共用即时取消入口，清空或改回原文也不能恢复候选。 */
-  const beginEditing = useCallback(() => session.beginEditing(eligibilityOwner.current), [session]);
   /** 回调引用变化不能重启已发出的请求。 */
   const generate = useRef(options.generate);
   generate.current = options.generate;
@@ -72,17 +73,38 @@ export function useInputSuggestion(options: {
   /** 新草稿没有会话身份。 */
   const conversationId = options.state?.conversationId ?? undefined;
 
+  /** 草稿补全使用独立请求，输入法、只读和目标模式沿用当前输入限制。 */
+  const completion = useDraftCompletion({
+    sessionKey,
+    modelKey,
+    enabled: enabled && hasModel && options.eligible && !(result?.mode === 'polish' && result.sourceDraft === options.draft),
+    draft: options.draft,
+    modelRef: modelRef ?? options.conversationModelRef ?? null,
+    projectId,
+    conversationId,
+    draftModelRef: !conversationId && options.settings?.followConversationModel ? options.conversationModelRef : undefined,
+    generate: options.generate,
+  });
+  /** 编辑清除旧后缀与润色，空输入建议继续生成，等待草稿删空。 */
+  const beginEditing = useCallback(() => {
+    session.invalidateDraft();
+    completion.dismiss();
+  }, [session, completion.dismiss]);
+
   /** 设置尚未载入时不把暂时缺失当作用户删除配置。 */
   const settingsReady = options.settings !== undefined;
   useEffect(() => {
     if (settingsReady) synchronizeInputSuggestionSettings(modelKey, enabled);
   }, [modelKey, enabled, settingsReady]);
 
-  /** 前台只负责主动生成，自动触发统一由工作台完成事件驱动。 */
+  /** 主动操作负责全文润色或空输入起草，与停顿补全分别控制。 */
   const requestManual = useCallback(() => {
     if (!options.eligible || !hasModel || !generate.current) return;
+    completion.dismiss();
     /** 按钮和 Tab 都按操作时的真实草稿决定生成类型。 */
     const mode = options.draft.trim() ? 'polish' : 'suggest';
+    // 用户主动处理当前草稿时替换隐藏的后台请求，避免控制器占用让点击无响应。
+    if (session.getSnapshot()?.sourceDraft !== options.draft) session.dismiss();
     session.start({
       key: resultKey,
       modelKey,
@@ -98,14 +120,15 @@ export function useInputSuggestion(options: {
       },
       generate: generate.current,
     });
-  }, [session, options.eligible, options.draft, options.conversationModelRef, options.settings?.followConversationModel, hasModel, modelRef, modelKey, projectId, conversationId, resultKey]);
+  }, [session, completion.dismiss, options.eligible, options.draft, options.conversationModelRef, options.settings?.followConversationModel, hasModel, modelRef, modelKey, projectId, conversationId, resultKey]);
 
   /** 浮层按所属请求关闭，输入框主动取消则清理当前请求。 */
   const dismiss = useCallback(
     (requestId?: string) => {
       session.dismiss(requestId);
+      if (!requestId) completion.dismiss();
     },
-    [session],
+    [session, completion.dismiss],
   );
   /** 后台状态自身拥有完成轮次；展示核对当前草稿和模型，不依赖本地轮次水合。 */
   const visible = Boolean(
@@ -145,13 +168,21 @@ export function useInputSuggestion(options: {
     const navigate = allowTabNavigation.current;
     allowTabNavigation.current = event.key === 'Escape';
     if (event.key === 'Escape') {
-      if (!visible) return false;
+      if (!visible && !completion.text && !completion.pending) return false;
       event.preventDefault();
       event.stopPropagation();
-      dismiss();
+      if (visible) dismiss();
+      else completion.dismiss();
       return true;
     }
     if (event.key !== 'Tab' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || navigate || !available) return false;
+    // 已有草稿的 Tab 优先采用可见后缀；没有后缀时保留原生焦点导航。
+    if (options.draft.length > 0 && !canAccept()) {
+      if (event.repeat || !completion.accept(input)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat && !(visible && result?.pending)) {
@@ -162,6 +193,9 @@ export function useInputSuggestion(options: {
   }
 
   return {
+    completion: completion.text,
+    completionPending: completion.pending,
+    onCompletionActiveChange: completion.setActive,
     requestId: visible ? result!.requestId : null,
     previewRef,
     claimPreview: session.claimPreview,

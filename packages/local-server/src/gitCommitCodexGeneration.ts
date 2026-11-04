@@ -139,6 +139,8 @@ export interface CodexTextGenerationInput {
   system: string;
   /** 当前生成场景提供的有界材料。 */
   prompt: string;
+  /** 行内后缀需要保留衔接空格与换行；其他调用沿用首尾清理。 */
+  preserveWhitespace?: boolean;
   /** 可选的目录推理档位；调用前再次核对支持范围。 */
   effort?: string;
   /** 不传时使用标准速度，调用方可按模型目录明确选择 Fast。 */
@@ -292,7 +294,9 @@ export async function generateCodexText(input: CodexTextGenerationInput, options
               const message = asRecord(entry);
               if (message.type === 'agentMessage' && message.phase !== 'commentary' && typeof message.text === 'string') messages.set(String(message.id), message.text);
             }
-            resolve([...messages.values()].join('\n').trim());
+            /** 补全的首尾空白属于待追加正文，不能在传输层丢失。 */
+            const text = [...messages.values()].join('\n');
+            resolve(input.preserveWhitespace ? text : text.trim());
           }
         });
       });

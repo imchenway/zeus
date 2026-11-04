@@ -89,7 +89,7 @@ export function useBackgroundInputSuggestions(options: {
           /** 隐藏会话也核对问题和计划确认，不能依赖可见输入框替它阻止生成。 */
           const pending = await client.loadNativePendingRequests(projectId, conversationId);
           signal.throwIfAborted();
-          // 编辑事件会取消本次请求；后台准备阶段也要核对是否出现待处理交互。
+          // 普通输入不取消生成；后台准备阶段仍核对问题和计划确认。
           if (pending.requests.some((item) => item.status === 'pending') || pending.planImplementationRequests?.some((item) => item.status === 'pending')) {
             return { completedTurnId: turnId, modelRef: selectedSettings.modelRef, text: null, reason: 'cancelled' };
           }

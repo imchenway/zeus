@@ -232,13 +232,22 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
   }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier]);
 
-  /** 自动预测要求空输入且无待处理交互；手动生成可以与主会话并行。 */
+  /** 自动预测可以在输入期间生成，空输入且无待处理交互时才展示。 */
   const suggestion = useInputSuggestion({
     state: props.state,
     conversationModelRef: effectiveModel,
     draft: editorValue,
     // 待处理问题由后台读取权威状态；这里仅报告即时输入限制，避免落后的会话投影漏掉完成事件。
     automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
+    automaticGenerationEligible:
+      inputWritable &&
+      !goalInputActive &&
+      !goalOperationBusy &&
+      !inputResources.processing &&
+      props.state.attachments.length === 0 &&
+      !props.state.browserSubmission &&
+      props.state.contextDraft.responseAnnotations.length === 0 &&
+      props.state.contextDraft.codeComments.length === 0,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     eligible: inputWritable && !busy && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
@@ -410,7 +419,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   return (
     <section
       className="session-composer-shell"
-      data-input-suggestion={suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
+      data-input-suggestion={suggestion.text || suggestion.completion || suggestion.completionPending || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
       aria-label={inputLabel}
       aria-busy={busy || inputResources.processing || undefined}
       data-active={active ? 'true' : 'false'}
@@ -485,6 +494,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
               ariaKeyShortcuts="Tab Enter Shift+Enter Escape Meta+A Control+A"
               placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
               suggestion={suggestion.text}
+              completion={suggestion.completion}
+              onCompletionActiveChange={suggestion.onCompletionActiveChange}
               loadCatalog={props.onLoadExtensions}
               loadEmployees={props.onLoadEmployees}
               goalAvailable={props.goalAvailable}

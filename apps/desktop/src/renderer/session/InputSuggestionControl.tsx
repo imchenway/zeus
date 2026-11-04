@@ -19,7 +19,7 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
   /** 自动开关关闭不影响主动入口。 */
   disabled: { 'zh-CN': '自动输入建议已关闭。', 'en-US': 'Automatic input suggestions are off.' },
   /** 没有对话时仍可输入草稿后主动润色。 */
-  context_unavailable: { 'zh-CN': '暂无可用的对话内容。可先输入目标，再按 Tab 生成输入建议。', 'en-US': 'No conversation context is available. Enter your goal, then press Tab to generate an input suggestion.' },
+  context_unavailable: { 'zh-CN': '暂无可用的对话内容。可先输入目标，再点击生成输入建议。', 'en-US': 'No conversation context is available. Enter your goal, then click to generate an input suggestion.' },
   /** 专用模型失效时不切换供应商。 */
   model_unavailable: { 'zh-CN': '输入建议模型不可用，请检查通用设置。', 'en-US': 'The suggestion model is unavailable. Check General settings.' },
   /** 显式档位失效需要用户重新选择。 */
@@ -59,8 +59,12 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   /** 加载、无需改写和错误只进入提示及读屏说明，不进入用户草稿。 */
   const outcomeMessage = props.suggestion.pending
     ? props.language === 'zh-CN'
-      ? '正在生成输入建议，修改输入将取消生成…'
-      : 'Generating an input suggestion; editing cancels generation…'
+      ? props.suggestion.mode === 'polish'
+        ? '正在润色，修改原文将取消生成…'
+        : '正在生成输入建议…'
+      : props.suggestion.mode === 'polish'
+        ? 'Polishing your draft; editing cancels generation…'
+        : 'Generating an input suggestion…'
     : props.suggestion.reason === 'failed' && props.suggestion.cause
       ? formatVisibleApplicationError(props.suggestion.cause, props.language === 'zh-CN' ? 'zh-CN' : 'en')
       : props.suggestion.reason
@@ -70,8 +74,8 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   const message =
     props.suggestion.pending && props.suggestion.retryAttempt > 0
       ? props.language === 'zh-CN'
-        ? `${props.suggestion.retryAt ? '暂未生成成功，等待自动重试' : '正在自动重试'}（${props.suggestion.retryAttempt}/2），修改输入将取消…`
-        : `${props.suggestion.retryAt ? 'Waiting to retry' : 'Retrying'} (${props.suggestion.retryAttempt}/2); editing cancels generation…`
+        ? `${props.suggestion.retryAt ? '暂未生成成功，等待自动重试' : '正在自动重试'}（${props.suggestion.retryAttempt}/2）${props.suggestion.mode === 'polish' ? '，修改原文将取消' : ''}…`
+        : `${props.suggestion.retryAt ? 'Waiting to retry' : 'Retrying'} (${props.suggestion.retryAttempt}/2)${props.suggestion.mode === 'polish' ? '; editing cancels generation' : ''}…`
       : !props.suggestion.pending && failed && props.suggestion.retryAttempt > 0
         ? `${props.language === 'zh-CN' ? '自动重试后仍未成功。' : 'Automatic retry did not succeed. '}${outcomeMessage}`
         : outcomeMessage;
@@ -108,7 +112,7 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
       : 'Generating...'
     : failed || !props.configured || props.suggestion.reason === 'no_change'
       ? label
-      : [props.language === 'zh-CN' ? '输入建议' : 'Input suggestions', props.suggestion.available ? 'Tab' : ''].filter(Boolean).join(' · ');
+      : [props.language === 'zh-CN' ? '输入建议' : 'Input suggestions', props.suggestion.available && (!props.draft || props.suggestion.completion || hasPreview) ? 'Tab' : ''].filter(Boolean).join(' · ');
   // 容器标记忙碌，按钮保留取消操作，避免全局忙碌按钮样式追加圆点并屏蔽点击。
   return (
     <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>

@@ -4105,7 +4105,7 @@ export function NewConversationComposer(props: {
     }
   }
 
-  /** 新草稿只在用户点击时生成，按项目和任务保存跨页面的请求结果。 */
+  /** 新草稿支持停顿补全与主动润色，按项目和任务隔离请求结果。 */
   const suggestion = useInputSuggestion({
     scopeKey: `new:${props.owner?.kind === 'task' ? props.owner.taskId : (props.owner?.projectId ?? '')}`,
     conversationModelRef: selectedModel?.id,
@@ -4120,7 +4120,7 @@ export function NewConversationComposer(props: {
     <section
       className="session-composer-shell session-new-conversation-composer"
       aria-label={copy.newInput}
-      data-input-suggestion={suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
+      data-input-suggestion={suggestion.text || suggestion.completion || suggestion.completionPending || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
       aria-busy={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || undefined}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
@@ -4235,6 +4235,8 @@ export function NewConversationComposer(props: {
               ariaKeyShortcuts="Tab Enter Shift+Enter Escape"
               placeholder={copy.newPlaceholder}
               suggestion={suggestion.text}
+              completion={suggestion.completion}
+              onCompletionActiveChange={suggestion.onCompletionActiveChange}
               loadCatalog={props.onLoadSkills}
               loadEmployees={props.onLoadDigitalEmployees}
               goalAvailable={goalAvailable}

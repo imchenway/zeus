@@ -63,6 +63,10 @@ export interface StructuredComposerInputProps {
   placeholder: string;
   /** 空输入框的灰字提示，与结构化标签和发送正文分开。 */
   suggestion?: string | null;
+  /** 草稿末尾的未采用补全，保持在文档之外。 */
+  completion?: string | null;
+  /** 菜单、焦点和选区共同决定是否允许末尾补全。 */
+  onCompletionActiveChange?: (active: boolean) => void;
   ariaKeyShortcuts?: string;
   loadCatalog?: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
   loadEmployees?: (projectId: string) => Promise<DigitalEmployeeRecord[]>;
@@ -370,6 +374,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         ariaKeyShortcuts={props.ariaKeyShortcuts}
         placeholder={props.placeholder}
         suggestion={props.suggestion}
+        completion={props.completion}
+        onCompletionActiveChange={props.onCompletionActiveChange}
         language={props.language}
         listboxId={trigger ? listboxId : undefined}
         activeDescendant={activeDescendant}

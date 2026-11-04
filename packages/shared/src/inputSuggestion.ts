@@ -36,17 +36,17 @@ export interface InputSuggestionModelOption {
 
 /** 自动建议与用户主动润色共用一次有界生成，不提交对话消息。 */
 export interface InputSuggestionRequest {
-  /** 空白输入预测下一句，有草稿时只润色用户表达。 */
-  mode: 'suggest' | 'polish';
-  /** 用户点击可以再次请求；自动触发仍受每轮一次约束。 */
-  trigger: 'automatic' | 'manual';
+  /** 空白输入预测下一句；草稿可主动润色，或在停顿后续写末尾。 */
+  mode: 'suggest' | 'polish' | 'complete';
+  /** 主动请求、完成轮次预测与输入停顿补全分别确定触发时机。 */
+  trigger: 'automatic' | 'manual' | 'typing';
   /** 已建立会话时必须同时传入所属项目和会话。 */
   projectId?: string;
   /** 新会话润色无需先创建会话。 */
   conversationId?: string;
-  /** 自动请求必须绑定刚完成的轮次；主动请求由服务端读取最新状态。 */
+  /** 完成轮次预测必须绑定刚完成的轮次；润色与补全由服务端读取最新状态。 */
   completedTurnId?: string;
-  /** 只有用户主动点击才发送尚未提交的草稿。 */
+  /** 润色及已启用的输入补全携带当前未提交草稿。 */
   draft?: string;
   /** 仅新草稿跟随模型时提供输入框选择；已有会话由服务端读取权威模型。 */
   draftModelRef?: string;
@@ -97,7 +97,7 @@ export function normalizeInputSuggestionUiDiagnostic(value: unknown): InputSugge
   const requestId = normalizePerformanceTraceIdentity(record.requestId);
   if (!requestId) return null;
   if (!['ui_started', 'ui_received', 'ui_result_stored', 'ui_discarded', 'ui_failed', 'ui_cancelled'].includes(String(record.event))) return null;
-  if (!['suggest', 'polish'].includes(String(record.mode)) || !['manual', 'automatic'].includes(String(record.trigger))) return null;
+  if (!['suggest', 'polish', 'complete'].includes(String(record.mode)) || !['manual', 'automatic', 'typing'].includes(String(record.trigger))) return null;
   if (typeof record.elapsedMs !== 'number' || !Number.isFinite(record.elapsedMs) || record.elapsedMs < 0) return null;
   return {
     requestId,

@@ -67,7 +67,7 @@ interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | '
   key: string;
   /** 专用模型、推理深度和速度共同决定请求配置。 */
   modelKey: string;
-  /** 请求时的原文用于预览和失效核对，编辑后不得继续使用。 */
+  /** 润色绑定请求时的原文；空输入建议只在草稿再次为空时展示。 */
   sourceDraft: string;
   /** 空输入建议与草稿润色使用原有生成通路。 */
   mode: InputSuggestionRequest['mode'];
@@ -93,7 +93,7 @@ class InputSuggestionSession {
   private requestedTurn: string | null = null;
   /** 用户消息事件可能重复送达，只在新的稳定身份出现时清除旧候选。 */
   private observedUserInputs = new Set<string>();
-  /** 已挂载输入框报告即时限制，卸载后改用已保存的草稿判断。 */
+  /** 输入框登记附件、目标和权限限制；未发送文字不阻止后台生成。 */
   private automaticEligibility = new Map<symbol, boolean>();
   /** 每个会话独立通知，后台结果不会刷新其他会话。 */
   private listeners = new Set<() => void>();
@@ -124,7 +124,7 @@ class InputSuggestionSession {
     return true;
   }
 
-  /** 输入法、目标输入或待处理附件立即阻止并取消自动生成，卸载只释放限制。 */
+  /** 附件、目标或权限限制使自动建议失效；普通文字输入不进入此限制。 */
   observeAutomaticEligibility(owner: symbol, eligible: boolean): () => void {
     this.automaticEligibility.set(owner, eligible);
     if (!eligible) this.dismissAutomatic();
@@ -133,13 +133,13 @@ class InputSuggestionSession {
     };
   }
 
-  /** 编辑事件立即阻止自动启动并取消旧请求，不等待 React 更新或输入法提交文字。 */
-  beginEditing(owner: symbol): void {
-    this.automaticEligibility.set(owner, false);
+  /** 编辑只使原文润色失效，空输入建议继续生成并在删空后展示。 */
+  invalidateDraft(): void {
+    if (this.result?.mode === 'suggest' && this.result.sourceDraft === '') return;
     this.dismiss();
   }
 
-  /** 后台事件不覆盖用户正在处理的输入，也不抢占手动结果。 */
+  /** 后台结果只写入建议缓存，已有请求或候选不被新的自动请求抢占。 */
   get automaticAllowed(): boolean {
     return !this.controller && !this.result && [...this.automaticEligibility.values()].every(Boolean);
   }
@@ -162,7 +162,7 @@ class InputSuggestionSession {
     return this.controller !== null || this.listeners.size > 0;
   }
 
-  /** 编辑、发送、采用或取消时清理；旧浮层的关闭事件不能取消新请求。 */
+  /** 发送、采用、明确取消或上下文失效时清理；旧浮层不能取消新请求。 */
   dismiss = (requestId?: string): void => {
     if (requestId !== undefined && this.result?.requestId !== requestId) return;
     this.controller?.abort();
@@ -173,7 +173,7 @@ class InputSuggestionSession {
 
   /** 配置变化也清理不可见会话，旧模型的迟到结果不能恢复。 */
   invalidateSettings(modelKey: string, automaticEnabled: boolean): void {
-    if (this.result && (this.result.modelKey !== modelKey || (this.result.trigger === 'automatic' && !automaticEnabled))) this.dismiss();
+    if (this.result && (this.result.modelKey !== modelKey || (this.result.trigger !== 'manual' && !automaticEnabled))) this.dismiss();
   }
 
   /** 生成由会话状态层持有，卸载输入框后继续接收完成或失败。 */
@@ -182,7 +182,7 @@ class InputSuggestionSession {
     key: string;
     /** 捕获本次所选模型配置。 */
     modelKey: string;
-    /** 原文快照用于说明候选依据，继续输入必须取消本次生成。 */
+    /** 润色绑定原文；空输入建议不依赖用户后来输入的文字。 */
     sourceDraft: string;
     /** 专用模型核对回执身份；跟随模式由服务端解析并核对当前会话。 */
     modelRef: string | null;
