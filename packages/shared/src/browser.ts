@@ -86,6 +86,8 @@ export interface ZeusBrowserTabSnapshot {
   canGoForward: boolean;
   crashed: boolean;
   annotationMode: boolean;
+  /** 译文只属于当前文档；刷新或导航后重新由用户开启。 */
+  translation?: { state: 'working' | 'ready' | 'error'; serviceLabel: string; message?: string };
   comments: ZeusBrowserComment[];
   createdAt: string;
   updatedAt: string;
@@ -112,6 +114,8 @@ export type ZeusFileOpenTarget = 'zeus_source' | 'system_default' | 'editor:vsco
 
 export interface ZeusBrowserSettings {
   enabled: boolean;
+  /** 记住免费服务身份或模型目录身份；未设置时使用默认免费翻译。 */
+  translationServiceId?: string;
   downloadDirectory: string;
   askWhereToSave: boolean;
   screenshotMode: ZeusBrowserScreenshotMode;
@@ -219,6 +223,12 @@ export type ZeusBrowserCommand =
   /** 页面查找复用 Chromium，搜索内容限制在当前标签内。 */
   | { action: 'find'; text: string; forward?: boolean }
   | { action: 'stop_find' }
+  /** 双语阅读与模型选择共用现有手动命令入口。 */
+  | { action: 'translate' | 'restore_original' }
+  /** 仅内置的免账号服务可以通过快捷菜单直接选择。 */
+  | { action: 'translation_google' | 'translation_microsoft' }
+  /** 已选择的模型或内置翻译服务，主进程会重新核对目录。 */
+  | { action: 'translation_service'; serviceId: string }
   /** 手动菜单操作只作用于经过归属校验的网页。 */
   | { action: 'copy_url' | 'open_external' | 'zoom_in' | 'zoom_out' | 'zoom_reset' | 'devtools' }
   | { action: 'set_annotation_mode'; enabled: boolean }

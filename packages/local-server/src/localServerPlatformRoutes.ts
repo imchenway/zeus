@@ -1,4 +1,5 @@
 import { GitDeliveryExecution } from './gitDeliveryExecution.js';
+import { registerBrowserTranslationRoutes } from './browserTranslationRoutes.js';
 import { registerTaskReminderService } from './taskReminderService.js';
 import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
@@ -933,10 +934,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
 
   /** 提交说明和输入建议共用现有模型目录及登录能力。 */
-  async function loadTextGenerationModels(selectedModelRef?: string) {
+  async function loadTextGenerationModels(selectedModelRef?: string, purpose: 'agent' | 'text' = 'agent', source?: 'codex' | 'custom') {
     /** 设置入口和生成服务使用同一份模型能力，不能猜测可用档位。 */
-    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string }> = (
-      selectedModelRef?.startsWith('codex:') ? [] : await modelConnections.listSelectableModels(selectedModelRef)
+    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string; sourceName: string; displayName: string }> = (
+      source === 'codex' || selectedModelRef?.startsWith('codex:') ? [] : await modelConnections.listSelectableModels(selectedModelRef, purpose)
     )
       .filter((model: SelectableConnectionModel) => model.available && model.enabled)
       .filter((model: SelectableConnectionModel) => !selectedModelRef || model.id === selectedModelRef)
@@ -944,19 +945,26 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         id: model.id,
         model: model.model,
         label: `${model.sourceName} · ${model.displayName}`,
+        sourceName: model.sourceName,
+        displayName: model.displayName,
         supportedReasoningEfforts: model.supportedReasoningEfforts,
         defaultReasoningEffort: model.defaultReasoningEffort ?? undefined,
         serviceTiers: model.serviceTiers,
       }));
     /** API 生成不初始化无关的 Codex 进程或查询其账户。 */
-    if (selectedModelRef && !selectedModelRef.startsWith('codex:')) return { items, warning: '' };
+    if (source === 'custom' || (selectedModelRef && !selectedModelRef.startsWith('codex:'))) return { items, warning: '' };
     /** 设置页面仍完整展示各供应商的可用模型和告警。 */
     let warning = '';
+    /** 只有账号查询确认需要认证时才进入订阅登录。 */
+    let codexLoginRequired = false;
     try {
       if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
       const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
       const account = await codexAppServerManager.readAccount();
-      if (!account.signedIn && account.requiresOpenaiAuth) throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
+      if (!account.signedIn && account.requiresOpenaiAuth) {
+        codexLoginRequired = true;
+        throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
+      }
       items.push(
         ...capabilities.models
           .filter((model: CodexModelCapability) => model.raw.hidden !== true)
@@ -965,6 +973,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             id: `codex:${model.model}`,
             model: model.model,
             label: `Codex · ${model.displayName || model.model}`,
+            sourceName: 'Codex',
+            displayName: model.displayName || model.model,
             supportedReasoningEfforts: model.supportedReasoningEfforts,
             defaultReasoningEffort: model.defaultReasoningEffort,
             serviceTiers: model.serviceTiers,
@@ -973,7 +983,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     } catch (error) {
       warning = redactSensitiveText(error instanceof Error ? error.message : 'Codex 模型加载失败。').text;
     }
-    return { items, warning };
+    return { items, warning, codexLoginRequired };
   }
 
   const commitCodexPool = createCommitCodexPool();
@@ -1450,6 +1460,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     now,
   });
   registerConversationCapabilityQueryRoutes({ server, application: conversationCapabilityQueries });
+
+  registerBrowserTranslationRoutes({
+    server,
+    readOnly: readOnlyValidation,
+    modelConnections,
+    loadModels: (selectedModelRef, source) => loadTextGenerationModels(selectedModelRef, 'text', source),
+    codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
+  });
 
   /** 正式运行持久保存诊断；只读验收不向正式目录写入文件。 */
   const inputSuggestionDiagnostics = readOnlyValidation ? undefined : createInputSuggestionDiagnosticLog({ directory: dataLayout.localLogs, source: 'core', appVersion: executionHostAppVersion, instanceId: executionHostInstanceId });

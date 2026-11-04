@@ -502,6 +502,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     },
     /** 打开系统浏览器菜单，仅返回用户选择，不直接执行动作。 */
     showBrowserMenu: (input: unknown) => transport.invoke('zeus:browser:show-menu', input),
+    /** 读取当前网页的翻译服务和模型目录。 */
+    getBrowserTranslationServices: (input: unknown) => transport.invoke('zeus:browser:translation-services', input),
     /** 按会话读取当前浏览器标签快照。 */
     getBrowserSnapshot: (conversationId: string) => transport.invoke('zeus:browser:get-snapshot', conversationId),
     /** 按会话身份打开内置浏览器标签。 */

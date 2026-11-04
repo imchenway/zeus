@@ -368,8 +368,36 @@ declare global {
         canSplit: boolean;
         expanded: boolean;
       }) => Promise<
-        'new_tab' | 'close_tab' | 'close_other_tabs' | 'back' | 'forward' | 'reload' | 'stop' | 'find' | 'copy_url' | 'open_external' | 'zoom_in' | 'zoom_out' | 'zoom_reset' | 'devtools' | 'toggle_expanded' | 'reset_size' | 'close' | null
+        | 'new_tab'
+        | 'close_tab'
+        | 'close_other_tabs'
+        | 'back'
+        | 'forward'
+        | 'reload'
+        | 'stop'
+        | 'find'
+        | 'translate'
+        | 'restore_original'
+        | 'translation_services'
+        | 'translation_google'
+        | 'translation_microsoft'
+        | 'copy_url'
+        | 'open_external'
+        | 'zoom_in'
+        | 'zoom_out'
+        | 'zoom_reset'
+        | 'devtools'
+        | 'toggle_expanded'
+        | 'reset_size'
+        | 'close'
+        | null
       >;
+      /** 返回可选模型、当前选择与 Codex 登录状态。 */
+      getBrowserTranslationServices: (input: {
+        conversationId: string;
+        tabId: string;
+        source: 'codex' | 'custom';
+      }) => Promise<{ items: import('@zeus/shared').BrowserTranslationModel[]; selectedId: string; warning: string; codexLoginRequired?: boolean }>;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       /** 首发受理后迁移草稿网页，仅将本次提交的批注标记为已发送。 */

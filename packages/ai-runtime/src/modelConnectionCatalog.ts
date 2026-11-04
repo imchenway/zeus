@@ -290,7 +290,8 @@ export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnection
   }
 }
 
-export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[]): SelectableConnectionModel[] {
+/** Agent 目录要求工具能力；纯文本场景只要求连接和模型可用。 */
+export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[], purpose: 'agent' | 'text' = 'agent'): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
     connection.models.map((model) => {
       // 模型连接没有第二条链路可切换：订阅目录以外的模型一律由 Zeus 内核执行，界面不需要再解释路由。
@@ -304,7 +305,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
           ? '模型供应商尚未配置 API Key。'
           : !model.enabled
             ? '模型已停用。'
-            : tools === 'unsupported'
+            : purpose === 'agent' && tools === 'unsupported'
               ? '模型明确不支持工具调用，只能保存在诊断目录中。'
               : '模型已配置，由 Zeus 内核执行；真实外部能力仍以运行探针结果为准。';
       return {
@@ -315,7 +316,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         sourceName: connection.name,
         agentKind,
         enabled: connection.enabled && model.enabled,
-        available: available && tools !== 'unsupported',
+        available: available && (purpose === 'text' || tools !== 'unsupported'),
         availabilityReason,
         supportedReasoningEfforts: model.capability.reasoning.options.map((option) => option.id),
         defaultReasoningEffort: model.capability.reasoning.defaultId,

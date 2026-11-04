@@ -1,0 +1,126 @@
+{
+  "libs/translator.js": {
+    "sha256": "636626777c3128d801cbc8f079254a1043c74cc195928f7c7aa88dd29c769566",
+    "modified": true
+  },
+  "libs/touchParagraph.js": {
+    "sha256": "bfc6bd9450caef93091dd654739f2275720415dcf7aacd0fe144b1ee5409a60e",
+    "modified": false
+  },
+  "libs/touchCapability.js": {
+    "sha256": "644ffd5592f26df40d6fc71b7fe9f89ce2d66a92c8c76b278333e27aee09e49f",
+    "modified": false
+  },
+  "libs/blacklist.js": {
+    "sha256": "49674e718eb58b3c61d13bba51a0bfc591373688c0d84878014f961afc51acd7",
+    "modified": false
+  },
+  "libs/utils.js": {
+    "sha256": "51b04ebbdab9bfddbfb16bf6b51bff499e1c0da0704a772b7c662bc4e488e59f",
+    "modified": false
+  },
+  "config/index.js": {
+    "sha256": "24df0f978d02ce5867bcb244b9707ce0b026135947b1de2d36614ab59225b1ff",
+    "modified": true
+  },
+  "config/app.js": {
+    "sha256": "f212a1b3d0e75413d6caa8b4542978c9067efc78875f4e2d74a5e8bab3231dbf",
+    "modified": true
+  },
+  "config/rules.js": {
+    "sha256": "cc6ca01f7f6a3640b1f16598f57d2dc4e59c729086eb535dc8263336cba570b9",
+    "modified": false
+  },
+  "config/api.js": {
+    "sha256": "286c82598180bba28fecfa3ce873f20ddf1dc8af0f2387ac4ef6e8cf937a1e7e",
+    "modified": false
+  },
+  "config/styles.js": {
+    "sha256": "80fe1923d361dea37aac85a425612685e3b8ae9b1612ce7d91d00f8916adc47e",
+    "modified": false
+  },
+  "config/prompt.js": {
+    "sha256": "990a4abf0618786dc8b27408665fd17af9b46ebd6a93439281b8b9d43627b30b",
+    "modified": false
+  },
+  "config/setting.js": {
+    "sha256": "2ee9468240a22a5df77a2be31492e7e19fea5c02ed090c2373a9d2f12788faff",
+    "modified": true
+  },
+  "libs/log.js": {
+    "sha256": "9ff44cabccfd6a44b9b7748e55a63c1652167d2330acb1aae9e5ac313a44c593",
+    "modified": false
+  },
+  "config/storage.js": {
+    "sha256": "3a87587dcdfb4ed5a0e2ddf4feea6a8da3ecf81d192b1139f7a76aff3f46410e",
+    "modified": false
+  },
+  "config/url.js": {
+    "sha256": "a022d3a59e5d409153ce9e111cee39a575eb7019ae56cb6188fb40a5a850a13a",
+    "modified": false
+  },
+  "config/msg.js": {
+    "sha256": "fa2c8ae6fbafdbc750984f98798cac57e05b0a42dcf71ba79d2433675f92ae29",
+    "modified": false
+  },
+  "config/client.js": {
+    "sha256": "5298dbcccdb4c5d2f1acf4fa610e2a147b840adb2518b18753f56c3f2392a2c6",
+    "modified": false
+  },
+  "libs/terms.js": {
+    "sha256": "8b6e2066fb6726523b4c0162097d031ca6a4ae7918e3c3bd9b4f7b7f31e012d4",
+    "modified": false
+  },
+  "libs/html.js": {
+    "sha256": "35a5a593b3b2c68eb4dd7b3ec7cde576269c44bab6fc12bd57341b1aeca060ff",
+    "modified": false
+  },
+  "libs/trustedTypes.js": {
+    "sha256": "ab5af29d60f5ca057057690decacacfb4a37bc3f8f41410f9461ad408422d0c7",
+    "modified": false
+  },
+  "libs/mathParse.js": {
+    "sha256": "a9f62d117e7ecee89697d2e17c6525cbf4afb4de2f98be0fce4e9c5f5e406c0b",
+    "modified": false
+  },
+  "libs/mathParseTables.js": {
+    "sha256": "994baf2062e200ea337926dd0bb294bbe5f63776be2228f33c7d230f5dfe9302",
+    "modified": false
+  },
+  "libs/style.js": {
+    "sha256": "39ebeb284146b36689dc1c13a6d2c6d2d737a762883c3b1ce6b9ed8d95bd3a08",
+    "modified": true
+  },
+  "libs/svg.js": {
+    "sha256": "6dac0dd7b373e537ea246b0338cec992238ba4cb41d80892d65712b06d7fcf84",
+    "modified": false
+  },
+  "libs/shortcut.js": {
+    "sha256": "548a9a8d41e494434e6b25040649b90030d650ea48f276e08831b12c1f8a81e8",
+    "modified": false
+  },
+  "libs/language.js": {
+    "sha256": "63a785cfb0ce69184f45042d078b84bb18ec7ba39c64c98611997544abb58d62",
+    "modified": false
+  },
+  "libs/injector.js": {
+    "sha256": "9ed42570947013ebd9ce51e21360f3c5073a46f3783dc2383e4c7e4c4eb76bf3",
+    "modified": false
+  },
+  "libs/docInfo.js": {
+    "sha256": "b148ce9c35b6f3b933463df28a1415d0f9ab45d4c5c5d6c9576722546a1a62ec",
+    "modified": false
+  },
+  "libs/translationTargets.js": {
+    "sha256": "5ecba68eceacb140f7159bd9f480392f4d2ffb3daa36766634dd81d964c2a40f",
+    "modified": false
+  },
+  "libs/apiSelection.js": {
+    "sha256": "eefa1fb8dbe7b691a07b56ad39b6782ecd100f5902905c5be40134f7072961b1",
+    "modified": false
+  },
+  "libs/storageEquality.js": {
+    "sha256": "94e49a8a4513487c3b370cc94a9e0742a3ce5ad115e206c6bd8cf6dd3a2eda77",
+    "modified": false
+  }
+}

@@ -8496,12 +8496,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 @media (max-width: 760px) {
-  .session-codex-parity-v1 .browser-annotate-button span,
-  .session-codex-parity-v1 .browser-annotate-button {
-    min-inline-size: 31px;
-    padding-inline: 7px;
-  }
-
   .session-codex-parity-v1 .browser-comments-rail {
     flex-basis: min(300px, 48%);
   }
@@ -9844,17 +9838,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: color-mix(in oklab, rgb(33 150 243) 13%, var(--session-canvas));
   border-color: transparent;
   color: color-mix(in oklab, rgb(0 111 202) 86%, var(--session-text));
-  max-inline-size: 168px;
-  padding-inline: 10px 13px;
-}
-
-.session-codex-parity-v1 .browser-annotate-button.selected .browser-annotate-label {
-  max-inline-size: 86px;
-  opacity: 1;
-}
-
-.session-codex-parity-v1 .browser-annotate-button.selected kbd {
-  display: none;
 }
 
 .session-codex-parity-v1 .browser-more-trigger {
@@ -9879,6 +9862,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .browser-more-trigger svg {
   block-size: 17px;
   inline-size: 17px;
+}
+
+/* 翻译沿用工具栏按钮尺寸，选中态表示当前页面保留双语。 */
+.session-codex-parity-v1 .browser-translate-trigger[aria-pressed='true'] {
+  background: color-mix(in oklab, rgb(33 150 243) 13%, var(--session-canvas));
+  color: color-mix(in oklab, rgb(0 111 202) 86%, var(--session-text));
+}
+
+/* 等待状态不改变按钮宽度或遮挡取消入口。 */
+.session-codex-parity-v1 .browser-translate-trigger[aria-busy='true'] {
+  opacity: 0.6;
 }
 
 .session-codex-parity-v1 .browser-stage-count {
@@ -9912,28 +9906,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   }
 }
 
-/* Codex Browser Annotation：普通导航只保留可展开注释入口，注释态切换为独立模式栏。 */
+/* 评论入口保持固定尺寸，选中状态使用相同的图标布局。 */
 .session-codex-parity-v1 .browser-annotate-button {
   background: transparent;
   border-color: transparent;
   border-radius: 999px;
-  gap: 7px;
+  inline-size: 38px;
   max-inline-size: 38px;
   min-inline-size: 38px;
-  overflow: hidden;
   padding-inline: 8px;
   transition:
     background 140ms ease,
-    border-color 140ms ease,
-    max-inline-size 180ms ease;
-  white-space: nowrap;
+    border-color 140ms ease;
 }
 
 .session-codex-parity-v1 .browser-annotate-button:hover:not(:disabled):not([aria-disabled='true']),
 .session-codex-parity-v1 .browser-annotate-button:focus-visible {
   background: var(--session-control-hover);
   border-color: var(--session-line);
-  max-inline-size: 172px;
 }
 
 .session-codex-parity-v1 .browser-annotate-icon {
@@ -9957,34 +9947,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 9px;
   position: absolute;
   right: -1px;
-}
-
-.session-codex-parity-v1 .browser-annotate-label,
-.session-codex-parity-v1 .browser-annotate-button kbd {
-  max-inline-size: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition:
-    max-inline-size 180ms ease,
-    opacity 120ms ease;
-}
-
-.session-codex-parity-v1 .browser-annotate-button:hover:not(:disabled):not([aria-disabled='true']) .browser-annotate-label,
-.session-codex-parity-v1 .browser-annotate-button:focus-visible .browser-annotate-label {
-  max-inline-size: 72px;
-  opacity: 1;
-}
-
-.session-codex-parity-v1 .browser-annotate-button:hover:not(:disabled):not([aria-disabled='true']) kbd,
-.session-codex-parity-v1 .browser-annotate-button:focus-visible kbd {
-  background: var(--zeus-interaction-hover);
-  border-radius: 999px;
-  color: var(--session-text-muted);
-  font-family: inherit;
-  font-size: 11px;
-  max-inline-size: 32px;
-  opacity: 1;
-  padding: 2px 6px;
 }
 
 .session-codex-parity-v1 .browser-annotation-toolbar {

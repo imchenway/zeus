@@ -1,0 +1,16 @@
+Zeus includes KISS Translator page-runtime code, Copyright KISS Translator
+contributors, licensed under the GNU General Public License version 3.
+Source: https://github.com/fishjar/kiss-translator
+Pinned commit: a1279f2517bd478ef1dd93b941f9177094486cd4
+Zeus modifications: 2026-11-04; packages/browser-translation/UPSTREAM.md.
+
+The combined Zeus application containing this code is distributed under GPL-3.0.
+See COPYING for the GPL text. LICENSE retains the Apache-2.0 terms and notices for
+pre-existing Zeus source; component licenses and copyright notices are preserved.
+There is no warranty to the extent permitted by applicable law.
+
+Packaged builds include the corresponding Zeus source snapshot, build scripts,
+dependency manifests and lockfile in dist/licenses/zeus-source.tar.gz inside
+app.asar. They also include this NOTICE, COPYING and the original Zeus LICENSE.
+The source snapshot contains the modified KISS implementation and its upstream
+provenance. Dependencies retain their own licenses and pinned source references.

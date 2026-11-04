@@ -2,6 +2,7 @@
   "name": "@zeus/desktop",
   "version": "0.4.4",
   "type": "module",
+  "license": "GPL-3.0-only",
   "main": "dist/main/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -22,6 +23,7 @@
     "@xterm/addon-search": "^0.16.0",
     "@xyflow/react": "^12.12.0",
     "@zeus/ai-runtime": "workspace:*",
+    "@zeus/browser-translation": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
