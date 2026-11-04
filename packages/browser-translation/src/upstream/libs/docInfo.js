@@ -9,7 +9,7 @@ const cleanText = (text) => {
 const getTitle = () => {
   try {
     return truncateWords(cleanText(document.title));
-  } catch (err) {
+  } catch {
     return '';
   }
 };
@@ -19,7 +19,7 @@ const getDescription = () => {
     const meta = document.querySelector('meta[name="description"]');
     const description = meta?.getAttribute('content') || '';
     return truncateWords(cleanText(description));
-  } catch (err) {
+  } catch {
     return '';
   }
 };
@@ -54,7 +54,7 @@ const getSummary = () => {
     if (!summary) {
       summary = document.querySelector('meta[name="keywords"]')?.getAttribute('content') || '';
     }
-  } catch (err) {
+  } catch {
     // ignore
   }
 

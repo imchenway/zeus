@@ -25,13 +25,11 @@ import {
   OPT_SPLIT_PARAGRAPH_DISABLE,
   OPT_SPLIT_PARAGRAPH_TEXTLENGTH,
   API_SPE_TYPES,
-  MSG_INJECT_CSS,
-  MSG_UPDATE_ICON,
   EVENT_FAVORITE_WORD_CHANGE,
   OPT_DICT_BING,
   OPT_DICT_MAP,
 } from '../config';
-import { debounce, scheduleIdle, genEventName, parseAITerms } from './utils';
+import { debounce, scheduleIdle, genEventName } from './utils';
 import { parseTerms, buildTermsRegex, buildTermsMatcher, applyTermReplace } from './terms';
 import { escapeHTML } from './html';
 import { parseMathInText } from './mathParse';
@@ -313,7 +311,6 @@ export class Translator {
   #isInitialized = false; // 初始化状态
   #editorPaused = false;
   #isJsInjected = false; // 注入用户JS
-  #isShadowRootJsInjected = false; //
   #mouseHoverEnabled = false; // 鼠标悬停翻译
   #enabled = false; // 全局默认状态
   #runId = 0; // 用于中止过期的异步请求
@@ -332,7 +329,6 @@ export class Translator {
   #translationTagName = APP_LCNAME; // 翻译容器的标签名
   #eventName = ''; // 通信事件名称
   #docInfo = {}; // 网页信息
-  #glossary = {}; // AI词典
   #blockSelectorInvalid = false; // 自定义块级选择器是否已确认无效
   #textClass = {}; // 译文样式class
   #textSheet = null; // CSSStyleSheet 实例（Firefox 内容脚本中不可用时为 null）
@@ -992,8 +988,6 @@ export class Translator {
     this.#combinedSkipsRegex = new RegExp(Translator.BUILTIN_SKIP_PATTERNS.map((r) => `(${r.source})`).join('|'));
 
     this.#parseTerms(this.#rule.terms);
-    // this.#parseAITerms(this.#rule.aiTerms);
-    this.#glossary = parseAITerms(this.#rule.aiTerms);
     this.#createTextStyles();
 
     this.#boundMouseMoveHandler = this.#handleMouseMove.bind(this);
@@ -1170,24 +1164,6 @@ export class Translator {
     // 规则更新走 #parseTerms 整体重建，热更新自然失效。
     this.#termMatcher = buildTermsMatcher(terms);
   }
-
-  // #parseAITerms(termsString) {
-  //   if (!termsString || typeof termsString !== "string") return;
-
-  //   try {
-  //     this.#glossary = Object.fromEntries(
-  //       termsString
-  //         .split(/\n|;/)
-  //         .map((line) => {
-  //           const [k = "", v = ""] = line.split(",").map((s) => s.trim());
-  //           return [k, v];
-  //         })
-  //         .filter(([k]) => k)
-  //     );
-  //   } catch (err) {
-  //     kissLog("parse aiterms", err);
-  //   }
-  // }
 
   // // todo: 利用AI总结
   // #getDocDescription() {
@@ -1455,7 +1431,7 @@ export class Translator {
   #isHoldSupportedByDevice() {
     try {
       return typeof window.matchMedia !== 'function' || window.matchMedia('(any-hover: hover)').matches;
-    } catch (err) {
+    } catch {
       return true;
     }
   }
@@ -1712,7 +1688,7 @@ export class Translator {
             }
             return current;
           }
-        } catch (err) {
+        } catch {
           // 忽略无效选择器
         }
       }
@@ -1794,7 +1770,7 @@ export class Translator {
     if (!Translator.isElement(el)) return false;
     try {
       return Boolean(el.matches(selector));
-    } catch (err) {
+    } catch {
       return false;
     }
   }
@@ -1855,7 +1831,7 @@ export class Translator {
     if (!Translator.isElement(node)) return false;
     try {
       return Boolean(node.matches?.("article, main, [role='main'], [role='article']"));
-    } catch (err) {
+    } catch {
       return false;
     }
   }
@@ -2796,7 +2772,7 @@ export class Translator {
     try {
       const jsonText = JSON.stringify(error);
       return jsonText || String(error);
-    } catch (_) {
+    } catch {
       return String(error);
     }
   }
@@ -3036,7 +3012,6 @@ export class Translator {
     const {
       transTag,
       textStyle,
-      transEndHook,
       transOnly,
       termsStyle,
       textExtStyle,
@@ -3779,7 +3754,7 @@ overflow-wrap: anywhere !important;`;
   }
 
   // 发起翻译请求
-  #translateFetch(text, deLang = '', onStreamChunk = null, apiSettingOverride = null) {
+  #translateFetch(text) {
     return this.#host.translate(text);
   }
 
@@ -4571,13 +4546,6 @@ overflow-wrap: anywhere !important;`;
     // 避免把解析状态置位到 undefined 派生值。
     if (Object.prototype.hasOwnProperty.call(newRule, 'terms')) {
       this.#parseTerms(this.#rule.terms);
-    }
-
-    // aiTerms 变更时同步刷新 #glossary：与 #terms 同类的运行时不对称缺陷——
-    // 构造后运行期更新规则里的 AI 术语若不同步重解析，glossary 会停留构造时旧值，
-    // 导致 AI 翻译静默不生效。这里与 terms 分支并列，保持两者解析状态一致。
-    if (Object.prototype.hasOwnProperty.call(newRule, 'aiTerms')) {
-      this.#glossary = parseAITerms(this.#rule.aiTerms);
     }
 
     const needsTriggerRescan = this.#enabled && (oldTransAllnow !== this.#transAllnow || String(oldRootMargin) !== String(this.#rootMargin));

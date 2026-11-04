@@ -818,7 +818,8 @@ async function ensureFastLocalGate(state) {
   });
   // 发布提交固定了 package.json 与 lockfile，typecheck 前必须让本机依赖与锁定内容一致，避免新增依赖只进入 lockfile、未落入 node_modules 时误判为源码错误。
   await runStage('同步锁定依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env);
-  // 自动格式化和版本文件都已进入固定候选；必须在任何 main 推送前运行低成本且能阻断发布的架构与类型检查。
+  // 自动格式化和版本文件都已进入固定候选；CI 的 lint、架构与类型门禁必须先在 main 推送前执行。
+  await runStage('本地阻塞级 ESLint 检查', 'pnpm', ['lint'], process.env);
   await runStage('本地阻塞级架构边界检查', 'pnpm', ['verify:architecture'], process.env);
   await runStage('本地阻塞级 TypeScript 检查', 'pnpm', ['typecheck'], process.env);
   const gateDirectory = join(state.stateDirectory, 'gate');
@@ -836,6 +837,7 @@ async function ensureFastLocalGate(state) {
       '- 版本文件与 Release notes：已写入固定候选提交。',
       '- Git 空白错误检查：通过。',
       '- 锁定依赖已按 frozen-lockfile 同步：通过。',
+      '- 本地阻塞级 ESLint 检查：通过。',
       '- 本地阻塞级架构边界检查：通过。',
       '- 本地阻塞级 typecheck：通过。',
       '- macOS 正式 DMG、Windows 双架构安装器及各自平台清单：交由同一固定提交的 Release Workflow 并行构建和核对。',

@@ -348,7 +348,7 @@ export const parseJsonObj = (str) => {
       str = `{${str}}`; // 自动补齐缺失的首尾大括号
     }
     return JSON.parse(str);
-  } catch (err) {
+  } catch {
     // 解析静默失败
   }
 
@@ -522,7 +522,7 @@ export function parseAITerms(termsString) {
         })
         .filter(([k]) => k),
     );
-  } catch (err) {
+  } catch {
     return {};
   }
 }

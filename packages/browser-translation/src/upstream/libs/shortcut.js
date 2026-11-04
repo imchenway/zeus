@@ -74,7 +74,7 @@ export const shortcutRegister = (targetKeys = [], fn, target = window) => {
     }
   };
 
-  const onKeyUp = (pressedKeys, event) => {
+  const onKeyUp = (pressedKeys) => {
     // 只有在按下组合完全一致，且中途没有任何其它按键干扰时才判定成功触发
     if (isSameSet(targetKeySet, pressedKeys) && !hasInterference) {
       fn();

@@ -62,7 +62,7 @@ function regexFullyMatches(regex, literalText) {
   try {
     const match = regex.exec(literalText);
     return Boolean(match && match[0] === literalText);
-  } catch (e) {
+  } catch {
     return false; // parseTerms 已校验过，正常不会走到这里
   }
 }
@@ -449,7 +449,7 @@ function analyzeCrossTermPatternConflicts(terms, seenKeys, diagnostics) {
       let re = null;
       try {
         re = new RegExp(key); // 非全局：exec 不推进 lastIndex，可安全复用
-      } catch (e) {
+      } catch {
         re = null; // parseTerms 已校验过，正常不会走到这里
       }
       regexCache.set(key, re);

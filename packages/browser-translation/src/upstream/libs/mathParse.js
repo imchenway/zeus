@@ -730,7 +730,7 @@ export const convertLatexToUnicode = (latex) => {
     // A `\$` would turn into a delimiter on the next pass: stay idempotent.
     if (result.includes('$')) return null;
     return result;
-  } catch (err) {
+  } catch {
     return null;
   } finally {
     work = outerWork;
@@ -907,7 +907,7 @@ const parseOnce = (text) => {
     // Neighbouring segments can spell out an entity no single segment saw.
     if (formsNewEntity(result, text)) return text;
     return result;
-  } catch (err) {
+  } catch {
     return text;
   } finally {
     work = outerWork;
