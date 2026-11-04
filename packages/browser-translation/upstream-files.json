@@ -93,7 +93,7 @@
   },
   "libs/svg.js": {
     "sha256": "6dac0dd7b373e537ea246b0338cec992238ba4cb41d80892d65712b06d7fcf84",
-    "modified": false
+    "modified": true
   },
   "libs/shortcut.js": {
     "sha256": "548a9a8d41e494434e6b25040649b90030d650ea48f276e08831b12c1f8a81e8",

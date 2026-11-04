@@ -1,7 +1,7 @@
 /**
  * 各种 UI 动画和图标的 SVG 静态模板
  */
-export const loadingSvg = `<svg viewBox="-20 0 100 100" 
+export const loadingSvg = `<svg viewBox="-20 0 100 100"
      style="display: inline-block; width: 1em; height: 1em; vertical-align: middle;">
   <circle fill="#209CEE" stroke="none" cx="6" cy="50" r="6">
     <animateTransform attributeName="transform" dur="1s" type="translate" values="0 15 ; 0 -15; 0 15" repeatCount="indefinite" begin="0.1"/>

@@ -387,7 +387,13 @@ export function createDesktopApi(transport: DesktopTransport) {
     releaseFilePreview: (ids: string[]) => transport.invoke('zeus:file-preview:release', ids),
     /** 对已授权的交付文件执行所选操作。 */
     actOnGitDeliveryFiles: (input: import('@zeus/shared').GitDeliveryFileActionInput) =>
-      invokeMainCommand('zeus:git-delivery:file-action', 'desktop.git_delivery.file_action', 'artifact', input.requests[0]?.kind === 'task-git' ? input.requests[0].workspaceId : input.requests[0]?.kind === 'project-git' ? input.requests[0].repositoryId : 'delivery', input),
+      invokeMainCommand(
+        'zeus:git-delivery:file-action',
+        'desktop.git_delivery.file_action',
+        'artifact',
+        input.requests[0]?.kind === 'task-git' ? input.requests[0].workspaceId : input.requests[0]?.kind === 'project-git' ? input.requests[0].repositoryId : 'delivery',
+        input,
+      ),
     /** 转交文件预览中的用户操作。 */
     actOnFilePreview: (id: string, action: string) => transport.invoke('zeus:file-preview:action', id, action),
     /** 读取文件预览对应版本的来源。 */

@@ -311,6 +311,7 @@ function assertRepositoryPreflight() {
   if (!['darwin', 'win32'].includes(process.platform)) throw new Error('Zeus 完整发布入口支持 macOS 和 Windows。');
 }
 
+/** 检查已提交候选的空白问题，允许支持格式化的源码进入修复尝试。 */
 function inspectCommittedCandidateWhitespace(headSha) {
   const baseTagResult = capture('git', ['describe', '--tags', '--match', 'v[0-9]*.[0-9]*.[0-9]*', '--abbrev=0', headSha], true);
   const baseTag = baseTagResult.stdout.trim();
@@ -320,20 +321,21 @@ function inspectCommittedCandidateWhitespace(headSha) {
   const inspection = inspectGitDiffCheck({
     label: '发布候选快速检查',
     diffArgs: [`${baseTag}^{commit}`, headSha],
-    allowAutoFix: true,
+    allowFormatAttempt: true,
   });
-  if (inspection.autoFixable.length > 0) {
-    console.log(`发布候选存在可自动修复的源码空白问题，将进入自动格式化阶段：${baseTag}..${headSha.slice(0, 12)}（${inspection.autoFixable.length} 项）`);
+  if (inspection.formatCandidates.length > 0) {
+    console.log(`发布候选存在源码空白问题，将尝试自动格式化；未修复项仍阻断发布：${baseTag}..${headSha.slice(0, 12)}（${inspection.formatCandidates.length} 项）`);
     return;
   }
   const warningSuffix = inspection.warnings.length > 0 ? `，另有 ${inspection.warnings.length} 项文档空白警告` : '';
   console.log(`发布候选快速检查通过：${baseTag}..${headSha.slice(0, 12)}${warningSuffix}`);
 }
 
+/** 区分文档警告、可尝试格式化的源码和阻断问题；格式化后必须严格复核。 */
 function inspectGitDiffCheck(input) {
   const commandArgs = ['-c', 'core.quotePath=false', '--no-pager', 'diff', '--check', ...input.diffArgs];
   const result = capture('git', commandArgs, true);
-  if (result.status === 0) return { warnings: [], autoFixable: [] };
+  if (result.status === 0) return { warnings: [], formatCandidates: [] };
 
   const report = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
   const issues = [];
@@ -352,15 +354,15 @@ function inspectGitDiffCheck(input) {
   }
 
   const warnings = [];
-  const autoFixable = [];
+  const formatCandidates = [];
   const blocking = [];
   for (const issue of issues) {
     if (isDocumentationWhitespaceWarning(issue)) {
       warnings.push(issue);
       continue;
     }
-    if (input.allowAutoFix && isAutoFixableWhitespaceIssue(issue)) {
-      autoFixable.push(issue);
+    if (input.allowFormatAttempt && isFormattingCandidateWhitespaceIssue(issue)) {
+      formatCandidates.push(issue);
       continue;
     }
     blocking.push(issue);
@@ -372,7 +374,7 @@ function inspectGitDiffCheck(input) {
   if (blocking.length > 0) {
     throw new Error(`${input.label}发现阻断发布的候选问题：\n${blocking.map(formatGitDiffCheckIssue).join('\n')}`);
   }
-  return { warnings, autoFixable };
+  return { warnings, formatCandidates };
 }
 
 // 本地任务记录及验收证据的普通空白只提示；冲突标记等其他问题仍阻断发布。
@@ -390,7 +392,8 @@ function normalizeGitDiffCheckPath(path) {
   }
 }
 
-function isAutoFixableWhitespaceIssue(issue) {
+/** 扩展名只决定是否尝试格式化，不保证 Prettier 能改写字符串内的空白。 */
+function isFormattingCandidateWhitespaceIssue(issue) {
   return isWhitespaceIssue(issue.message) && formatExtensions.has(extname(issue.path).toLocaleLowerCase());
 }
 
@@ -619,6 +622,7 @@ function assertResumeWorktree(state) {
   if (unexpected.length > 0) throw new Error(`恢复现场包含发布候选以外的工作区变更：\n${unexpected.join('\n')}`);
 }
 
+/** 格式化固定候选，严格复核剩余问题后再记录格式提交。 */
 function formatReleaseCandidate(state) {
   if (!['initialized', 'notes_generated', 'release_committed'].includes(state.phase)) return;
   const currentHead = git(['rev-parse', 'HEAD']);
@@ -637,6 +641,12 @@ function formatReleaseCandidate(state) {
   run('pnpm', ['exec', 'prettier', '--write', '--ignore-path', '.prettierignore', ...paths]);
   console.log(`\n[复核${formattingCommittedCandidate ? '发布提交' : '发布候选'}格式] Prettier --check（${paths.length} 个文件）`);
   run('pnpm', ['exec', 'prettier', '--check', '--ignore-path', '.prettierignore', ...paths]);
+  // Prettier 可能保留模板字符串中的空白；没有生成变更也必须复核。
+  inspectGitDiffCheck({
+    label: '自动格式化后的发布候选检查',
+    diffArgs: [`${state.baseTag}^{commit}`],
+    allowFormatAttempt: false,
+  });
   const formattedStatus = git(['status', '--short']);
   if (!formattedStatus) {
     console.log(`${formattingCommittedCandidate ? '发布提交' : '发布候选'}原本已符合格式规范，无需创建格式提交。`);
@@ -654,11 +664,6 @@ function formatReleaseCandidate(state) {
     throw new Error(`自动格式化产生了候选范围之外的变更，拒绝提交：\n${unexpectedPaths.join('\n')}`);
   }
 
-  inspectGitDiffCheck({
-    label: '自动格式化后的发布候选检查',
-    diffArgs: [`${state.baseTag}^{commit}`],
-    allowAutoFix: false,
-  });
   const formattedParentExpected = state.releaseCommit ?? state.sourceHead;
   runGit(['add', '--', ...formattedPaths]);
   runGit(['diff', '--cached', '--check', '--', ...formattedPaths]);
@@ -792,7 +797,7 @@ async function ensureCandidatePreflight(state) {
   inspectGitDiffCheck({
     label: '候选前置检查',
     diffArgs: [`${state.baseTag}^{commit}`, state.sourceHead],
-    allowAutoFix: false,
+    allowFormatAttempt: false,
   });
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) {
     throw new Error(`目标标签 ${state.tag} 已存在，拒绝把新候选写入同一版本。`);
@@ -809,7 +814,7 @@ async function ensureFastLocalGate(state) {
   inspectGitDiffCheck({
     label: '发布提交空白检查',
     diffArgs: [`${state.releaseCommit}^`, state.releaseCommit],
-    allowAutoFix: false,
+    allowFormatAttempt: false,
   });
   // 发布提交固定了 package.json 与 lockfile，typecheck 前必须让本机依赖与锁定内容一致，避免新增依赖只进入 lockfile、未落入 node_modules 时误判为源码错误。
   await runStage('同步锁定依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env);

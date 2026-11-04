@@ -973,11 +973,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
       /** 翻译入口明确选择 Codex 时允许准备运行时；普通目录只读取现有状态。 */
       const transport = codexAppServerManager.getState();
-      const capabilities = selectedModelRef || source === 'codex'
-        ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) })
-        : transport.type === 'ready'
-          ? transport.capabilities
-          : null;
+      const capabilities =
+        selectedModelRef || source === 'codex'
+          ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) })
+          : transport.type === 'ready'
+            ? transport.capabilities
+            : null;
       if (!capabilities) throw new Error('Codex 尚未就绪，其他供应商的模型仍可选择。');
       /** 仅翻译入口主动读取账号；其他调用保留现有缓存边界。 */
       const account = source === 'codex' ? await codexAppServerManager.readAccount() : await codexAppServerManager.readAccount({ cachedOnly: true }).catch(() => null);

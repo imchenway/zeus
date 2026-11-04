@@ -69,15 +69,15 @@ const genBuiltinStyles = (color = DEFAULT_COLOR) => {
 
   const glow = keyframes`
   from {
-    text-shadow: 0 0 10px #fff, 
-    0 0 20px #fff, 
-    0 0 30px #0073e6, 
+    text-shadow: 0 0 10px #fff,
+    0 0 20px #fff,
+    0 0 30px #0073e6,
     0 0 40px #0073e6;
   }
   to {
-    text-shadow: 0 0 20px #fff, 
-    0 0 30px #ff4da6, 
-    0 0 40px #ff4da6, 
+    text-shadow: 0 0 20px #fff,
+    0 0 30px #ff4da6,
+    0 0 40px #ff4da6,
     0 0 50px #ff4da6;
   }
 `;
