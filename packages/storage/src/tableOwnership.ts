@@ -200,6 +200,9 @@ const ownershipGroups = [
       // 任务与会话共用的代码交付运行及步骤由执行与资产维护耐久进度。
       'git_delivery_runs',
       'git_delivery_steps',
+      // 命令与归档动作迁移的中间表同属执行与资产，事务内改回正式步骤表名。
+      'git_delivery_steps_with_commands',
+      'git_delivery_steps_with_archive',
       'git_snapshots',
       'git_changes',
       'turn_change_sets',
