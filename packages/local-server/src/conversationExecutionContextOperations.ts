@@ -1,4 +1,5 @@
 import { buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, prepareTaskWorktree } from '@zeus/git-core';
+import { restoreConversationWorktrees } from './conversationWorktreeLifecycle.js';
 import {
   ConversationExpertRepository,
   ConversationRepository,
@@ -84,6 +85,18 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     const config = resolveTaskManagementStatusConfigForProject(task.projectId);
     return task.managementStatus === config.roles.completedStatusId || task.managementStatus === config.roles.cancelledStatusId;
   }
+
+  /** 从新对话建立的任务保留会话自有目录；已有任务工作区仍走任务恢复链路。 */
+  function usesProjectConversationWorkspace(conversation: ZeusConversationRecord): boolean {
+    if (!conversation.taskId) return true;
+    if (conversation.workspaceId || conversation.environmentId) return false;
+    /** 任务来源绑定最初会话，专家子通道共用同一目录归属。 */
+    const task = tasks.getById(conversation.taskId);
+    if (task?.createdFrom !== 'conversation') return false;
+    const source = parseJsonObject(task.sourceContextJson);
+    const root = typeof source.conversationId === 'string' ? conversations.getRecordById(source.conversationId) : undefined;
+    return root?.taskId === task.id && root.projectId === conversation.projectId;
+  }
   function taskConflictExecutionForConversation(conversation: ZeusConversationRecord): { operationId: string; integration: ZeusTaskIntegrationRecord; worktreePath: string } | null {
     const persistedAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
     if (persistedAttempt) {
@@ -135,6 +148,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       for (const submission of conversationSubmissions.listByConversation(parent.id)) {
         const input = parseJsonObject(submission.inputJson);
         const context = isNativeApiRecord(input.context) ? input.context : null;
+        if (input.expertRound === true && context?.executionWorkspaceMode === 'worktree' && usesProjectConversationWorkspace(parent)) return 'worktree';
         if (input.expertRound === true && context?.executionWorkspaceMode === 'direct' && typeof context.projectLocalPath === 'string' && resolve(context.projectLocalPath) === resolve(project.localPath)) return 'direct';
       }
     }
@@ -156,12 +170,18 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       return isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && Boolean(context.projectLocalPath.trim());
     });
     const persistedContext = contextualSubmission ? parseJsonObject(contextualSubmission.inputJson).context : undefined;
+    /** 专家通道首发前还没有自己的提交，目录来自已登记的父会话。 */
+    if (!persistedContext && usesProjectConversationWorkspace(conversation)) {
+      const participant = conversationExperts.getParticipantByChildConversation(conversation.id);
+      const parent = participant ? conversations.getRecordById(participant.conversationId) : undefined;
+      if (parent && parent.id !== conversation.id && parent.projectId === conversation.projectId && parent.taskId === conversation.taskId) return resolveNativeConversationExecutionRoot(parent);
+    }
     const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
     /** 旧会话可能仅由工作区关联环境；路径查询与实际恢复必须读取同一身份。 */
     const environmentId = conversation.environmentId ?? workspace?.environmentId;
     const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
     const project = projects.getById(conversation.projectId);
-    if (conversation.taskId) {
+    if (conversation.taskId && !usesProjectConversationWorkspace(conversation)) {
       const conflictExecution = taskConflictExecutionForConversation(conversation);
       if (conflictExecution) return existsSync(conflictExecution.worktreePath) ? resolve(conflictExecution.worktreePath) : null;
       const executionMode = taskConversationExecutionWorkspaceMode(conversation, project);
@@ -170,7 +190,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         return projectPath && existsSync(projectPath) && statSync(projectPath).isDirectory() ? projectPath : null;
       }
       /** 目录暂时不存在仍保留隔离身份，不能把排队快照冻结到项目主目录。 */
-      const task = tasks.getById(conversation.taskId);
+      const task = conversation.taskId ? tasks.getById(conversation.taskId) : undefined;
       if (!project || !task || !workspace || executionMode !== 'worktree') return null;
       if (conversation.permissionMode === 'read-only') return resolveTaskReadOnlyWorkspacePath(project, task.id, workspace, environment);
       /** 和实际恢复采用同一原路径或确定性重建路径。 */
@@ -245,14 +265,19 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       if (!conversation) return null;
       // 归档是产品会话的继续边界；Provider 内部归档和任务状态不代替这个判断。
       if (conversation.archived && input.mode !== 'restore') throw nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
-      if (!conversation.taskId) {
+      if (usesProjectConversationWorkspace(conversation)) {
+        await restoreConversationWorktrees({ db, projects, conversations, conversationSubmissions }, conversation);
         /** 项目会话同样使用所属项目或已记录的路径，Pi 重启后不能退回宿主启动目录。 */
         const executionRoot = resolveNativeConversationExecutionRoot(conversation);
         if (!executionRoot || !existsSync(executionRoot) || !statSync(executionRoot).isDirectory()) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录不存在或不可用。');
-        return { projectLocalPath: resolve(executionRoot), writableRoots: resolveProjectConversationWritableRoots(conversation, executionRoot) };
+        return {
+          projectLocalPath: resolve(executionRoot),
+          writableRoots: resolveProjectConversationWritableRoots(conversation, executionRoot),
+          executionWorkspaceMode: taskConversationExecutionWorkspaceMode(conversation, projects.getById(conversation.projectId)) ?? undefined,
+        };
       }
       const project = projects.getById(conversation.projectId);
-      const task = tasks.getById(conversation.taskId);
+      const task = conversation.taskId ? tasks.getById(conversation.taskId) : undefined;
       const workspace = conversation.workspaceId ? taskWorkspaces.getById(conversation.workspaceId) : undefined;
       const environmentId = conversation.environmentId ?? workspace?.environmentId ?? null;
       const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;

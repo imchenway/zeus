@@ -188,6 +188,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  /** 本次首发是否同时创建任务。 */
+  createTask?: boolean;
   /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
   conversationContext?: ConversationContextDraft;
   /** 新对话的浏览器上下文，首发失败时仍属于原草稿。 */
@@ -1274,7 +1276,7 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     workspaceMode: conversation.workspaceMode === 'direct' || conversation.workspaceMode === 'worktree' ? conversation.workspaceMode : undefined,
     executionPath: nullableStringField(conversation.executionPath),
     projectId: stringField(conversation.projectId) ?? owner.projectId,
-    taskId: null,
+    taskId: nullableStringField(conversation.taskId),
     title: stringField(conversation.title) ?? owner.projectName,
     summary: nullableStringField(conversation.summary),
     status: stringField(conversation.status) ?? 'active',
@@ -1320,7 +1322,7 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
-  bindDraftSystemMessages(options.input.owner.projectId, null, choice.id);
+  bindDraftSystemMessages(options.input.owner.projectId, choice.taskId, choice.id);
   // 继承目录时不把尚未加载的工作树事实猜成项目直连。
   if (!request.inheritConversationId || request.workspaceMode) choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
@@ -1335,6 +1337,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
   if (!input.content.trim() && input.attachments.length === 0 && !input.browserDraft?.submission?.comments.length) throw new Error('Project conversation start content or attachments are required.');
   return {
     mode: 'create',
+    ...(input.createTask !== undefined ? { createTask: input.createTask } : {}),
     ...(input.source ? { source: input.source, inheritConversationId: input.inheritConversationId } : input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
     ...(!input.inheritConversationId || input.source ? { workspaceMode: input.workspaceMode ?? 'direct' } : {}),
     ...(input.workspaceMode === 'worktree' && input.worktree ? { worktree: input.worktree } : {}),
@@ -1377,6 +1380,7 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
   if (!isRecord(value)) return false;
   return (
     value.mode === 'create' &&
+    (value.createTask === undefined || typeof value.createTask === 'boolean') &&
     (value.workspaceMode === undefined || value.workspaceMode === 'direct' || value.workspaceMode === 'worktree') &&
     (value.worktree === undefined || isConversationWorktreeOptions(value.worktree)) &&
     (value.source === undefined || value.source === 'code_review') &&
@@ -1710,6 +1714,8 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
+  /** 创建任务的选择随草稿恢复。 */
+  createTask?: boolean;
   /** 浏览器身份、显示状态和批注随输入草稿一起恢复。 */
   browserDraft?: NewConversationBrowserDraft;
   /** 返回创建界面时恢复浏览器工作面。 */
@@ -3062,9 +3068,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       : undefined
                   }
                   onStartCodeReview={(selection: SessionCodeReviewSelection) => {
-                    if (props.conversation && !props.conversation.taskId && owner?.kind === 'project' && actions.onStartProjectConversation) {
+                    if (props.conversation && !props.conversation.workspaceId && !props.conversation.environmentId && owner && actions.onStartProjectConversation) {
                       return actions.onStartProjectConversation({
-                        owner,
+                        owner: { kind: 'project', projectId: owner.projectId, projectName: owner.projectName },
                         source: 'code_review',
                         inheritConversationId: props.conversation.id,
                         content: '请审查当前会话工作树的代码变化。',
@@ -3700,6 +3706,8 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  /** 保留原有默认行为，只有用户开启时才创建任务。 */
+  const [createTask, setCreateTask] = useState(() => restoredDraft?.createTask ?? false);
   const [workspaceMode, setWorkspaceMode] = useState<'direct' | 'worktree'>(() => restoredDraft?.workspaceMode ?? 'direct');
   const [worktreeDrafts, setWorktreeDrafts] = useState<Record<string, ConversationWorktreeOptions>>(() => restoredDraft?.worktreeDrafts ?? {});
   const worktreeProjectId = props.owner?.kind === 'project' ? props.owner.projectId : undefined;
@@ -3738,6 +3746,7 @@ export function NewConversationComposer(props: {
       browserDraft,
       browserOpen,
       runtimeProjectId: runtimeProjectId ?? undefined,
+      createTask,
       workspaceMode,
       worktreeDrafts,
       content,
@@ -3759,6 +3768,7 @@ export function NewConversationComposer(props: {
     browserDraft,
     browserOpen,
     runtimeProjectId,
+    createTask,
     workspaceMode,
     worktreeDrafts,
     content,
@@ -4030,6 +4040,7 @@ export function NewConversationComposer(props: {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
         accepted = await props.onStartProject({
           owner: props.owner,
+          createTask,
           workspaceMode: props.owner.projectId === temporaryWorkspaceId ? 'direct' : workspaceMode,
           ...(props.owner.projectId !== temporaryWorkspaceId && workspaceMode === 'worktree' && worktree ? { worktree } : {}),
           content: submittedContent,
@@ -4157,6 +4168,8 @@ export function NewConversationComposer(props: {
             taskBranchPrefix={props.taskBranchPrefix ?? 'zeus'}
             projectId={props.owner.projectId}
             projects={props.projects}
+            createTask={createTask}
+            onCreateTaskChange={setCreateTask}
             workspaceMode={workspaceMode}
             worktree={worktree}
             onWorktreeChange={updateWorktree}

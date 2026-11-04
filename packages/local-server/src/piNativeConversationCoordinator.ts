@@ -192,6 +192,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
 }
 
 export interface StartPiConversationInput {
+  /** 应用层在一个事务中创建任务与会话。 */
+  createRecord?: ConversationRepository['create'];
   /** 会话创建接纳时冻结，排队与恢复从会话记录读取。 */
   contextCapacityTokens?: number | null;
   executionWorkspaceMode?: 'direct' | 'worktree';
@@ -483,7 +485,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     );
     if (input.holdDispatch) {
       if (!existingConversation) {
-        options.conversations.create({
+        (input.createRecord ?? options.conversations.create.bind(options.conversations))({
           contextCapacityTokens: input.contextCapacityTokens ?? null,
           id: input.conversationId,
           projectId: input.projectId,
@@ -559,7 +561,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     let attachmentInput: PiAttachmentResolution = { attachments: orderedAttachments, images: [], pathReferences: rawPathReferences, allowedRoots: allowedResourceRoots };
     if (!existingConversation) {
-      options.conversations.create({
+      (input.createRecord ?? options.conversations.create.bind(options.conversations))({
         contextCapacityTokens: input.contextCapacityTokens ?? null,
         id: input.conversationId,
         projectId: input.projectId,

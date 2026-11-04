@@ -577,6 +577,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     stopConversationSubagents,
     conversationRuntime,
     archiveNativeConversation,
+    prepareConversationArchive,
     buildRuntimeProcessEnv,
     commandDeliveries,
     createReleaseNotesCapability,
@@ -1953,6 +1954,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       clearGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).clearGoal(input),
     },
     archiveNativeConversation,
+    prepareConversationArchive,
     restoreNativeConversation,
     validateContextCapacity: async (conversation, model) => {
       if (conversation.contextCapacityTokens === null) return;
@@ -3028,7 +3030,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     inspectTerminalCleanup: inspectTaskTerminalCleanup,
     cleanupRequiresConfirmation: (cleanup) => ({
       required: cleanup.requiresConfirmation,
-      dirtyWorkspaceCount: cleanup.workspaces.filter((entry: { force: boolean }) => entry.force).length,
+      dirtyWorkspaceCount: cleanup.dirtyWorkspaceCount,
       activeConversationCount: cleanup.activeConversationCount,
       activeRuntimeSessionCount: cleanup.activeRuntimeSessionCount,
     }),

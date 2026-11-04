@@ -133,6 +133,7 @@ import { createCodexUsageService } from './codexUsageService.js';
 import { createContextDispatchAuditPort } from './contextDispatchAudit.js';
 import { ContextDispatchApplicationService, type ContextDispatchEnvelope, type ProviderDispatchContextCompilerInput } from './contextDispatchService.js';
 import { createConversationApplicationOperations, isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
+import { createConversationTitleGeneration } from './conversationTitleGeneration.js';
 import { routeConversationExpertEvent } from './conversationExpertEventRouting.js';
 import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { compareConversationStageUpdatedDesc, ConversationChoiceQueryApplication, type ProjectConversationAttentionState } from './conversationChoiceQueryApplication.js';
@@ -615,6 +616,8 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  /** 与新会话一起创建关联任务，缺省不创建。 */
+  createTask?: boolean;
   /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
   conversationContext?: Record<string, unknown>;
   /** 新对话首条消息的结构化网页批注。 */
@@ -648,6 +651,8 @@ export interface StartProjectConversationBody {
 }
 
 export interface TaskConversationAcceptanceReservation {
+  /** 项目首发同时创建的稳定任务身份，已有任务入口不使用此字段。 */
+  taskId?: string;
   /** 接纳时冻结，命令重放不得重新读取项目默认。 */
   contextCapacityTokens: number | null;
   /** 仅解释冻结值的来源。 */
@@ -3226,7 +3231,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   traceStartup('runtime_sessions_ready');
 
+  /** 标题生成复用当前宿主模型连接，生命周期独立于主会话。 */
+  const conversationTitles = createConversationTitleGeneration({
+    db,
+    conversations,
+    submissions: conversationSubmissions,
+    tasks,
+    modelConnections,
+    codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
+    publish: (type, payload) => (type.startsWith('conversation.') ? publishNativeConversationEvent(type, payload) : publishRealtimeEvent(type, payload)),
+    onFailure: (conversationId) => server.log.warn({ conversationId }, '会话自动命名未完成，保留原名称'),
+  });
+  server.addHook('onClose', () => conversationTitles.close());
+
   conversationOperations = createConversationApplicationOperations({
+    scheduleConversationTitle: conversationTitles.schedule,
     conversationSources,
     settings,
     conversationGoals,
@@ -3347,6 +3366,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   } = conversationOperations;
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
+    interruptConversationTurn: (conversation, providerTurnId) =>
+      conversation.agentKind === 'pi' ? piNativeCoordinator.interruptTurn({ conversation, providerTurnId }) : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
     settings,
     aiRuntimeManager,
     stopPersistedOrphanRuntimeSession,
@@ -3395,6 +3416,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     readTaskWorkspaceSnapshot,
     unavailableTaskWorkspaceSnapshot,
     inspectTaskTerminalCleanup,
+    prepareConversationArchive,
     closeTaskResourcesForTerminalStatus,
     resolveTaskWorkspaceRequest,
     resolveTaskIntegrationRequest,
@@ -3661,6 +3683,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   const platformRoutes = await registerLocalServerPlatformRoutes({
     server,
+    prepareConversationArchive,
     // 计划修改与普通消息共用附件授权校验。
     normalizeNativeConversationAttachments: conversationOperations.normalizeNativeConversationAttachments,
     listConversationSubagents: conversationOperations.listConversationSubagents,

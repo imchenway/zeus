@@ -7,9 +7,9 @@ import { CommandDeliveryRepository } from './commandDeliveryStore.js';
 export interface GitDeliveryMergeResult {
   /** 独立合入目录。 */
   integrationPath: string;
-  /** 来源分支。 */
+  /** 待交付的当前分支，即 Git 合入的输入分支。 */
   sourceBranch: string;
-  /** 目标分支。 */
+  /** 用户指定的来源分支，即接收交付的合入目标。 */
   targetBranch: string;
   /** 原来源提交。 */
   sourceHeadSha: string;
@@ -124,13 +124,52 @@ export function migrateGitDeliveryCommands(db: ZeusDatabasePort): void {
   });
 }
 
+/** 为会话归档步骤扩展动作约束，事务内保留现有步骤身份、顺序及运行事实。 */
+export function migrateGitDeliveryArchiving(db: ZeusDatabasePort): void {
+  /** 与旧交付表迁移分开登记，已有数据库只执行一次。 */
+  const migrationId = '20261104_git_delivery_archiving';
+  if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute(`CREATE TABLE git_delivery_steps_with_archive (
+      id TEXT PRIMARY KEY, -- 稳定步骤身份
+      run_id TEXT NOT NULL REFERENCES git_delivery_runs(id) ON DELETE CASCADE, -- 所属交付
+      repository_id TEXT, -- 仓库身份，全局命令及任务状态及归档为空
+      repository_name TEXT NOT NULL, -- 仓库名或命令标题快照
+      action TEXT NOT NULL CHECK(action IN ('commit','merge','push','command','task_status','conversation_archive')), -- 步骤操作
+      command_definition_id TEXT, -- 接纳时的命令身份，删除定义后仍保留历史
+      state TEXT NOT NULL CHECK(state IN ('pending','running','waiting','attention','unknown','succeeded')), -- 步骤进度
+      attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0), -- 手动重试次数
+      command_id TEXT, -- 最近执行命令的回执身份
+      message TEXT, -- 待处理原因
+      conversation_id TEXT, -- 冲突会话身份
+      integration_id TEXT, -- 任务合入身份
+      result_json TEXT, -- 已执行阶段的固定回执
+      CHECK((action IN ('task_status','command','conversation_archive')) = (repository_id IS NULL)),
+      CHECK((action = 'command') = (command_definition_id IS NOT NULL))
+    )`);
+    db.execute(`INSERT INTO git_delivery_steps_with_archive(id,run_id,repository_id,repository_name,action,command_definition_id,state,attempt,command_id,message,conversation_id,integration_id,result_json)
+      SELECT id,run_id,repository_id,repository_name,action,command_definition_id,state,attempt,command_id,message,conversation_id,integration_id,result_json FROM git_delivery_steps ORDER BY rowid`);
+    db.execute('DROP TABLE git_delivery_steps');
+    db.execute('ALTER TABLE git_delivery_steps_with_archive RENAME TO git_delivery_steps');
+    db.execute('CREATE UNIQUE INDEX git_delivery_steps_repository ON git_delivery_steps(run_id, repository_id, action) WHERE repository_id IS NOT NULL');
+    db.execute("CREATE UNIQUE INDEX git_delivery_steps_status ON git_delivery_steps(run_id) WHERE action IN ('task_status','conversation_archive')");
+    db.execute("CREATE UNIQUE INDEX git_delivery_steps_command ON git_delivery_steps(run_id, command_definition_id) WHERE action = 'command'");
+    db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '代码交付成功后的会话归档步骤',
+      createHash('sha256').update(migrationId).digest('hex'),
+      new Date().toISOString(),
+    ]);
+  });
+}
+
 /** 运行仓库不执行 Git，只通过已有耐久事务提交进度。 */
 export class GitDeliveryRepository {
   /** 共用应用数据库。 */
   constructor(private readonly db: ZeusDatabasePort) {}
 
   /** 接纳输入与全部步骤在同一事务保存。 */
-  create(id: string, projectId: string, input: GitDeliveryInput, names: Record<string, string>, initialTaskStatus: string | null): GitDeliveryRunRecord {
+  create(id: string, projectId: string, input: GitDeliveryInput, names: Record<string, string>, initialTaskStatus: string | null, taskId?: string | null): GitDeliveryRunRecord {
     /** 创建时间也作为初始进度时间。 */
     const now = new Date().toISOString();
     this.db.commitCriticalFactSync(() => {
@@ -145,9 +184,9 @@ export class GitDeliveryRepository {
         now,
         now,
       ]);
-      if (input.scope.kind === 'task')
+      if (taskId || input.scope.kind === 'task')
         this.db.execute("UPDATE git_delivery_runs SET initial_task_status_event_id=(SELECT id FROM task_events WHERE task_id=? AND event_type='task.management_status.changed' ORDER BY rowid DESC LIMIT 1) WHERE id=?", [
-          input.scope.taskId,
+          taskId ?? (input.scope.kind === 'task' ? input.scope.taskId : null),
           id,
         ]);
       for (const repository of input.repositories) {
@@ -155,6 +194,7 @@ export class GitDeliveryRepository {
       }
       for (const command of input.postPushCommands ?? []) this.addStep(id, null, names[command.commandId] ?? command.commandId, 'command', command.commandId);
       if (input.settings.finalTaskStatus) this.addStep(id, null, '任务状态', 'task_status');
+      if (input.settings.archiveConversation) this.addStep(id, null, '归档会话', 'conversation_archive');
     });
     return this.get(id)!;
   }

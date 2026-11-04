@@ -23,6 +23,8 @@ export interface GitDeliverySettings {
   skillId: string | null;
   /** 全部成功后变更的管理状态；普通会话必须为空。 */
   finalTaskStatus: string | null;
+  /** 无任务会话在全部交付步骤成功后归档；缺项表示不归档。 */
+  archiveConversation?: boolean;
 }
 
 /** 初次交付默认处理全部仓库的合入冲突，避免停在首个冲突仓库；已保存的用户设置仍优先。 */
@@ -36,6 +38,7 @@ export const defaultGitDeliverySettings: GitDeliverySettings = {
   permissionMode: 'auto',
   skillId: null,
   finalTaskStatus: null,
+  archiveConversation: false,
 };
 
 /** 一次运行固定的仓库及相对路径。 */
@@ -48,7 +51,7 @@ export interface GitDeliverySelection {
   expectedBranch: string;
   /** 用户审阅时的提交身份；首次提交可以为空。 */
   expectedHeadSha: string;
-  /** 任务入口为合入目标；会话入口为要合入的来源分支。 */
+  /** 当前分支交付到的来源分支；所有入口均将它作为合入目标。 */
   mergeBranch: string;
 }
 
@@ -80,7 +83,7 @@ export interface GitDeliveryInput {
 }
 
 /** AI 是合入的条件处理，任务状态是全局最后一步。 */
-export type GitDeliveryAction = 'commit' | 'merge' | 'push' | 'command' | 'task_status';
+export type GitDeliveryAction = 'commit' | 'merge' | 'push' | 'command' | 'task_status' | 'conversation_archive';
 /** 未知结果与确定失败分开，不能直接重放。 */
 export type GitDeliveryStepState = 'pending' | 'running' | 'waiting' | 'attention' | 'unknown' | 'succeeded';
 

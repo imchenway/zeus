@@ -258,6 +258,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [pendingTaskStatuses, setPendingTaskStatuses] = useState<Record<string, { status: TaskManagementStatus }>>({});
   const [taskTerminalCleanupConfirmation, setTaskTerminalCleanupConfirmation] = useState<{
     statusLabel: string;
+    /** 会话归档复用清理确认框，但不表示任务进入终态。 */
+    archiveConversation?: boolean;
     resolve: (confirmed: boolean) => void;
   } | null>(null);
   const archivedConversations = conversationQuery.archived;

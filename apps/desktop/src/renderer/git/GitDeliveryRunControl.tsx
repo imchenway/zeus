@@ -34,7 +34,14 @@ export { readGitDeliverySettings } from './gitDeliverySettings.js';
 
 /** 固定步骤的用户文案同时用于摘要和运行进度。 */
 function actionLabel(action: GitDeliveryStep['action'], zh: boolean): string {
-  return { commit: zh ? '提交' : 'Commit', merge: zh ? '合入' : 'Merge', push: zh ? '推送' : 'Push', command: zh ? '命令' : 'Command', task_status: zh ? '任务状态' : 'Task status' }[action];
+  return {
+    commit: zh ? '提交' : 'Commit',
+    merge: zh ? '合入' : 'Merge',
+    push: zh ? '推送' : 'Push',
+    command: zh ? '命令' : 'Command',
+    task_status: zh ? '任务状态' : 'Task status',
+    conversation_archive: zh ? '归档会话' : 'Archive conversation',
+  }[action];
 }
 
 /** 运行控件不持有执行循环，只接纳固定输入并显示后台事实。 */
@@ -43,6 +50,8 @@ export function GitDeliveryRunControl(props: {
   client: GitDeliveryClient;
   /** 当前真实项目。 */
   projectId: string;
+  /** 会话仓库交付仍使用会话范围，收尾选项按其真实任务归属展示。 */
+  taskId?: string | null;
   /** 当前输入；点击时再次固定副本。 */
   input: Omit<GitDeliveryInput, 'settings'>;
   /** 原页正在处理单步操作。 */
@@ -56,6 +65,8 @@ export function GitDeliveryRunControl(props: {
   const combination = useContext(GitDeliveryCombinationContext);
   if (!combination) throw new Error('代码交付运行按钮必须位于交付操作栏。');
   const { settings, setSettings, settingsOpen, setSettingsOpen, setRunning } = combination;
+  /** 任务工作区与关联任务的普通会话共享任务收尾。 */
+  const taskId = props.input.scope.kind === 'task' ? props.input.scope.taskId : props.taskId;
   /** 设置弹窗草稿。 */
   const [draft, setDraft] = useState<GitDeliverySettings | null>(null);
   /** 项目当前真实状态定义。 */
@@ -220,7 +231,7 @@ export function GitDeliveryRunControl(props: {
       const sourceJson = JSON.stringify({
         ...props.input,
         postPushCommands: settings.push ? (settings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 })) : [],
-        settings: { ...settings, finalTaskStatus: props.input.scope.kind === 'task' ? settings.finalTaskStatus : null },
+        settings: { ...settings, finalTaskStatus: taskId ? settings.finalTaskStatus : null, archiveConversation: !taskId && settings.archiveConversation === true },
       });
       if (request.current?.sourceJson !== sourceJson) {
         /** 模型参数随运行冻结，之后修改项目偏好不影响已接纳步骤。 */
@@ -371,6 +382,29 @@ export function GitDeliveryRunControl(props: {
           </div>
         ))}
       </section>
+      <section className="task-git-delivery-action-step">
+        {taskId ? (
+          <label>
+            <span>{props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}</span>
+            <ZeusSelect
+              size="compact"
+              disabled={props.disabled || busy || running}
+              value={settings.finalTaskStatus ?? ''}
+              options={[
+                { value: '', label: props.zh ? '不变更' : 'Do not change' },
+                ...statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id })),
+              ]}
+              onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value || null }))}
+              ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
+            />
+          </label>
+        ) : (
+          <label className="git-delivery-checkbox">
+            <input type="checkbox" disabled={props.disabled || busy || running} checked={settings.archiveConversation === true} onChange={(event) => setSettings((current) => ({ ...current, archiveConversation: event.target.checked }))} />
+            {props.zh ? '交付成功后自动归档会话' : 'Archive conversation after delivery succeeds'}
+          </label>
+        )}
+      </section>
       <section className="task-git-delivery-action-step git-delivery-combination" aria-label={props.zh ? '组合交付' : 'Combined delivery'}>
         <div className="git-delivery-combination-buttons">
           <Button
@@ -378,7 +412,17 @@ export function GitDeliveryRunControl(props: {
             size="compact"
             busy={busy}
             disabled={props.disabled || busy || running || !props.input.repositories.length || !summary || (settings.push && Boolean(settings.postPushCommandIds?.length) && !commandsLoaded)}
-            data-icon-tooltip={settings.finalTaskStatus && props.input.scope.kind === 'task' ? (props.zh ? `完成后状态：${finalStatusLabel}` : `Final status: ${finalStatusLabel}`) : undefined}
+            data-icon-tooltip={
+              settings.finalTaskStatus && taskId
+                ? props.zh
+                  ? `完成后状态：${finalStatusLabel}`
+                  : `Final status: ${finalStatusLabel}`
+                : !taskId && settings.archiveConversation
+                  ? props.zh
+                    ? '交付成功后归档会话'
+                    : 'Archive conversation after delivery succeeds'
+                  : undefined
+            }
             onClick={() => void start()}
           >
             {props.zh ? '全部仓库：' : 'All repositories: '}
@@ -409,7 +453,7 @@ export function GitDeliveryRunControl(props: {
                 .filter((step) => step.state !== 'succeeded' && step.state !== 'pending')
                 .map((step) => (
                   <li key={step.id}>
-                    <strong>{step.action === 'task_status' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh)}`}</strong>
+                    <strong>{step.action === 'task_status' || step.action === 'conversation_archive' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh)}`}</strong>
                     <span>
                       {
                         {
@@ -498,21 +542,6 @@ export function GitDeliveryRunControl(props: {
                 <ConflictAiPermissions zh={props.zh} value={draft.permissionMode} disabled={busy} onChange={(value) => setDraft({ ...draft, permissionMode: value })} />
                 <SkillSelector client={props.client} projectId={props.projectId} value={draft.skillId ?? ''} onChange={(value) => setDraft({ ...draft, skillId: value || null })} language={props.zh ? 'zh-CN' : 'en-US'} />
               </>
-            ) : null}
-            {props.input.scope.kind === 'task' ? (
-              <label>
-                <span>{props.zh ? '最后变更任务状态' : 'Final task status'}</span>
-                <ZeusSelect
-                  size="compact"
-                  value={draft.finalTaskStatus ?? ''}
-                  options={[
-                    { value: '', label: props.zh ? '不变更' : 'Do not change' },
-                    ...statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id })),
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, finalTaskStatus: value || null })}
-                  ariaLabel={props.zh ? '最后变更任务状态' : 'Final task status'}
-                />
-              </label>
             ) : null}
           </FormDialog>
         ) : null}

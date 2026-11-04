@@ -1576,6 +1576,8 @@ export type StartNativeConversationRequest =
     };
 
 export interface StartProjectConversationRequest {
+  /** 与新会话一起创建关联任务；命名由服务端异步完成。 */
+  createTask?: boolean;
   /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
   conversationContext?: ConversationContextDraft;
   /** 首条消息的结构化网页批注，复用后续消息的处理链路。 */

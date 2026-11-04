@@ -4,7 +4,7 @@ import type { ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
 import { GitDeliveryRunControl, readGitDeliverySettings, type GitDeliveryClient } from '../git/GitDeliveryRunControl.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import { buildTaskCommitMessageSuggestion, gitConflictPreservationInstructions, type GitDeliveryInput, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
+import { buildTaskCommitMessageSuggestion, gitConflictPreservationInstructions, type GitDeliveryInput, type GitDeliverySettings, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
   TaskBranchFileChange,
@@ -693,13 +693,13 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   /** 合入使用同一持久交付执行器，逐仓处理冲突，关闭窗口不会中断其他仓库。 */
-  async function mergeSelected(): Promise<void> {
+  async function mergeSelected(settings?: GitDeliverySettings): Promise<void> {
     if (!interactionOpen || !props.client) return;
     setBusyAction('merge');
     setError(null);
     try {
-      /** 单独合入不附带提交、推送或任务状态变更，冲突处理沿用项目权限设置。 */
-      const input = directoryMergeInput();
+      /** 单独合入完成后应用当前收尾选择，不附带提交或推送。 */
+      const input = directoryMergeInput(undefined, undefined, settings);
       /** 相同输入的未知接纳结果不能产生第二次运行。 */
       const json = JSON.stringify(input);
       if (directoryRequest.current?.json !== json) directoryRequest.current = { json, key: crypto.randomUUID() };
@@ -714,14 +714,24 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }
 
   /** 主合入与冲突接管均冻结整个工作目录；已有来源关系不因文件选择而缩小。 */
-  function directoryMergeInput(permissionMode?: TaskIntegrationConflictPermissionMode, skillId?: string): GitDeliveryInput {
+  function directoryMergeInput(permissionMode?: TaskIntegrationConflictPermissionMode, skillId?: string, selectedSettings?: GitDeliverySettings): GitDeliveryInput {
     if (directoryUnavailable) throw new Error(zh ? '尚有仓库详情未读取，请刷新后交付全部仓库。' : 'Repository details are incomplete. Refresh before delivering all repositories.');
     if (permissionMode && permissionMode !== 'auto' && permissionMode !== 'full-access') throw new Error(zh ? '全部仓库冲突处理需要选择自动或完全访问权限。' : 'Choose Auto or Full access to resolve all repositories.');
-    /** 只复用现有权限与 Skill 偏好，不引入额外的推送或状态操作。 */
-    const settings = readGitDeliverySettings(props.task.projectId);
+    /** 冲突接管只复用权限；直接合入使用用户当前明确选择的收尾状态。 */
+    const settings = selectedSettings ?? readGitDeliverySettings(props.task.projectId);
     return {
       ...directoryInput,
-      settings: { ...settings, commit: false, generateCommitMessage: false, merge: true, push: false, resolveConflicts: true, finalTaskStatus: null, ...(permissionMode ? { permissionMode, skillId: skillId ?? null } : {}) },
+      settings: {
+        ...settings,
+        commit: false,
+        generateCommitMessage: false,
+        merge: true,
+        push: false,
+        resolveConflicts: selectedSettings?.resolveConflicts ?? true,
+        finalTaskStatus: selectedSettings?.finalTaskStatus ?? null,
+        archiveConversation: false,
+        ...(permissionMode ? { permissionMode, skillId: skillId ?? null } : {}),
+      },
     };
   }
 
@@ -1175,12 +1185,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       ))}
                     </>
                   }
+                  sourceBranches={directoryWorkspaceIds.map((id) => targetBranchesByWorkspace[id])}
+                  onCopyBranch={copyBranchName}
                   mergeDisabled={directoryUnavailable}
                   mode={mode}
                   onModeChange={setMode}
                   mergeCount={directoryUnavailable ? 0 : directoryWorkspaceIds.length}
                   mergeAll
-                  onMerge={() => void mergeSelected()}
+                  onMerge={(settings) => void mergeSelected(settings)}
                   mergeIssues={
                     <>
                       {targetIssues.length > 0 ? (

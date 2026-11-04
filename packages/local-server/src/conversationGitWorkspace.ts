@@ -17,6 +17,19 @@ async function commonGitDirectory(cwd: string): Promise<string> {
 /** 会话 Git 范围的持久仓库身份前缀。 */
 export const conversationGitRepositoryPrefix = 'conversation:';
 
+/** 读取第一次持久提交的执行目录，归档、恢复与 Git 查询使用同一来源。 */
+export function conversationExecutionWorkspace(conversationId: string, submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>) {
+  for (const submission of submissions.listByConversation(conversationId)) {
+    try {
+      const context = JSON.parse(submission.inputJson).context as { projectLocalPath?: unknown; executionWorkspaceMode?: unknown } | undefined;
+      if (typeof context?.projectLocalPath === 'string' && (context.executionWorkspaceMode === 'worktree' || context.executionWorkspaceMode === 'direct' || context.executionWorkspaceMode === undefined)) return context;
+    } catch {
+      /* 非执行提交不含目录信息。 */
+    }
+  }
+  return undefined;
+}
+
 /** 只认服务端持久化的会话目录；命令 cwd 和客户端路径不能改变 Git 操作范围。 */
 export async function resolveConversationGitWorkspace(
   project: ZeusProjectRecord,
@@ -27,16 +40,9 @@ export async function resolveConversationGitWorkspace(
   /** 错误身份保持稳定，文案适用于普通目录和独立工作树。 */
   const unavailable = () => Object.assign(new Error('会话工作目录不存在、已回收或不属于当前项目。'), { code: 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE', statusCode: 409 });
   const conversation = conversations.getRecordById(conversationId);
-  if (!conversation || conversation.projectId !== project.id || conversation.taskId) throw unavailable();
-  const contexts = submissions.listByConversation(conversation.id).map((submission) => {
-    try {
-      return JSON.parse(submission.inputJson).context as { projectLocalPath?: unknown; executionWorkspaceMode?: unknown } | undefined;
-    } catch {
-      return undefined;
-    }
-  });
+  if (!conversation || conversation.projectId !== project.id || conversation.workspaceId || conversation.environmentId) throw unavailable();
   /** 沿用最初持久提交的目录，不从最近命令的 cwd 或客户端路径推断操作范围。 */
-  const context = contexts.find((item) => typeof item?.projectLocalPath === 'string' && (item.executionWorkspaceMode === 'worktree' || item.executionWorkspaceMode === 'direct' || item.executionWorkspaceMode === undefined));
+  const context = conversationExecutionWorkspace(conversation.id, submissions);
   if (!context || typeof context.projectLocalPath !== 'string') throw unavailable();
   try {
     const [root, cwd] = await Promise.all([realpath(project.localPath), realpath(context.projectLocalPath)]);
@@ -50,7 +56,7 @@ export async function resolveConversationGitWorkspace(
         relativePath: '.',
         localPath: cwd,
         workspaceMode: 'direct' as const,
-        repositories: repositories.map((repository) => ({ ...repository, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
+        repositories: repositories.map((repository) => ({ ...repository, repositoryPath: repository.localPath, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
       };
     }
     if (cwd === root) throw unavailable();
@@ -75,7 +81,11 @@ export async function resolveConversationGitWorkspace(
       relativePath: '.',
       localPath: cwd,
       workspaceMode: 'worktree' as const,
-      repositories: members.map((repository) => ({ ...repository, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
+      repositories: members.map((repository) => ({
+        ...repository,
+        repositoryPath: sources.find((source) => source.relativePath === repository.relativePath)!.localPath,
+        id: conversationRepositoryId(conversation.id, repository.relativePath),
+      })),
     };
   } catch {
     throw unavailable();

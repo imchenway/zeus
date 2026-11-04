@@ -9,6 +9,7 @@ export function readGitDeliverySettings(projectId: string): GitDeliverySettings 
       !value ||
       ['commit', 'merge', 'push', 'resolveConflicts'].some((key) => typeof value[key as 'commit'] !== 'boolean') ||
       (value.generateCommitMessage !== undefined && typeof value.generateCommitMessage !== 'boolean') ||
+      (value.archiveConversation !== undefined && typeof value.archiveConversation !== 'boolean') ||
       (value.postPushCommandIds !== undefined &&
         (!Array.isArray(value.postPushCommandIds) ||
           value.postPushCommandIds.length > 50 ||

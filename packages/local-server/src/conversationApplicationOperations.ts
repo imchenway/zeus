@@ -94,6 +94,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ConversationApplicationOperationDependencies = Record<string, any> & {
+  /** 首发已持久接纳后，独立安排命名，不等待模型。 */
+  scheduleConversationTitle?: (conversationId: string) => void;
   /** 来源引用与模型读取共用服务端归属校验。 */
   conversationSources: ConversationSourceContextReader;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
@@ -506,7 +508,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             sharedPaths: dependencies.projectSharedPaths.listByProject(input.project.id),
           });
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
-    const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : undefined;
+    const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : input.body.workspaceMode === 'worktree' ? 'worktree' : 'direct';
     if (!executionRoot || (input.task && !executionWorkspaceMode)) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '讨论会话的工作目录身份不可用。');
     const skills = zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: executionRoot, skillId: reference.id }))) : [];
     const pluginReferences = await resolveNewConversationPluginReferences(input.project.id, content, input.body.pluginReferences);
@@ -571,23 +573,26 @@ export function createConversationApplicationOperations(dependencies: Conversati
     });
     let conversation: ZeusConversationRecord | null = input.conversation ?? null;
     if (!conversation) {
-      conversation = conversations.create({
-        id: input.reservedConversationId,
-        contextCapacityTokens: Object.prototype.hasOwnProperty.call(input.body, 'contextCapacityTokens') ? (input.body.contextCapacityTokens as number | null) : null,
-        projectId: input.project.id,
-        ...(input.task ? { taskId: input.task.id } : {}),
-        title: input.task ? input.task.title : displayText.slice(0, 60) || '专家群聊',
-        transportKind: 'codex_native',
-        providerId: selectedModel.agentKind === 'pi' ? `pi:${selectedModel.sourceId ?? 'custom'}` : 'codex',
-        providerModel: selectedModel.model,
-        providerState: 'unbound',
-        permissionMode,
-        collaborationMode,
-        agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
-        agentTransport: selectedModel.agentKind === 'pi' ? 'rpc' : 'app_server',
-        modelSourceId: selectedModel.sourceId ?? null,
-        modelId: selectedModel.model,
-      });
+      conversation = createProjectConversationRecord(
+        {
+          id: input.reservedConversationId,
+          contextCapacityTokens: Object.prototype.hasOwnProperty.call(input.body, 'contextCapacityTokens') ? (input.body.contextCapacityTokens as number | null) : null,
+          projectId: input.project.id,
+          ...(input.task ? { taskId: input.task.id } : input.body.createTask === true ? { taskId: `task_${input.reservedConversationId}` } : {}),
+          title: input.task ? input.task.title : displayText.slice(0, 60) || '专家群聊',
+          transportKind: 'codex_native',
+          providerId: selectedModel.agentKind === 'pi' ? `pi:${selectedModel.sourceId ?? 'custom'}` : 'codex',
+          providerModel: selectedModel.model,
+          providerState: 'unbound',
+          permissionMode,
+          collaborationMode,
+          agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+          agentTransport: selectedModel.agentKind === 'pi' ? 'rpc' : 'app_server',
+          modelSourceId: selectedModel.sourceId ?? null,
+          modelId: selectedModel.model,
+        },
+        input.task ? undefined : displayText || content,
+      );
     }
     const parentConversation = conversation;
     if (!parentConversation || parentConversation.projectId !== input.project.id || parentConversation.taskId !== (input.task?.id ?? parentConversation.taskId)) {
@@ -2435,6 +2440,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   async function executeProjectConversationIdempotent(project: ZeusProjectRecord, body: StartProjectConversationBody | Record<string, unknown>, idempotencyKey: string, markExternalWriteStarted?: () => void, executionProjectIds?: string[]) {
+    if (body.createTask !== undefined && typeof body.createTask !== 'boolean') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'createTask 必须是布尔值。');
+    if (body.createTask && (body.source || body.inheritConversationId)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', '审查和继承会话不能同时创建任务。');
     assertRequestedAgentKind(body);
     /** 跨项目目录只能来自服务端调用参数，不能读取客户端正文中的路径。 */
     const executionProjects = executionProjectIds?.map((projectId) => projects.getById(projectId)) ?? [project];
@@ -2458,6 +2465,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           if (ownedOperationId !== reservation.operationId) throw nativeApiError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Stable operation identity changed while accepting a project conversation.');
           const accepted = await acceptProjectConversation(project, body, idempotencyKey, ownedOperationId, reservation, lifecycle, executionProjects as ZeusProjectRecord[]);
           await checkpointInProgressIdempotentResponse(scope, idempotencyKey, 202, accepted);
+          if (!body.source && !body.inheritConversationId && !executionProjectIds) dependencies.scheduleConversationTitle?.(reservation.conversationId);
           return accepted;
         },
         (_ownedOperationId, persistedResourceId) => recoverProjectConversationAcceptance(project, idempotencyKey, reservation, persistedResourceId),
@@ -2469,6 +2477,28 @@ export function createConversationApplicationOperations(dependencies: Conversati
 
   function encodeProjectConversationAcceptanceReservation(reservation: ProjectConversationAcceptanceReservation): string {
     return `project-acceptance:${Buffer.from(JSON.stringify(reservation), 'utf8').toString('base64url')}`;
+  }
+
+  /** 复用任务仓储的编号与约束，任务和会话要么一起落库，要么一起回滚。 */
+  function createProjectConversationRecord(record: Parameters<ConversationRepository['create']>[0], description?: string): ZeusConversationRecord {
+    return db.transaction(() => {
+      if (record.taskId && description !== undefined) {
+        tasks.create({
+          id: record.taskId,
+          projectId: record.projectId,
+          title: record.title,
+          taskType: 'task',
+          managementStatus: dependencies.resolveTaskManagementStatusConfigForProject(record.projectId).roles.defaultStatusId,
+          description,
+          createdFrom: 'conversation',
+          sourceContext: { conversationId: record.id },
+          allowCodeChanges: record.permissionMode !== 'read-only',
+          allowTests: record.permissionMode !== 'read-only',
+          allowGitCommit: false,
+        });
+      }
+      return conversations.create(record);
+    });
   }
 
   function decodeProjectConversationAcceptanceReservation(value: string | null): ProjectConversationAcceptanceReservation | null {
@@ -2662,6 +2692,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content) } : {}),
             cwd: executionRoot,
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
@@ -2694,6 +2725,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content) } : {}),
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             browserComments,
@@ -2725,7 +2757,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       !submission ||
       conversation.id !== reservation.conversationId ||
       conversation.projectId !== project.id ||
-      conversation.taskId !== null ||
+      conversation.taskId !== (reservation.taskId ?? null) ||
       submission.id !== reservation.submissionId ||
       submission.conversationId !== conversation.id
     ) {
@@ -2743,7 +2775,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       !conversation ||
       !submission ||
       conversation.projectId !== project.id ||
-      conversation.taskId !== null ||
+      conversation.taskId !== (expected.taskId ?? null) ||
       submission.conversationId !== conversation.id ||
       submission.idempotencyKey !== idempotencyKey ||
       persisted.scope !== `project-conversation:${project.id}` ||
@@ -2823,6 +2855,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       operationId,
       conversationId,
       submissionId: `conversation_submission_${createHash('sha256').update(`${operationId}\0submission`).digest('hex').slice(0, 24)}`,
+      ...(scope.startsWith('project-conversation:') && isNativeApiRecord(body) && body.createTask === true ? { taskId: `task_${conversationId}` } : {}),
     };
   }
 
@@ -3807,7 +3840,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
               throw nativeApiError('ZEUS_TASK_WORKSPACE_CLOSED', '原工作区已结束开发，不能以可写模式创建侧栏会话。');
             inheritedBinding = { ...(environmentId ? { environmentId } : {}), workspaceId: workspace.id, writableRoots: permissionMode === 'read-only' ? [] : resolveTaskEnvironmentWritableRoots(project, members) };
           } else if (inheritedCwd !== realpathSync(project.localPath)) {
-            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', '源任务会话缺少工作区归属。');
+            /** 会话自有工作树按原 Git 登记核验，任务关联不改变目录。 */
+            const sourceWorkspace = await resolveConversationGitWorkspace(project, sourceConversation.id, conversations, conversationSubmissions);
+            if (realpathSync(sourceWorkspace.localPath) !== inheritedCwd) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', '源会话工作目录已变化。');
+            inheritedBinding = { writableRoots: permissionMode === 'read-only' ? [] : [inheritedCwd] };
           }
         }
         /** 首发与恢复使用相同的服务端解析目录。 */

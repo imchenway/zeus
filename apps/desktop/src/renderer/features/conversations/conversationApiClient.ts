@@ -119,7 +119,7 @@ export interface ConversationApiClient {
   loadNativeSubagents: (projectId: string, conversationId: string) => Promise<NativeSubagentListSnapshot>;
   loadNativeSubagentThread: (projectId: string, conversationId: string, threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   loadNativeConversationChoice: (projectId: string, conversationId: string) => Promise<NativeConversationChoice>;
-  archiveNativeConversation: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
+  archiveNativeConversation: (projectId: string, conversationId: string, options?: { confirmWorktreeCleanup?: boolean }) => Promise<ConversationHistoryItem>;
   restoreConversationArchive: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
   loadConversationResourcePreview: (projectId: string, conversationId: string, resourceId: string) => Promise<ConversationResourcePreview>;
   loadTurnChangeFilePreview: (projectId: string, conversationId: string, turnId: string, changeSetId: string, fileId: string) => Promise<ConversationResourcePreview>;
@@ -263,8 +263,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadNativeSubagents: (projectId, conversationId) => transport.request<NativeSubagentListSnapshot>(`${conversationPath(projectId, conversationId)}/subagents`),
     loadNativeSubagentThread: (projectId, conversationId, threadId) => transport.request<NativeSubagentThreadSnapshot>(`${conversationPath(projectId, conversationId)}/subagents/${encodeURIComponent(threadId)}`),
     loadNativeConversationChoice: (projectId, conversationId) => transport.request(`${conversationPath(projectId, conversationId)}/choice`),
-    archiveNativeConversation: async (projectId, conversationId) => {
-      const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.archive, conversationId, value: {} });
+    archiveNativeConversation: async (projectId, conversationId, options) => {
+      const body = await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.archive, conversationId, value: options?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {} });
       return transport.request<ConversationHistoryItem>(`${conversationPath(projectId, conversationId)}/archive`, jsonRequest('POST', body));
     },
     restoreConversationArchive: async (projectId, conversationId) => {

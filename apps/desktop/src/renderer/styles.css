@@ -16320,6 +16320,20 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
 }
 
+/* 固定来源与复制入口同行，长分支名沿用下拉组件的截断规则。 */
+.macos-ai-app .task-git-delivery-source-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.macos-ai-app .task-git-delivery-source-branch > .zeus-select {
+  flex: 1;
+  min-inline-size: 0;
+}
+.macos-ai-app .task-git-delivery-source-branch > button {
+  flex: none;
+}
+
 /* 图标入口保留与生成按钮相同的操作高度。 */
 .macos-ai-app .task-git-generation-settings-button {
   inline-size: 28px;

@@ -3,7 +3,6 @@ import { PushDialog } from './GitPushDialog.js';
 import { defaultPushTarget } from './GitRepositoryControls.js';
 import type { PushSelection, OperationTone } from './gitWorkbenchTypes.js';
 import { GitDeliveryRunControl, type GitDeliveryClient } from './GitDeliveryRunControl.js';
-import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
@@ -49,7 +48,7 @@ interface RepositoryGitDeliveryContentProps {
   /** 用户可以回到当前仓库的全部文件。 */
   onClearPathPrefix?(): void;
   /** 后台组合只接受真实会话范围及其客户端。 */
-  conversation?: { id: string; title: string; client: GitDeliveryClient };
+  conversation?: { id: string; title: string; taskId: string | null; client: GitDeliveryClient };
   /** 普通目录会话监听项目；独立工作树会话监听绑定目录。 */
   conversationWorkspaceMode?: 'direct' | 'worktree' | null;
   /** 项目与会话交付弹窗共用关闭生命周期。 */
@@ -98,8 +97,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const [focus, setFocus] = useState({ repositoryId: '', path: '' });
   /** 两种入口采用相同文件范围。 */
   const [scope, setScope] = useState<DiffScope>('working');
-  /** 普通目录的合入仍使用现有当前分支合入命令。 */
-  const [mergeBranch, setMergeBranch] = useState('');
   /** 手动编辑和生成失败均保留提交说明。 */
   const [drafts, setDrafts] = useGitCommitDrafts(props.conversation ? `${props.project.id}:conversation:${props.conversation.id}` : props.project.id);
   /** 项目全量、单仓和会话分别保存草稿，避免不同提交范围互相覆盖。 */
@@ -261,17 +258,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     .filter((item) => item.paths.length);
   /** 提交数量来自可执行的文件范围。 */
   const commitCount = commitSelection.reduce((count, item) => count + item.paths.length, 0);
-  /** 合入现有分支保持当前检出，禁止在脏目录或未结束冲突中开始新合入。 */
-  const mergeCandidates = selected.filter(
-    (repository) =>
-      mergeBranch &&
-      repository.snapshot.clean &&
-      !repository.snapshot.detached &&
-      !repository.snapshot.integrationState &&
-      !repository.snapshot.conflictFiles.length &&
-      repository.snapshot.branch !== mergeBranch &&
-      repository.snapshot.localBranches.includes(mergeBranch),
-  );
   /** 推送沿用 Git 工作区弹窗，入口只初始化当前勾选范围。 */
   const [pushSelections, setPushSelections] = useState<PushSelection[] | null>(null);
   /** 逐仓结果保留在推送弹窗，失败后可审阅原目标。 */
@@ -316,11 +302,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     (repository) =>
       !repository.snapshot.detached && !repository.snapshot.integrationState && !repository.snapshot.conflictFiles.length && repository.snapshot.remotes.length && (!repository.snapshot.upstream || repository.snapshot.ahead > 0),
   );
-  /** 可选分支仅来自所选仓库。 */
-  const mergeOptions = [
-    { value: '', label: zh ? '选择来源分支' : 'Select source branch' },
-    ...[...new Set(selected.flatMap((repository) => repository.snapshot.localBranches.filter((branch) => branch !== repository.snapshot.branch)))].sort().map((branch) => ({ value: branch, label: branch })),
-  ];
   /** 生成所选文件变化时同时固定分支和 HEAD。 */
   const generationKey = JSON.stringify(
     commitSelection.map((item) => {
@@ -343,10 +324,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   }
 
   /** 批量操作复用现有命令入口，分别显示成功、冲突和失败。 */
-  async function execute(action: 'commit' | 'merge', repositories: ProjectGitRepositoryWorkbenchItem[]): Promise<void> {
+  async function commitSelected(repositories: ProjectGitRepositoryWorkbenchItem[]): Promise<void> {
     if (busyRef.current) return;
-    busyRef.current = action;
-    setBusyAction(action);
+    busyRef.current = 'commit';
+    setBusyAction('commit');
     setFeedback(null);
     try {
       /** 仓库相互独立，单仓失败不撤销其他仓库的成功。 */
@@ -354,10 +335,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         repositories.map(async (repository): Promise<BatchDeliveryResult> => {
           try {
             /** 提交带 HEAD 和分支约束，避免读取后分支切换导致提交错位。 */
-            const input: ProjectGitAction =
-              action === 'commit'
-                ? { type: 'commit', message, paths: selection[repository.id] ?? [], expectedBranch: repository.snapshot.branch, expectedHeadSha: repository.snapshot.headSha }
-                : createProjectGitMergeAction(repository, mergeBranch);
+            const input: ProjectGitAction = { type: 'commit', message, paths: selection[repository.id] ?? [], expectedBranch: repository.snapshot.branch, expectedHeadSha: repository.snapshot.headSha };
             /** 接口继续验证真实仓库范围及已有命令幂等身份。 */
             const response = await props.client.executeProjectGitAction(props.project.id, repository.id, input);
             return {
@@ -378,9 +356,9 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         }),
       );
       if (!open) return;
-      if (action === 'commit' && results.every((result) => result.status === 'succeeded')) setMessage('');
+      if (results.every((result) => result.status === 'succeeded')) setMessage('');
       setFeedback({
-        action,
+        action: 'commit',
         results,
         tone: results.every((result) => result.status === 'succeeded') ? 'success' : 'warning',
         summary: zh ? `${results.filter((result) => result.status === 'succeeded').length}/${results.length} 个仓库成功` : `${results.filter((result) => result.status === 'succeeded').length}/${results.length} repositories succeeded`,
@@ -557,27 +535,18 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                   ) : undefined
                 }
                 commitCount={commitCount}
-                onCommit={() =>
-                  void execute(
-                    'commit',
-                    selected.filter((repository) => commitSelection.some((item) => item.repositoryId === repository.id)),
-                  )
-                }
+                onCommit={() => void commitSelected(selected.filter((repository) => commitSelection.some((item) => item.repositoryId === repository.id)))}
                 commitFeedback={feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
-                mergeLabel={zh ? '合入来源分支' : 'Source branch'}
-                mergeTarget={mergeBranch}
-                mergeOptions={mergeOptions}
-                onMergeTargetChange={setMergeBranch}
-                mergeDisabled={!selectedIds.length}
+                sourceBranches={[]}
+                mergeDisabled
                 mode="merge"
-                mergeCount={mergeCandidates.length}
-                onMerge={() => void execute('merge', mergeCandidates)}
-                mergeFeedback={feedback?.action === 'merge' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
+                mergeCount={0}
                 combination={
                   props.conversation ? (
                     <GitDeliveryRunControl
                       client={props.conversation.client}
                       projectId={props.project.id}
+                      taskId={props.conversation.taskId}
                       zh={zh}
                       disabled={Boolean(busyAction)}
                       onAccepted={() => props.onClose?.()}
@@ -590,7 +559,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                           paths: visibleRepositoryFiles(repository, snapshot.repositories).map((file) => file.path),
                           expectedBranch: repository.snapshot.branch,
                           expectedHeadSha: repository.snapshot.headSha,
-                          mergeBranch,
+                          mergeBranch: '',
                         })),
                       }}
                     />

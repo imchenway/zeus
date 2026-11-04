@@ -64,6 +64,7 @@ export function registerConversationStartCommandRoutes(options: {
           'workspaceMode',
           'worktree',
           'content',
+          'createTask',
           'conversationContext',
           'contextCapacityTokens',
           'displayText',

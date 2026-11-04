@@ -18,6 +18,10 @@ export interface NewConversationExecutionContextProps {
   projectId: string;
   projects: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   workspaceMode: 'direct' | 'worktree';
+  /** 首发时同时创建关联任务，默认关闭。 */
+  createTask: boolean;
+  /** 开关只修改草稿，发送前不创建任务。 */
+  onCreateTaskChange: (enabled: boolean) => void;
   /** 新工作树分支必须使用的当前全局前缀。 */
   taskBranchPrefix: string;
   worktree?: ConversationWorktreeOptions;
@@ -487,6 +491,21 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
             />
           </span>
         )}
+        <label className="session-new-conversation-create-task">
+          <span>{zh ? '创建任务' : 'Create task'}</span>
+          <span className="settings-switch-state">
+            <input
+              className="native-switch-input"
+              type="checkbox"
+              role="switch"
+              aria-label={zh ? '创建任务' : 'Create task'}
+              checked={props.createTask}
+              onChange={(event) => props.onCreateTaskChange(event.currentTarget.checked)}
+              disabled={props.disabled}
+            />
+            <span className="native-switch-track" aria-hidden="true" />
+          </span>
+        </label>
       </div>
 
       <MotionPresence>

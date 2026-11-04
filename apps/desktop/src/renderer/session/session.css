@@ -2357,6 +2357,17 @@
   position: relative;
 }
 
+/* 创建任务复用全局开关，窄窗口中随工作位置栏换行。 */
+.session-codex-parity-v1 .session-new-conversation-create-task {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  margin-inline-start: auto;
+  order: 1;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .session-codex-parity-v1 .session-new-conversation-context-spinner {
   animation: session-context-spin 900ms linear infinite;
 }

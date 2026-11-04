@@ -1,4 +1,6 @@
-import { migrateGitDelivery, migrateGitDeliveryCommands } from './gitDeliveryStore.js';
+import { migrateGitDelivery, migrateGitDeliveryCommands, migrateGitDeliveryArchiving } from './gitDeliveryStore.js';
+import { migrateConversationWorktreeRecovery } from './conversationWorktreeRecoveryStore.js';
+export * from './conversationWorktreeRecoveryStore.js';
 export * from './gitDeliveryStore.js';
 import { migrateTaskReminders } from './taskReminderStore.js';
 /** 任务提醒与任务共用数据库和耐久事务。 */
@@ -1016,6 +1018,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateTaskReminders(zeusDb);
     migrateGitDelivery(zeusDb);
     migrateGitDeliveryCommands(zeusDb);
+    migrateGitDeliveryArchiving(zeusDb);
+    migrateConversationWorktreeRecovery(zeusDb);
     migrateRetiredCodeGraph(zeusDb);
     migrateTaskBoardSchema(zeusDb);
     migrateRetiredUnitTestTemplate(zeusDb);

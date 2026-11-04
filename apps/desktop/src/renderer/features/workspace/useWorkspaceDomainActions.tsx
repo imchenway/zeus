@@ -1677,7 +1677,15 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const client = props.nativeConversationClient;
     if (!client) return;
     /** 会话树负责把失败原因留在对应行；请求成功前不会移除原会话。 */
-    await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    try {
+      await client.archiveNativeConversation(conversation.projectId, conversation.id);
+    } catch (error) {
+      if (!(error instanceof ZeusApiError && error.error === 'ZEUS_CONVERSATION_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
+      /** 与任务完成共用明确的丢弃确认，取消时保留会话和目录。 */
+      const confirmed = await new Promise<boolean>((resolve) => setTaskTerminalCleanupConfirmation({ statusLabel: '', archiveConversation: true, resolve }));
+      if (!confirmed) return;
+      await client.archiveNativeConversation(conversation.projectId, conversation.id, { confirmWorktreeCleanup: true });
+    }
     removeConfirmedArchivedConversation(conversation.id, conversation.projectId, conversation.taskId ?? null, conversation.navigationId ?? conversation.id);
     void (conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId)).catch(() => undefined);
     void refreshArchivedConversations();
@@ -2066,6 +2074,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
     let refreshError: unknown | null = null;
+    /** 回执中的真实归属决定列表写入和后续刷新。 */
+    let acceptedTaskId: string | null = null;
     try {
       const result = await startProjectConversationWithDurableAcceptance({
         input,
@@ -2074,12 +2084,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         onAccepted: async (choice) => {
           reconcileNativeConversationProjectionStates([choice]);
           await adoptConversationBrowser(input, choice);
-          nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(choice);
-          setNativeConversationChoicesByProject((current) => {
-            const prior = current[projectId];
-            const choices = [choice, ...(prior?.choices ?? []).filter((candidate) => candidate.id !== choice.id)];
-            return { ...current, [projectId]: { projectId, choices, items: choices } };
-          });
+          acceptedTaskId = choice.taskId;
+          if (choice.taskId) {
+            nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
+            setNativeConversationChoicesByTask((current) => ({ ...current, [choice.taskId!]: upsertTaskConversationChoiceSnapshot(choice.taskId!, current[choice.taskId!], choice) }));
+            void props
+              .onLoadTask?.(choice.taskId)
+              .then(mergeTaskRecord)
+              .catch((error: unknown) => recordRealtimeSynchronizationError('new-conversation-task-refresh', error));
+          } else {
+            nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(choice);
+            setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], choice) }));
+          }
           setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
           // A 项目的迟到 acceptance 只能写回 A 的缓存，不能抢走用户已切换到 B 项目的画布。
           if (activeProjectIdRef.current !== projectId) return;
@@ -2088,7 +2104,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           setSelectedNativeConversationPresentation('interactive');
           setConversationDraftOpen(false);
         },
-        refresh: refreshNativeProjectConversationChoices,
+        refresh: async (acceptedProjectId) => {
+          if (acceptedTaskId) await refreshNativeConversationChoices(acceptedTaskId);
+          else await refreshNativeProjectConversationChoices(acceptedProjectId);
+        },
       });
       refreshError = result.refreshError;
     } catch (error) {

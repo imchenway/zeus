@@ -9,7 +9,7 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
       client={props.client}
       project={props.project}
       language={props.language}
-      conversation={{ id: props.conversation.id, title: props.conversation.title, client: props.client }}
+      conversation={{ id: props.conversation.id, title: props.conversation.title, taskId: props.conversation.taskId, client: props.client }}
       conversationWorkspaceMode={props.conversation.workspaceMode}
       onClose={props.onClose}
     />

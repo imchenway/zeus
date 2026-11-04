@@ -93,7 +93,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   /** 普通目录读取项目仓库，独立工作树继续使用服务端绑定的会话范围。 */
   const directWorkspace = props.conversation.workspaceMode === 'direct';
   /** 关联任务不等于使用任务工作树，普通目录任务仍读取项目全部仓库。 */
-  const useTaskWorkspaces = Boolean(taskId && !directWorkspace);
+  const useTaskWorkspaces = Boolean(taskId && !directWorkspace && (props.conversation.workspaceId || props.conversation.workspaceMode !== 'worktree'));
   /** 交付入口沿用原目录模式，摘要订阅不扩大写入范围。 */
   const conversationGitClient = !useTaskWorkspaces ? gitClient : null;
   /** 审查入口核对原工作区身份，不借用其他仓库。 */
@@ -107,7 +107,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const branch = directWorkspace && (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
   /** 摘要覆盖同一交付范围的全部活动仓库。 */
   const changes = summary ?? { files: 0, additions: 0, deletions: 0 };
-  const conversationReady = !taskId && workspaceState === 'ready' && Boolean(summary?.repositoryCount);
+  const conversationReady = !useTaskWorkspaces && workspaceState === 'ready' && Boolean(summary?.repositoryCount);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   /** 待提交提示与展示文件数使用同一范围，不受父仓占位的 dirty 状态影响。 */
@@ -116,7 +116,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const canOpenDelivery = Boolean(conversationGitClient || (useTaskWorkspaces && props.onOpenGitDelivery));
   const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
     zh,
-    taskId,
+    taskId: useTaskWorkspaces ? taskId : null,
     conversation: props.conversation,
     workspace: exactReviewWorkspace,
     workspaceState,

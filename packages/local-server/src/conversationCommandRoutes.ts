@@ -24,6 +24,8 @@ import {
 } from './conversationCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
+/** 只有明确确认后，归档才允许清理包含未提交内容的工作树。 */
+type ConversationLifecycleInput = { confirmWorktreeCleanup?: boolean };
 
 interface NextTurnSettingsInput {
   /** 容量只在下一轮应用。 */
@@ -106,6 +108,8 @@ export function registerConversationCommandRoutes(options: {
   };
   /** 在具体执行器的实际外部动作前记录写出。 */
   archiveNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
+  /** Provider 归档前完成目录检查，归档确认后执行同一清理计划。 */
+  prepareConversationArchive(conversation: ZeusConversationRecord, confirmed: boolean): Promise<(beforeExternalWrite?: () => void) => Promise<void>>;
   /** 纯本地恢复不记录外部写出。 */
   restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
   /** 模型变更前校验会话已冻结预算，不修改任何持久状态。 */
@@ -124,7 +128,17 @@ export function registerConversationCommandRoutes(options: {
     const commandError = conversationCommandHttpError(error);
     if (commandError) return reply.code(commandError.statusCode).send(commandError.payload);
     if (error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' && typeof (error as { statusCode?: unknown }).statusCode === 'number') {
-      return reply.code((error as { statusCode: number }).statusCode).send({ error: (error as { code: string }).code, message: error instanceof Error ? error.message : String(error) });
+      return reply.code((error as { statusCode: number }).statusCode).send({
+        error: (error as { code: string }).code,
+        message: error instanceof Error ? error.message : String(error),
+        ...((error as { code: string }).code === 'ZEUS_CONVERSATION_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED'
+          ? {
+              dirtyWorkspaceCount: (error as { dirtyWorkspaceCount?: number }).dirtyWorkspaceCount ?? 0,
+              activeConversationCount: 0,
+              activeRuntimeSessionCount: (error as { activeRuntimeSessionCount?: number }).activeRuntimeSessionCount ?? 0,
+            }
+          : {}),
+      });
     }
     return options.sendNativeError(reply, error);
   };
@@ -373,7 +387,7 @@ export function registerConversationCommandRoutes(options: {
     }
   });
 
-  server.post('/api/projects/:projectId/conversations/:conversationId/archive', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<EmptyInput> }>, reply) => {
+  server.post('/api/projects/:projectId/conversations/:conversationId/archive', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<ConversationLifecycleInput> }>, reply) => {
     return executeLifecycle(request, reply, 'archive');
   });
 
@@ -381,15 +395,18 @@ export function registerConversationCommandRoutes(options: {
     return executeLifecycle(request, reply, 'restore');
   });
 
-  async function executeLifecycle(request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<EmptyInput> }>, reply: FastifyReply, action: 'archive' | 'restore') {
+  async function executeLifecycle(request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<ConversationLifecycleInput> }>, reply: FastifyReply, action: 'archive' | 'restore') {
     try {
       const parsed = parseCommand(request, action === 'archive' ? conversationCommandTypes.archive : conversationCommandTypes.restore);
       assertExpectedRevision(parsed, null);
-      assertExactInputKeys(parsed.input, [], parsed.command.commandType);
+      assertOnlyInputKeys(parsed.input, action === 'archive' ? ['confirmWorktreeCleanup'] : [], parsed.command.commandType);
+      if (parsed.input.confirmWorktreeCleanup !== undefined && typeof parsed.input.confirmWorktreeCleanup !== 'boolean') throw routeError('ZEUS_CONVERSATION_COMMAND_INVALID', 'confirmWorktreeCleanup must be a boolean.', 400);
       requireProject(request.params.projectId);
       const conversation = requireConversation(request.params);
       let result: ConversationLifecycleResult;
-      if (conversation.transportKind === 'codex_native') {
+      if (conversation.transportKind === 'codex_native' || action === 'archive') {
+        /** 清理计划只在本次命令接纳时创建，重试重新检查目录与共享使用者。 */
+        let cleanup: ((beforeExternalWrite?: () => void) => Promise<void>) | undefined;
         const executed = await application.executeExternal({
           parsed,
           destinationId: 'conversation-provider-lifecycle',
@@ -399,11 +416,15 @@ export function registerConversationCommandRoutes(options: {
             requireProject(request.params.projectId);
             const current = requireConversation(request.params);
             if (action === 'restore') assertTaskCanRestore(current);
+            else cleanup = await options.prepareConversationArchive(current, parsed.input.confirmWorktreeCleanup === true);
           },
           invoke: async (beforeExternalWrite) => {
             const current = requireConversation(request.params);
-            if (action === 'archive') await options.archiveNativeConversation(current, beforeExternalWrite);
-            else await options.restoreNativeConversation(current, beforeExternalWrite);
+            if (action === 'archive') {
+              if (current.transportKind === 'codex_native') await options.archiveNativeConversation(current, beforeExternalWrite);
+              else options.conversations.archive(current.id);
+              await cleanup?.(beforeExternalWrite);
+            } else await options.restoreNativeConversation(current, beforeExternalWrite);
             return lifecycleResult(requireConversation(request.params));
           },
           isExplicitRejection: isConversationLifecycleExplicitRejection,
@@ -419,8 +440,7 @@ export function registerConversationCommandRoutes(options: {
             requireProject(request.params.projectId);
             const current = requireConversation(request.params);
             if (action === 'restore') assertTaskCanRestore(current);
-            if (action === 'archive') options.conversations.archive(current.id);
-            else options.conversations.restore(current.id);
+            options.conversations.restore(current.id);
             appendLifecycleAudit(action, request.params.projectId, current.id);
             return lifecycleResult(requireConversation(request.params));
           },

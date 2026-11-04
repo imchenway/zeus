@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { conversationCommandTypes } from './conversationCommandApplication.js';
 import { isAbsolute, relative, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -41,6 +42,7 @@ import {
   executeProjectGitAction,
   getProjectGitRepositorySnapshot,
   getGitBranchHead,
+  getGitRepositoryContext,
   getGitCommonDirectory,
   startTaskBranchIntegration,
   completeTaskIntegrationCommit,
@@ -186,7 +188,8 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
     (input.settings.finalTaskStatus !== null && (typeof input.settings.finalTaskStatus !== 'string' || !input.settings.finalTaskStatus || input.settings.finalTaskStatus.length > 128))
   )
     throw deliveryError('Skill 或任务状态无效。', undefined, 400);
-  if (input.scope.kind === 'conversation' && input.settings.finalTaskStatus !== null) throw deliveryError('普通会话不能变更任务状态。', undefined, 400);
+  if (input.settings.archiveConversation !== undefined && typeof input.settings.archiveConversation !== 'boolean') throw deliveryError('会话归档设置无效。', undefined, 400);
+  if (input.settings.archiveConversation && (input.scope.kind !== 'conversation' || input.settings.finalTaskStatus)) throw deliveryError('归档会话与任务状态变更不能同时执行。', undefined, 400);
   if (typeof input.message !== 'string' || input.message.length > 100_000 || !['merge', 'squash'].includes(input.mode)) throw deliveryError('提交说明或合入方式无效。', undefined, 400);
   if (!Array.isArray(input.repositories) || input.repositories.length === 0 || input.repositories.length > 200) throw deliveryError('请选择交付仓库。', undefined, 400);
   /** 重复仓库不能造成相同步骤运行两次。 */
@@ -203,6 +206,7 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
     )
       throw deliveryError('仓库分支快照无效。', undefined, 400);
     if (input.settings.merge && !repository.mergeBranch) throw deliveryError('请选择要合入的分支。', undefined, 400);
+    if (input.settings.merge && repository.mergeBranch === repository.expectedBranch) throw deliveryError('当前分支与来源分支相同，没有可执行的合入。', undefined, 400);
     if (
       !Array.isArray(repository.paths) ||
       repository.paths.length > 100_000 ||
@@ -227,6 +231,7 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
       permissionMode: input.settings.permissionMode,
       skillId: input.settings.skillId,
       finalTaskStatus: input.settings.finalTaskStatus,
+      ...(input.settings.archiveConversation !== undefined ? { archiveConversation: input.settings.archiveConversation } : {}),
     },
     ...(input.postPushCommands !== undefined ? { postPushCommands: commandSelections.map(({ commandId, expectedRevision }) => ({ commandId, expectedRevision })) } : {}),
     message: input.message,
@@ -287,9 +292,10 @@ export class GitDeliveryExecution {
     /** 复用现有 HTTP 幂等事务实现接纳和手动继续。 */
     const mutations = new AutomationMutationApplication(db);
     /** 所有入口都保持真实项目归属。 */
-    const requireRun = (projectId: string, id: string) => {
+    const requireRun = (projectId: string, id: string, forWrite = false) => {
       const run = this.repository.get(id);
       if (!run || run.projectId !== projectId) throw deliveryError('交付记录不存在。', 'ZEUS_GIT_DELIVERY_NOT_FOUND', 404);
+      if (forWrite) this.assertMergeDirection(run);
       return run;
     };
     /** 共享错误映射，不把接纳失败显示为后台运行。 */
@@ -323,11 +329,14 @@ export class GitDeliveryExecution {
         for (const selection of input.repositories) names[selection.repositoryId] = (await this.resolve(request.params.projectId, input, selection)).name;
         await this.assertDirectoryCoverage(input);
         for (const selection of input.postPushCommands ?? []) names[selection.commandId] = this.requirePostPushCommand(request.params.projectId, selection).title;
-        const task = input.scope.kind === 'task' ? this.options.tasks.getById(input.scope.taskId) : null;
+        const taskId = input.scope.kind === 'task' ? input.scope.taskId : this.options.conversations.getRecordById(input.scope.conversationId)?.taskId;
+        const task = taskId ? this.options.tasks.getById(taskId) : null;
+        if (input.settings.finalTaskStatus && (!task || task.projectId !== request.params.projectId)) throw deliveryError('当前会话未关联本项目任务，不能变更任务状态。', undefined, 400);
+        if (input.settings.archiveConversation && taskId) throw deliveryError('关联任务的会话应使用任务状态收尾。', undefined, 400);
         if (input.settings.finalTaskStatus && !this.options.statusOptions(request.params.projectId).some((status) => status.id === input.settings.finalTaskStatus)) throw deliveryError('所选任务状态已不存在，请重新设置。');
         const result = mutations.execute({ method: 'POST', url: request.url, body: input, key }, () => ({
           statusCode: 202,
-          body: this.repository.view(this.repository.create(stableId, request.params.projectId, input, names, task?.managementStatus ?? null)),
+          body: this.repository.view(this.repository.create(stableId, request.params.projectId, input, names, task?.managementStatus ?? null, taskId)),
         }));
         const run = result.body as GitDeliveryRun;
         this.authorized.add(run.id);
@@ -340,7 +349,7 @@ export class GitDeliveryExecution {
     server.post<{ Params: { projectId: string; runId: string }; Body: { confirmWorktreeCleanup?: boolean } }>('/api/projects/:projectId/git-delivery-runs/:runId/resume', async (request, reply) => {
       try {
         this.assertWritable();
-        const run = requireRun(request.params.projectId, request.params.runId);
+        const run = requireRun(request.params.projectId, request.params.runId, true);
         if (this.active.has(run.id)) return reply.code(202).send(this.repository.view(run));
         const result = mutations.execute({ method: 'POST', url: request.url, body: request.body, key: request.headers['idempotency-key'] }, () => {
           for (const step of run.steps) {
@@ -360,7 +369,7 @@ export class GitDeliveryExecution {
                 state: 'pending',
                 attempt: step.attempt + 1,
                 message: null,
-                result: { ...step.result, phases, ...(step.action === 'task_status' && step.result?.cleanupConfirmation && request.body?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) },
+                result: { ...step.result, phases, ...(step.result?.cleanupConfirmation && request.body?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) },
               });
             }
           }
@@ -404,7 +413,7 @@ export class GitDeliveryExecution {
       async (request, reply) => {
         try {
           this.assertWritable();
-          const run = requireRun(request.params.projectId, request.params.runId);
+          const run = requireRun(request.params.projectId, request.params.runId, true);
           const step = run.steps.find((item) => item.id === request.params.stepId);
           const merge = step?.result?.merge as GitDeliveryMergeResult | undefined;
           const taskIntegration = step?.integrationId ? this.options.taskIntegrations.getById(step.integrationId) : undefined;
@@ -430,7 +439,7 @@ export class GitDeliveryExecution {
       async (request, reply) => {
         try {
           this.assertWritable();
-          const run = requireRun(request.params.projectId, request.params.runId);
+          const run = requireRun(request.params.projectId, request.params.runId, true);
           const step = run.steps.find((item) => item.id === request.params.stepId);
           if (!step || step.action !== 'merge' || step.state !== 'attention' || this.active.has(run.id) || step.conversationId) throw deliveryError('请打开已有冲突会话，或等待当前操作完成。');
           if (!['auto', 'full-access'].includes(request.body.permissionMode) || typeof request.body.path !== 'string' || typeof request.body.content !== 'string' || typeof request.body.fingerprint !== 'string')
@@ -520,8 +529,26 @@ export class GitDeliveryExecution {
     this.active.set(id, work);
   }
 
+  /** 旧会话交付曾把来源合入当前分支；保留其回执与隔离目录，禁止反向结果继续进入推送或收尾。 */
+  private assertMergeDirection(run: GitDeliveryRunRecord): void {
+    if (run.scope.kind !== 'conversation' || !run.input.settings.merge) return;
+    for (const selection of run.input.repositories) {
+      /** 优先使用完整候选；崩溃恢复可能暂时只有已接纳的 Git 回执。 */
+      const step = run.steps.find((candidate) => candidate.repositoryId === selection.repositoryId && candidate.action === 'merge');
+      const merge = step?.result?.merge as GitDeliveryMergeResult | undefined;
+      const started = (step?.result?.phases as Record<string, Record<string, unknown>> | undefined)?.merge;
+      if (!merge && !started && step?.state !== 'succeeded') continue;
+      if ((merge?.sourceBranch ?? started?.taskBranch) !== selection.expectedBranch || (merge?.targetBranch ?? started?.targetBranch) !== selection.mergeBranch)
+        throw deliveryError(
+          `${step?.repositoryName ?? selection.repositoryId} 的旧交付结果不是“${selection.expectedBranch} → ${selection.mergeBranch}”。原结果已保留，请重新发起交付，不能继续复用这次运行。`,
+          'ZEUS_GIT_DELIVERY_MERGE_DIRECTION_CHANGED',
+        );
+    }
+  }
+
   /** 每仓依次推进，失败仓库不阻塞其他仓库。 */
   private async advance(run: GitDeliveryRunRecord): Promise<void> {
+    this.assertMergeDirection(run);
     this.repository.updateState(run.id, 'running');
     await Promise.all(
       run.input.repositories.map(async (selection) => {
@@ -567,22 +594,23 @@ export class GitDeliveryExecution {
       await this.advancePostPushCommands(current);
       current = this.repository.get(run.id)!;
     }
-    if (!this.stopped && current.steps.filter((step) => step.action !== 'task_status').every((step) => step.state === 'succeeded')) {
-      const status = current.steps.find((step) => step.action === 'task_status');
+    if (!this.stopped && current.steps.filter((step) => step.action !== 'task_status' && step.action !== 'conversation_archive').every((step) => step.state === 'succeeded')) {
+      const status = current.steps.find((step) => step.action === 'task_status' || step.action === 'conversation_archive');
       if (status && status.state !== 'succeeded' && status.state !== 'attention') {
         try {
-          await this.changeTaskStatus(current, status);
+          if (status.action === 'conversation_archive') await this.archiveConversation(current, status);
+          else await this.changeTaskStatus(current, status);
         } catch (error) {
           const latest = this.step(status);
           const details = (error as { details?: Record<string, unknown> }).details;
           this.repository.updateStep(latest, {
             state: /OUTCOME_UNKNOWN|RESULT_MISSING/u.test(String((error as { code?: string }).code)) ? 'unknown' : 'attention',
-            message: error instanceof Error ? error.message : '任务状态变更失败。',
-            ...(details?.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED'
+            message: error instanceof Error ? error.message : '交付收尾失败。',
+            ...(['ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED', 'ZEUS_CONVERSATION_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED'].includes(String(details?.error))
               ? {
                   result: {
                     ...latest.result,
-                    cleanupConfirmation: { dirtyWorkspaceCount: details.dirtyWorkspaceCount, activeConversationCount: details.activeConversationCount, activeRuntimeSessionCount: details.activeRuntimeSessionCount },
+                    cleanupConfirmation: { dirtyWorkspaceCount: details?.dirtyWorkspaceCount, activeConversationCount: details?.activeConversationCount, activeRuntimeSessionCount: details?.activeRuntimeSessionCount },
                   },
                 }
               : {}),
@@ -743,6 +771,8 @@ export class GitDeliveryExecution {
       if (step.state === 'unknown') return false;
     }
     const phases = (step.result?.phases ?? {}) as Record<string, Record<string, unknown>>;
+    /** 结果核对可能刚恢复旧命令回执，重建候选前再次验证真实合入方向。 */
+    this.assertMergeDirection(this.repository.get(run.id)!);
     if ((step.action === 'commit' && phases.commit) || (step.action === 'push' && phases.push)) {
       this.succeed(step);
       return true;
@@ -758,8 +788,8 @@ export class GitDeliveryExecution {
             ...step.result,
             merge: {
               integrationPath: saved.integrationPath,
-              sourceBranch: selection.mergeBranch,
-              targetBranch: selection.expectedBranch,
+              sourceBranch: selection.expectedBranch,
+              targetBranch: selection.mergeBranch,
               sourceHeadSha: saved.taskHeadSha,
               targetHeadSha: saved.targetHeadSha,
               conflictFiles: saved.conflictFiles,
@@ -801,7 +831,8 @@ export class GitDeliveryExecution {
     const committedResult = committed?.commit;
     const committedHead = (committedResult?.result as { headSha?: string } | undefined)?.headSha ?? committedResult?.headSha;
     const mergedStep = previousSteps.find((item) => item.action === 'merge');
-    const mergedHead = scope.kind === 'task' && mergedStep?.integrationId ? this.options.taskIntegrations.getById(mergedStep.integrationId)?.taskHeadSha : (mergedStep?.result?.merge as GitDeliveryMergeResult | undefined)?.resultHeadSha;
+    /** 合入推进的是来源分支，当前开发分支仍应停留在已交付的输入提交。 */
+    const mergedHead = scope.kind === 'task' && mergedStep?.integrationId ? this.options.taskIntegrations.getById(mergedStep.integrationId)?.taskHeadSha : (mergedStep?.result?.merge as GitDeliveryMergeResult | undefined)?.sourceHeadSha;
     const expectedHead = mergedHead ?? (typeof committedHead === 'string' ? committedHead : selection.expectedHeadSha);
     if (snapshot.headSha !== expectedHead) throw deliveryError('运行范围之外出现了新提交，请重新审阅后运行。');
     if (step.action === 'merge' && (step.integrationId || step.result?.merge)) return this.finishMerge(run, step, selection, context);
@@ -852,21 +883,21 @@ export class GitDeliveryExecution {
           this.repository.updateStep(this.step(step), { integrationId: integration.id });
         }
       } else {
-        const result = await this.external(run, step, 'merge', { source: selection.mergeBranch, target: selection.expectedBranch, head: snapshot.headSha }, () =>
+        const result = await this.external(run, step, 'merge', { source: selection.expectedBranch, target: selection.mergeBranch, head: snapshot.headSha }, () =>
           startTaskBranchIntegration({
-            repositoryPath: context.path,
+            repositoryPath: context.repositoryPath ?? context.path,
             projectSlug: run.projectId,
             integrationId: `${step.id}_${step.attempt}`,
-            targetBranch: selection.expectedBranch,
-            taskBranch: selection.mergeBranch,
+            targetBranch: selection.mergeBranch,
+            taskBranch: selection.expectedBranch,
             mode: 'merge',
-            commitMessage: run.input.message || `Merge ${selection.mergeBranch}`,
+            commitMessage: run.input.message || `Merge ${selection.expectedBranch} into ${selection.mergeBranch}`,
           }),
         );
         const merge: GitDeliveryMergeResult = {
           integrationPath: result.integrationPath as string,
-          sourceBranch: selection.mergeBranch,
-          targetBranch: selection.expectedBranch,
+          sourceBranch: selection.expectedBranch,
+          targetBranch: selection.mergeBranch,
           sourceHeadSha: result.taskHeadSha as string,
           targetHeadSha: result.targetHeadSha as string,
           conflictFiles: result.conflictFiles as string[],
@@ -890,15 +921,22 @@ export class GitDeliveryExecution {
         await this.command(run, step, 'push', `/api/tasks/${scope.taskId}/integrations/${integration.id}/push`, workspaceGitCommandTypes.taskIntegrationPush, 'task_integration', integration.id, {});
       } else {
         if (!snapshot.remotes.length) throw deliveryError('仓库未配置远端。');
-
+        /** 启用合入时只推送已同步的来源分支；未启用合入才推送当前分支。 */
+        const merge = mergedStep?.result?.merge as GitDeliveryMergeResult | undefined;
+        const branch = run.input.settings.merge ? selection.mergeBranch : snapshot.branch;
+        const headSha = await getGitBranchHead(context.repositoryPath ?? context.path, branch);
+        if (run.input.settings.merge && (!merge?.resultHeadSha || merge.targetBranch !== branch || headSha !== merge.resultHeadSha)) throw deliveryError('来源分支尚未完成本次合入或已出现新提交，不能推送。');
+        /** 目标分支的上游独立于当前开发分支，不借用当前分支的远端目标。 */
+        const upstream = run.input.settings.merge ? snapshot.branchUpstreams?.[branch] : snapshot.upstream;
+        const remote = snapshot.remotes.find((name) => upstream?.startsWith(`${name}/`)) ?? snapshot.remotes[0]!;
         const action: ProjectGitAction = {
           type: 'push',
-          remote: snapshot.upstream?.split('/')[0] ?? snapshot.remotes[0]!,
-          sourceBranch: snapshot.branch,
-          targetBranch: snapshot.upstream?.split('/').slice(1).join('/') || snapshot.branch,
-          setUpstream: !snapshot.upstream,
+          remote,
+          sourceBranch: branch,
+          targetBranch: upstream?.startsWith(`${remote}/`) ? upstream.slice(remote.length + 1) : branch,
+          setUpstream: !upstream,
         };
-        this.repository.updateStep(this.step(step), { result: { ...this.step(step).result, pushProof: { remote: action.remote, branch: action.targetBranch, headSha: snapshot.headSha } } });
+        this.repository.updateStep(this.step(step), { result: { ...this.step(step).result, pushProof: { remote: action.remote, branch: action.targetBranch, headSha } } });
         await this.external(run, step, 'push', action, () => executeProjectGitAction(context.path, action, this.shutdown.signal));
       }
       this.succeed(this.step(step));
@@ -992,13 +1030,17 @@ export class GitDeliveryExecution {
       return true;
     }
     const merge = step.result?.merge as GitDeliveryMergeResult;
-    const target = await getProjectGitRepositorySnapshot(context.path);
+    /** 接收合入的来源分支可以在另一 worktree 检出，也可以没有检出目录。 */
+    const repositoryPath = context.repositoryPath ?? context.path;
+    const repository = await getGitRepositoryContext(repositoryPath);
+    /** 空仓库的来源分支尚无引用，首次交付仍可由原 Git 同步流程创建它。 */
+    const targetHead = !merge.targetHeadSha && !repository.detached && repository.branch === merge.targetBranch && !repository.headSha ? '' : await getGitBranchHead(repositoryPath, merge.targetBranch, repository);
     const finalizedBefore = (step.result?.phases as Record<string, Record<string, unknown>> | undefined)?.finalize;
-    if (finalizedBefore?.localSyncStatus === 'synced' && target.branch === merge.targetBranch && target.headSha === merge.resultHeadSha) {
+    if (finalizedBefore?.localSyncStatus === 'synced' && targetHead === merge.resultHeadSha) {
       this.succeed(step);
       return true;
     }
-    if ((await getGitBranchHead(context.path, merge.sourceBranch)) !== merge.sourceHeadSha) throw deliveryError('合入来源分支已推进，请重新审阅后运行；隔离结果已保留。');
+    if ((await getGitBranchHead(repositoryPath, merge.sourceBranch)) !== merge.sourceHeadSha) throw deliveryError('待交付的当前分支已推进，请重新审阅后运行；隔离结果已保留。');
     const files = await readTaskIntegrationConflictPaths(merge.integrationPath);
     if (files.length) {
       if ((!run.input.settings.resolveConflicts && !ai) || step.conversationId) throw deliveryError('仍有合入冲突，请打开冲突页处理后继续。');
@@ -1032,7 +1074,7 @@ export class GitDeliveryExecution {
       this.repository.updateStep(this.step(step), { state: 'waiting', conversationId, result: { ...this.step(step).result, manualResolution: false } });
       return false;
     }
-    if (target.branch !== merge.targetBranch || target.headSha !== merge.targetHeadSha || !target.clean) throw deliveryError('原目标分支或工作目录已变化，已保留隔离结果，请核对后继续。');
+    if (targetHead !== merge.targetHeadSha) throw deliveryError('接收合入的来源分支已变化，已保留隔离结果，请核对后继续。');
     if (!merge.resultHeadSha) {
       const completed = await this.external(run, step, 'complete', { sourceHeadSha: merge.sourceHeadSha, targetHeadSha: merge.targetHeadSha }, () =>
         completeTaskIntegrationCommit({ integrationPath: merge.integrationPath, mode: 'merge', commitMessage: run.input.message || `Merge ${merge.sourceBranch}` }),
@@ -1041,7 +1083,7 @@ export class GitDeliveryExecution {
       this.repository.updateStep(this.step(step), { result: { ...this.step(step).result, merge } });
     }
     const finalized = await this.external(run, step, 'finalize', { targetBranch: merge.targetBranch, targetHeadSha: merge.targetHeadSha, resultHeadSha: merge.resultHeadSha }, () =>
-      finalizeTaskBranchIntegration({ repositoryPath: context.path, integrationPath: merge.integrationPath, targetBranch: merge.targetBranch, targetHeadSha: merge.targetHeadSha, resultHeadSha: merge.resultHeadSha! }),
+      finalizeTaskBranchIntegration({ repositoryPath, integrationPath: merge.integrationPath, targetBranch: merge.targetBranch, targetHeadSha: merge.targetHeadSha, resultHeadSha: merge.resultHeadSha! }),
     );
     if (finalized.localSyncStatus !== 'synced') throw deliveryError('隔离合入已保留，原工作目录尚未安全同步。');
     this.succeed(this.step(step));
@@ -1094,14 +1136,15 @@ export class GitDeliveryExecution {
 
   /** 管理状态只在全部仓库完成后使用现有业务命令更新。 */
   private async changeTaskStatus(run: GitDeliveryRunRecord, step: GitDeliveryStepRecord): Promise<void> {
-    if (run.scope.kind !== 'task' || !run.input.settings.finalTaskStatus) throw deliveryError('任务状态步骤归属无效。');
+    const taskId = run.scope.kind === 'task' ? run.scope.taskId : this.options.conversations.getRecordById(run.scope.conversationId)?.taskId;
+    if (!taskId || !run.input.settings.finalTaskStatus) throw deliveryError('任务状态步骤归属无效。');
     if (step.state === 'unknown') {
       await this.reconcile(step);
       step = this.step(step);
       if (step.state === 'unknown') return;
     }
-    const task = this.options.tasks.getById(run.scope.taskId);
-    if (!task) throw deliveryError('任务已不存在。');
+    const task = this.options.tasks.getById(taskId);
+    if (!task || task.projectId !== run.projectId) throw deliveryError('任务已不存在或已不属于当前项目。');
     if (task.managementStatus === run.input.settings.finalTaskStatus) {
       this.succeed(step);
       return;
@@ -1120,6 +1163,30 @@ export class GitDeliveryExecution {
       task.id,
       { status: run.input.settings.finalTaskStatus, expectedUpdatedAt: task.updatedAt, ...(step.result?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) },
       'PATCH',
+    );
+    this.succeed(this.step(step));
+  }
+
+  /** 归档复用公共会话命令及 worktree 清理确认，不直接写归档标记。 */
+  private async archiveConversation(run: GitDeliveryRunRecord, step: GitDeliveryStepRecord): Promise<void> {
+    if (run.scope.kind !== 'conversation' || !run.input.settings.archiveConversation) throw deliveryError('归档步骤归属无效。');
+    if (step.state === 'unknown') {
+      await this.reconcile(step);
+      step = this.step(step);
+      if (step.state === 'unknown') return;
+    }
+    const conversation = this.options.conversations.getRecordById(run.scope.conversationId);
+    if (!conversation || conversation.taskId || conversation.projectId !== run.projectId) throw deliveryError('会话归属已变化，不能自动归档。');
+    this.repository.updateStep(step, { state: 'running' });
+    await this.command(
+      run,
+      step,
+      'archive',
+      `/api/projects/${run.projectId}/conversations/${conversation.id}/archive`,
+      conversationCommandTypes.archive,
+      'product_conversation',
+      conversation.id,
+      step.result?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {},
     );
     this.succeed(this.step(step));
   }
@@ -1246,7 +1313,7 @@ export class GitDeliveryExecution {
     }
     const workspace = await resolveConversationGitWorkspace(project, input.scope.conversationId, this.options.conversations, this.options.conversationSubmissions);
     const member = workspace.repositories.find((repository) => repository.id === selection.repositoryId);
-    if (member) return { path: member.localPath, name: member.name };
+    if (member) return { path: member.localPath, repositoryPath: member.repositoryPath, name: member.name };
     if (workspace.workspaceMode !== 'direct') throw deliveryError('不能扩大会话工作树的交付范围。');
     const repositories = await discoverGitRepositories(workspace.localPath);
     const registered = this.options.projectRepositories.getById(selection.repositoryId);

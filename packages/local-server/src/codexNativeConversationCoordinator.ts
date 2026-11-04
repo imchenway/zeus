@@ -907,7 +907,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       contextCapacityTokens: existingConversation ? existingConversation.contextCapacityTokens : (input.contextCapacityTokens ?? null),
       projectId: input.projectId,
       projectLocalPath: resolve(input.projectLocalPath),
-      taskId: null,
+      taskId: input.taskId ?? null,
       ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
       model: input.model,
       modelSourceId: input.modelSourceId ?? null,
@@ -921,15 +921,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       ...(input.writableRoots?.length ? { writableRoots: input.writableRoots.map((root) => resolve(root)) } : {}),
       workMode: input.collaborationMode ?? existingConversation?.collaborationMode ?? 'default',
     };
-    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== null || existingConversation.transportKind !== 'codex_native')) {
+    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || existingConversation.transportKind !== 'codex_native')) {
       throw coordinatorError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', 'Reserved project conversation id is already owned by another resource.');
     }
     const conversation =
       existingConversation ??
-      options.conversations.create({
+      (input.createRecord ?? options.conversations.create.bind(options.conversations))({
         contextCapacityTokens: context.contextCapacityTokens,
         ...(input.conversationId ? { id: input.conversationId } : {}),
         projectId: input.projectId,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
         title,
         summary: [...(input.displayText ?? input.prompt)].slice(0, 240).join('') || input.attachments?.[0]?.name || '',
         status: 'starting',

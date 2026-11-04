@@ -144,6 +144,7 @@ const ownershipGroups = [
     authorityClass: 'mixed',
     tables: [
       'conversations',
+      'conversation_worktree_recovery',
       'conversation_submissions',
       'conversation_turns',
       'conversation_goals',

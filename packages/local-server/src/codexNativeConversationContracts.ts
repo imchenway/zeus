@@ -357,6 +357,10 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  /** 可选关联任务仍使用本次新对话选择的工作目录。 */
+  taskId?: string;
+  /** 应用层在一个事务中创建任务与会话。 */
+  createRecord?: ConversationRepository['create'];
   /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
   conversationContext?: Record<string, unknown>;
   /** 首发与后续消息共用结构化网页批注。 */

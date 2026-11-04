@@ -453,8 +453,9 @@ export interface ProjectGitRepositorySnapshot {
   conflictFiles: string[];
   localBranches: string[];
   checkedOutBranches: string[];
-  /** 仅用于展示的脱敏远端地址与各本地分支的跟踪关系。 */
+  /** 仅用于展示的脱敏远端地址。 */
   remoteDetails?: Array<{ name: string; fetchUrl: string; pushUrl: string }>;
+  /** 各本地分支的真实跟踪关系，用于展示和解析该分支的推送目标。 */
   branchUpstreams?: Record<string, string>;
   /** 每个已设置上游的本地分支，相对其远端跟踪分支的提交差异。 */
   branchDivergences?: Record<string, { ahead: number; behind: number }>;

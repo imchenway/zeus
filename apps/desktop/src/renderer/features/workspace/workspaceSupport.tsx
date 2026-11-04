@@ -611,6 +611,7 @@ export function applyRuntimeEndedEventToConversation(conversation: ConversationH
 }
 
 export const nativeConversationListLifecycleEventTypes = new Set([
+  'conversation.title.changed',
   'conversation.transport.changed',
   'conversation.thread.changed',
   'conversation.turn.started',
@@ -2334,10 +2335,18 @@ export function TaskTableLayoutDecisionDialog(props: { open: boolean; title: str
   return surface;
 }
 
-export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
+export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string; archiveConversation?: boolean } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
   if (!props.confirmation) return null;
   const zh = props.language === 'zh-CN';
-  const title = zh ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？` : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
+  /** 单会话归档不改变整个任务的状态或其他会话。 */
+  const archiving = props.confirmation.archiveConversation === true;
+  const title = archiving
+    ? zh
+      ? '清理工作树并归档会话？'
+      : 'Clean up worktrees and archive this conversation?'
+    : zh
+      ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？`
+      : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
   return (
     <ModalPortal
       rootClassName="task-terminal-cleanup-dialog-portal"
@@ -2354,22 +2363,38 @@ export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: 
           </span>
           <span>
             <strong id="task-terminal-cleanup-dialog-title">{title}</strong>
-            <p id="task-terminal-cleanup-dialog-description">{zh ? '这个任务还有未提交内容或活动会话。继续后，Zeus 会：' : 'This task still has local changes or active sessions. If you continue, Zeus will:'}</p>
+            <p id="task-terminal-cleanup-dialog-description">
+              {archiving
+                ? zh
+                  ? '会话工作树包含未提交内容、合入现场或活动进程。继续后，Zeus 会：'
+                  : 'The conversation worktrees contain local changes, integration work or active processes. If you continue, Zeus will:'
+                : zh
+                  ? '这个任务还有未提交内容或活动会话。继续后，Zeus 会：'
+                  : 'This task still has local changes or active sessions. If you continue, Zeus will:'}
+            </p>
           </span>
         </header>
         <ul id="task-terminal-cleanup-dialog-effects">
-          <li>{zh ? '停止并归档关联会话；消息记录仍可查看。' : 'Stop and archive related sessions; their message history remains available.'}</li>
-          <li>{zh ? '永久删除任务工作目录中的未提交和未跟踪文件。' : 'Permanently delete uncommitted and untracked files from the task workspace.'}</li>
+          <li>
+            {archiving
+              ? zh
+                ? '停止工作树内的进程并归档当前会话；消息记录仍可查看。'
+                : 'Stop processes in these worktrees and archive this conversation; its message history remains available.'
+              : zh
+                ? '停止并归档关联会话；消息记录仍可查看。'
+                : 'Stop and archive related sessions; their message history remains available.'}
+          </li>
+          <li>{zh ? '永久删除待清理工作树中的未提交和未跟踪文件。' : 'Permanently delete uncommitted and untracked files from the worktrees being cleaned up.'}</li>
         </ul>
         <p className="task-terminal-cleanup-dialog-preserved" id="task-terminal-cleanup-dialog-preserved">
-          {zh ? '已提交的代码、任务分支和代码交付记录不会删除。' : 'Committed code, task branches, and delivery records will not be deleted.'}
+          {zh ? '已提交的代码、Git 分支和代码交付记录不会删除。' : 'Committed code, Git branches, and delivery records will not be deleted.'}
         </p>
         <footer>
           <Button variant="secondary" onClick={props.onCancel}>
             {zh ? '先保留现场' : 'Keep workspace'}
           </Button>
           <Button variant="danger" onClick={props.onConfirm}>
-            {zh ? `清理并标记为“${props.confirmation.statusLabel}”` : `Clean up and mark “${props.confirmation.statusLabel}”`}
+            {archiving ? (zh ? '清理并归档' : 'Clean up and archive') : zh ? `清理并标记为“${props.confirmation.statusLabel}”` : `Clean up and mark “${props.confirmation.statusLabel}”`}
           </Button>
         </footer>
       </section>
