@@ -578,6 +578,7 @@ export function normalizeTaskBoardViewSettings(value: unknown, fallback: TaskBoa
 }
 
 export * from './browser.js';
+export * from './browserTranslation.js';
 export * from './commands.js';
 export * from './conversationContext.js';
 export * from './conversationResources.js';

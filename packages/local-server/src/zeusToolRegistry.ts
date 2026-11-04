@@ -5,6 +5,7 @@ import { browserFrozenContractEntry, browserFrozenContractVersion, browserFrozen
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { zeusComputerDynamicTools } from './computerDynamicTools.js';
 import { conversationSourceDynamicTools, type ConversationSourceContextReader } from './conversationSourceContext.js';
+import { browserAutomationDeadline, remainingBrowserAutomationTime } from './browserAutomationFlow.js';
 
 /** 注册、调用分派和 Pi 名称映射共用的原生工具归属集合。 */
 export const zeusNativeToolNamespaces = ['zeus_browser', 'zeus_computer', 'zeus_work', 'zeus_conversation'] as const;
@@ -93,12 +94,16 @@ export function createZeusToolBroker(automation: BrowserAutomationPort | undefin
     await options.audit?.({ phase: 'started', conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: input.callId, namespace: input.namespace, tool: input.tool, surface });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      /** 调度端已有截止时间不会在工具代理内被延长。 */
+      const deadlineUnixMs = input.namespace === 'zeus_browser' ? browserAutomationDeadline(Math.min(input.deadlineUnixMs ?? Infinity, Date.now() + timeoutMs)) : Math.min(input.deadlineUnixMs ?? Infinity, Date.now() + timeoutMs);
+      /** 排队与桥接继续沿用此绝对期限。 */
+      const remainingMs = remainingBrowserAutomationTime(deadlineUnixMs);
       const timeout = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(Object.assign(new Error(`Zeus 原生工具调用超时：${input.namespace}.${input.tool}`), { code: 'ZEUS_NATIVE_TOOL_TIMEOUT' })), timeoutMs);
+        timer = setTimeout(() => reject(Object.assign(new Error(`Zeus 原生工具调用超时：${input.namespace}.${input.tool}。已发出的动作可能已执行，请先观察，不要自动重放。`), { code: 'ZEUS_NATIVE_TOOL_TIMEOUT' })), remainingMs);
         timer.unref();
       });
       /** 宿主共用本次截止时间，外层超时后不得遗留可执行的确认框。 */
-      const boundedInput = { ...input, deadlineUnixMs: Date.now() + timeoutMs };
+      const boundedInput = { ...input, deadlineUnixMs };
       const operation = input.namespace === 'zeus_conversation' ? options.sources!.invoke(boundedInput) : input.namespace === 'zeus_work' ? options.work!.invoke(boundedInput) : automation!.invoke(boundedInput);
       const result = await Promise.race([operation, timeout]);
       await options.audit?.({

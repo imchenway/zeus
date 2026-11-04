@@ -65,6 +65,10 @@ export interface ZeusSelectProps<T extends string> {
   /** 列表之外的独立操作区域，例如筛选结果的显示开关。 */
   footer?: ReactNode;
   size: 'compact' | 'regular' | 'roomy';
+  /** 临时入口挂载后直接展示选项。 */
+  defaultOpen?: boolean;
+  /** 通知临时入口浮层已关闭。 */
+  onOpenChange?: (open: boolean) => void;
 }
 
 interface ZeusSelectPopoverLayout {
@@ -274,6 +278,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
     if (restoreFocus) focusElement(triggerRef.current ?? undefined);
+    props.onOpenChange?.(false);
   };
 
   const openListbox = (nextActiveValue = props.value) => {
@@ -287,9 +292,15 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     popoverContentWidthRef.current = 0;
     setPopoverLayout(null);
     setOpen(true);
+    props.onOpenChange?.(true);
     // 长列表优先聚焦搜索；任务工具栏这类短列表直接聚焦选项，避免顶部搜索灰区抢占视觉。
     focusElement(searchable ? (searchRef.current ?? undefined) : (optionRefs.current.get(resolvedActiveValue) ?? undefined));
   };
+
+  /** 等触发器挂载后再打开，浮层直接进入所属应用容器。 */
+  useEffect(() => {
+    if (props.defaultOpen) openListbox();
+  }, []);
 
   const selectOption = (value: T) => {
     props.onChange(value);

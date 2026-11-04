@@ -4,6 +4,8 @@ import { installIconTooltips } from './iconTooltip.js';
 import { installMarkdownListInput } from './markdownListInput.js';
 import { selectionCommentIcons } from './selectionCommentIcons.js';
 import selectionCommentStyles from '../renderer/session/selectionComment.css?inline';
+import { createBrowserPageTranslation, translationSourceElement, sourceText, isTranslationNode } from './browserTranslation.js';
+import type { BrowserTranslationSegment } from '@zeus/shared';
 
 function invokeBrowserPageCommand(commandType: string, body: unknown): Promise<unknown> {
   const commandId = globalThis.crypto.randomUUID();
@@ -98,6 +100,19 @@ let markerLayer: HTMLDivElement | null = null;
 let editorPin: HTMLDivElement | null = null;
 let editor: HTMLDivElement | null = null;
 let speechRecognition: SpeechRecognitionLike | null = null;
+
+/** 翻译走隔离预加载与 Main；网页不获得模型调用接口。 */
+const pageTranslation = createBrowserPageTranslation({
+  translate: async (runId, segments) => {
+    /** 业务错误不带 Electron IPC 前缀，工具栏直接显示可操作的原因。 */
+    const result = (await ipcRenderer.invoke('zeus:browser-page:translate', { runId, segments })) as { segments?: BrowserTranslationSegment[]; error?: string };
+    if (!result.segments) throw new Error(result.error || '翻译失败，请重试。');
+    return result.segments;
+  },
+  report: (runId, state, message) => ipcRenderer.send('zeus:browser-page:translation-state', { runId, state, message }),
+  onLayout: () => render(),
+});
+window.addEventListener('pagehide', () => pageTranslation.stop(), { once: true });
 
 function install(): void {
   if (document.getElementById(overlayRootId)) return;
@@ -465,8 +480,8 @@ function elementAnchor(element: Element): PageAnchor {
   const role = element.getAttribute('role') || implicitRole(element);
   const explicitAccessibleName = element.getAttribute('aria-label') || element.getAttribute('alt') || element.getAttribute('title') || '';
   const inputValue = element instanceof HTMLInputElement ? element.value : '';
-  const semanticText = element instanceof HTMLElement ? firstVisibleTextNode(element)?.data : element.textContent;
-  const accessibleName = explicitAccessibleName || (role === 'button' || role === 'link' || role === 'heading' ? normalizedText(inputValue || semanticText || element.textContent, 1_000) : '');
+  const semanticText = element instanceof HTMLElement ? firstVisibleTextNode(element)?.data : sourceText(element);
+  const accessibleName = explicitAccessibleName || (role === 'button' || role === 'link' || role === 'heading' ? normalizedText(inputValue || semanticText || sourceText(element), 1_000) : '');
   return baseAnchor('element', rect, {
     selector: selectorFor(element),
     elementPath: elementPath(element),
@@ -474,16 +489,18 @@ function elementAnchor(element: Element): PageAnchor {
     role,
     accessibleName,
     tagName: element.tagName,
-    immediateText: normalizedText(element.textContent, 2_000),
-    nearbyText: normalizedText(element.parentElement?.textContent, 2_000),
+    immediateText: normalizedText(sourceText(element), 2_000),
+    nearbyText: normalizedText(sourceText(element.parentElement), 2_000),
     fixed: style.position === 'fixed' || style.position === 'sticky',
   });
 }
 
 function regionAnchor(rect: Rect): PageAnchor {
-  const element = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  /** 译文浮层所在区域使用原文元素保存定位。 */
+  const element = target ? translationSourceElement(target) : null;
   return baseAnchor('region', rect, {
-    ...(element ? { selector: selectorFor(element), elementPath: elementPath(element), nearbyText: normalizedText(element.parentElement?.textContent, 2_000) } : {}),
+    ...(element ? { selector: selectorFor(element), elementPath: elementPath(element), nearbyText: normalizedText(sourceText(element.parentElement), 2_000) } : {}),
   });
 }
 
@@ -493,8 +510,10 @@ function textAnchor(selection: Selection): PageAnchor {
   const rect = unionRects(rects);
   const startElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
   const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer.parentElement;
+  // 译文字数与原文偏移不同，保存原文元素锚点，避免恢复原文后留下失效的文本范围。
+  if (startElement && (isTranslationNode(range.startContainer) || isTranslationNode(range.endContainer))) return elementAnchor(translationSourceElement(startElement));
   return baseAnchor('text', rect, {
-    ...(startElement ? { selector: selectorFor(startElement), elementPath: elementPath(startElement), nearbyText: normalizedText(startElement.parentElement?.textContent, 2_000) } : {}),
+    ...(startElement ? { selector: selectorFor(startElement), elementPath: elementPath(startElement), nearbyText: normalizedText(sourceText(startElement.parentElement), 2_000) } : {}),
     immediateText: normalizedText(selection.toString(), 20_000),
     textRange: {
       text: selection.toString(),
@@ -732,7 +751,8 @@ function isOverlayEvent(event: Event): boolean {
 }
 
 function annotationTargetFromEvent(event: Event): Element | null {
-  const raw = event.composedPath().find((candidate): candidate is Element => candidate instanceof Element && !isOverlayNode(candidate));
+  const target = event.composedPath().find((candidate): candidate is Element => candidate instanceof Element && !isOverlayNode(candidate));
+  const raw = target ? translationSourceElement(target) : null;
   if (!raw) return null;
   return raw.closest('button,a[href],input,textarea,select,summary,[role],[contenteditable="true"]') ?? raw;
 }
@@ -798,7 +818,7 @@ function firstVisibleTextNode(element: HTMLElement): Text | null {
       const parent = node.parentElement;
       /** 样式只用于判断可见性。 */
       const style = parent ? getComputedStyle(parent) : null;
-      if (parent && !parent.closest('script,style,noscript,[aria-hidden="true"]') && style?.display !== 'none' && style?.visibility !== 'hidden') return node;
+      if (parent && !isTranslationNode(node) && !parent.closest('script,style,noscript,[aria-hidden="true"]') && style?.display !== 'none' && style?.visibility !== 'hidden') return node;
     }
     node = walker.nextNode();
   }
@@ -808,13 +828,21 @@ function firstVisibleTextNode(element: HTMLElement): Text | null {
 function commonSelectionElement(selection: Selection): HTMLElement | null {
   if (!selection.rangeCount) return null;
   const container = selection.getRangeAt(0).commonAncestorContainer;
-  return container instanceof HTMLElement ? container : container.parentElement;
+  /** 选择译文时，编辑器和保存锚点都跟随原文。 */
+  const element = container instanceof HTMLElement ? container : container.parentElement;
+  /** 上游把每个译文容器映射回对应的原文宿主。 */
+  const source = element ? translationSourceElement(element) : null;
+  return source instanceof HTMLElement ? source : null;
 }
 
 ipcRenderer.on('zeus-browser-page:command', (_event, message: unknown) => {
   if (!message || typeof message !== 'object') return;
-  const command = message as { type?: unknown; enabled?: unknown; comments?: unknown; annotationMode?: unknown; commentId?: unknown };
-  if (command.type === 'set_annotation_mode') {
+  const command = message as { type?: unknown; enabled?: unknown; comments?: unknown; annotationMode?: unknown; commentId?: unknown; runId?: unknown; serviceId?: unknown };
+  if (command.type === 'start_translation' && typeof command.runId === 'string' && typeof command.serviceId === 'string') {
+    pageTranslation.start(command.runId, command.serviceId);
+  } else if (command.type === 'stop_translation') {
+    pageTranslation.stop();
+  } else if (command.type === 'set_annotation_mode') {
     state.enabled = command.enabled === true;
     if (!state.enabled) {
       hide(hoverOutline);

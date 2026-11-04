@@ -9,6 +9,8 @@ electronLanguages:
   - zh_TW
 directories:
   output: ../../dist
+# 相应源码和许可证由两端共用的打包入口随应用提供。
+beforePack: ../../scripts/stage-corresponding-source.mjs
 files:
   - dist/**
   - assets/**

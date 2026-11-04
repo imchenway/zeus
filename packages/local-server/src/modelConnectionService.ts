@@ -95,7 +95,7 @@ export interface ModelConnectionService {
   probeModels(id: string): Promise<ModelCapabilityProbeSummary>;
   diagnose(id: string): Promise<ModelConnectionDiagnostic>;
   /** 生成入口只解析选中连接，设置入口省略参数时读取完整目录。 */
-  listSelectableModels(selectedModelRef?: string): Promise<SelectableConnectionModel[]>;
+  listSelectableModels(selectedModelRef?: string, purpose?: 'agent' | 'text'): Promise<SelectableConnectionModel[]>;
   /** 可选模型身份限制凭据读取，普通运行调用仍读取原有连接集合。 */
   loadRuntimeConnections(selectedModelRef?: string): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
 }
@@ -405,8 +405,8 @@ export function createModelConnectionService(options: {
         };
       }
     },
-    async listSelectableModels(selectedModelRef) {
-      return listSelectableConnectionModels(await hydrate(connectionsForModel(selectedModelRef)));
+    async listSelectableModels(selectedModelRef, purpose) {
+      return listSelectableConnectionModels(await hydrate(connectionsForModel(selectedModelRef)), purpose);
     },
     async loadRuntimeConnections(selectedModelRef) {
       /** 只为选中模型读取实际密钥，不访问其他连接的凭据。 */

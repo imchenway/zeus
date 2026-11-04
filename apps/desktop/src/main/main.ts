@@ -67,6 +67,7 @@ import {
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
+import { createBrowserTranslationClient } from './browserTranslationClient.js';
 import { computerBackgroundLaunchSwitch, type ComputerHost, computerTargetDisplaySwitch, createComputerHost } from './computerHost.js';
 import { createNativeAutomationHost } from './nativeAutomationHost.js';
 import { createExternalBrowserHost, type ExternalBrowserHost } from './externalBrowserHost.js';
@@ -4068,6 +4069,10 @@ async function initializeApplication(): Promise<void> {
       productionEdgeExtensionId: process.env.ZEUS_EDGE_EXTENSION_ID,
     });
     browserHost = createBrowserHost({
+      translation: createBrowserTranslationClient(async () => {
+        if (!localServerRuntime) throw new Error('翻译服务尚未就绪。');
+        return localServerRuntime.refreshConfig();
+      }),
       language: () => appShellSettings.appLanguage,
       statePath: dataLayout.browserState,
       preloadPath: join(desktopRoot(), 'dist/preload/browser-page.cjs'),

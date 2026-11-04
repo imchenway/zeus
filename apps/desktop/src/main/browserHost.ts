@@ -4,7 +4,8 @@ import { publishFile } from '@zeus/storage/platform-security';
 import { readFileSync } from 'node:fs';
 import { mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { serializeBrowserComments } from '@zeus/shared';
+import { defaultBrowserTranslationService, isFreeBrowserTranslationService, serializeBrowserComments, validBrowserTranslationSegments } from '@zeus/shared';
+import type { createBrowserTranslationClient } from './browserTranslationClient.js';
 import type {
   ZeusBrowserApprovalDecision,
   ZeusBrowserApprovalRequest,
@@ -47,6 +48,10 @@ interface LiveBrowserTab {
   ownerWindowId?: number;
   refs: Map<string, string>;
   documentGeneration: number;
+  /** 当前文档的翻译身份与取消范围，关闭标签后不再请求外部服务。 */
+  translation?: { id: string; serviceId: string; controller: AbortController; busy: boolean };
+  /** 页面 preload 未启动时不能把未被接收的翻译指令显示为持续处理中。 */
+  pagePreloadFailed?: boolean;
   /** 区分本页首次查找与上一处／下一处，换页后重新开始。 */
   findText?: string;
   consoleLogs: Array<{ level: number; message: string; line: number; sourceId: string; createdAt: string }>;
@@ -133,6 +138,8 @@ interface ManagedBrowserAuditEntry {
 }
 
 interface CreateBrowserHostOptions {
+  /** 免费服务和已配置模型都通过本机 Core 请求，不把凭据交给网页。 */
+  translation?: ReturnType<typeof createBrowserTranslationClient>;
   /** 内置浏览器的授权和登录窗口跟随应用语言。 */
   language?: () => 'zh-CN' | 'en-US';
   statePath: string;
@@ -236,6 +243,8 @@ export class BrowserHost implements BrowserAutomationPort {
   private readonly managementTabGroups = new Map<string, ManagedBrowserTabGroup>();
   private readonly managementAudit: ManagedBrowserAuditEntry[] = [];
   private cdpSequence = 0;
+  /** 本次宿主运行内不复用快照引用，避免旧 e 编号意外命中新页面元素。 */
+  private elementRefSequence = 0;
   private settings: ZeusBrowserSettings;
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined;
   private persistenceChain: Promise<void> = Promise.resolve();
@@ -321,6 +330,8 @@ export class BrowserHost implements BrowserAutomationPort {
           { label: english ? 'Stop loading' : '停止加载', enabled: tab.snapshot.loading, click: () => resolveSelection('stop') },
           { type: 'separator' },
           { label: english ? 'Find on page…' : '在页面中查找…', click: () => resolveSelection('find') },
+          { label: tab.snapshot.translation ? (english ? 'Restore original' : '恢复原文') : english ? 'Translate to Chinese' : '中英对照', click: () => resolveSelection(tab.snapshot.translation ? 'restore_original' : 'translate') },
+          { label: english ? 'Translation service…' : '翻译服务…', click: () => resolveSelection('translation_services') },
           { label: english ? 'Copy page link' : '复制页面链接', enabled: tab.snapshot.url !== 'about:blank', click: () => resolveSelection('copy_url') },
           { label: english ? 'Open in default browser' : '在默认浏览器中打开', enabled: Boolean(normalizeExternalWebUrl(tab.snapshot.url)), click: () => resolveSelection('open_external') },
           {
@@ -339,6 +350,14 @@ export class BrowserHost implements BrowserAutomationPort {
         ]);
         menu.popup({ window, x: Math.min(bounds.width, Math.max(0, Math.round(finiteNumber(value.x, 0)))), y: Math.min(bounds.height, Math.max(0, Math.round(finiteNumber(value.y, 0)))), callback: () => resolveSelection(null) });
       });
+    });
+    /** 服务目录仅对当前会话和标签开放。 */
+    ipcMain.handle('zeus:browser:translation-services', async (event, input: unknown) => {
+      const window = this.requireRendererWindow(event);
+      const value = asRecord(input);
+      const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
+      if (value.source !== 'codex' && value.source !== 'custom') throw new TypeError('翻译模型类型无效。');
+      return this.loadTranslationServices(window, tab, value.source);
     });
     ipcMain.handle('zeus:browser:open-tab', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);
@@ -497,6 +516,36 @@ export class BrowserHost implements BrowserAutomationPort {
         await command.markWriteStarted();
         return this.options.retiredNativeRuntimeCleanup.restoreLatest();
       });
+    });
+    ipcMain.handle('zeus:browser-page:translate', async (event, input: unknown) => {
+      /** 仅当前顶层文档的隔离预加载可以请求已开启的翻译。 */
+      const tab = this.requirePageTab(event);
+      const value = asRecord(input);
+      const run = tab.translation;
+      this.assertWritableBrowserCapability();
+      if (event.senderFrame !== event.sender.mainFrame || !run || value.runId !== run.id || run.controller.signal.aborted || run.busy || !this.options.translation || !validBrowserTranslationSegments(value.segments))
+        throw new Error('当前页面翻译请求已失效。');
+      run.busy = true;
+      try {
+        return { segments: await this.options.translation.translate(run.serviceId, value.segments, run.controller.signal) };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : this.text('翻译失败，请重试。', 'Translation failed. Retry.') };
+      } finally {
+        run.busy = false;
+      }
+    });
+    ipcMain.on('zeus:browser-page:translation-state', (event, input: unknown) => {
+      /** 迟到的文档状态不能影响新页面或另一标签。 */
+      const tab = this.tabFromWebContents(event.sender);
+      const value = asRecord(input);
+      if (!tab?.translation || event.senderFrame !== event.sender.mainFrame || value.runId !== tab.translation.id || !['working', 'ready', 'error'].includes(String(value.state)) || !tab.snapshot.translation) return;
+      tab.snapshot = {
+        ...tab.snapshot,
+        translation: { state: value.state as 'working' | 'ready' | 'error', serviceLabel: tab.snapshot.translation.serviceLabel, ...(typeof value.message === 'string' ? { message: value.message.slice(0, 500) } : {}) },
+      };
+      this.emitSnapshot(tab.snapshot.conversationId);
+      if (value.state === 'error')
+        this.emit({ type: 'error', conversationId: tab.snapshot.conversationId, tabId: tab.snapshot.id, message: tab.snapshot.translation!.message || this.text('翻译失败，请重试。', 'Translation failed. Retry.') });
     });
     ipcMain.handle('zeus:browser-page:get-state', (event) => {
       const tab = this.requirePageTab(event);
@@ -667,6 +716,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     this.pendingApprovals.clear();
     for (const tab of this.tabs.values()) {
+      this.stopTranslation(tab);
       if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     }
     if (!this.options.readOnlyValidation) await this.persist();
@@ -854,6 +904,7 @@ export class BrowserHost implements BrowserAutomationPort {
     const tab = this.requireConversationTab(conversationId, tabId);
     /** 只有被关闭网页持有焦点时才把焦点交给下一网页。 */
     const focusedBounds = this.visibleTabByWindow.get(window.id) === tabId && this.isVisibleTabFocused(window) ? tab.view!.getBounds() : null;
+    this.stopTranslation(tab);
     if (this.visibleTabByWindow.get(window.id) === tabId) this.detachTab(tabId);
     if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tabs.delete(tabId);
@@ -956,6 +1007,8 @@ export class BrowserHost implements BrowserAutomationPort {
     view.webContents.on('did-start-loading', update);
     view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       if (!isMainFrame || isInPlace) return;
+      this.stopTranslation(tab);
+      tab.pagePreloadFailed = false;
       tab.findText = undefined;
       tab.documentGeneration += 1;
       tab.refs.clear();
@@ -963,8 +1016,22 @@ export class BrowserHost implements BrowserAutomationPort {
     });
     view.webContents.on('did-stop-loading', update);
     view.webContents.on('did-navigate', update);
-    view.webContents.on('did-navigate-in-page', update);
+    view.webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      // 路由变化停止翻译；同页锚点滚动保留已开启的阅读状态。
+      if (isMainFrame && url.split('#')[0] !== tab.snapshot.url.split('#')[0]) this.stopTranslation(tab);
+      update();
+    });
     view.webContents.on('page-title-updated', update);
+    view.webContents.on('preload-error', (_event, preloadPath, error) => {
+      tab.pagePreloadFailed = true;
+      tab.consoleLogs.push({ level: 3, message: String(error.message).slice(0, 20_000), line: 0, sourceId: preloadPath, createdAt: this.now() });
+      if (tab.consoleLogs.length > 500) tab.consoleLogs.splice(0, tab.consoleLogs.length - 500);
+      if (tab.translation && tab.snapshot.translation) {
+        tab.translation.controller.abort();
+        tab.snapshot = { ...tab.snapshot, translation: { ...tab.snapshot.translation, state: 'error', message: this.text('页面功能加载失败，请重新加载网页。', 'Page features failed to load. Reload the page.') } };
+        this.emitSnapshot(tab.snapshot.conversationId);
+      }
+    });
     view.webContents.on('console-message', (_event, level, message, line, sourceId) => {
       tab.consoleLogs.push({ level, message: String(message).slice(0, 20_000), line, sourceId: String(sourceId).slice(0, 4_000), createdAt: this.now() });
       if (tab.consoleLogs.length > 500) tab.consoleLogs.splice(0, tab.consoleLogs.length - 500);
@@ -982,6 +1049,7 @@ export class BrowserHost implements BrowserAutomationPort {
       update();
     });
     view.webContents.on('render-process-gone', () => {
+      this.stopTranslation(tab);
       this.activeJsDialogs.delete(tab.snapshot.id);
       tab.snapshot = { ...tab.snapshot, crashed: true, loading: false, updatedAt: this.now() };
       this.emitSnapshot(tab.snapshot.conversationId);
@@ -1038,6 +1106,29 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'stop_find':
         view.webContents.stopFindInPage('clearSelection');
         tab.findText = undefined;
+        break;
+      case 'translate':
+        await this.startTranslation(tab);
+        break;
+      case 'translation_google':
+      case 'translation_microsoft':
+        await this.selectTranslationService(tab, command.action === 'translation_google' ? 'free:google' : 'free:microsoft');
+        break;
+      case 'translation_service': {
+        if (typeof command.serviceId !== 'string' || !command.serviceId || command.serviceId.length > 2000) throw new TypeError('翻译服务身份无效。');
+        /** 重新核对模型目录，不接受已删除或未启用的模型身份。 */
+        if (!isFreeBrowserTranslationService(command.serviceId)) {
+          if (!this.options.translation) throw new Error(this.text('翻译服务不可用。', 'Translation is unavailable.'));
+          const generation = tab.documentGeneration;
+          const models = await this.options.translation.models(AbortSignal.timeout(30_000), command.serviceId);
+          if (generation !== tab.documentGeneration || !tab.view || tab.view.webContents.isDestroyed()) return;
+          if (!models.items.some((item) => item.id === command.serviceId)) throw new Error(this.text('翻译模型不可用，请重新选择。', 'The translation model is unavailable. Choose another model.'));
+        }
+        await this.selectTranslationService(tab, command.serviceId);
+        break;
+      }
+      case 'restore_original':
+        this.stopTranslation(tab);
         break;
       case 'copy_url':
         clipboard.writeText(tab.snapshot.url);
@@ -1100,6 +1191,83 @@ export class BrowserHost implements BrowserAutomationPort {
       default:
         throw new TypeError('不支持的浏览器操作。');
     }
+  }
+
+  /** 选择服务先保存设置；当前是已加载网页时立即用新服务重新翻译。 */
+  private async selectTranslationService(tab: LiveBrowserTab, serviceId: string): Promise<void> {
+    this.assertWritableBrowserCapability();
+    this.settings = { ...this.settings, translationServiceId: serviceId };
+    this.schedulePersist();
+    if (!tab.snapshot.loading && /^(https?:|file:)/u.test(tab.snapshot.url)) await this.startTranslation(tab);
+  }
+
+  /** 打开服务选择时读取当前目录，页面关闭或导航后取消读取。 */
+  private async loadTranslationServices(window: BrowserWindow, tab: LiveBrowserTab, source: 'codex' | 'custom') {
+    this.assertWritableBrowserCapability();
+    if (!this.options.translation || !tab.view) throw new Error(this.text('翻译服务不可用。', 'Translation is unavailable.'));
+    const contents = tab.view.webContents;
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    contents.once('did-start-navigation', cancel);
+    contents.once('destroyed', cancel);
+    window.once('closed', cancel);
+    try {
+      const models = await this.options.translation.models(AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]), undefined, source);
+      controller.signal.throwIfAborted();
+      return { ...models, selectedId: this.settings.translationServiceId ?? defaultBrowserTranslationService };
+    } finally {
+      contents.off('did-start-navigation', cancel);
+      contents.off('destroyed', cancel);
+      window.off('closed', cancel);
+    }
+  }
+
+  /** 开启当前选择的服务；默认免费服务不读取模型目录或要求模型登录。 */
+  private async startTranslation(tab: LiveBrowserTab): Promise<void> {
+    this.assertWritableBrowserCapability();
+    if (!this.options.translation) throw new Error(this.text('翻译服务不可用。', 'Translation is unavailable.'));
+    if (tab.snapshot.loading || !/^(https?:|file:)/u.test(tab.snapshot.url)) throw new Error(this.text('请在网页加载完成后开启中英对照。', 'Open a webpage and wait for it to load.'));
+    if (tab.pagePreloadFailed) throw new Error(this.text('页面功能加载失败，请重新加载网页。', 'Page features failed to load. Reload the page.'));
+    this.stopTranslation(tab);
+    /** 未设置过服务的新用户直接使用免费翻译。 */
+    const serviceId = this.settings.translationServiceId ?? defaultBrowserTranslationService;
+    /** 换页或关闭立即取消服务准备和当前请求。 */
+    const run = { id: randomUUID(), serviceId, controller: new AbortController(), busy: false };
+    tab.translation = run;
+    tab.snapshot = { ...tab.snapshot, translation: { state: 'working', serviceLabel: '' } };
+    this.emitSnapshot(tab.snapshot.conversationId);
+    try {
+      /** 免费服务名称固定；AI 服务从当前目录获取显示名称。 */
+      let label: string;
+      if (isFreeBrowserTranslationService(serviceId)) {
+        label = serviceId === 'free:microsoft' ? this.text('微软翻译 · 免费', 'Microsoft · Free') : this.text('Google 翻译 · 免费', 'Google · Free');
+      } else {
+        /** 只核对已选模型，不初始化无关供应商。 */
+        const models = await this.options.translation.models(AbortSignal.any([run.controller.signal, AbortSignal.timeout(30_000)]), serviceId);
+        /** 用户删除或禁用的模型不能自动替换为其他模型。 */
+        const selected = models.items.find((entry) => entry.id === serviceId);
+        if (!selected) throw new Error(this.text('翻译模型不可用，请在翻译服务菜单中重新选择。', 'The translation model is unavailable. Choose another translation service.'));
+        label = selected.label;
+      }
+      if (run.controller.signal.aborted || tab.translation !== run) return;
+      tab.snapshot = { ...tab.snapshot, translation: { state: 'working', serviceLabel: label } };
+      tab.view!.webContents.send('zeus-browser-page:command', { type: 'start_translation', runId: run.id, serviceId });
+      this.emitSnapshot(tab.snapshot.conversationId);
+    } catch (error) {
+      if (tab.translation !== run) return;
+      this.stopTranslation(tab);
+      throw error;
+    }
+  }
+
+  /** 停止服务请求并清除译文；不改变原始 DOM 和已有批注。 */
+  private stopTranslation(tab: LiveBrowserTab): void {
+    if (!tab.translation && !tab.snapshot.translation) return;
+    tab.translation?.controller.abort();
+    tab.translation = undefined;
+    tab.snapshot = { ...tab.snapshot, translation: undefined };
+    if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.send('zeus-browser-page:command', { type: 'stop_translation' });
+    this.emitSnapshot(tab.snapshot.conversationId);
   }
 
   private async savePageComment(tab: LiveBrowserTab, input: BrowserPageCommentInput): Promise<ZeusBrowserComment> {
@@ -1382,22 +1550,39 @@ export class BrowserHost implements BrowserAutomationPort {
     return toolJson({ action, url: webContents.getURL() });
   }
 
+  /** 将页面观察绑定到真实标签和文档代次，引用只对最新一次成功观察有效。 */
   private async pageSnapshot(tab: LiveBrowserTab, maxElements: number): Promise<Record<string, unknown>> {
+    /** 读取期间发生导航时，旧文档的结果不能写回当前引用集合。 */
+    const documentGeneration = tab.documentGeneration;
+    /** 本次页面结果仍是不可信数据，后续操作继续走宿主的检查入口。 */
     const result = (await this.ensureView(tab).webContents.executeJavaScript(`(${pageSnapshotScript})(${JSON.stringify(maxElements)})`, true)) as {
       title: string;
       url: string;
       text: string;
       elements: Array<{ ref: string; selector: string; [key: string]: unknown }>;
     };
+    if (tab.documentGeneration !== documentGeneration || !this.tabs.has(tab.snapshot.id)) {
+      throw Object.assign(new Error('页面在观察期间已切换或关闭，请重新读取快照。'), { code: 'ZEUS_BROWSER_SNAPSHOT_CHANGED' });
+    }
     tab.refs.clear();
     for (const element of result.elements ?? []) {
-      if (typeof element.ref === 'string' && typeof element.selector === 'string') tab.refs.set(element.ref, element.selector);
+      if (typeof element.selector === 'string') {
+        element.ref = `e${++this.elementRefSequence}`;
+        tab.refs.set(element.ref, element.selector);
+      }
     }
-    return result;
+    return { ...result, tabId: tab.snapshot.id, documentGeneration };
   }
 
+  /** 引用缺失时明确要求重新观察，不能把过期引用当作 CSS 选择器。 */
   private resolveTarget(tab: LiveBrowserTab, target: string): string {
-    return tab.refs.get(target.replace(/^\[?ref=|\]$/gu, '')) ?? target;
+    /** 模型可使用裸引用或快照引用标记。 */
+    const reference = /^(?:\[?ref=)?(e\d+)\]?$/u.exec(target)?.[1];
+    if (!reference) return target;
+    /** 映射仅来自当前标签最新的成功快照。 */
+    const selector = tab.refs.get(reference);
+    if (!selector) throw Object.assign(new Error(`元素引用 ${reference} 已过期或不属于当前标签，请重新读取快照。`), { code: 'ZEUS_BROWSER_STALE_REFERENCE' });
+    return selector;
   }
 
   private async elementInfo(tab: LiveBrowserTab, selector: string): Promise<BrowserToolElementInfo> {
@@ -3151,6 +3336,7 @@ function normalizeSettings(value: unknown, fallback: ZeusBrowserSettings): ZeusB
   const downloadDirectory = typeof record.downloadDirectory === 'string' && isAbsolute(record.downloadDirectory.trim()) ? resolve(record.downloadDirectory.trim()) : fallback.downloadDirectory;
   return {
     enabled: typeof record.enabled === 'boolean' ? record.enabled : fallback.enabled,
+    translationServiceId: typeof record.translationServiceId === 'string' && record.translationServiceId.length > 0 && record.translationServiceId.length <= 2000 ? record.translationServiceId : fallback.translationServiceId,
     downloadDirectory,
     askWhereToSave: typeof record.askWhereToSave === 'boolean' ? record.askWhereToSave : fallback.askWhereToSave,
     screenshotMode: record.screenshotMode === 'necessary' ? 'necessary' : record.screenshotMode === 'always' ? 'always' : fallback.screenshotMode,
@@ -3743,16 +3929,25 @@ const advancedLocatorOperationScript = async function advancedLocatorOperation(q
   throw new Error(`Unsupported locator operation: ${operation}`);
 }.toString();
 
+/** 读取可见交互元素及有界正文；短选择器必须唯一，避免相同名称命中其他控件。 */
 const pageSnapshotScript = function pageSnapshot(maxElements: number) {
+  /** 优先使用唯一属性；无法唯一定位时才构造结构路径。 */
   const selectorFor = (element: Element): string => {
-    if (element.id) return `#${CSS.escape(element.id)}`;
+    /** 页面中的重复 id 不具备唯一身份。 */
+    const idSelector = element.id ? `#${CSS.escape(element.id)}` : '';
+    if (idSelector && document.querySelectorAll(idSelector).length === 1) return idSelector;
     for (const attribute of ['data-testid', 'data-test', 'name', 'aria-label']) {
+      /** 属性值只用于生成选择器，不执行页面提供的代码。 */
       const value = element.getAttribute(attribute);
-      if (value) return `${element.tagName.toLowerCase()}[${attribute}="${CSS.escape(value)}"]`;
+      if (value) {
+        /** 相同名称常出现在多个表单，只有唯一匹配才可简写。 */
+        const candidate = `${element.tagName.toLowerCase()}[${attribute}="${CSS.escape(value)}"]`;
+        if (document.querySelectorAll(candidate).length === 1) return candidate;
+      }
     }
     const parts: string[] = [];
     let current: Element | null = element;
-    while (current && current !== document.documentElement && parts.length < 8) {
+    while (current && current !== document.documentElement) {
       let part = current.tagName.toLowerCase();
       const siblings = current.parentElement ? [...current.parentElement.children].filter((candidate) => candidate.tagName === current!.tagName) : [];
       if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;

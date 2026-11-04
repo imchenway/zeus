@@ -15,6 +15,8 @@ import {
   browserFrozenContractEntry,
   browserFrozenContractVersion,
   browserFrozenUnsupportedSurfaceKinds,
+  browserAutomationDeadline,
+  remainingBrowserAutomationTime,
   type BrowserAutomationContentItem,
   type BrowserAutomationPort,
   type BrowserAutomationToolCall,
@@ -38,6 +40,8 @@ interface QueuedCommand {
   tool: string;
   arguments: Record<string, unknown>;
   identity: Pick<BrowserAutomationToolCall, 'conversationId' | 'threadId' | 'turnId' | 'callId'>;
+  /** 桌面桥的绝对截止时间；原生消息排队不能延长动作期限。 */
+  deadlineUnixMs?: number;
 }
 
 interface PendingCommand {
@@ -139,6 +143,8 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   }
 
   async invoke(input: BrowserAutomationToolCall): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    input = { ...input, deadlineUnixMs: browserAutomationDeadline(input.deadlineUnixMs) };
+    remainingBrowserAutomationTime(input.deadlineUnixMs!);
     const surface = input.arguments.surface;
     if (surface !== 'chrome' && surface !== 'edge') return textResult('外部浏览器调用必须明确指定 chrome 或 edge surface。', false);
     const runtime = this.surfaces[surface];
@@ -167,6 +173,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       const identity = { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: input.callId };
       return await this.enqueue(surface, {
         id: `browser-${randomUUID()}`,
+        deadlineUnixMs: input.deadlineUnixMs,
         tool: input.tool,
         arguments: argumentsValue,
         identity,
@@ -221,11 +228,13 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   private async performAdvancedClipboard(surface: ExternalSurface, input: BrowserAutomationToolCall, path: string, args: Record<string, unknown>): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
     const validation = await this.enqueue(surface, {
       id: `browser-clipboard-${randomUUID()}`,
+      deadlineUnixMs: input.deadlineUnixMs,
       tool: 'invoke',
       arguments: { ...withoutSurface(input.arguments), arguments: { ...args, __phase: 'validate' } },
       identity: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: `${input.callId}:clipboard-validate` },
     });
     if (!validation.success) return validation;
+    remainingBrowserAutomationTime(input.deadlineUnixMs!);
     if (path === 'TabClipboardAPI.readText') return jsonResult(clipboard.readText());
     if (path === 'TabClipboardAPI.read') {
       const entries = clipboard.availableFormats().map((mimeType) => {
@@ -392,10 +401,21 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       } else if (record.type === 'host_error') {
         runtime.connection = undefined;
       }
-      // 结果处理也会异步落盘，关闭后不能再把迟到响应加入长轮询队列。
+      // 关闭后不能把迟到响应加入长轮询队列。
       if (this.closed || response.destroyed) return;
-      const next = runtime.queue.shift();
-      if (next) return this.respondNative(response, { type: 'command', ...next });
+      /** 已超时或已取消等待的请求不能在扩展重连后重新送出。 */
+      let next = runtime.queue.shift();
+      while (next) {
+        /** 只发送仍有等待者且未到截止时间的命令。 */
+        const pending = this.pending.get(next.id);
+        if (pending && next.deadlineUnixMs! > Date.now()) return this.respondNative(response, { type: 'command', ...next });
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pending.delete(next.id);
+          pending.resolve(textResult('ZEUS_BROWSER_CALL_EXPIRED: 扩展请求已过期，未发送的动作已取消。', false));
+        }
+        next = runtime.queue.shift();
+      }
       runtime.waiters.push(response);
       const timer = setTimeout(() => {
         const index = runtime.waiters.indexOf(response);
@@ -409,13 +429,20 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     }
   }
 
+  /** 原生消息队列保留调用期限，超时删除尚未发送的命令，已发送命令不重放。 */
   private enqueue(surface: ExternalSurface, command: QueuedCommand): Promise<{ contentItems: BrowserAutomationContentItem[]; success: boolean }> {
+    command = { ...command, deadlineUnixMs: browserAutomationDeadline(command.deadlineUnixMs) };
+    /** 队列时间不得超过宿主允许的单次请求上限。 */
+    const timeoutMs = Math.min(requestTimeoutMs, remainingBrowserAutomationTime(command.deadlineUnixMs!));
     const runtime = this.surfaces[surface];
     return new Promise((resolveCommand) => {
       const timer = setTimeout(() => {
         this.pending.delete(command.id);
-        resolveCommand(textResult(`ZEUS_BROWSER_EXTENSION_TIMEOUT: ${surface} 扩展调用超时。`, false));
-      }, requestTimeoutMs);
+        /** 未送出的请求在超时后必须从队列中移除。 */
+        const queuedIndex = runtime.queue.findIndex((queued) => queued.id === command.id);
+        if (queuedIndex >= 0) runtime.queue.splice(queuedIndex, 1);
+        resolveCommand(textResult(`ZEUS_BROWSER_EXTENSION_TIMEOUT: ${surface} 扩展调用超时。${queuedIndex >= 0 ? '尚未发送的动作已取消。' : '动作结果未知，请先观察页面，不要自动重放。'}`, false));
+      }, timeoutMs);
       timer.unref();
       this.pending.set(command.id, { resolve: resolveCommand, timer });
       const waiter = runtime.waiters.shift();
@@ -522,6 +549,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     const requestArguments = asRecord(input.arguments.arguments);
     const validation = await this.enqueue(surface, {
       id: `browser-${randomUUID()}`,
+      deadlineUnixMs: input.deadlineUnixMs,
       tool: 'invoke',
       arguments: { ...withoutSurface(input.arguments), arguments: { ...requestArguments, __phase: 'validate' } },
       identity: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: `${input.callId}:validate` },
@@ -539,6 +567,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     try {
       return await this.enqueue(surface, {
         id: `browser-${randomUUID()}`,
+        deadlineUnixMs: input.deadlineUnixMs,
         tool: 'invoke',
         arguments: { ...withoutSurface(input.arguments), arguments: { ...requestArguments, __phase: 'fill', __secureValues: secure.values, ...(secure.selectedOption ? { __selectedOption: secure.selectedOption } : {}) } },
         identity: { conversationId: input.conversationId, threadId: input.threadId, turnId: input.turnId, callId: `${input.callId}:fill` },

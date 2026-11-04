@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.preload.json",
+  "compilerOptions": {
+    // Chromium WebUI 的模块在浏览器中加载；检查阶段不输出 CommonJS 产物。
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/preload/chromium.ts", "src/preload/chromiumWire.ts", "src/preload/chromiumWebUi.d.ts"]
+}

@@ -1,5 +1,6 @@
 import { readPublicPricingPage } from './pricingPageReader.js';
 import type { BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
+import { createBrowserAutomationFlow, remainingBrowserAutomationTime } from '@zeus/local-server';
 
 interface NativeAutomationHostOptions {
   browser: BrowserAutomationPort;
@@ -17,6 +18,22 @@ interface NativeAutomationHostOptions {
 
 /** Electron Main 的单一自动化端口；执行宿主只持有短期桥租约，不拥有任何 UI 或系统权限。 */
 export function createNativeAutomationHost(options: NativeAutomationHostOptions): BrowserAutomationPort {
+  /** 模型供应商共用同一执行顺序；运行层替换时继续复用会话隔离和操作后观察。 */
+  const invokeBrowser = createBrowserAutomationFlow(async (input) => {
+    await options.beforeNetwork?.();
+    /** 网络准备消耗原调用预算，不能在准备完成后执行过期动作。 */
+    const deadlineUnixMs = input.deadlineUnixMs!;
+    remainingBrowserAutomationTime(deadlineUnixMs);
+    /** 显式选择外部浏览器时保持该目标，不回退到内置浏览器。 */
+    const surface = input.arguments.surface ?? 'built_in';
+    if (surface === 'chrome' || surface === 'edge') {
+      await options.beforeExternalBrowser?.();
+      remainingBrowserAutomationTime(deadlineUnixMs);
+      if (options.externalBrowser) return options.externalBrowser.invoke({ ...input, namespace: 'zeus_browser' });
+      return { contentItems: [{ type: 'inputText', text: `Zeus ${surface} 扩展宿主当前不可用。` }], success: false };
+    }
+    return options.browser.invoke({ ...input, namespace: 'zeus_browser' });
+  });
   return {
     ensureWechatApplication: options.ensureWechatApplication,
     ensureCodexRemoteControl: options.ensureCodexRemoteControl,
@@ -31,14 +48,7 @@ export function createNativeAutomationHost(options: NativeAutomationHostOptions)
       if (input.namespace && input.namespace !== 'zeus_browser') {
         return Promise.resolve({ contentItems: [{ type: 'inputText', text: `Zeus 原生自动化命名空间不存在：${input.namespace}` }], success: false });
       }
-      await options.beforeNetwork?.();
-      const surface = typeof input.arguments.surface === 'string' ? input.arguments.surface : 'built_in';
-      if (surface === 'chrome' || surface === 'edge') {
-        await options.beforeExternalBrowser?.();
-        if (options.externalBrowser) return options.externalBrowser.invoke({ ...input, namespace: 'zeus_browser' });
-        return Promise.resolve({ contentItems: [{ type: 'inputText', text: `Zeus ${surface} 扩展宿主当前不可用。` }], success: false });
-      }
-      return options.browser.invoke({ ...input, namespace: 'zeus_browser' });
+      return invokeBrowser({ ...input, namespace: 'zeus_browser' });
     },
   };
 }

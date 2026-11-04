@@ -167,7 +167,8 @@ export function useModelSetup(input: {
       /** 错误出口只允许选择已有接入步骤。 */
       const requested = (event as CustomEvent).detail;
       if (requested?.conversationContext) open('choose', requested.conversationContext);
-      else open(requested === 'codex' ? 'codex' : 'choose', currentInputRef.current.taskContext ?? null);
+      else if (requested?.browserStep === 'codex' || requested?.browserStep === 'custom') open(requested.browserStep, null);
+      else open(requested === 'codex' ? 'codex' : requested === 'custom' ? 'custom' : 'choose', currentInputRef.current.taskContext ?? null);
     };
     window.addEventListener(modelSetupRequestedEvent, openFromError);
     return () => {

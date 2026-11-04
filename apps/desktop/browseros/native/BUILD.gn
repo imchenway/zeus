@@ -1,0 +1,44 @@
+# Zeus 可信界面的资源编译沿用 Chromium GRIT。
+import("//tools/grit/grit_rule.gni")
+# 资源路径由同一份 React 产物生成，不在原生层另列文件副本。
+import("resources/zeus_resource_files.gni")
+
+# 将 Zeus 页面资源纳入 Chromium 的资源 ID 分配和最终 pak。
+grit("resources") {
+  # 资源描述由 Zeus 界面构建生成，文件内容经过 SHA-256 清单核对。
+  source = "resources/zeus_resources.grd"
+  # 显式输入使资源变化触发重新编译。
+  inputs = zeus_resource_files
+  # C++ 头与资源包使用同一个 GRIT 编译结果。
+  outputs = [
+    "grit/zeus_resources.h",
+    "zeus_resources.pak",
+  ]
+  # 与 Chrome 资源打包的输入地址保持一致。
+  output_dir = "$root_gen_dir/chrome"
+}
+
+# 两端共用 WebUI 控制器与桌面会话边界，不依赖 Electron 窗口对象。
+source_set("zeus") {
+  # 仅编译真实处理器和当前生成的契约头。
+  sources = [
+    "zeus_desktop_session.cc",
+    "zeus_desktop_session.h",
+    "zeus_ui.cc",
+    "zeus_ui.h",
+    "resources/zeus_csp.h",
+    "resources/zeus_desktop_contract.h",
+    "resources/zeus_resources_map.h",
+  ]
+  # 原生资源必须先于使用资源 ID 的 C++ 编译。
+  deps = [
+    ":resources",
+    "//base",
+    "//chrome/browser/profiles:profile",
+    "//content/public/browser",
+    "//content/public/common",
+    "//services/network/public/mojom",
+    "//ui/base",
+    "//url",
+  ]
+}

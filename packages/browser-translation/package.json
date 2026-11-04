@@ -1,0 +1,19 @@
+{
+  "name": "@zeus/browser-translation",
+  "version": "0.4.4",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "description": "KISS Translator page runtime with Zeus translation and annotation ports",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "dependencies": {
+    "@emotion/css": "11.13.5",
+    "dompurify": "3.4.17",
+    "franc-min": "6.2.0"
+  }
+}
