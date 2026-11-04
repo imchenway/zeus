@@ -44,8 +44,8 @@ export function useQueuedMessageReorder(input: {
 }) {
   /** 服务端要求完整的 queued、paused、failed 成员。 */
   const authoritativeQueue = useMemo(() => reorderableQueuedSubmissions(input.state.queue), [input.state.queue]);
-  /** 本地待接纳消息只展示，不参与排序写入。 */
-  const visibleQueue = useMemo(() => composerQueuedSubmissions(input.state), [input.state.itemOrder, input.state.items, input.state.queue, input.state.snapshot?.providerState]);
+  /** 轮次切换与终态同步更新可见队列；本地待接纳消息不参与排序写入。 */
+  const visibleQueue = useMemo(() => composerQueuedSubmissions(input.state), [input.state.activeTurnId, input.state.itemOrder, input.state.items, input.state.queue, input.state.snapshot?.providerState, input.state.terminalTurnIds]);
   /** 会话切换不能继续使用旧队列的回调。 */
   const scope = JSON.stringify([input.state.projectId, input.state.conversationId]);
   /** 顺序本身不影响成员身份，状态与可见边界变化会使当前批次失效。 */

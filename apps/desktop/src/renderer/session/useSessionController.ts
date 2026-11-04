@@ -2653,8 +2653,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   /** 普通消息与问题回答共用待发队列；只冻结一次内容，内部等待结束后自动接续。 */
   function sendOrDeferEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
-    if (deferredSends.length > 0 || state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed) {
-      /** 连接未就绪时只保存本消息；队列顺序不代表消息状态存在依赖。 */
+    /** 普通连续发送按意图顺序接纳；直接引导不等待普通提交的回执。 */
+    const waitingForAcceptance = envelope.delivery === 'queue' && (deferredSends.length > 0 || sendOperations.size > 0);
+    /** 连接等待与前序接纳等待分开，已连接的排队消息不能显示为正在重连。 */
+    const waitingForConnection = state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed;
+    if (waitingForAcceptance || waitingForConnection) {
       /** 待发副本已交出 Composer，后续回执不能清空新草稿。 */
       const queuedEnvelope = { ...envelope, composerConsumed: true };
       deferredSends = [...deferredSends.filter((candidate) => candidate.clientUserMessageId !== envelope.clientUserMessageId), queuedEnvelope];
@@ -2673,7 +2676,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
         previousConversationState: state.conversationState,
         startedAt: envelope.startedAt ?? new Date().toISOString(),
-        queuedUntilHydrated: true,
+        queuedUntilHydrated: waitingForConnection,
       });
       persistDraft();
       if (state.transportState !== 'ready' || !realtimeSubscribed) {
@@ -2688,8 +2691,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   /** 连接就绪后按保存顺序提交待发消息；单条失败不会终止后续消息。 */
   async function flushDeferredSends(): Promise<void> {
-    if (disposed || state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation) return;
-    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation) {
+    // 接纳完成会继续排空；重连、续发和回执回调不能并行取走后续消息。
+    if (disposed || state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation || sendOperations.size > 0) return;
+    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && sendOperations.size === 0) {
       const envelope = deferredSends[0]!;
       deferredSends = deferredSends.slice(1);
       persistDraft();

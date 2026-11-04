@@ -6,7 +6,6 @@ const emptyItems: NativeSessionState['items'] = Object.freeze({});
 const emptyItemOrder: NativeSessionState['itemOrder'] = Object.freeze([]) as unknown as NativeSessionState['itemOrder'];
 const emptyTurns: NativeSessionState['turnsByProviderId'] = Object.freeze({});
 const emptyChangeSets: NativeSessionState['changeSetsByProviderId'] = Object.freeze({});
-const emptyTerminalTurns: NativeSessionState['terminalTurnIds'] = Object.freeze({});
 const emptyRequests: NativeSessionState['pendingRequests'] = Object.freeze([]) as unknown as NativeSessionState['pendingRequests'];
 const emptyPlanRequests: NativeSessionState['planImplementationRequests'] = Object.freeze([]) as unknown as NativeSessionState['planImplementationRequests'];
 const emptyAttachments: NativeSessionState['attachments'] = Object.freeze([]) as unknown as NativeSessionState['attachments'];
@@ -119,7 +118,7 @@ export function createConversationQueueStateSelector(): StateSelector {
       ...state,
       turnsByProviderId: emptyTurns,
       changeSetsByProviderId: emptyChangeSets,
-      terminalTurnIds: emptyTerminalTurns,
+      // 轮次终态参与排队判定，必须与正文保留同一份权威状态。
       items: previousProjection.items,
       // 排队区只订阅提交状态，不跟随实时摘要。
       currentReasoningItem: null,

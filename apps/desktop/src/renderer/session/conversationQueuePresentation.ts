@@ -115,7 +115,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
     /** 只读取当前稳定条目，不为已经清理的顺序占位生成空卡片。 */
     const item = state.items[key];
     if (!item || !item.optimistic || item.type !== 'userMessage' || item.payload.delivery !== 'queue' || item.payload.queuedForActiveTurn !== true) return [];
-    if (!hasUnfinishedConversationTurn(state)) return [];
+    // 首次提交已冻结等待关系；轮次尚未建立或已结束时，仍由权威提交回执接管，不能提前退回正文。
     if (item.status !== 'pending' && item.status !== 'queued') return [];
     /** 本地客户端身份是等待接纳期间唯一可依赖的去重键。 */
     const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
