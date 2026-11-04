@@ -39,10 +39,14 @@ export function useFilePreviewDraft(identity: string, items: FilePreviewItem[] |
   /** 文件错误与本地暂存错误分别展示，成功暂存不掩盖保存失败。 */
   const [error, setError] = useState<unknown>(null);
   const [storageError, setStorageError] = useState<unknown>(null);
+  /** 只有用户主动切换时才展示冲突草稿；磁盘再次变化后回到工作区版本。 */
+  const [draftViewBase, setDraftViewBase] = useState<string | null>(null);
   /** 磁盘正文只来自当前预览的右侧授权版本。 */
   const base = previewText(items?.[1]);
-  const dirty = Boolean(draft && draft.content !== base);
+  const dirty = Boolean(draft && draft.content !== draft.base && draft.content !== base);
   const conflict = Boolean(dirty && draft?.base !== base);
+  /** 未冲突的编辑继续实时展示，冲突草稿不能覆盖默认 Git 差异。 */
+  const showingDraft = dirty && (!conflict || draftViewBase === base);
   const writable = Boolean(items?.[1]?.canEditInline && window.zeus?.saveFilePreview);
 
   /** 每次输入先保留内存草稿，再持久化；返回此文件时仍需重新核对基线。 */
@@ -51,7 +55,10 @@ export function useFilePreviewDraft(identity: string, items: FilePreviewItem[] |
       latest.current = value;
       setDraft(value);
       if (value) drafts.set(key, value);
-      else drafts.delete(key);
+      else {
+        drafts.delete(key);
+        setDraftViewBase(null);
+      }
       try {
         if (value) localStorage.setItem(key, JSON.stringify(value));
         else localStorage.removeItem(key);
@@ -64,7 +71,7 @@ export function useFilePreviewDraft(identity: string, items: FilePreviewItem[] |
   );
   useEffect(() => {
     /** 已保存或其他入口写入同样内容时清理持久草稿。 */
-    if (items?.[1] && latest.current?.content === base) update(null);
+    if (items?.[1] && latest.current && (latest.current.content === base || latest.current.content === latest.current.base)) update(null);
   }, [items, base, update]);
   useEffect(() => {
     /** 暂存失败时让浏览器关闭保护保留尚在内存中的正文。 */
@@ -102,16 +109,22 @@ export function useFilePreviewDraft(identity: string, items: FilePreviewItem[] |
     }
   }
   return {
-    content: draft?.content ?? base,
+    content: showingDraft ? draft!.content : base,
     base,
     dirty,
     conflict,
+    showingDraft,
     saving,
     writable,
     error: error ?? storageError,
     /** 所有修改只更新草稿，文件写入由显式保存触发。 */
     onChange(content: string) {
+      if (conflict) return;
       update(content === base ? null : { base: latest.current?.base ?? base, content });
+    },
+    /** 保留两份正文，切换只影响展示，不把旧草稿当作当前磁盘内容。 */
+    onToggleDraft() {
+      setDraftViewBase(showingDraft ? null : base);
     },
     onSave: save,
     /** 放弃操作只删除本地草稿，不修改磁盘文件。 */

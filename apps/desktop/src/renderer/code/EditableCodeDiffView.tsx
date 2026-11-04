@@ -207,7 +207,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   /** 逐行归属分别绑定已保存版本，草稿变化行不冒用旧作者。 */
   const leftBlame = useGitBlame({ previewId: preview.items?.[0]?.blame === undefined ? preview.items?.[0]?.id : undefined });
   const rightBlame = useGitBlame({ previewId: preview.items?.[1]?.blame === undefined ? preview.items?.[1]?.id : undefined });
-  const blame = { left: props.blame?.left ?? preview.items?.[0]?.blame ?? leftBlame?.lines, right: editing.dirty ? undefined : (props.blame?.right ?? preview.items?.[1]?.blame ?? rightBlame?.lines) };
+  const blame = { left: props.blame?.left ?? preview.items?.[0]?.blame ?? leftBlame?.lines, right: editing.showingDraft ? undefined : (props.blame?.right ?? preview.items?.[1]?.blame ?? rightBlame?.lines) };
   /** 评论门户登记只随可见节点变化；正文输入不重新创建门户容器。 */
   const portals = useMemo(() => {
     const entries = new Map<HTMLElement, { line: number; side: 'left' | 'right' }>();
@@ -338,7 +338,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     setViews({ left: merge.a, right: merge.b });
     /** 在途或外部 Git 命令锁定恢复按钮，不能绕过共享只读状态。 */
     const blockRevert = (event: MouseEvent) => {
-      if (latest.current.preview.editing?.saving || latest.current.props.revertDisabled) {
+      if (latest.current.preview.editing?.saving || latest.current.preview.editing?.conflict || latest.current.props.revertDisabled) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
@@ -373,7 +373,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           if (type === 'accept') button.style.display = 'none';
           if (type === 'reject')
             button.onclick = (event) => {
-              if (!latest.current.preview.editing?.saving && !latest.current.props.revertDisabled) action(event);
+              if (!latest.current.preview.editing?.saving && !latest.current.preview.editing?.conflict && !latest.current.props.revertDisabled) action(event);
             };
           return button;
         },
@@ -404,7 +404,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         const sourceDoc = source?.state.doc ?? (unified && anchor.side === 'left' ? Text.of(before.split('\n')) : undefined);
         if (!sourceDoc) return [];
         let sourcePos = sourceDoc.line(Math.min(anchor.line, sourceDoc.lines)).to;
-        if (anchor.side === 'right' && editing.dirty) {
+        if (anchor.side === 'right' && editing.showingDraft) {
           // 重新打开已有草稿时先把磁盘评论行映射到当前正文，不把插入行当成旧评论位置。
           const saved = Text.of(editing.base.split('\n'));
           const pos = saved.line(Math.min(anchor.line, saved.lines)).to;
@@ -446,7 +446,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
       });
       view.dispatch({ effects: setComments.of(Decoration.set(decorations, true)) });
     }
-  }, [views, anchors]);
+  }, [views, anchors, editing.showingDraft]);
   useEffect(() => {
     /** 评论正文高度和窗口宽度变化后同步另一栏补白。 */
     const alignComments = () => {
@@ -526,8 +526,31 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         onRefresh={preview.onRefresh}
       />
       <span className="diff-edit-status" role="status">
-        {editing.saving ? (zh ? '正在保存…' : 'Saving…') : editing.dirty ? (zh ? '未保存' : 'Unsaved') : zh ? '可直接编辑' : 'Editable'}
+        {editing.saving
+          ? zh
+            ? '正在保存…'
+            : 'Saving…'
+          : editing.conflict
+            ? editing.showingDraft
+              ? zh
+                ? '保留草稿（只读）'
+                : 'Retained draft (read only)'
+              : zh
+                ? '工作区差异'
+                : 'Working tree diff'
+            : editing.dirty
+              ? zh
+                ? '未保存'
+                : 'Unsaved'
+              : zh
+                ? '可直接编辑'
+                : 'Editable'}
       </span>
+      {editing.conflict ? (
+        <button type="button" aria-pressed={editing.showingDraft} onClick={editing.onToggleDraft}>
+          {editing.showingDraft ? (zh ? '查看工作区' : 'View working tree') : zh ? '查看保留草稿' : 'View retained draft'}
+        </button>
+      ) : null}
       <button type="button" className="diff-edit-save" disabled={!editing.dirty || editing.saving || editing.conflict || props.revertDisabled} onClick={() => void editing.onSave()}>
         {zh ? '保存' : 'Save'}
       </button>
@@ -571,7 +594,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
       ) : null}
       {preview.toolbarTarget ? createPortal(toolbar, preview.toolbarTarget) : toolbar}
       {editing.conflict ? (
-        <p role="alert">{zh ? '文件已被外部修改，草稿已保留。请复制需要保留的内容，放弃草稿并刷新后再编辑。' : 'The file changed outside this view. Your draft is retained. Copy needed changes, discard the draft, then refresh.'}</p>
+        <p role="alert">{zh ? '文件已更新，未保存草稿已保留。可切换查看和复制，放弃草稿后可继续编辑。' : 'The file changed. Your unsaved draft is retained. Switch views to copy it, or discard it to resume editing.'}</p>
       ) : null}
       {editing.error ? <VisibleApplicationError error={editing.error} language={zh ? 'zh-CN' : 'en'} /> : null}
       <div className={`code-diff-view code-diff-editable${single || unified ? ' is-single-side' : ''}${props.renderLineNumber ? ' has-line-actions' : ''}`} aria-label={props.label}>
@@ -601,8 +624,8 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
             content={editing.content}
             savedContent={editing.base}
             language={detectSourceLanguage(props.file.newPath)}
-            readOnly={Boolean(editing.saving || props.revertDisabled)}
-            label={zh ? '当前版本（可编辑）' : 'Current version (editable)'}
+            readOnly={Boolean(editing.saving || editing.conflict || props.revertDisabled)}
+            label={editing.conflict ? (editing.showingDraft ? (zh ? '保留草稿（只读）' : 'Retained draft (read only)') : zh ? '工作区版本（只读）' : 'Working tree (read only)') : zh ? '当前版本（可编辑）' : 'Current version (editable)'}
             extensions={rightExtensions}
             blameLines={blame.right}
             blame={blame.right}
@@ -622,7 +645,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           />
         ) : null}
         {props.resizable && !single && !unified ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".code-diff-editable" /> : null}
-        {[...portals.entries].map(([element, position]) => createPortal(position.side === 'right' && editing.dirty ? position.line : (props.renderLineNumber?.(position.line, position.side) ?? position.line), element))}
+        {[...portals.entries].map(([element, position]) => createPortal(position.side === 'right' && editing.showingDraft ? position.line : (props.renderLineNumber?.(position.line, position.side) ?? position.line), element))}
         {anchors.map((anchor) => createPortal(props.renderLineComments?.(anchor.line, anchor.side), anchor.element, `${anchor.side}:${anchor.line}`))}
       </div>
     </div>

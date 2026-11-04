@@ -180,7 +180,7 @@ export function FileReviewContent(props: {
       {showDiff && props.review?.diff ? (
         <Suspense fallback={null}>
           {props.previewRequest ? (
-            <FilePreview request={props.previewRequest} zh={props.zh} onSaved={props.onSaved}>
+            <FilePreview request={props.previewRequest} revision={JSON.stringify(props.review.diff)} zh={props.zh} onSaved={props.onSaved}>
               <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
             </FilePreview>
           ) : (
@@ -292,8 +292,11 @@ function FilePreviewBody(props: {
       .loadFilePreview({ ...(JSON.parse(props.identity) as FilePreviewRequest), textEncoding: textEncoding || undefined })
       .then((result) => {
         ids = result.map((item) => item.id).filter(Boolean);
-        if (active) setItems(result);
-        else void bridge.releaseFilePreview(ids).catch(() => undefined);
+        if (active) {
+          setItems(result);
+          // 主动刷新同时更新补丁，不能继续用刷新前的片段校验新正文。
+          if (attempt > 0) setReverted(true);
+        } else void bridge.releaseFilePreview(ids).catch(() => undefined);
       })
       .catch((cause: unknown) => {
         if (active) setError(userFacingErrorCause(cause));
@@ -319,7 +322,7 @@ function FilePreviewBody(props: {
   const restoredIds = useRef<string[]>([]);
   /** 异步恢复回执不再更新已关闭的预览。 */
   const active = useRef(true);
-  /** 本页正文已由恢复后的新快照接管。 */
+  /** 保存、恢复或主动刷新后，差异由新读取的两端正文接管。 */
   const [reverted, setReverted] = useState(false);
   useEffect(() => {
     active.current = true;

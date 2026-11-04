@@ -58,10 +58,10 @@ function TaskGitTextDiffTable(props: {
   );
 }
 
-/** 所有任务差异入口通过共享预览选择媒体或原有文字与评论界面。 */
+/** 任务差异共用预览与评论；没有快照修订号时按补丁变化重读正文。 */
 export function TaskGitDiffTable(props: Parameters<typeof TaskGitTextDiffTable>[0]) {
   return props.previewRequest ? (
-    <FilePreview request={props.previewRequest} revision={props.revision} onSaved={props.onSaved} zh={props.zh} fileStatus={props.fileStatus ?? props.diff?.changeType}>
+    <FilePreview request={props.previewRequest} revision={props.revision ?? JSON.stringify(props.diff)} onSaved={props.onSaved} zh={props.zh} fileStatus={props.fileStatus ?? props.diff?.changeType}>
       {props.diff ? <TaskGitTextDiffTable {...props} /> : null}
     </FilePreview>
   ) : (

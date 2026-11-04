@@ -323,12 +323,12 @@ function selectFileDiff(diff: GitDiffSummary, path: string): GitDiffSummary {
   return { ...diff, fileDiffs: diff.fileDiffs.filter((file) => file.newPath === path || file.oldPath === path) };
 }
 
-/** 仓库各入口共用媒体预览，文本保留原来的区块操作。 */
+/** 仓库各入口共用媒体预览；新补丁重读正文，文本保留原来的区块操作。 */
 export function SideBySideDiff(props: SideBySideDiffProps) {
   return props.previewRequest ? (
     <FilePreview
       request={props.previewRequest}
-      revision={props.revision}
+      revision={props.revision ?? props.diff?.diffText}
       onSaved={props.onSaved}
       zh={props.zh}
       fileStatus={props.fileStatus ?? props.diff?.fileDiffs[0]?.changeType}
