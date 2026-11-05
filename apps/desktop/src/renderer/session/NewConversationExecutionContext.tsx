@@ -1,17 +1,16 @@
-import { executeRepositoryBatch, groupRepositoriesByBranch, intersectRepositoryValues, repositoryLocalBranches } from '../git/repositoryBranchGroups.js';
+import { executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from '../git/repositoryBranchGroups.js';
 import { temporaryWorkspaceId, type ConversationWorktreeBranchOptions, type ConversationWorktreeOptions } from '@zeus/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { BranchSwitcher } from '../git/GitRepositoryControls.js';
 import { Button } from '../ui/Button.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-
-const createBranchActionValue = '__zeus create branch__';
 
 export interface NewConversationExecutionContextProps {
   language: SessionUiLanguage;
@@ -34,6 +33,7 @@ export interface NewConversationExecutionContextProps {
   onBusyChange?: (busy: boolean) => void;
 }
 
+/** 新会话的项目、工作位置和分支配置；发送前只执行明确的 Git 动作。 */
 export function NewConversationExecutionContext(props: NewConversationExecutionContextProps) {
   const zh = props.language === 'zh-CN';
   const loadVersionRef = useRef(0);
@@ -60,49 +60,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const selectedRepository = scopedRepositories[0] ?? null;
   /** 非根仓即使只有一个成员，也需要保留项目容器目录。 */
   const projectWorktree = repositories.length > 1 || Boolean(repositories[0] && !['', '.'].includes(repositories[0].relativePath));
-  /** 共享代码交付的同名分组，游离 HEAD 不参与分支分组。 */
-  const scopeChoices = useMemo(() => {
-    /** 同名分组只包含真实分支，避免把游离提交误称为共同分支。 */
-    const groups = groupRepositoriesByBranch(
-      repositories.filter((repository) => !repository.snapshot.detached && repository.snapshot.branch),
-      (repository) => repository.snapshot.branch,
-    );
-    /** 操作范围沿用统一选择器，不增加第二套勾选或弹层。 */
-    const choices = [
-      { value: 'all', label: zh ? `全部仓库（${repositories.length}）` : `All repositories (${repositories.length})`, description: '', group: '', ids: [] as string[] },
-      ...groups
-        .filter((group) => group.repositories.length > 1)
-        .map((group) => ({
-          value: JSON.stringify(group.repositories.map((repository) => repository.id)),
-          label: `${group.branchName} · ${group.repositories.length}`,
-          description: group.repositories.map((repository) => (repository.relativePath === '.' ? repository.name : repository.relativePath)).join('、'),
-          group: zh ? '同名分支' : 'Same branch',
-          ids: group.repositories.map((repository) => repository.id),
-        })),
-      ...repositories.map((repository) => ({
-        value: JSON.stringify([repository.id]),
-        label: repository.relativePath === '.' ? repository.name : repository.relativePath,
-        description: repository.snapshot.detached ? (zh ? '游离 HEAD' : 'Detached HEAD') : repository.snapshot.branch,
-        group: zh ? '仓库' : 'Repositories',
-        ids: [repository.id],
-      })),
-    ];
-    /** 部分成功后原分组可能拆开，仍保留用户已选的准确范围。 */
-    const selectedValue = scopeIds.length ? JSON.stringify(scopeIds) : 'all';
-    if (!choices.some((choice) => choice.value === selectedValue))
-      choices.push({
-        value: selectedValue,
-        label: zh ? `已选仓库（${scopedRepositories.length}）` : `Selected repositories (${scopedRepositories.length})`,
-        description: scopedRepositories.map((repository) => repository.name).join('、'),
-        group: '',
-        ids: scopeIds,
-      });
-    return choices;
-  }, [repositories, scopedRepositories, scopeIds, zh]);
-  /** 选择器值绑定成员身份，而非会随检出改变的分支名。 */
-  const scopeValue = scopeIds.length ? JSON.stringify(scopeIds) : 'all';
-  /** 同名分组内的仓库名称已在菜单中显示，触发器只保留组名。 */
-  const scopeLabel = scopeChoices.find((choice) => choice.value === scopeValue)?.label ?? '';
+  /** 单仓范围由分支菜单中的仓库行选择，空身份集合表示全部仓库。 */
+  const scopeLabel = scopeIds.length ? (selectedRepository?.name ?? '') : zh ? `全部仓库（${repositories.length}）` : `All repositories (${repositories.length})`;
   /** 工作树设置可按当前范围批量修改，其他仓库保持各自配置。 */
   const selections = scopedRepositories.map((repository) =>
     props.worktree && 'repositories' in props.worktree ? props.worktree.repositories.find((entry) => entry.repositoryId === repository.id) : projectWorktree ? undefined : props.worktree,
@@ -167,31 +126,6 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     [props.projects, zh],
   );
 
-  const branchOptions = useMemo(() => {
-    if (!selectedRepository) return [];
-    const unavailableReason = zh ? '已在其他工作目录使用' : 'In use in another working folder';
-    return [
-      ...localBranches.map((branch) => {
-        /** 任一仓库的目标分支被其他工作树使用时，整组目标不可检出。 */
-        const occupied = scopedRepositories.some((repository) => (repository.snapshot.detached || repository.snapshot.branch !== branch) && repository.snapshot.checkedOutBranches?.includes(branch));
-        return {
-          value: branch,
-          label: occupied ? `${branch} · ${unavailableReason}` : branch,
-          group: zh ? '分支' : 'Branches',
-          searchText: `${branch} ${occupied ? unavailableReason : ''}`,
-          disabled: occupied,
-        };
-      }),
-      {
-        value: createBranchActionValue,
-        label: zh ? '创建并检出新分支…' : 'Create and check out a new branch…',
-        group: zh ? '操作' : 'Actions',
-        searchText: zh ? '新建 创建 检出 分支' : 'new create checkout branch',
-        disabled: false,
-      },
-    ];
-  }, [localBranches, selectedRepository, scopedRepositories, zh]);
-
   useEffect(() => {
     const version = ++loadVersionRef.current;
     setWorkbench(null);
@@ -255,10 +189,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   }, [temporary, props.workspaceMode, props.worktree, props.onWorktreeChange, props.taskBranchPrefix, worktreeAvailable, sources, snapshot?.branch, projectWorktree, repositories]);
 
   /** 批量修改只覆盖用户编辑的字段，其余来源和分支名各自保留。 */
-  function updateSelection(value: Partial<ConversationWorktreeBranchOptions>): void {
+  function updateSelection(value: Partial<ConversationWorktreeBranchOptions>, targets = scopedRepositories): void {
     if (!selectedRepository) return;
     if (props.worktree && 'repositories' in props.worktree) {
-      props.onWorktreeChange({ repositories: props.worktree.repositories.map((entry) => (scopedRepositories.some((repository) => repository.id === entry.repositoryId) ? { ...entry, ...value } : entry)) });
+      props.onWorktreeChange({ repositories: props.worktree.repositories.map((entry) => (targets.some((repository) => repository.id === entry.repositoryId) ? { ...entry, ...value } : entry)) });
     } else if (props.worktree) props.onWorktreeChange({ ...props.worktree, ...value });
   }
 
@@ -267,6 +201,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     return () => props.onBusyChange?.(false);
   }, [branchBusy, projectBusy, refreshing, temporary, props.workspaceMode, validWorktree, props.onBusyChange]);
 
+  /** 关闭新建分支窗口后恢复共享分支入口的焦点。 */
   function closeCreateBranchDialog(): void {
     setCreateBranchOpen(false);
     setCreateBranchName('');
@@ -274,12 +209,12 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   }
 
   /** 复用 Git 页的顺序批处理，并立即发布每个仓库返回的真实快照。 */
-  async function executeBranchAction(action: ProjectGitAction): Promise<boolean> {
-    if (!scopedRepositories.length || !props.onExecuteProjectGit || branchBusyRef.current || refreshing || projectBusy || props.disabled) return false;
+  async function executeBranchAction(action: ProjectGitAction, repositoriesToUpdate: ProjectGitRepositoryWorkbenchItem[] = scopedRepositories): Promise<boolean> {
+    if (!repositoriesToUpdate.length || !props.onExecuteProjectGit || branchBusyRef.current || refreshing || projectBusy || props.disabled) return false;
     /** 操作开始时固定项目和仓库范围。 */
     const version = loadVersionRef.current;
     /** 已到目标分支的仓库无需重复检出；本地无 remote 的仓库不参与 fetch。 */
-    const targets = scopedRepositories.filter((repository) =>
+    const targets = repositoriesToUpdate.filter((repository) =>
       action.type === 'checkout' || action.type === 'create_branch' ? repository.snapshot.detached || repository.snapshot.branch !== action.branchName : action.type !== 'fetch' || repository.snapshot.remotes.length > 0,
     );
     branchBusyRef.current = true;
@@ -380,118 +315,103 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
             />
           </span>
         ) : null}
-        {!temporary && projectWorktree ? (
-          <span className="session-new-conversation-context-control">
-            <ZeusSelect
-              ariaLabel={zh ? '分支操作范围' : 'Repositories for branch action'}
-              className="session-new-conversation-context-select"
-              value={scopeValue}
-              triggerLabel={scopeLabel}
-              triggerIcon={<Folder />}
-              options={scopeChoices.map((choice) => ({ ...choice, searchText: choice.description }))}
-              onChange={(value) => setScopeIds(scopeChoices.find((choice) => choice.value === value)?.ids ?? [])}
-              disabled={props.disabled || refreshing || branchBusy || projectBusy}
-              searchable
-              searchPlaceholder={zh ? '搜索分支或仓库' : 'Search branches or repositories'}
-              size="compact"
-              popoverMinWidth={280}
-            />
-          </span>
-        ) : null}
         {temporary ? (
-          <span data-icon-tooltip={selectedProject?.localPath}>{zh ? '文件保存在默认目录' : 'Files saved in the default folder'}</span>
-        ) : props.workspaceMode === 'direct' ? (
-          <span className="session-new-conversation-context-control">
-            <ZeusSelect
-              ariaLabel={zh ? `分支：${branchLabel}` : `Branch: ${branchLabel}`}
-              className="session-new-conversation-context-select"
-              emptyLabel={zh ? '没有匹配的共同本地分支' : 'No matching common local branches'}
-              onChange={(value) => {
-                if (value === createBranchActionValue) {
-                  setCreateBranchOpen(true);
-                  return;
-                }
-                void executeBranchAction({ type: 'checkout', branchName: value });
-              }}
-              options={branchOptions}
-              popoverMinWidth={340}
-              searchable
-              searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
-              size="compact"
-              triggerIcon={loadState === 'loading' ? <span className="session-new-conversation-context-spinner" aria-hidden="true" /> : <GitBranch />}
-              triggerLabel={branchLabel}
-              triggerRef={branchTriggerRef}
-              value={branchLabel}
-              disabled={props.disabled || refreshing || branchBusy || projectBusy || loadState !== 'ready' || !selectedRepository || !props.onExecuteProjectGit}
-            />
+          <span className="session-new-conversation-context-note" data-icon-tooltip={selectedProject?.localPath}>
+            {zh ? '文件保存在默认目录' : 'Files saved in the default folder'}
           </span>
         ) : (
-          <span className="session-new-conversation-context-control">
-            <ZeusSelect
-              ariaLabel={zh ? '来源分支' : 'Source branch'}
-              className="session-new-conversation-context-select"
-              popoverClassName="session-worktree-branch-popover"
-              size="compact"
-              popoverMinWidth={420}
-              popoverArrowAlignment="start"
-              triggerIcon={<GitBranch />}
+          <span className="session-new-conversation-context-control session-new-conversation-context-branch">
+            <BranchSwitcher
+              key={`${props.projectId}:${props.workspaceMode}`}
+              cascadeRepositories
+              zh={zh}
+              repositories={repositories}
+              selectedRepository={selectedRepository}
+              triggerRef={branchTriggerRef}
               triggerLabel={
-                commonSource ? (zh ? `来源分支：${commonSource.sourceRef}` : `Source branch: ${commonSource.sourceRef}`) : selection ? (zh ? '多个来源分支' : 'Multiple source branches') : zh ? '选择来源分支' : 'Choose source branch'
+                props.workspaceMode === 'direct'
+                  ? branchLabel
+                  : commonSource
+                    ? zh
+                      ? `来源分支：${commonSource.sourceRef}`
+                      : `Source branch: ${commonSource.sourceRef}`
+                    : selection
+                      ? zh
+                        ? '多个来源分支'
+                        : 'Multiple source branches'
+                      : zh
+                        ? '选择来源分支'
+                        : 'Choose source branch'
               }
-              triggerTitle={[scopeLabel, commonSource?.sourceRef, props.createTask ? undefined : commonBranchName].filter(Boolean).join(' · ')}
-              value={commonSource ? `${commonSource.sourceKind}:${commonSource.sourceRef}` : ''}
-              options={sources.map((source) => ({
-                value: `${source.kind}:${source.ref}`,
-                label: source.ref,
-                group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? '远程分支' : 'Remote branches',
-              }))}
-              onChange={(value) => {
-                const source = sources.find((entry) => `${entry.kind}:${entry.ref}` === value);
-                if (source && selection) updateSelection({ sourceKind: source.kind, sourceRef: source.ref });
+              disabled={props.disabled || refreshing || branchBusy || projectBusy || loadState !== 'ready' || !selectedRepository || (props.workspaceMode === 'direct' ? !props.onExecuteProjectGit : !selection)}
+              busy={branchBusy ? { repositoryId: selectedRepository?.id ?? '', action: 'checkout' } : null}
+              onSelectRepository={(repositoryId) => setScopeIds([repositoryId])}
+              referenceSelection={{
+                mode: props.workspaceMode === 'direct' ? 'checkout' : 'source',
+                onSelect: async (targets, ref, kind) => {
+                  setScopeIds(targets.length === repositories.length ? [] : targets.map((repository) => repository.id));
+                  if (props.workspaceMode === 'direct') return executeBranchAction({ type: 'checkout', branchName: ref }, targets);
+                  updateSelection({ sourceKind: kind, sourceRef: ref }, targets);
+                  return true;
+                },
               }}
-              searchable
-              searchPlaceholder={zh ? `搜索 ${selectedProject?.name ?? ''} 分支` : `Search ${selectedProject?.name ?? ''} branches`}
-              emptyLabel={zh ? '没有匹配的分支' : 'No matching branches'}
-              disabled={props.disabled || projectBusy || branchBusy || !selection}
+              onExecute={async (repository, action) => ((await executeBranchAction(action, [repository])) ? 'completed' : null)}
+              onOpenNewBranch={
+                props.workspaceMode === 'direct'
+                  ? (_baseRef, repositoryId) => {
+                      setScopeIds(repositoryId ? [repositoryId] : []);
+                      setCreateBranchOpen(true);
+                    }
+                  : undefined
+              }
               footer={
-                <span className="session-new-worktree-fields">
-                  {!props.createTask ? (
-                    <>
-                      <label>
-                        <span>{zh ? '工作树分支名' : 'Worktree branch name'}</span>
-                        <input
-                          aria-label={zh ? '工作树分支名' : 'Worktree branch name'}
-                          value={commonBranchName}
-                          placeholder={selection && !commonBranchName ? (zh ? '多个分支名' : 'Multiple branch names') : `${props.taskBranchPrefix}/conversation-example`}
-                          spellCheck={false}
-                          disabled={props.disabled || projectBusy || branchBusy || !selection}
-                          onChange={(event) => {
-                            if (selection) updateSelection({ branchName: event.currentTarget.value });
-                          }}
-                        />
-                      </label>
-                      <small>
-                        {scopedRepositories.some((repository, index) => !repository.snapshot.headSha && selections[index]?.sourceKind === 'local' && selections[index]?.sourceRef === repository.snapshot.branch)
-                          ? zh
-                            ? `空仓库会把当前项目文件带入工作树；分支名须以 ${branchNamespace} 开头。`
-                            : `The current project files will seed this empty repository worktree. The new name must start with ${branchNamespace}.`
-                          : zh
-                            ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。`
-                            : `Create from the selected branch. The new name must start with ${branchNamespace}.`}
-                      </small>
-                    </>
-                  ) : null}
-                  {selection && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    busy={refreshing}
-                    disabled={props.disabled || projectBusy || branchBusy || !scopedRepositories.some((repository) => repository.snapshot.remotes.length) || !props.onExecuteProjectGit}
-                    onClick={() => void executeBranchAction({ type: 'fetch' })}
-                  >
-                    {zh ? '刷新远程分支' : 'Refresh remote branches'}
-                  </Button>
-                </span>
+                props.workspaceMode === 'worktree' ? (
+                  <span className="session-new-worktree-fields">
+                    {scopeIds.length > 0 ? (
+                      <Button variant="secondary" size="compact" disabled={props.disabled || refreshing || branchBusy || projectBusy} onClick={() => setScopeIds([])}>
+                        {zh ? '配置全部仓库' : 'Configure all repositories'}
+                      </Button>
+                    ) : null}
+                    {!props.createTask ? (
+                      <>
+                        <label>
+                          <span>
+                            {zh ? '工作树分支名' : 'Worktree branch name'} · {scopeLabel}
+                          </span>
+                          <input
+                            aria-label={zh ? '工作树分支名' : 'Worktree branch name'}
+                            value={commonBranchName}
+                            placeholder={selection && !commonBranchName ? (zh ? '多个分支名' : 'Multiple branch names') : `${props.taskBranchPrefix}/conversation-example`}
+                            spellCheck={false}
+                            disabled={props.disabled || projectBusy || branchBusy || !selection}
+                            onChange={(event) => {
+                              if (selection) updateSelection({ branchName: event.currentTarget.value });
+                            }}
+                          />
+                        </label>
+                        <small>
+                          {scopedRepositories.some((repository, index) => !repository.snapshot.headSha && selections[index]?.sourceKind === 'local' && selections[index]?.sourceRef === repository.snapshot.branch)
+                            ? zh
+                              ? `空仓库会把当前项目文件带入工作树；分支名须以 ${branchNamespace} 开头。`
+                              : `The current project files will seed this empty repository worktree. The new name must start with ${branchNamespace}.`
+                            : zh
+                              ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。`
+                              : `Create from the selected branch. The new name must start with ${branchNamespace}.`}
+                        </small>
+                      </>
+                    ) : null}
+                    {selection && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      busy={refreshing}
+                      disabled={props.disabled || projectBusy || branchBusy || !scopedRepositories.some((repository) => repository.snapshot.remotes.length) || !props.onExecuteProjectGit}
+                      onClick={() => void executeBranchAction({ type: 'fetch' })}
+                    >
+                      {zh ? '刷新远程分支' : 'Refresh remote branches'}
+                    </Button>
+                  </span>
+                ) : undefined
               }
             />
           </span>

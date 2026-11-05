@@ -2330,8 +2330,8 @@
 /* ZEUS-0236：新会话执行上下文位于输入正文上方，项目目录显示当前分支，工作树单独配置来源和新分支。 */
 .session-codex-parity-v1 .session-new-conversation-context {
   align-items: center;
-  /* 仓库选择加入工作位置栏后，窄工作面按控件换行。 */
-  flex-wrap: wrap;
+  /* 分支入口优先收缩，任务开关保持同行。 */
+  flex-wrap: nowrap;
   background: color-mix(in srgb, var(--session-line-soft) 58%, transparent);
   border-radius: 13px 13px 0 0;
   display: flex;
@@ -2357,9 +2357,10 @@
   position: relative;
 }
 
-/* 创建任务复用全局开关，窄窗口中随工作位置栏换行。 */
+/* 创建任务复用全局开关，并保留不参与收缩的操作宽度。 */
 .session-codex-parity-v1 .session-new-conversation-create-task {
   align-items: center;
+  flex: 0 0 auto;
   display: inline-flex;
   gap: 8px;
   margin-inline-start: auto;
@@ -3307,16 +3308,6 @@
   min-inline-size: 0;
 }
 
-@media (max-width: 559px) {
-  .session-codex-parity-v1 .session-new-conversation-context {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .session-codex-parity-v1 .session-new-conversation-context-control {
-    inline-size: 100%;
-  }
-}
 
 .session-codex-parity-v1 .session-generated-image-list {
   display: grid;
@@ -12015,14 +12006,55 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-@media (max-width: 559px) {
-  .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select {
-    inline-size: 100%;
+/* 项目与工作位置有独立收缩空间，长分支名不挤走任务开关。 */
+.session-codex-parity-v1 .session-new-conversation-context-control {
+  flex: 0 1 auto;
+  max-inline-size: 25%;
+}
+.session-codex-parity-v1 .session-new-conversation-context-control > .zeus-select,
+.session-codex-parity-v1 .session-new-conversation-context-control > .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger {
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+.session-codex-parity-v1 .session-new-conversation-context-branch {
+  flex: 1 1 0;
+  max-inline-size: none;
+}
+.session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger {
+  background: transparent;
+  border: 0;
+  margin: 0;
+  min-inline-size: 0;
+  min-block-size: 30px;
+  max-inline-size: 100%;
+  flex: 1 1 0;
+  padding: 0 8px;
+}
+.session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger > span {
+  min-inline-size: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+.session-new-conversation-context-note {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@container session-composer (max-width: 560px) {
+  .session-codex-parity-v1 .session-new-conversation-context {
+    padding-inline: 6px;
+    gap: 2px;
   }
-
-  .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger {
-    inline-size: 100%;
+  .session-codex-parity-v1 .session-new-conversation-context-control {
+    max-inline-size: 20%;
+  }
+  .session-codex-parity-v1 .session-new-conversation-context-branch {
     max-inline-size: none;
+  }
+  .session-codex-parity-v1 .session-new-conversation-create-task {
+    gap: 4px;
+    font-size: 11px;
   }
 }
 
@@ -13851,7 +13883,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: var(--zeus-product-accent);
 }
 
-.session-worktree-branch-popover .session-new-worktree-fields {
+.session-worktree-branch-popover .session-new-worktree-fields,
+.project-git-branch-popover .session-new-worktree-fields {
   display: grid;
   gap: 8px;
   padding: 12px 8px 4px;
@@ -13859,7 +13892,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   border-block-start: 1px solid var(--zeus-product-border);
 }
 
-.session-worktree-branch-popover .session-new-worktree-fields > button {
+.session-worktree-branch-popover .session-new-worktree-fields > button,
+.project-git-branch-popover .session-new-worktree-fields > button {
   justify-self: start;
 }
 
