@@ -220,7 +220,7 @@ export function ModelConnectionsSettingsPane(props: {
       templateId: connection.templateId,
       baseUrl: connection.baseUrl,
       modelsPath: connection.modelsPath,
-      pricingUrl: connection.pricingUrl ?? '',
+      pricingUrl: connection.pricingUrl || connection.pricingCatalog?.url || '',
       enabled: connection.enabled,
       models: connection.models.map(cloneModel),
       apiKey: '',
@@ -301,7 +301,7 @@ export function ModelConnectionsSettingsPane(props: {
       await props.client.updateModelConnection(current.id, { ...createSaveInput({ ...current, id: current.id, apiKey: '' }), pricingUrl: draft.pricingUrl?.trim() ?? '' });
       const updated = await props.client.refreshModelConnectionPricing(current.id);
       setConnections((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-      setDraft((value) => (value.id === updated.id ? { ...value, pricingUrl: updated.pricingUrl ?? '' } : value));
+      setDraft((value) => (value.id === updated.id ? { ...value, pricingUrl: updated.pricingUrl || updated.pricingCatalog?.url || '' } : value));
     } catch (error) {
       setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
@@ -320,7 +320,7 @@ export function ModelConnectionsSettingsPane(props: {
       setConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
       setRevealedApiKey(null);
       setApiKeyVisible(false);
-      setDraft({ ...saved, id: saved.id, apiKey: '', models: saved.models.map(cloneModel) });
+      setDraft({ ...saved, id: saved.id, apiKey: '', pricingUrl: saved.pricingUrl || saved.pricingCatalog?.url || '', models: saved.models.map(cloneModel) });
       setSaveState('saved');
       if (props.onComplete) await refreshDefaultModels(saved.id);
     } catch (error) {
@@ -695,11 +695,6 @@ export function ModelConnectionsSettingsPane(props: {
                   {zh ? '上次读取：' : 'Last read: '}
                   {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
                 </small>
-              ) : null}
-              {current?.pricingUrl || current?.pricingCatalog?.url ? (
-                <a href={current.pricingUrl || current.pricingCatalog?.url} target="_blank" rel="noreferrer">
-                  {zh ? '价格来源' : 'Pricing source'}
-                </a>
               ) : null}
             </div>
             {current?.pricingCatalog?.error ? (

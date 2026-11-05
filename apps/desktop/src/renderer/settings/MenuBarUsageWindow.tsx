@@ -1079,13 +1079,6 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
                   {formatModelRate(entry, props.language).map((line) => (
                     <span key={line}>{line}</span>
                   ))}
-                  {entry.sourceUrls?.map((url) => (
-                    <span key={url}>
-                      <a href={url} target="_blank" rel="noreferrer">
-                        {props.language === 'zh-CN' ? '价格来源' : 'Pricing source'}
-                      </a>
-                    </span>
-                  ))}
                   {entry.pricePeriod ? (
                     <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
                       {formatPricePeriod(entry.pricePeriod, props.language)}
