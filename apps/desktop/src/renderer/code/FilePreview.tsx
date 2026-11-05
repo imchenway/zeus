@@ -222,10 +222,11 @@ export function FilePreview(props: {
   /** 序列化的请求避免父组件重渲染触发重复读取。 */
   const identity = JSON.stringify(props.request);
   return (
-    <ReadingStateScope id={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}>
+    <ReadingStateScope id={`${identity}:${JSON.stringify(props.location)}`}>
       <FilePreviewBody
-        key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}
+        key={`${identity}:${JSON.stringify(props.location)}`}
         identity={identity}
+        revision={props.revision}
         location={props.location}
         zh={props.zh}
         actions={props.actions}
@@ -245,6 +246,8 @@ export function FilePreview(props: {
 function FilePreviewBody(props: {
   location?: ConversationFileLocation;
   identity: string;
+  /** 同一文件的外部修订只触发后台读取。 */
+  revision?: string | number;
   zh: boolean;
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
@@ -257,7 +260,7 @@ function FilePreviewBody(props: {
 }) {
   /** 系统标题栏使用当前文件名，嵌入式预览不改主工作区标题。 */
   const ownerDocument = useWindowDocument();
-  /** 资源读取完成前不复用旧文件的内容。 */
+  /** 同一文件后台读取时保留内容，文件身份变化由外层重新挂载。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
@@ -275,14 +278,16 @@ function FilePreviewBody(props: {
   const [unified, setUnified] = useReadingState('unified', false);
   /** 实际差异组件将公共控件挂到同一标题行。 */
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+  /** 读取和保存共享代次，保存回执不能被较早读取覆盖。 */
+  const readRevision = useRef(0);
+  /** 接纳后即登记令牌，关闭发生在 React 提交前也能完整释放。 */
+  const ownedIds = useRef(new Set<string>());
   useEffect(() => {
+    const revision = ++readRevision.current;
     /** 卸载后拒绝迟到结果。 */
     let active = true;
-    /** 本次加载需要撤销的资源令牌。 */
-    let ids: string[] = [];
     /** 当前窗口的受信主进程桥接。 */
     const bridge = window.zeus;
-    setItems(null);
     setError('');
     if (!bridge?.loadFilePreview) {
       setError(props.zh ? '当前环境没有文件预览服务。' : 'File preview service is unavailable.');
@@ -291,21 +296,29 @@ function FilePreviewBody(props: {
     void bridge
       .loadFilePreview({ ...(JSON.parse(props.identity) as FilePreviewRequest), textEncoding: textEncoding || undefined })
       .then((result) => {
-        ids = result.map((item) => item.id).filter(Boolean);
-        if (active) {
+        const ids = result.map((item) => item.id).filter(Boolean);
+        if (active && revision === readRevision.current) {
+          for (const id of ids) ownedIds.current.add(id);
           setItems(result);
-          // 主动刷新同时更新补丁，不能继续用刷新前的片段校验新正文。
-          if (attempt > 0) setReverted(true);
+          // 后台与主动刷新都以新正文重建补丁，避免把不同读取批次拼在一起。
+          setReverted(true);
         } else void bridge.releaseFilePreview(ids).catch(() => undefined);
       })
       .catch((cause: unknown) => {
-        if (active) setError(userFacingErrorCause(cause));
+        if (active && revision === readRevision.current) setError(userFacingErrorCause(cause));
       });
     return () => {
       active = false;
-      if (ids.length) void bridge.releaseFilePreview(ids).catch(() => undefined);
     };
-  }, [props.identity, props.zh, attempt, textEncoding]);
+  }, [props.identity, props.revision, props.zh, attempt, textEncoding]);
+  // 内容替换完成或关闭后再释放上一版令牌，后台读取失败仍保留可用预览。
+  useEffect(() => {
+    const ids = items?.map((item) => item.id).filter(Boolean) ?? [];
+    return () => {
+      for (const id of ids) ownedIds.current.delete(id);
+      if (ids.length) void window.zeus?.releaseFilePreview(ids).catch(() => undefined);
+    };
+  }, [items]);
   /** 文字默认差异；有媒体时优先展示实际内容。 */
   const textOnly = items?.some((item) => item.kind === 'text') && items.every((item) => item.kind === 'text' || item.kind === 'unavailable');
   /** 按文件类型和用户选择确定当前视图。 */
@@ -318,8 +331,6 @@ function FilePreviewBody(props: {
   const editableItem = items?.findLast((item) => item.canEdit);
   /** 完整前后端都存在或明确为空时，才允许宣称左右全文。 */
   const fullAvailable = items?.length === 2 && items.every((item) => item.missing || (item.kind === 'text' && item.content !== undefined && !item.truncated));
-  /** 恢复产生的新令牌由当前预览统一管理，关闭后不遗留授权。 */
-  const restoredIds = useRef<string[]>([]);
   /** 异步恢复回执不再更新已关闭的预览。 */
   const active = useRef(true);
   /** 保存、恢复或主动刷新后，差异由新读取的两端正文接管。 */
@@ -328,8 +339,8 @@ function FilePreviewBody(props: {
     active.current = true;
     return () => {
       active.current = false;
-      if (restoredIds.current.length) void window.zeus?.releaseFilePreview(restoredIds.current).catch(() => undefined);
-      restoredIds.current = [];
+      void window.zeus?.releaseFilePreview([...ownedIds.current]).catch(() => undefined);
+      ownedIds.current.clear();
     };
   }, []);
   /** 保存与恢复回执统一接管授权，关闭后的迟到结果立即释放。 */
@@ -340,9 +351,8 @@ function FilePreviewBody(props: {
         void window.zeus?.releaseFilePreview(ids).catch(() => undefined);
         return;
       }
-      const previous = restoredIds.current;
-      restoredIds.current = ids;
-      if (previous.length) void window.zeus?.releaseFilePreview(previous).catch(() => undefined);
+      ++readRevision.current;
+      for (const id of ids) ownedIds.current.add(id);
       setReverted(true);
       setItems(result);
       void Promise.resolve()
@@ -482,10 +492,10 @@ function FilePreviewBody(props: {
         ) : (
           <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
             {(images ? items : current ? [current] : []).map((item, index) => (
-              <ReadingStateScope key={`${item.id}:${index}:${item.label}`} id={item.label}>
+              <ReadingStateScope key={`${index}:${item.label}`} id={item.label}>
                 <FilePreviewContent
                   onSaved={() => setAttempt((value) => value + 1)}
-                  key={`${item.id}:${index}:${item.label}`}
+                  key={`${index}:${item.label}`}
                   item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
                   request={attachment}
                   zh={props.zh}
@@ -521,6 +531,10 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
   const [dimensions, setDimensions] = useState('');
   /** 记录当前图片解码失败。 */
   const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+    setDimensions('');
+  }, [props.url]);
   return (
     <div className={`file-preview-image${props.compact ? ' file-preview-image-compact' : ''}`}>
       <div className="file-preview-toolbar" role="group" aria-label={props.zh ? '图片缩放' : 'Image zoom'}>
@@ -587,6 +601,8 @@ function FilePreviewContent(props: {
 }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
+  /** 阅读身份不使用每次读取都会更换的授权令牌。 */
+  const readingIdentity = `${JSON.stringify(props.request)}:${item.label}`;
   /** 归属绑定预览版本令牌，不根据显示名称猜测目录。 */
   const blame = useGitBlame({ previewId: item.blame === undefined && !item.blameError ? item.id || undefined : undefined });
   /** 通用文本入口与会话源码使用同一行定位高亮，保留范围终点。 */
@@ -716,14 +732,14 @@ function FilePreviewContent(props: {
           <Suspense fallback={null}>
             {markdown && !source ? (
               <div ref={markdownScroll} className="file-preview-markdown">
-                <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} documentMode />
+                <Markdown text={item.content} streamId={readingIdentity} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} documentMode />
               </div>
             ) : (
               <div className="file-preview-text">
                 {selectionPreviewVisible ? (
                   <CommentableSourceCodePreview
-                    key={item.id}
-                    identity={`${item.id}:${item.label}`}
+                    key={readingIdentity}
+                    identity={readingIdentity}
                     path={props.commentPath ?? item.name}
                     content={item.content}
                     blame={item.blame}

@@ -2978,7 +2978,8 @@ function gitCoreError(code: string, message: string, details?: string): Error & 
 export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
   try {
     const branch = (await execFileAsync('git', ['branch', '--show-current'], { cwd })).stdout.trim() || 'detached';
-    const porcelain = (await execFileAsync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
+    // 后台读取不写回索引缓存，避免目录监听把读取误认为修改并再次刷新交付窗口。
+    const porcelain = (await execFileAsync('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
     const parsedStatus = parseGitPorcelainStatus(porcelain);
     const remoteBranches = splitLines(await readGitStdout(cwd, ['branch', '-r', '--format=%(refname:short)']));
     const recentCommits = parseRecentCommits(await readGitStdout(cwd, ['-c', 'core.quotePath=false', 'log', '-n', '5', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P']));
@@ -3891,7 +3892,8 @@ export async function getGitDiff(cwd: string): Promise<GitDiffSummary> {
     await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
     const names = (await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--name-only'], { cwd })).stdout.trim();
     const stagedNames = (await execFileAsync('git', ['-c', 'core.quotePath=false', 'diff', '--cached', '--name-only'], { cwd })).stdout.trim();
-    const porcelain = (await execFileAsync('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
+    // 差异读取同样禁止状态命令写回索引，避免与共享目录监听形成刷新循环。
+    const porcelain = (await execFileAsync('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { cwd })).stdout;
     const untrackedPaths = parseGitPorcelainStatus(porcelain)
       .fileStatuses.filter((file) => file.indexStatus === '?')
       .map((file) => file.path);

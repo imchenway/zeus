@@ -174,6 +174,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   /** 当前审阅文件的差异内容，与完整交付范围分别保存。 */
   const [fileDiff, setFileDiff] = useState<TaskGitDiffSummary | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  /** 差异结果绑定文件与范围，后台刷新不能清空同一文件或混入另一文件。 */
+  const [fileDiffIdentity, setFileDiffIdentity] = useState('');
   const [message, setMessage] = useState('');
   /** 流式结果只作预览，生成失败、停止或手动编辑时保留已有提交说明。 */
   const [generatedMessage, setGeneratedMessage] = useState<string | null>(null);
@@ -206,6 +208,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const appliedConversationWorkspaceIdRef = useRef<string | null | undefined>(undefined);
 
   const selectedWorkspace = workspaceDetails[workspaceId] ?? null;
+  /** 文件路径相同但工作区或比较范围不同仍属于新的预览。 */
+  const diffIdentity = JSON.stringify([props.task.id, workspaceId, selectedFile, diffScope]);
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
   /** 当前差异标题保留仓库与完整路径，合并工具栏后仍能识别文件来源。 */
   const selectedDiffTitle = selectedWorkspace ? `${repositoryLabel(selectedWorkspace, zh)} / ${selectedFile}` : zh ? '差异对比' : 'Diff';
@@ -421,7 +425,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   useEffect(() => {
     const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map(toWorkingDeliveryFile);
     setSelectedFile((current) => (nextFiles.some((file) => file.path === current) ? current : (nextFiles[0]?.path ?? '')));
-    setFileDiff(null);
   }, [workspaceId, diffScope, committedFiles, workingFiles]);
 
   useEffect(() => {
@@ -433,12 +436,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
     let cancelled = false;
     setDiffLoading(true);
-    setFileDiff(null);
     void props.client
       .loadTaskWorkspaceFileDiff(props.task.id, selectedWorkspace.id, selectedFile, diffScope)
       .then((result) => {
         if (cancelled) return;
         setFileDiff(result.diff);
+        setFileDiffIdentity(diffIdentity);
         setDiffLoading(false);
       })
       .catch((reason: unknown) => {
@@ -1246,8 +1249,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               selectedFile={selectedFile}
               fileStatus={diffScope === 'working' ? workingFiles.find((file) => file.path === selectedFile)?.category : committedFiles.find((file) => file.path === selectedFile)?.status}
               diffTitle={selectedDiffTitle}
-              diffLoading={diffLoading}
-              diff={fileDiff}
+              diffLoading={diffLoading && fileDiffIdentity !== diffIdentity}
+              diff={fileDiffIdentity === diffIdentity ? fileDiff : null}
               revision={snapshotRevision}
               onFileSaved={() => reload(workspaceId)}
               previewRequest={selectedWorkspace ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope } : undefined}

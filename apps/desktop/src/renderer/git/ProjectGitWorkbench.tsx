@@ -220,17 +220,28 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     if (append && historyInFlight.current === historyRequest.current) return;
     const key = `${selectedRepository.id}:${historyRef}`;
     const previous = append && historyPage?.key === key ? historyPage.commits : [];
+    /** 后台刷新重读已展开的范围，不能把多页历史缩回首批。 */
+    const retainedCount = !append && historyPage?.key === key ? historyPage.commits.length : 0;
     const request = ++historyRequest.current;
     historyInFlight.current = request;
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      const page = props.conversationScope
-        ? await props.client.loadConversationGitHistory(props.project.id, selectedRepository.id, previous.length, historyRef || undefined)
-        : await window.zeus!.loadProjectGitHistory!({ projectId: props.project.id, repositoryId: selectedRepository.id, offset: previous.length, ...(historyRef ? { ref: historyRef } : {}) });
-      if (request !== historyRequest.current) return;
-      const commits = [...previous, ...page.commits].filter((commit, index, items) => items.findIndex((item) => item.hash === commit.hash) === index);
-      setHistoryPage({ key, commits, hasMore: page.hasMore });
+      /** 已读页面一次发布，避免每页结果改变列表高度。 */
+      const commits = [...previous];
+      /** 偏移量使用服务端返回条数，不受去重后的长度影响。 */
+      let offset = previous.length;
+      let hasMore = false;
+      do {
+        const page = props.conversationScope
+          ? await props.client.loadConversationGitHistory(props.project.id, selectedRepository.id, offset, historyRef || undefined)
+          : await window.zeus!.loadProjectGitHistory!({ projectId: props.project.id, repositoryId: selectedRepository.id, offset, ...(historyRef ? { ref: historyRef } : {}) });
+        if (request !== historyRequest.current) return;
+        commits.push(...page.commits);
+        offset += page.commits.length;
+        hasMore = page.hasMore && page.commits.length > 0;
+      } while (!append && hasMore && offset < retainedCount);
+      setHistoryPage({ key, commits: commits.filter((commit, index, items) => items.findIndex((item) => item.hash === commit.hash) === index), hasMore });
     } catch (reason) {
       if (request === historyRequest.current) setHistoryError(errorMessage(reason, zh));
     } finally {

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { GitEnvironmentScope, GitEnvironmentSummary } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
-import { subscribeProjectGitRefresh } from './projectGitWorkbenchState.js';
 
 /** 所有交付范围沿用环境摘要的真实目录监听，不自行轮询或接收客户端路径。 */
 export function useGitDeliveryRefresh(options: {
@@ -61,7 +60,7 @@ export function useGitDeliveryRefresh(options: {
         if (active && pending) void drain();
       }
     }
-    /** 本机事件和宿主文件事件进入同一刷新队列。 */
+    /** 宿主目录监听统一覆盖本机和后台写入，避免两个通知源重复读取。 */
     function schedule(): void {
       pending = true;
       void drain();
@@ -90,15 +89,13 @@ export function useGitDeliveryRefresh(options: {
       );
     }
     resume.current = () => void drain();
-    /** 保留同窗口 Git 操作和重新聚焦的既有刷新入口。 */
-    const unsubscribeLocal = subscribeProjectGitRefresh(projectId, schedule);
+    // 可见性恢复会重新订阅并核对摘要；Git 操作仍由调用方主动刷新结果。
     connect();
     document.addEventListener('visibilitychange', connect);
     return () => {
       active = false;
       resume.current = null;
       unsubscribe?.();
-      unsubscribeLocal();
       document.removeEventListener('visibilitychange', connect);
     };
   }, [client, open, projectId, taskId, workspaceId, conversationId]);
