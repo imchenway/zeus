@@ -9,7 +9,7 @@ import {
   type ZeusDatabase,
 } from '@zeus/storage';
 import { lstat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { conversationExecutionWorkspace, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -105,10 +105,23 @@ export async function removeConversationWorktrees(db: ZeusDatabase, plans: Conve
   new ConversationWorktreeRecoveryRepository(db).save(snapshots);
   /** 子仓先于父仓回收，避免父工作树含有仍登记的子仓目录。 */
   const ordered = [...plans].sort((left, right) => right.worktreePath.length - left.worktreePath.length);
+  /** 只豁免本轮已成功回收的子仓，不能用待删除计划跳过文件保护。 */
+  const removedPaths: string[] = [];
   let removed = 0;
   for (const plan of ordered) {
+    /** 子模块删除会使父仓出现 Git 删除状态，路径按系统边界判断后转为 Git 路径。 */
+    const removedChildren = removedPaths
+      .map((path) => relative(plan.worktreePath, path))
+      .filter((path) => path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+      .map((path) => path.split(sep).join('/'));
+    if (!plan.force && removedChildren.length && !(await getGitWorktreeClean(plan.worktreePath, removedChildren))) {
+      throw Object.assign(new Error('工作树仍有未经确认的本地改动，目录已保留。'), { code: 'ZEUS_TASK_WORKSPACE_DIRTY' });
+    }
     beforeExternalWrite?.();
-    if ((await removeTaskWorktreeForTerminalStatus(plan)).removed) removed += 1;
+    if ((await removeTaskWorktreeForTerminalStatus({ ...plan, force: plan.force || removedChildren.length > 0 })).removed) {
+      removedPaths.push(plan.worktreePath);
+      removed += 1;
+    }
   }
   return removed;
 }
