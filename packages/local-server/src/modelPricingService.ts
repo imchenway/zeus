@@ -27,6 +27,8 @@ export function createModelPricingService(options: {
   extract(connection: ModelConnectionRecord, text: string, system: string, signal: AbortSignal): Promise<string>;
   /** 可替换时钟供现有专项探针使用。 */
   now(): string;
+  /** 成功读取目录后补齐同连接的历史缺价。 */
+  onCatalogUpdated?: (connection: ModelConnectionRecord, catalog: ModelPricingCatalog) => Promise<void>;
 }) {
   /** 同一连接的手工与后台读取合并为一次请求。 */
   const active = new Map<string, Promise<ModelPricingCatalog>>();
@@ -129,6 +131,7 @@ export function createModelPricingService(options: {
       if (!controller.signal.aborted && options.connections().some((current) => current.id === connection.id && source(current) === url)) {
         options.settings.setJson(`models.pricing.${connection.id}`, catalog);
         await options.save();
+        if (catalog.retrievedAt) await options.onCatalogUpdated?.(connection, catalog);
       }
       return catalog;
     })().finally(() => active.delete(connection.id));

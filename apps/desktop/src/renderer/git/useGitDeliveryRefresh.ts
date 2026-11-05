@@ -43,7 +43,7 @@ export function useGitDeliveryRefresh(options: {
     let pending = false;
     /** 同一订阅不并发刷新，避免复用变化前的在途快照。 */
     let reading = false;
-    /** 页面隐藏时释放服务端目录监听。 */
+    /** 页面隐藏时释放订阅，服务端按空闲期限回收目录监听。 */
     let unsubscribe: (() => void) | undefined;
     /** 重连后忽略旧连接的迟到事件。 */
     let generation = 0;
@@ -81,6 +81,7 @@ export function useGitDeliveryRefresh(options: {
       unsubscribe = subscribeEvents(
         (event) => {
           if (!active || current !== generation) return;
+          // 缓存预览供环境卡片立即显示；交付窗口只响应重新核对后的摘要。
           if (event.type === 'git.summary.updated' && (event.payload.summary as GitEnvironmentSummary).projectId === projectId) schedule();
           else if (event.type === 'git.summary.error') latest.current.onError(new Error(String(event.payload.message ?? 'Git 状态读取失败。')));
         },

@@ -1901,7 +1901,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
       /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
       const recorded = options.usageLedger.findByProviderTurn(`pi:${run.sourceId}`, run.providerThreadId, run.providerTurnId);
-      if (recorded?.estimate.requests && recorded.estimate.requests.length > run.priceRequests.length) {
+      if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
         run.priceRequests = recorded.estimate.requests;
         run.usage = { ...recorded.usage };
         run.usageComplete = recorded.usageComplete;

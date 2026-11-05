@@ -120,6 +120,8 @@ export function createModelConnectionService(options: {
   now?: () => string;
   fetch?: typeof fetch;
   readPricingPage?: (input: { url: string }) => Promise<string>;
+  /** 共用目录刷新后的补价入口。 */
+  onPricingUpdated?: (connection: ModelConnectionRecord, catalog: import('@zeus/shared').ModelPricingCatalog) => Promise<void>;
 }): ModelConnectionService {
   const now = options.now ?? (() => new Date().toISOString());
   const fetcher = options.fetch ?? fetch;
@@ -138,6 +140,7 @@ export function createModelConnectionService(options: {
     readPricingPage: options.readPricingPage,
     settings: options.settings,
     connections: readStored,
+    onCatalogUpdated: options.onPricingUpdated,
     save: options.save,
     now,
     async extract(connection, text, system, signal) {
@@ -177,12 +180,15 @@ export function createModelConnectionService(options: {
     const timestamp = now();
     const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
     if (input.apiKey !== undefined && !apiKey) throw serviceError('ZEUS_MODEL_API_KEY_INVALID', 'API Key 不能为空。', 400);
-    const record = normalizeModelConnection(input, {
-      id,
-      apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured),
-      createdAt: existing?.createdAt ?? timestamp,
-      updatedAt: timestamp,
-    });
+    const record = normalizeModelConnection(
+      { ...input, pricingUrl: input.pricingUrl === undefined ? existing?.pricingUrl : input.pricingUrl },
+      {
+        id,
+        apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured),
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      },
+    );
     const requiresInsecureHttpConfirmation = record.baseUrl.startsWith('http://') && record.baseUrl !== existing?.baseUrl;
     if (requiresInsecureHttpConfirmation && input.allowInsecureHttp !== true) {
       throw serviceError('ZEUS_MODEL_CONNECTION_INSECURE_HTTP_CONFIRMATION_REQUIRED', 'HTTP 不会加密传输 API Key、请求内容或模型回复，请确认风险后再保存。', 409);

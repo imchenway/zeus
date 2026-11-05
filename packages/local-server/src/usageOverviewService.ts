@@ -1,3 +1,4 @@
+import { codexPricingUrl } from './codexUsagePricing.js';
 import {
   calculateCacheHitRate,
   emptyTokenUsageBreakdown,
@@ -57,12 +58,16 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
   /** 被动读取不刷新官方账户；汇总快捷时间范围与数据库返回的历史边界。 */
   async function read(): Promise<UsageOverviewSnapshot> {
     const official = options.codexUsage.readCachedOfficialUsage();
+    const pricingStatus = options.codexUsage.pricingStatus();
     const readAt = now();
     const connections = options.modelConnections.listMetadata();
     const revision = options.ledger.readRevision();
     /** 请求计时不属于费用账本修订，必须纳入缓存身份才能及时显示新速率。 */
     const outputMeasurements = options.execution.listOutputRateMeasurements();
-    const key = JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, outputMeasurements]);
+    const key =
+      JSON.stringify(connections.map((connection) => options.modelConnections.pricing.read(connection))) +
+      JSON.stringify(pricingStatus) +
+      JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, outputMeasurements]);
     if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const outputRateByTurn = indexOutputRateMeasurements(outputMeasurements);
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
@@ -82,6 +87,14 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           provider.cacheUsageAvailable ||= bounds.hasCache === 1;
           provider.updatedAt = providerId === 'codex' && official.fetchedAt && official.fetchedAt > bounds.lastAt ? official.fetchedAt : bounds.lastAt;
         }
+        const connection = connectionsById.get(providerId.replace(/^api:/u, ''));
+        const source = providerId === 'codex' ? codexPricingUrl : connection ? options.modelConnections.pricing.source(connection) : null;
+        const error = providerId === 'codex' ? pricingStatus.error : connection ? options.modelConnections.pricing.read(connection)?.error : null;
+        for (const range of Object.values(provider.overviewRanges))
+          for (const entry of range.costBreakdown) {
+            if (!entry.sourceUrls?.length && source) entry.sourceUrls = [source];
+            if (!entry.rate || !entry.estimatedCosts.length) entry.missingPriceReason = error ? 'sync_failed' : 'unconfirmed';
+          }
         return provider;
       })
       // 概览只展示当前供应商，移除连接不删除用于历史统计的账本。
@@ -96,6 +109,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
   async function readAnalytics(input: Parameters<UsageOverviewService['readAnalytics']>[0]): Promise<UsageAnalyticsSnapshot> {
     const readAt = now();
     const official = options.codexUsage.readCachedOfficialUsage();
+    const pricingStatus = options.codexUsage.pricingStatus();
     const connections = options.modelConnections.listMetadata();
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
@@ -124,7 +138,9 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         const provider = buildProviderSummary({ providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById });
         const pricingRows = filteredRows.length > 0 ? filteredRows : rows;
         const catalogDates = [...new Set(pricingRows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
-        const sourceUrls = [...new Set(pricingRows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))];
+        const connection = connectionsById.get(providerId.replace(/^api:/u, ''));
+        const configuredSource = isCodex ? codexPricingUrl : connection ? options.modelConnections.pricing.source(connection) : null;
+        const sourceUrls = [...new Set([...(configuredSource ? [configuredSource] : []), ...pricingRows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls)])];
         return {
           provider,
           range: input.range,
@@ -150,10 +166,13 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
             collectionStartedAt: rows[0]?.occurredAt ?? null,
           },
           pricing: {
+            ...(isCodex ? { sync: pricingStatus } : {}),
             catalogDate: catalogDates.at(-1) ?? null,
             sourceUrls,
             note: isCodex
-              ? 'Credits 与 API 等价美元均为估算，不是实际账单；缺价会自动获取官方价格。' + (filteredRows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录按补价时价格估算。' : '')
+              ? (pricingStatus.error ? `价格同步未完整完成：${pricingStatus.error}。` : '') +
+                'Credits 与 API 等价美元均为估算，不是实际账单；缺价会自动获取官方价格。' +
+                (filteredRows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录按补价时价格估算。' : '')
               : '费用为供应商费率估算；未知模型或未返回费率的轮次不会计入估算。',
           },
         };
@@ -331,6 +350,7 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
       /** 同档同价维持原有一行展示。 */
       const existing = groups.get(key);
       if (existing) {
+        existing.sourceUrls = [...new Set([...(existing.sourceUrls ?? []), ...snapshot.sourceUrls])];
         existing.usage = sumBreakdowns([existing.usage, request.usage]);
         existing.estimatedCosts = sumEstimatedCosts([{ costs: existing.estimatedCosts, apiEquivalentUsd: null }, request.estimate]);
         /** 合并行包含无法确定周期的条件时，不用其他条件的日期掩盖未知。 */
@@ -344,6 +364,7 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
           pricePeriod,
           usage: { ...request.usage },
           estimatedCosts: sumEstimatedCosts([request.estimate]),
+          sourceUrls: [...snapshot.sourceUrls],
         });
       }
     }

@@ -19,8 +19,6 @@ import { TranslateIcon as Translate } from '@phosphor-icons/react/dist/csr/Trans
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { modelSetupRequestedEvent, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ZeusSelect } from '../ZeusSelect.js';
-import { presentModelOptions } from '../modelOptionPresentation.js';
 
 /** 浏览器正文保持原生视图，标签栏可挂到会话顶栏。 */
 interface BrowserWorkspaceProps {
@@ -149,25 +147,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [addressFocused, setAddressFocused] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  /** 翻译选择器与发起它的网页绑定，换页后不保留旧选项。 */
-  const [translationPicker, setTranslationPicker] = useState<{
-    tabId: string;
-    url: string;
-    selectedId: string;
-    items: import('@zeus/shared').BrowserTranslationModel[];
-    codexLoginRequired: boolean;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  /** 目录异步失败时只提示仍打开的选择器。 */
-  const translationPickerRef = useRef(translationPicker);
-  translationPickerRef.current = translationPicker;
-  /** 关闭选择器后回到原来的更多操作按钮。 */
-  const moreTriggerRef = useRef<HTMLButtonElement | null>(null);
-  /** 登录弹窗打开时由弹窗接管焦点。 */
-  const translationSetupRef = useRef(false);
   /** 查找栏占用真实高度，避免原生网页盖住输入框。 */
   const [findOpen, setFindOpen] = useState(false);
   /** 查询仅在用户提交时执行，避免每个字符产生跨进程写入。 */
@@ -178,10 +157,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [error, setError] = useState<unknown>(null);
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
-
-  useEffect(() => {
-    if (translationPicker && (translationPicker.tabId !== activeTab?.id || translationPicker.url !== activeTab.url)) setTranslationPicker(null);
-  }, [activeTab?.id, activeTab?.url, translationPicker]);
 
   useEffect(() => {
     if (findOpen) findInputRef.current?.focus();
@@ -368,7 +343,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   async function openMoreMenu(trigger: HTMLButtonElement): Promise<void> {
     if (moreOpen || !activeTab) return;
     /** 接入弹窗打开后由弹窗管理焦点。 */
-    let openedPicker = false;
+    let openedSetup = false;
     setMoreOpen(true);
     try {
       const rect = trigger.getBoundingClientRect();
@@ -381,7 +356,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         canSplit: props.canSplit !== false,
         expanded: Boolean(props.expanded),
       });
-      if (action === 'new_tab') await addTab();
+      if (action && typeof action === 'object') await command(action);
+      else if (action === 'new_tab') await addTab();
       else if (action === 'close_tab') await closeTab(activeTab.id);
       else if (action === 'close_other_tabs') {
         for (const tab of snapshot?.tabs ?? []) {
@@ -393,47 +369,15 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       } else if (action === 'toggle_expanded') props.onToggleExpanded();
       else if (action === 'reset_size') props.onResetSize();
       else if (action === 'close') props.onClose();
-      else if (action === 'translation_services') {
-        /** 目录读取与选择均绑定当前标签，取消不会改变当前服务。 */
-        const settings = await window.zeus!.getBrowserSettings();
-        openedPicker = true;
-        translationSetupRef.current = false;
-        setTranslationPicker({
-          items: [],
-          selectedId: settings.translationServiceId ?? 'free:microsoft',
-          tabId: activeTab.id,
-          url: activeTab.url,
-          codexLoginRequired: false,
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        });
-        /** 两类目录独立加载，Codex 不可用时免费和自定义服务仍能立即使用。 */
-        for (const source of ['codex', 'custom'] as const) {
-          void window
-            .zeus!.getBrowserTranslationServices({ conversationId: props.conversationId, tabId: activeTab.id, source })
-            .then((services) => {
-              setTranslationPicker((current) => {
-                if (!current || current.tabId !== activeTab.id || current.url !== activeTab.url) return current;
-                return {
-                  ...current,
-                  items: [...current.items.filter((model) => model.id.startsWith('codex:') !== (source === 'codex')), ...services.items],
-                  codexLoginRequired: source === 'codex' ? services.codexLoginRequired === true : current.codexLoginRequired,
-                };
-              });
-            })
-            .catch((error: unknown) => {
-              const current = translationPickerRef.current;
-              if (current?.tabId === activeTab.id && current.url === activeTab.url) setError(error);
-            });
-        }
+      else if (action === 'translation_login') {
+        openedSetup = true;
+        window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { browserStep: 'codex' } }));
       } else if (action) await command({ action });
     } catch (menuError) {
       setError(menuError);
     } finally {
       setMoreOpen(false);
-      if (!openedPicker && trigger.isConnected) trigger.focus();
+      if (!openedSetup && trigger.isConnected) trigger.focus();
     }
   }
 
@@ -712,55 +656,12 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                 <Plus weight="bold" />
               </span>
             </button>
-            <button
-              ref={moreTriggerRef}
-              type="button"
-              className="browser-more-trigger"
-              aria-label={labels.more}
-              data-icon-tooltip={labels.more}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen || Boolean(translationPicker)}
-              onClick={(event) => void openMoreMenu(event.currentTarget)}
-            >
+            <button type="button" className="browser-more-trigger" aria-label={labels.more} data-icon-tooltip={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => void openMoreMenu(event.currentTarget)}>
               <DotsThreeVertical aria-hidden="true" weight="bold" />
             </button>
           </span>
         </div>
       )}
-
-      {translationPicker ? (
-        <ZeusSelect
-          ariaLabel={props.language === 'zh-CN' ? '翻译服务' : 'Translation service'}
-          value={translationPicker.selectedId}
-          size="compact"
-          defaultOpen
-          searchable
-          searchPlaceholder={props.language === 'zh-CN' ? '搜索模型' : 'Search models'}
-          emptyLabel={props.language === 'zh-CN' ? '没有匹配的模型' : 'No matching models'}
-          popoverMinWidth={240}
-          style={{ position: 'fixed', left: translationPicker.x, top: translationPicker.y, width: translationPicker.width, height: translationPicker.height, opacity: 0, pointerEvents: 'none' }}
-          options={[
-            { value: 'free:microsoft', label: props.language === 'zh-CN' ? '微软翻译 · 免费' : 'Microsoft · Free' },
-            { value: 'free:google', label: props.language === 'zh-CN' ? 'Google 翻译 · 免费' : 'Google · Free' },
-            ...presentModelOptions(translationPicker.items, translationPicker.selectedId, props.language, { preserveMissingSelection: true }).groups.flatMap((group) =>
-              group.models.map((model) => ({ value: model.id, label: model.displayName, group: group.providerName, searchText: `${model.sourceName} ${model.model} ${model.displayName}` })),
-            ),
-            ...(translationPicker.codexLoginRequired ? [{ value: 'codex:login', label: props.language === 'zh-CN' ? '登录 Codex' : 'Sign in to Codex', group: 'Codex' }] : []),
-          ]}
-          onChange={(value) => {
-            if (value === 'codex:login') {
-              translationSetupRef.current = true;
-              window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { browserStep: 'codex' } }));
-            } else void command({ action: 'translation_service', serviceId: value });
-          }}
-          onOpenChange={(open) => {
-            if (!open) {
-              setTranslationPicker(null);
-              if (!translationSetupRef.current) requestAnimationFrame(() => moreTriggerRef.current?.focus());
-            }
-          }}
-        />
-      ) : null}
 
       {findOpen ? (
         <form

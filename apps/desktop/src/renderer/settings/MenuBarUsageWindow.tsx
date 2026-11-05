@@ -1079,6 +1079,13 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
                   {formatModelRate(entry, props.language).map((line) => (
                     <span key={line}>{line}</span>
                   ))}
+                  {entry.sourceUrls?.map((url) => (
+                    <span key={url}>
+                      <a href={url} target="_blank" rel="noreferrer">
+                        {props.language === 'zh-CN' ? '价格来源' : 'Pricing source'}
+                      </a>
+                    </span>
+                  ))}
                   {entry.pricePeriod ? (
                     <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
                       {formatPricePeriod(entry.pricePeriod, props.language)}
@@ -1107,7 +1114,10 @@ function formatModelPriceTier(entry: UsageModelCostBreakdown): string {
 function formatModelRate(entry: UsageModelCostBreakdown, language: Language): string[] {
   const text = copy[language];
   const rate = entry.rate;
-  if (!rate) return [text.noPrice];
+  if (!rate)
+    return [
+      entry.missingPriceReason === 'sync_failed' ? (language === 'zh-CN' ? '价格同步失败' : 'Price sync failed') : entry.missingPriceReason === 'unconfirmed' ? (language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed') : text.noPrice,
+    ];
   if (rate.perRequest !== null) return [`${text.perRequestPrice} ${formatRateAmount(rate.perRequest, rate.currency, language)}`];
   if (!rate.perMillion) return [text.noPrice];
   /** 普通输入输出始终成对展示，便于横向比较。 */
@@ -1129,6 +1139,8 @@ function formatPricePeriod(period: NonNullable<UsageModelCostBreakdown['pricePer
 
 /** 每行费用直接展示后台按请求价格快照汇总的原币金额。 */
 function formatModelEstimatedCost(entry: UsageModelCostBreakdown, language: Language): string {
+  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'sync_failed') return language === 'zh-CN' ? '价格同步失败' : 'Price sync failed';
+  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'unconfirmed') return language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed';
   const costs = entry.estimatedCosts;
   if (!costs?.length) return copy[language].noPrice;
   return costs.map(({ currency, amount }) => `~${formatCostAmount(amount, currency, language)}`).join(' + ');

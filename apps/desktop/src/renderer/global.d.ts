@@ -413,7 +413,8 @@ declare global {
         | 'find'
         | 'translate'
         | 'restore_original'
-        | 'translation_services'
+        | 'translation_login'
+        | { action: 'translation_service'; serviceId: string }
         | 'translation_google'
         | 'translation_microsoft'
         | 'copy_url'
@@ -427,12 +428,6 @@ declare global {
         | 'close'
         | null
       >;
-      /** 返回可选模型、当前选择与 Codex 登录状态。 */
-      getBrowserTranslationServices: (input: {
-        conversationId: string;
-        tabId: string;
-        source: 'codex' | 'custom';
-      }) => Promise<{ items: import('@zeus/shared').BrowserTranslationModel[]; selectedId: string; warning: string; codexLoginRequired?: boolean }>;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       /** 首发受理后迁移草稿网页，仅将本次提交的批注标记为已发送。 */

@@ -2368,6 +2368,13 @@
   font-size: 12px;
 }
 
+/* 内联任务开关仅保留轨道，去掉设置页容器的外层底色和边框。 */
+.macos-ai-app .session-new-conversation-create-task .settings-switch-state {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
 .session-codex-parity-v1 .session-new-conversation-context-spinner {
   animation: session-context-spin 900ms linear infinite;
 }
