@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { publishFile } from '@zeus/storage/platform-security';
 import { readFileSync } from 'node:fs';
@@ -317,7 +317,41 @@ export class BrowserHost implements BrowserAutomationPort {
       const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
       /** 使用真实页面缩放比例显示菜单状态。 */
       const zoom = Math.round(this.ensureView(tab).webContents.getZoomFactor() * 100);
-      return new Promise<string | null>((resolveSelection) => {
+      return new Promise<string | { action: 'translation_service'; serviceId: string } | null>((resolveSelection) => {
+        /** 原生子菜单覆盖网页，不创建触发网页隐藏的 Renderer 浮层。 */
+        const services = new Menu();
+        /** 选中标记只来自已保存身份，异步追加模型不触发原生 radio 分组的默认勾选。 */
+        const selectedId = this.settings.translationServiceId ?? defaultBrowserTranslationService;
+        /** 菜单关闭后丢弃迟到目录，不再修改原生菜单。 */
+        let closed = false;
+        /** 免费翻译始终立即可选，不等待模型目录。 */
+        for (const [id, label] of [
+          ['free:microsoft', english ? 'Microsoft · Free' : '微软翻译 · 免费'],
+          ['free:google', english ? 'Google · Free' : 'Google 翻译 · 免费'],
+        ]) {
+          services.append(new MenuItem({ label, type: 'checkbox', checked: selectedId === id, click: () => resolveSelection({ action: 'translation_service', serviceId: id! }) }));
+        }
+        /** 两类目录独立返回，失败只影响对应的模型选项。 */
+        for (const source of ['codex', 'custom'] as const) {
+          services.append(new MenuItem({ type: 'separator' }));
+          const loading = new MenuItem({ label: source === 'codex' ? (english ? 'Loading Codex models…' : '正在读取 Codex 模型…') : english ? 'Loading provider models…' : '正在读取供应商模型…', enabled: false });
+          services.append(loading);
+          void this.loadTranslationServices(window, tab, source)
+            .then((catalog) => {
+              if (closed) return;
+              loading.visible = false;
+              for (const model of catalog.items)
+                services.append(new MenuItem({ label: model.label, type: 'checkbox', checked: selectedId === model.id, click: () => resolveSelection({ action: 'translation_service', serviceId: model.id }) }));
+              if (catalog.codexLoginRequired) services.append(new MenuItem({ label: english ? 'Sign in to Codex' : '登录 Codex', click: () => resolveSelection('translation_login') }));
+              if (!catalog.items.length && !catalog.codexLoginRequired) {
+                loading.visible = true;
+                loading.label = catalog.warning || (english ? 'No available models' : '暂无可用模型');
+              }
+            })
+            .catch(() => {
+              if (!closed) loading.label = source === 'codex' ? (english ? 'Codex models unavailable' : 'Codex 模型不可用') : english ? 'Provider models unavailable' : '供应商模型不可用';
+            });
+        }
         /** 固定菜单项不接收网页提供的文案或可执行动作。 */
         const menu = Menu.buildFromTemplate([
           { label: english ? 'New tab' : '新建标签', click: () => resolveSelection('new_tab') },
@@ -331,7 +365,7 @@ export class BrowserHost implements BrowserAutomationPort {
           { type: 'separator' },
           { label: english ? 'Find on page…' : '在页面中查找…', click: () => resolveSelection('find') },
           { label: tab.snapshot.translation ? (english ? 'Restore original' : '恢复原文') : english ? 'Translate to Chinese' : '中英对照', click: () => resolveSelection(tab.snapshot.translation ? 'restore_original' : 'translate') },
-          { label: english ? 'Translation service…' : '翻译服务…', click: () => resolveSelection('translation_services') },
+          { label: english ? 'Translation service' : '翻译服务', submenu: services },
           { label: english ? 'Copy page link' : '复制页面链接', enabled: tab.snapshot.url !== 'about:blank', click: () => resolveSelection('copy_url') },
           { label: english ? 'Open in default browser' : '在默认浏览器中打开', enabled: Boolean(normalizeExternalWebUrl(tab.snapshot.url)), click: () => resolveSelection('open_external') },
           {
@@ -348,16 +382,16 @@ export class BrowserHost implements BrowserAutomationPort {
           { label: english ? 'Reset split width' : '恢复默认分栏宽度', enabled: value.canSplit === true, click: () => resolveSelection('reset_size') },
           { label: english ? 'Close browser' : '关闭浏览器', click: () => resolveSelection('close') },
         ]);
-        menu.popup({ window, x: Math.min(bounds.width, Math.max(0, Math.round(finiteNumber(value.x, 0)))), y: Math.min(bounds.height, Math.max(0, Math.round(finiteNumber(value.y, 0)))), callback: () => resolveSelection(null) });
+        menu.popup({
+          window,
+          x: Math.min(bounds.width, Math.max(0, Math.round(finiteNumber(value.x, 0)))),
+          y: Math.min(bounds.height, Math.max(0, Math.round(finiteNumber(value.y, 0)))),
+          callback: () => {
+            closed = true;
+            resolveSelection(null);
+          },
+        });
       });
-    });
-    /** 服务目录仅对当前会话和标签开放。 */
-    ipcMain.handle('zeus:browser:translation-services', async (event, input: unknown) => {
-      const window = this.requireRendererWindow(event);
-      const value = asRecord(input);
-      const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
-      if (value.source !== 'codex' && value.source !== 'custom') throw new TypeError('翻译模型类型无效。');
-      return this.loadTranslationServices(window, tab, value.source);
     });
     ipcMain.handle('zeus:browser:open-tab', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);

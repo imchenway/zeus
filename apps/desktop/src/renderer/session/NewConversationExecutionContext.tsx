@@ -492,13 +492,13 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           </span>
         )}
         <label className="session-new-conversation-create-task">
-          <span>{zh ? '创建任务' : 'Create task'}</span>
+          <span>{zh ? '自动创建任务' : 'Automatically create task'}</span>
           <span className="settings-switch-state">
             <input
               className="native-switch-input"
               type="checkbox"
               role="switch"
-              aria-label={zh ? '创建任务' : 'Create task'}
+              aria-label={zh ? '自动创建任务' : 'Automatically create task'}
               checked={props.createTask}
               onChange={(event) => props.onCreateTaskChange(event.currentTarget.checked)}
               disabled={props.disabled}

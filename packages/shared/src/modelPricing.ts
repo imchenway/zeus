@@ -97,6 +97,7 @@ export function estimateModelPrice(model: string, usage: TokenUsageBreakdown, ca
   const price = matches.length === 1 ? matches[0] : undefined;
   /** 使用通用空费率建立账本形状，不套用任何模型默认价格。 */
   const snapshot = unavailableRateSnapshot(model);
+  if (catalog?.url) snapshot.sourceUrls = [catalog.url];
   if (!price || !catalog?.retrievedAt) return estimateCodexUsageWithRateSnapshot(usage, snapshot);
   snapshot.retrievedAt = catalog.retrievedAt;
   snapshot.catalogDate = catalog.retrievedAt.slice(0, 10);

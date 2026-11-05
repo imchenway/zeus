@@ -159,7 +159,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setReviewDialogOpen(false);
   }, [props.conversation.id]);
 
-  /** 可见卡片订阅真实 Git 摘要；隐藏或切换身份后释放服务端文件监听。 */
+  /** 可见卡片订阅真实 Git 摘要；切换身份后只接受新范围，服务端短期复用工作树缓存。 */
   useEffect(() => {
     setSummary(null);
     setWorkspaceState('idle');
@@ -188,7 +188,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       unsubscribe = gitClient.subscribeEvents(
         (event) => {
           if (current !== generation) return;
-          if (event.type === 'git.summary.updated') {
+          if (event.type === 'git.summary.updated' || event.type === 'git.summary.cached') {
             const next = event.payload.summary as GitEnvironmentSummary;
             if (next.projectId !== props.conversation.projectId) return;
             setSummary(next);

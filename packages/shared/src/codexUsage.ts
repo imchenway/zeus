@@ -138,6 +138,10 @@ export interface UsageModelPricePeriod {
 
 /** 同一模型、计费档位和价格快照归为一行，调价后的记录保持分开。 */
 export interface UsageModelCostBreakdown {
+  /** 该费用行的价格依据；缺价时仍可展示已配置的公开页面。 */
+  sourceUrls?: string[];
+  /** 缺价原因独立于账户连接状态，全部费用明细入口共用。 */
+  missingPriceReason?: 'sync_failed' | 'unconfirmed';
   model: string;
   rate: UsageModelRate | null;
   /** Codex 请求快照的服务档位，统一普通和快速档位别名；其他供应源为空。 */
@@ -278,6 +282,8 @@ export interface UsageProviderAnalytics {
     catalogDate: string | null;
     sourceUrls: string[];
     note: string;
+    /** 官方价格同步状态，与账户用量刷新分开记录。 */
+    sync?: { checkedAt: string | null; succeededAt: string | null; error: string | null };
   };
 }
 
@@ -316,6 +322,8 @@ export interface CodexUsageAnalyticsSnapshot {
     catalogDate: string;
     sourceUrls: string[];
     note: string;
+    /** 官方价格同步状态，与账户用量刷新分开记录。 */
+    sync?: { checkedAt: string | null; succeededAt: string | null; error: string | null };
   };
   updatedAt: string;
 }

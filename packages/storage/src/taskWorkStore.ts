@@ -506,8 +506,16 @@ export class TaskWorkRunRepository {
       .map(mapWorkRun);
   }
 
-  listRecoverable(limit = 100): TaskWorkRunRecord[] {
-    return this.db.select<TaskWorkRunRow>(`SELECT * FROM task_work_runs WHERE status IN ('prepared','dispatching','active','waiting_input','runtime_completed') ORDER BY created_at ASC LIMIT ?`, [boundedLimit(limit)]).map(mapWorkRun);
+  /** 按创建时间和唯一身份翻页；游标记录退出恢复集合后仍可继续扫描。 */
+  listRecoverable(limit = 100, after?: Pick<TaskWorkRunRecord, 'createdAt' | 'id'>): TaskWorkRunRecord[] {
+    return this.db
+      .select<TaskWorkRunRow>(
+        `SELECT * FROM task_work_runs WHERE status IN ('prepared','dispatching','active','waiting_input','runtime_completed')
+         ${after ? 'AND (created_at > ? OR (created_at = ? AND id > ?))' : ''}
+         ORDER BY created_at ASC, id ASC LIMIT ?`,
+        after ? [after.createdAt, after.createdAt, after.id, boundedLimit(limit)] : [boundedLimit(limit)],
+      )
+      .map(mapWorkRun);
   }
 
   nextAttempt(workItemId: string): number {

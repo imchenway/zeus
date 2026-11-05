@@ -457,14 +457,14 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
         {props.analytics.pricing.catalogDate && !['unknown', 'unavailable'].includes(props.analytics.pricing.catalogDate)
           ? ` ${props.language === 'zh-CN' ? '价格来源日期' : 'Price source date'}: ${props.analytics.pricing.catalogDate}`
           : null}
-        {props.analytics.pricing.sourceUrls[0] ? (
-          <>
+        {props.analytics.pricing.sourceUrls.map((url) => (
+          <span key={url}>
             {' · '}
-            <a href={props.analytics.pricing.sourceUrls[0]} target="_blank" rel="noreferrer">
-              {props.analytics.provider.name}
+            <a href={url} target="_blank" rel="noreferrer">
+              {new URL(url).hostname}
             </a>
-          </>
-        ) : null}
+          </span>
+        ))}
       </p>
       {props.analytics.local.collectionStartedAt ? (
         <small>

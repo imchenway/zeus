@@ -14,6 +14,11 @@ import type { ConversationRealtimeSocket } from './conversationSyncRoutes.js';
 /** Git 目录由 Git 自身解析，支持普通仓库、独立 worktree 和路径别名。 */
 const readGit = promisify(execFile);
 
+/** 最近访问的工作树保留监听五分钟，切换会话无需重新初始化，单位毫秒。 */
+const IDLE_SUMMARY_RETENTION_MS = 5 * 60_000;
+/** 无订阅的目录监听最多保留八组，避免浏览大量会话后资源持续增长。 */
+const MAX_IDLE_SUMMARIES = 8;
+
 /** 单个真实工作树的共享摘要和有效订阅。 */
 interface SummaryEntry {
   /** 真实目录与排除范围共同组成缓存身份。 */
@@ -50,10 +55,14 @@ interface SummarySource {
   nestedPaths?: string[];
 }
 
-/** 卡片摘要服务只读 Git，订阅关闭即释放无调用方的监听和缓存。 */
+/** 卡片摘要服务只读 Git，短期保留最近访问的工作树以复用目录监听和快照。 */
 export class GitEnvironmentSummaryService {
   /** 同一工作树和排除范围跨窗口共享初始化与读取。 */
   private readonly entries = new Map<string, { promise: Promise<SummaryEntry>; listeners: Set<() => void> }>();
+  /** 按退出订阅的顺序回收空闲工作树；重新订阅会移出此集合。 */
+  private readonly idleEntries = new Map<string, { entry: SummaryEntry; timer: ReturnType<typeof setTimeout> }>();
+  /** 宿主关闭后，迟到的初始化结果也必须立即释放。 */
+  private closed = false;
   /** 项目操作和宿主关闭通知当前订阅。 */
   private readonly subscriptions = new Set<{ projectId: string; invalidate: (repositoryId?: string) => void; close: () => void }>();
 
@@ -104,7 +113,29 @@ export class GitEnvironmentSummaryService {
 
   /** 宿主关闭时先解除连接和文件监听。 */
   close(): void {
+    this.closed = true;
     for (const subscription of [...this.subscriptions]) subscription.close();
+    for (const { entry } of this.idleEntries.values()) this.disposeEntry(entry);
+  }
+
+  /** 最后一个订阅离开后短期保留监听；没有订阅时文件事件只标记失效，不启动 Git。 */
+  private releaseEntry(entry: SummaryEntry, listener: () => void): void {
+    entry.listeners.delete(listener);
+    if (entry.listeners.size || this.idleEntries.has(entry.key)) return;
+    if (this.closed) return this.disposeEntry(entry);
+    const timer = setTimeout(() => this.disposeEntry(entry), IDLE_SUMMARY_RETENTION_MS);
+    timer.unref();
+    this.idleEntries.set(entry.key, { entry, timer });
+    while (this.idleEntries.size > MAX_IDLE_SUMMARIES) this.disposeEntry(this.idleEntries.values().next().value!.entry);
+  }
+
+  /** 回收空闲或关闭中的监听，不能删除同一路径后续创建的新条目。 */
+  private disposeEntry(entry: SummaryEntry): void {
+    clearTimeout(this.idleEntries.get(entry.key)?.timer);
+    this.idleEntries.delete(entry.key);
+    for (const watcher of entry.watchers) watcher.close();
+    clearInterval(entry.fallback);
+    if (this.entries.get(entry.key)?.listeners === entry.listeners) this.entries.delete(entry.key);
   }
 
   /** 只向连接发送变化后的摘要；短时写入合并，持续写入最多等待一秒。 */
@@ -135,6 +166,8 @@ export class GitEnvironmentSummaryService {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     /** 连续失败次数只影响重试延迟，成功后归零。 */
     let failureCount = 0;
+    /** 首次推送优先使用仍受监听的快照；失效数据随后在同一订阅后台刷新。 */
+    let initialSnapshot = true;
     /** 将快照或错误放进现有事件信封，并限制慢客户端积压。 */
     const send = (type: string, payload: Record<string, unknown>): void => {
       if (!active || socket.readyState !== socket.OPEN) return;
@@ -158,11 +191,7 @@ export class GitEnvironmentSummaryService {
     const release = (key: string, entry: SummaryEntry): void => {
       held.delete(key);
       for (const [id, repository] of repositories) if (repository === entry) repositories.delete(id);
-      entry.listeners.delete(schedule);
-      if (entry.listeners.size) return;
-      for (const watcher of entry.watchers) watcher.close();
-      clearInterval(entry.fallback);
-      this.entries.delete(key);
+      this.releaseEntry(entry, schedule);
     };
     /** 重新核验持久身份后组合摘要，不读取完整工作台详情。 */
     const refresh = async (): Promise<void> => {
@@ -176,6 +205,8 @@ export class GitEnvironmentSummaryService {
       pending = false;
       /** 本次有效目录集合决定哪些旧监听可以释放。 */
       const used = new Set<string>();
+      /** 缓存预览只供卡片展示，不触发代码交付窗口重复读取完整状态。 */
+      let cachedPreview = false;
       try {
         /** 项目路径可能被设置页修改，读取前使用最新记录。 */
         const project = this.options.projects.getById(projectId);
@@ -297,20 +328,14 @@ export class GitEnvironmentSummaryService {
           if (!active) return;
           const entry = await this.entry(source, schedule);
           if (!active) {
-            entry.listeners.delete(schedule);
-            if (!entry.listeners.size) {
-              for (const watcher of entry.watchers) watcher.close();
-              clearInterval(entry.fallback);
-              this.entries.delete(entry.key);
-            }
+            this.releaseEntry(entry, schedule);
             return;
           }
-          // 返回窗口重新核对现有缓存；首次并发订阅仍共用同一读取。
-          if (!held.has(entry.key) && entry.snapshot && !entry.request) entry.revision += 1;
           held.set(entry.key, entry);
           repositories.set(source.id, entry);
           used.add(entry.key);
-          const review = await this.read(entry);
+          const review = initialSnapshot && entry.snapshot ? entry.snapshot : await this.read(entry);
+          if (initialSnapshot && entry.loadedRevision !== entry.revision) cachedPreview = true;
           if (entry.loadedRevision !== entry.revision) pending = true;
           if (source.path === cwd || (!scope.taskId && !summary.branch)) summary.branch = review.branch || null;
           /** 与交付页使用相同的嵌套目录占位过滤，暂存和未暂存路径只计一次。 */
@@ -326,7 +351,8 @@ export class GitEnvironmentSummaryService {
           }
         }
         /** 文件内容或路径变化也要通知交付页，不能只按文件数及增删行数去重。 */
-        send('git.summary.updated', { summary, revisions: sources.map((source) => [source.id, repositories.get(source.id)?.loadedRevision]) });
+        send(cachedPreview ? 'git.summary.cached' : 'git.summary.updated', { summary, revisions: sources.map((source) => [source.id, repositories.get(source.id)?.loadedRevision]) });
+        initialSnapshot = false;
         failureCount = 0;
       } catch (error) {
         send('git.summary.error', { message: error instanceof Error ? error.message : 'Git 状态读取失败。' });
@@ -382,6 +408,9 @@ export class GitEnvironmentSummaryService {
     const path = await realpath(source.path);
     /** 排除范围属于摘要语义，不能让不同范围错误共用缓存。 */
     const key = JSON.stringify([path, [...source.ignoredPaths].sort()]);
+    /** 重新使用仍在监听的条目，不因会话或窗口切换强制失效。 */
+    clearTimeout(this.idleEntries.get(key)?.timer);
+    this.idleEntries.delete(key);
     let pending = this.entries.get(key);
     if (!pending) {
       /** 初始化期间先保留订阅，避免另一个关闭中的窗口释放即将共用的监听。 */

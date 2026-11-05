@@ -696,8 +696,8 @@ export function ModelConnectionsSettingsPane(props: {
                   {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
                 </small>
               ) : null}
-              {current?.pricingCatalog ? (
-                <a href={current.pricingCatalog.url} target="_blank" rel="noreferrer">
+              {current?.pricingUrl || current?.pricingCatalog?.url ? (
+                <a href={current.pricingUrl || current.pricingCatalog?.url} target="_blank" rel="noreferrer">
                   {zh ? '价格来源' : 'Pricing source'}
                 </a>
               ) : null}
