@@ -103,6 +103,9 @@ export function registerWorkspaceGitCommandRoutes(options: {
       allowedInputKeys: [
         'baseRef',
         'branchName',
+        // 提交与合入携带用户审阅的分支和 HEAD，交给 Git 执行前再次核对。
+        'expectedBranch',
+        'expectedHeadSha',
         'forceWithLease',
         'includeUntracked',
         'keepIndex',

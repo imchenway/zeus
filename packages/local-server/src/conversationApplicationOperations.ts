@@ -4305,7 +4305,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
       case 'apply_patch':
         return { type: 'apply_patch', patch: typeof value.patch === 'string' ? value.patch : '', reverse: value.reverse === true };
       case 'commit':
-        return { type: 'commit', message: stringValue('message') ?? '' };
+        // 与桌面入口保留相同的文件范围和快照约束；空 HEAD 表示尚无首次提交。
+        return {
+          type: 'commit',
+          message: stringValue('message') ?? '',
+          ...(value.paths === undefined ? {} : { paths: paths() }),
+          expectedHeadSha: typeof value.expectedHeadSha === 'string' ? value.expectedHeadSha : undefined,
+          expectedBranch: stringValue('expectedBranch'),
+        };
       case 'push':
         return {
           type: 'push',
