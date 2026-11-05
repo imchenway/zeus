@@ -402,7 +402,9 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
   /** 不接受从其他项目借用的会话或缺失记录。 */
   const project = snapshot.projects.find((item) => item.id === (task?.projectId ?? projectId));
   if (!task && !project) throw new Error('代码交付项目不存在，请从当前项目重新打开。');
-  if (conversationId && (!conversation || conversation.projectId !== project?.id || conversation.id !== conversationId || conversation.taskId)) throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
+  // 自动创建任务的会话仍使用自有目录；已绑定任务工作区或环境的会话须走任务交付入口。
+  if (conversationId && (!conversation || conversation.projectId !== project?.id || conversation.id !== conversationId || conversation.workspaceId || conversation.environmentId))
+    throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
   /** 控制器能力由真实记录选择，原生窗口壳与交付视图保持一致。 */
   const scope: import('./task/TaskGitDeliveryWindow.js').GitDeliveryWindowScope = task
     ? { kind: 'task', task, projectName: project?.name }

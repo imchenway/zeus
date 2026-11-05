@@ -503,10 +503,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ? resolveNativeConversationExecutionRoot(input.conversation)
       : input.task
         ? input.project.localPath
-        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree, platformMutableState.appShellSettings.taskBranchPrefix, {
-            repositories: dependencies.projectRepositories.listByProject(input.project.id),
-            sharedPaths: dependencies.projectSharedPaths.listByProject(input.project.id),
-          });
+        : await prepareProjectConversationWorkspace(
+            input.project,
+            input.reservedConversationId,
+            input.body.workspaceMode,
+            input.body.worktree,
+            platformMutableState.appShellSettings.taskBranchPrefix,
+            {
+              repositories: dependencies.projectRepositories.listByProject(input.project.id),
+              sharedPaths: dependencies.projectSharedPaths.listByProject(input.project.id),
+            },
+            input.body.createTask === true && input.body.workspaceMode === 'worktree'
+              ? ensureProjectConversationTask({ id: input.reservedConversationId, projectId: input.project.id, title: displayText.slice(0, 60) || '专家群聊', permissionMode }, displayText || content)
+              : undefined,
+          );
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
     const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : input.body.workspaceMode === 'worktree' ? 'worktree' : 'direct';
     if (!executionRoot || (input.task && !executionWorkspaceMode)) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '讨论会话的工作目录身份不可用。');
@@ -2479,24 +2489,35 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return `project-acceptance:${Buffer.from(JSON.stringify(reservation), 'utf8').toString('base64url')}`;
   }
 
-  /** 复用任务仓储的编号与约束，任务和会话要么一起落库，要么一起回滚。 */
-  function createProjectConversationRecord(record: Parameters<ConversationRepository['create']>[0], description?: string): ZeusConversationRecord {
+  /** 在准备 Git 目录前保存真实任务编号；失败重试复用同一任务。 */
+  function ensureProjectConversationTask(record: Pick<Parameters<ConversationRepository['create']>[0], 'id' | 'projectId' | 'title' | 'permissionMode'>, description: string): ZeusTaskRecord {
     return db.transaction(() => {
-      if (record.taskId && description !== undefined) {
+      /** 自动创建任务的身份与会话预留一致，不接受客户端指定任务。 */
+      const taskId = `task_${record.id}`;
+      return (
+        tasks.getById(taskId) ??
         tasks.create({
-          id: record.taskId,
+          id: taskId,
           projectId: record.projectId,
           title: record.title,
           taskType: 'task',
-          managementStatus: dependencies.resolveTaskManagementStatusConfigForProject(record.projectId).roles.defaultStatusId,
+          // 新对话已开始推进任务，初始状态复用项目的推送后状态（默认开发中）。
+          managementStatus: dependencies.resolveTaskManagementStatusConfigForProject(record.projectId).roles.pushedStatusId,
           description,
           createdFrom: 'conversation',
           sourceContext: { conversationId: record.id },
           allowCodeChanges: record.permissionMode !== 'read-only',
           allowTests: record.permissionMode !== 'read-only',
           allowGitCommit: false,
-        });
-      }
+        })
+      );
+    });
+  }
+
+  /** 直接目录在接纳时创建任务；工作树接纳复用准备目录前保存的任务。 */
+  function createProjectConversationRecord(record: Parameters<ConversationRepository['create']>[0], description?: string): ZeusConversationRecord {
+    return db.transaction(() => {
+      if (record.taskId && description !== undefined) ensureProjectConversationTask(record, description);
       return conversations.create(record);
     });
   }
@@ -2643,10 +2664,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const executionRoot =
       deliveryWorkspace?.localPath ??
       inheritedWorkspace?.localPath ??
-      (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix, {
-        repositories: dependencies.projectRepositories.listByProject(project.id),
-        sharedPaths: dependencies.projectSharedPaths.listByProject(project.id),
-      }));
+      (await prepareProjectConversationWorkspace(
+        project,
+        reservation.conversationId,
+        body.workspaceMode,
+        body.worktree,
+        platformMutableState.appShellSettings.taskBranchPrefix,
+        {
+          repositories: dependencies.projectRepositories.listByProject(project.id),
+          sharedPaths: dependencies.projectSharedPaths.listByProject(project.id),
+        },
+        reservation.taskId && body.workspaceMode === 'worktree'
+          ? ensureProjectConversationTask({ id: reservation.conversationId, projectId: project.id, title: (displayText || providerContent).slice(0, 120), permissionMode }, displayText || content)
+          : undefined,
+      ));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
     const executionRoots = inheritedWorkspace || deliveryWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
     /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */

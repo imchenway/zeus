@@ -139,8 +139,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       const options = props.worktree && 'repositories' in props.worktree ? props.worktree.repositories.find((entry) => entry.repositoryId === repository.id) : projectWorktree ? undefined : props.worktree;
       return Boolean(
         options &&
-        options.branchName.trim().startsWith(branchNamespace) &&
-        options.branchName.trim().length > branchNamespace.length &&
+        (props.createTask || (options.branchName.trim().startsWith(branchNamespace) && options.branchName.trim().length > branchNamespace.length)) &&
         repositorySources(repository.snapshot).some((source) => source.kind === options.sourceKind && source.ref === options.sourceRef),
       );
     });
@@ -436,8 +435,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
               popoverMinWidth={420}
               popoverArrowAlignment="start"
               triggerIcon={<GitBranch />}
-              triggerLabel={commonSource?.sourceRef || (selection ? (zh ? '多个来源分支' : 'Multiple source branches') : zh ? '选择来源分支' : 'Choose source branch')}
-              triggerTitle={[scopeLabel, commonSource?.sourceRef, commonBranchName].filter(Boolean).join(' · ')}
+              triggerLabel={
+                commonSource ? (zh ? `来源分支：${commonSource.sourceRef}` : `Source branch: ${commonSource.sourceRef}`) : selection ? (zh ? '多个来源分支' : 'Multiple source branches') : zh ? '选择来源分支' : 'Choose source branch'
+              }
+              triggerTitle={[scopeLabel, commonSource?.sourceRef, props.createTask ? undefined : commonBranchName].filter(Boolean).join(' · ')}
               value={commonSource ? `${commonSource.sourceKind}:${commonSource.sourceRef}` : ''}
               options={sources.map((source) => ({
                 value: `${source.kind}:${source.ref}`,
@@ -454,28 +455,32 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
               disabled={props.disabled || projectBusy || branchBusy || !selection}
               footer={
                 <span className="session-new-worktree-fields">
-                  <label>
-                    <span>{zh ? '工作树分支名' : 'Worktree branch name'}</span>
-                    <input
-                      aria-label={zh ? '工作树分支名' : 'Worktree branch name'}
-                      value={commonBranchName}
-                      placeholder={selection && !commonBranchName ? (zh ? '多个分支名' : 'Multiple branch names') : `${props.taskBranchPrefix}/conversation-example`}
-                      spellCheck={false}
-                      disabled={props.disabled || projectBusy || branchBusy || !selection}
-                      onChange={(event) => {
-                        if (selection) updateSelection({ branchName: event.currentTarget.value });
-                      }}
-                    />
-                  </label>
-                  <small>
-                    {scopedRepositories.some((repository, index) => !repository.snapshot.headSha && selections[index]?.sourceKind === 'local' && selections[index]?.sourceRef === repository.snapshot.branch)
-                      ? zh
-                        ? `空仓库会把当前项目文件带入工作树；分支名须以 ${branchNamespace} 开头。`
-                        : `The current project files will seed this empty repository worktree. The new name must start with ${branchNamespace}.`
-                      : zh
-                        ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。`
-                        : `Create from the selected branch. The new name must start with ${branchNamespace}.`}
-                  </small>
+                  {!props.createTask ? (
+                    <>
+                      <label>
+                        <span>{zh ? '工作树分支名' : 'Worktree branch name'}</span>
+                        <input
+                          aria-label={zh ? '工作树分支名' : 'Worktree branch name'}
+                          value={commonBranchName}
+                          placeholder={selection && !commonBranchName ? (zh ? '多个分支名' : 'Multiple branch names') : `${props.taskBranchPrefix}/conversation-example`}
+                          spellCheck={false}
+                          disabled={props.disabled || projectBusy || branchBusy || !selection}
+                          onChange={(event) => {
+                            if (selection) updateSelection({ branchName: event.currentTarget.value });
+                          }}
+                        />
+                      </label>
+                      <small>
+                        {scopedRepositories.some((repository, index) => !repository.snapshot.headSha && selections[index]?.sourceKind === 'local' && selections[index]?.sourceRef === repository.snapshot.branch)
+                          ? zh
+                            ? `空仓库会把当前项目文件带入工作树；分支名须以 ${branchNamespace} 开头。`
+                            : `The current project files will seed this empty repository worktree. The new name must start with ${branchNamespace}.`
+                          : zh
+                            ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。`
+                            : `Create from the selected branch. The new name must start with ${branchNamespace}.`}
+                      </small>
+                    </>
+                  ) : null}
                   {selection && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
                   <Button
                     variant="secondary"
@@ -500,7 +505,19 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
               role="switch"
               aria-label={zh ? '自动创建任务' : 'Automatically create task'}
               checked={props.createTask}
-              onChange={(event) => props.onCreateTaskChange(event.currentTarget.checked)}
+              onChange={(event) => {
+                // 自动命名仍保留完整来源草稿；关闭开关后可以继续编辑原分支名。
+                if (event.currentTarget.checked && props.worktree) {
+                  /** 草稿空名称不阻断任务自动命名，最终名称由服务端按真实任务生成。 */
+                  const branchName = `${props.taskBranchPrefix}/conversation-${crypto.randomUUID().slice(0, 8)}`;
+                  props.onWorktreeChange(
+                    'repositories' in props.worktree
+                      ? { repositories: props.worktree.repositories.map((entry) => ({ ...entry, branchName: entry.branchName.trim() || branchName })) }
+                      : { ...props.worktree, branchName: props.worktree.branchName.trim() || branchName },
+                  );
+                }
+                props.onCreateTaskChange(event.currentTarget.checked);
+              }}
               disabled={props.disabled}
             />
             <span className="native-switch-track" aria-hidden="true" />
