@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import type { GitDiffSummary, GitStatusSummary } from '@zeus/git-core';
 import type { ProjectGitPushPreviewInput } from '@zeus/git-core';
+import type { GitEnvironmentSummary } from '@zeus/shared';
 import type { ProjectRepository, ProjectRepositoryRegistrationRepository, ZeusProjectRecord } from '@zeus/storage';
 
 export interface ProjectGitReadEffectPort {
@@ -23,7 +24,10 @@ interface ProjectGitQueryPorts {
   effects: ProjectGitReadEffectPort;
   now(): Date;
   /** 会话工作区可能包含多个仓库，查询列表保留完整成员。 */
-  resolveConversationWorkspace(project: ZeusProjectRecord, conversationId: string): Promise<{ repositories: Array<{ id: string; name: string; relativePath: string; localPath: string }> }>;
+  resolveConversationWorkspace(
+    project: ZeusProjectRecord,
+    conversationId: string,
+  ): Promise<{ repositories: Array<{ id: string; name: string; relativePath: string; localPath: string }>; sourceBranches?: GitEnvironmentSummary['sourceBranches'] }>;
   resolveConversationRepository(project: ZeusProjectRecord, conversationId: string): Promise<{ id: string; name: string; relativePath: string; localPath: string }>;
 }
 
@@ -46,12 +50,15 @@ export class ProjectGitQueryApplication {
 
   async readWorkbench(projectId: string, conversationId?: string): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
     const project = this.requireProject(projectId);
-    const repositories = conversationId ? (await this.ports.resolveConversationWorkspace(project, conversationId)).repositories : this.ports.repositories.listByProject(project.id);
+    /** 会话来源与环境卡片复用同一份已核验记录。 */
+    const workspace = conversationId ? await this.ports.resolveConversationWorkspace(project, conversationId) : null;
+    const repositories = workspace?.repositories ?? this.ports.repositories.listByProject(project.id);
     const items = await mapWithConcurrency(repositories, async (repository) => ({
       id: repository.id,
       name: repository.name,
       relativePath: repository.relativePath,
       localPath: repository.localPath,
+      sourceBranch: workspace?.sourceBranches?.find((source) => source.repositoryRelativePath === repository.relativePath)?.branch ?? null,
       snapshot: await this.ports.effects.readRepositorySnapshot(repository.localPath),
     }));
     return { projectId: project.id, projectName: project.name, refreshedAt: this.ports.now().toISOString(), repositories: items };

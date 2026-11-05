@@ -7,6 +7,7 @@ import {
   cleanupPreparedTaskWorktree,
   getGitRepositoryContext,
   prepareTaskWorktree,
+  recordGitBranchSource,
   type GitRepositoryContext,
 } from '@zeus/git-core';
 import { defaultTaskBranchPrefix, isConversationWorktreeOptions, type ConversationWorktreeBranchOptions } from '@zeus/shared';
@@ -123,7 +124,11 @@ export async function prepareProjectConversationWorkspace(
         includeLocalChanges: sourceUnborn,
         ignoredPaths,
       });
-      if (!existingBranch) created.push(preparation);
+      if (!existingBranch) {
+        /** 来源只在创建时冻结；复用工作树不能覆盖其原始来源。 */
+        await recordGitBranchSource(repositoryPath, selection.branchName, selection.sourceRef);
+        created.push(preparation);
+      }
       preparing = undefined;
     }
     if (selections && members && newEnvironment) overlayTaskEnvironmentSharedPaths(environmentRoot, members.sharedPaths);

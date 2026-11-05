@@ -668,8 +668,10 @@ export function GitDeliveryActions(props: {
   onCommit: () => void;
   beforeCommit?: ReactNode;
   commitFeedback?: ReactNode;
-  /** 当前交付范围内各仓库记录的来源分支；空列表或缺失项禁止合入。 */
-  sourceBranches: string[];
+  /** 各仓库独立选择本地合入目标，默认值由入口的来源记录提供。 */
+  mergeTargets: Array<{ repositoryId: string; label: string; value: string; branches: string[] }>;
+  /** 选择结果同时用于单独合入和组合交付。 */
+  onMergeTargetChange: (repositoryId: string, branch: string) => void;
   /** 复用入口的剪贴板能力和失败反馈。 */
   onCopyBranch?: (branchName: string) => boolean | Promise<boolean>;
   mergeDisabled: boolean;
@@ -690,14 +692,12 @@ export function GitDeliveryActions(props: {
 }) {
   /** 每个项目恢复最近一次被后台接纳的组合，临时勾选仅属于当前操作栏。 */
   const [preferences, setSettings] = useState(() => readGitDeliverySettings(props.projectId));
-  /** 缺少任一来源时不执行部分合入，也不覆盖用户保存的步骤偏好。 */
-  const canMerge = props.sourceBranches.length > 0 && props.sourceBranches.every(Boolean) && !props.mergeDisabled;
+  /** 每个仓库都选择有效本地目标后才允许整次合入。 */
+  const canMerge = props.mergeTargets.length > 0 && props.mergeTargets.every((target) => target.value && target.branches.includes(target.value)) && !props.mergeDisabled;
   /** 勾选、组合按钮及后台提交读取同一个可执行设置。 */
   const settings = { ...preferences, merge: preferences.merge && canMerge };
-  /** 多仓同名来源只显示一次，不同来源保留完整分支名供复制。 */
-  const sourceBranches = [...new Set(props.sourceBranches.filter(Boolean))].join(', ');
-  /** 复制成功才显示确认图标，来源变化后旧回执不再匹配。 */
-  const [copiedSourceBranches, setCopiedSourceBranches] = useState<string | null>(null);
+  /** 复制成功才显示确认图标，目标变化后旧回执不再匹配。 */
+  const [copiedTargetBranch, setCopiedTargetBranch] = useState<string | null>(null);
   /** 详细设置保留权限、技能及最终任务状态，步骤选择直接放在功能旁。 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 后台运行与单步操作共用组合选择锁。 */
@@ -775,7 +775,7 @@ export function GitDeliveryActions(props: {
         </section>
         <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
           <div className="task-git-delivery-step-heading">
-            {stepTitle('merge', props.zh ? '合入来源分支' : 'Merge into source branch')}
+            {stepTitle('merge', props.zh ? '合入目标分支' : 'Merge into target branch')}
             {props.combination ? (
               <Button variant="secondary" size="compact" disabled={busy} aria-label={props.zh ? '交付设置' : 'Delivery settings'} data-icon-tooltip={props.zh ? '交付设置' : 'Delivery settings'} onClick={() => setSettingsOpen(true)}>
                 <GearSixIcon aria-hidden="true" />
@@ -783,27 +783,33 @@ export function GitDeliveryActions(props: {
             ) : null}
           </div>
           <div className="task-git-delivery-merge-row">
-            <div className="task-git-delivery-source-branch">
-              <ZeusSelect
-                size="compact"
-                ariaLabel={props.zh ? '来源分支' : 'Source branch'}
-                value={sourceBranches}
-                options={[{ value: sourceBranches, label: sourceBranches || (props.zh ? '无来源分支' : 'No source branch') }]}
-                onChange={() => undefined}
-                disabled
-                searchable={false}
-              />
-              {sourceBranches && props.onCopyBranch ? (
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  aria-label={copiedSourceBranches === sourceBranches ? (props.zh ? '已复制来源分支名' : 'Source branch name copied') : props.zh ? '复制来源分支名' : 'Copy source branch name'}
-                  data-icon-tooltip={props.zh ? '复制来源分支名' : 'Copy source branch name'}
-                  onClick={async () => setCopiedSourceBranches((await props.onCopyBranch?.(sourceBranches)) ? sourceBranches : null)}
-                >
-                  {copiedSourceBranches === sourceBranches ? <CheckIcon aria-hidden="true" /> : <CopySimpleIcon aria-hidden="true" />}
-                </Button>
-              ) : null}
+            <div className="task-git-delivery-targets">
+              {props.mergeTargets.map((target) => (
+                <div className="task-git-delivery-source-branch" key={target.repositoryId}>
+                  <ZeusSelect
+                    size="compact"
+                    ariaLabel={`${target.label} · ${props.zh ? '合入目标分支' : 'Merge target branch'}`}
+                    value={target.value}
+                    options={[
+                      ...(!target.value || !target.branches.includes(target.value) ? [{ value: target.value, label: target.value || (props.zh ? '选择目标分支' : 'Choose target branch'), disabled: true }] : []),
+                      ...target.branches.map((branch) => ({ value: branch, label: props.mergeTargets.length > 1 ? `${target.label}: ${branch}` : branch })),
+                    ]}
+                    onChange={(branch) => props.onMergeTargetChange(target.repositoryId, branch)}
+                    disabled={busy || !target.branches.length}
+                  />
+                  {target.value && props.onCopyBranch ? (
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      aria-label={copiedTargetBranch === target.value ? (props.zh ? '已复制目标分支名' : 'Target branch name copied') : props.zh ? '复制目标分支名' : 'Copy target branch name'}
+                      data-icon-tooltip={props.zh ? '复制目标分支名' : 'Copy target branch name'}
+                      onClick={async () => setCopiedTargetBranch((await props.onCopyBranch?.(target.value)) ? target.value : null)}
+                    >
+                      {copiedTargetBranch === target.value ? <CheckIcon aria-hidden="true" /> : <CopySimpleIcon aria-hidden="true" />}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
             </div>
             <Button
               variant="secondary"
@@ -811,8 +817,8 @@ export function GitDeliveryActions(props: {
               aria-label={
                 props.mergeAll
                   ? props.zh
-                    ? `全部合入各自来源分支（${props.mergeCount} 个仓库）`
-                    : `Merge all ${props.mergeCount} repositories into their source branches`
+                    ? `全部合入所选目标分支（${props.mergeCount} 个仓库）`
+                    : `Merge all ${props.mergeCount} repositories into their selected target branches`
                   : props.zh
                     ? `合入所选仓库（${props.mergeCount}）`
                     : `Merge selected repositories (${props.mergeCount})`
@@ -821,7 +827,7 @@ export function GitDeliveryActions(props: {
               onClick={() => props.onMerge?.(settings)}
               disabled={busy || !canMerge || props.mergeCount === 0}
             >
-              {props.zh ? (props.mergeAll ? '全部合入来源分支' : '合入') : props.mergeAll ? 'Merge all into source branches' : 'Merge'}
+              {props.zh ? (props.mergeAll ? '全部合入' : '合入') : props.mergeAll ? 'Merge all' : 'Merge'}
               {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
             </Button>
           </div>

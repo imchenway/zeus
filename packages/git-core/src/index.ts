@@ -826,6 +826,28 @@ export async function assertValidGitBranchName(cwd: string, branchName: string, 
   }
 }
 
+/** 读取创建分支时记录的来源；缺项表示历史未记录，不以 upstream 或当前项目分支推测。 */
+export async function readGitBranchSource(cwd: string, branchName: string): Promise<string | null> {
+  /** 使用本地分支配置，避免用户全局配置混入工作树来源。 */
+  const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
+  try {
+    /** Git 未找到配置时退出码为 1，其余错误继续交给调用方呈现。 */
+    const result = await execFileAsync('git', ['config', '--local', '--get', `branch.${branch}.zeus-source-branch`], { cwd, timeout: 15_000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+    return result.stdout.trim() || null;
+  } catch (error) {
+    if ((error as { code?: number }).code === 1) return null;
+    throw error;
+  }
+}
+
+/** 新建独立会话分支时保存已核验的来源引用；分支重命名和删除沿用 Git 的配置生命周期。 */
+export async function recordGitBranchSource(cwd: string, branchName: string, sourceBranch: string): Promise<void> {
+  /** 来源可以是本地分支名或包含 remote 名称的远端跟踪分支名。 */
+  const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
+  const source = await assertGitBranchFormat(cwd, sourceBranch, 'source branch');
+  await runGit(cwd, ['config', '--local', '--replace-all', `branch.${branch}.zeus-source-branch`, source]);
+}
+
 /**
  * 创建或恢复任务 worktree。已注册的同名分支 worktree 会直接复用，
  * 从而保证一个任务开发分支同时只有一个物理写工作区。

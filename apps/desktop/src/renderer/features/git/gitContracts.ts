@@ -130,6 +130,8 @@ export interface ProjectGitRepositorySnapshot {
 }
 
 export interface ProjectGitRepositoryWorkbenchItem {
+  /** 创建会话工作树时记录的来源；普通目录或历史缺失为空。 */
+  sourceBranch?: string | null;
   /** 服务端校验过的会话工作树目录。 */
   localPath?: string;
   id: string;

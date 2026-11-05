@@ -307,50 +307,47 @@ export class BrowserHost implements BrowserAutomationPort {
       return this.snapshotFor(requireNonEmptyString(conversationId, 'conversationId'));
     });
     // 系统菜单覆盖原生网页，选择结果仍交回现有操作入口执行。
-    ipcMain.handle('zeus:browser:show-menu', (event, input: unknown) => {
+    ipcMain.handle('zeus:browser:show-menu', async (event, input: unknown) => {
       /** 菜单只允许本应用渲染器打开，位置限制在所属窗口内。 */
       const window = this.requireRendererWindow(event);
       const value = asRecord(input);
-      const bounds = window.getContentBounds();
       const english = value.language === 'en-US';
       /** 菜单状态来自当前标签，不能由渲染器伪造网址或导航能力。 */
       const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
-      /** 使用真实页面缩放比例显示菜单状态。 */
-      const zoom = Math.round(this.ensureView(tab).webContents.getZoomFactor() * 100);
+      /** 等待目录期间页面可能关闭或导航，菜单只能用于原来的页面。 */
+      const contents = this.ensureView(tab).webContents;
+      const generation = tab.documentGeneration;
+      /** 原生菜单弹出后不能追加模型项；两类目录并行读取并独立保留失败结果。 */
+      const sources = ['codex', 'custom'] as const;
+      const catalogs = await Promise.allSettled(sources.map((source) => this.loadTranslationServices(window, tab, source)));
+      if (window.isDestroyed() || contents.isDestroyed() || generation !== tab.documentGeneration || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return null;
+      /** 使用等待结束后的窗口尺寸和真实缩放比例。 */
+      const bounds = window.getContentBounds();
+      const zoom = Math.round(contents.getZoomFactor() * 100);
       return new Promise<string | { action: 'translation_service'; serviceId: string } | null>((resolveSelection) => {
         /** 原生子菜单覆盖网页，不创建触发网页隐藏的 Renderer 浮层。 */
         const services = new Menu();
-        /** 选中标记只来自已保存身份，异步追加模型不触发原生 radio 分组的默认勾选。 */
+        /** 选中标记只来自已保存身份，避免 radio 分组默认勾选其他服务。 */
         const selectedId = this.settings.translationServiceId ?? defaultBrowserTranslationService;
-        /** 菜单关闭后丢弃迟到目录，不再修改原生菜单。 */
-        let closed = false;
-        /** 免费翻译始终立即可选，不等待模型目录。 */
+        /** 模型目录失败不影响免费服务的展示和选择。 */
         for (const [id, label] of [
           ['free:microsoft', english ? 'Microsoft · Free' : '微软翻译 · 免费'],
           ['free:google', english ? 'Google · Free' : 'Google 翻译 · 免费'],
         ]) {
           services.append(new MenuItem({ label, type: 'checkbox', checked: selectedId === id, click: () => resolveSelection({ action: 'translation_service', serviceId: id! }) }));
         }
-        /** 两类目录独立返回，失败只影响对应的模型选项。 */
-        for (const source of ['codex', 'custom'] as const) {
+        /** 弹出前完整构建各类模型、登录入口和不可用提示。 */
+        for (const [index, result] of catalogs.entries()) {
           services.append(new MenuItem({ type: 'separator' }));
-          const loading = new MenuItem({ label: source === 'codex' ? (english ? 'Loading Codex models…' : '正在读取 Codex 模型…') : english ? 'Loading provider models…' : '正在读取供应商模型…', enabled: false });
-          services.append(loading);
-          void this.loadTranslationServices(window, tab, source)
-            .then((catalog) => {
-              if (closed) return;
-              loading.visible = false;
-              for (const model of catalog.items)
-                services.append(new MenuItem({ label: model.label, type: 'checkbox', checked: selectedId === model.id, click: () => resolveSelection({ action: 'translation_service', serviceId: model.id }) }));
-              if (catalog.codexLoginRequired) services.append(new MenuItem({ label: english ? 'Sign in to Codex' : '登录 Codex', click: () => resolveSelection('translation_login') }));
-              if (!catalog.items.length && !catalog.codexLoginRequired) {
-                loading.visible = true;
-                loading.label = catalog.warning || (english ? 'No available models' : '暂无可用模型');
-              }
-            })
-            .catch(() => {
-              if (!closed) loading.label = source === 'codex' ? (english ? 'Codex models unavailable' : 'Codex 模型不可用') : english ? 'Provider models unavailable' : '供应商模型不可用';
-            });
+          if (result.status === 'rejected') {
+            services.append(new MenuItem({ label: sources[index] === 'codex' ? (english ? 'Codex models unavailable' : 'Codex 模型不可用') : english ? 'Provider models unavailable' : '供应商模型不可用', enabled: false }));
+            continue;
+          }
+          /** 目录身份与翻译命令共用完整 modelRef。 */
+          const catalog = result.value;
+          for (const model of catalog.items) services.append(new MenuItem({ label: model.label, type: 'checkbox', checked: selectedId === model.id, click: () => resolveSelection({ action: 'translation_service', serviceId: model.id }) }));
+          if (catalog.codexLoginRequired) services.append(new MenuItem({ label: english ? 'Sign in to Codex' : '登录 Codex', click: () => resolveSelection('translation_login') }));
+          if (!catalog.items.length && !catalog.codexLoginRequired) services.append(new MenuItem({ label: catalog.warning || (english ? 'No available models' : '暂无可用模型'), enabled: false }));
         }
         /** 固定菜单项不接收网页提供的文案或可执行动作。 */
         const menu = Menu.buildFromTemplate([
@@ -386,10 +383,7 @@ export class BrowserHost implements BrowserAutomationPort {
           window,
           x: Math.min(bounds.width, Math.max(0, Math.round(finiteNumber(value.x, 0)))),
           y: Math.min(bounds.height, Math.max(0, Math.round(finiteNumber(value.y, 0)))),
-          callback: () => {
-            closed = true;
-            resolveSelection(null);
-          },
+          callback: () => resolveSelection(null),
         });
       });
     });

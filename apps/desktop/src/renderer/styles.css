@@ -16320,7 +16320,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
 }
 
-/* 固定来源与复制入口同行，长分支名沿用下拉组件的截断规则。 */
+/* 多仓目标逐行显示，保持每个分支选择器的可用宽度。 */
+.macos-ai-app .task-git-delivery-targets {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+}
+/* 目标与复制入口同行，长分支名沿用下拉组件的截断规则。 */
 .macos-ai-app .task-git-delivery-source-branch {
   display: flex;
   align-items: center;

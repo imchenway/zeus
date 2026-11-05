@@ -403,7 +403,17 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <GitBranch aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
-                      {summary?.sourceBranch ? <small>{zh ? `来源分支 ${summary.sourceBranch}` : `Source branch ${summary.sourceBranch}`}</small> : null}
+                      {summary?.sourceBranches?.length ? (
+                        summary.sourceBranches.map((source) => (
+                          <small key={source.repositoryRelativePath} title={`${source.repositoryRelativePath}: ${source.branch ?? (zh ? '未记录' : 'Not recorded')}`}>
+                            {zh ? '来源分支 ' : 'Source branch '}
+                            {summary.sourceBranches!.length > 1 ? `${source.repositoryRelativePath}: ` : ''}
+                            {source.branch ?? (zh ? '未记录' : 'Not recorded')}
+                          </small>
+                        ))
+                      ) : summary?.sourceBranch ? (
+                        <small>{zh ? `来源分支 ${summary.sourceBranch}` : `Source branch ${summary.sourceBranch}`}</small>
+                      ) : null}
                     </span>
                     {branch && !(directWorkspace && (summary?.repositoryCount ?? 0) > 1) ? (
                       <RuntimeCopyButton text={branch} label={zh ? '复制工作分支' : 'Copy working branch'} copiedLabel={zh ? '工作分支已复制' : 'Working branch copied'} />

@@ -218,13 +218,18 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     () => deliveryWorkspacesForConversationBranch(workspaceIndex?.items ?? [], props.currentConversationWorkspaceId || workspaceId),
     [workspaceIndex?.items, props.currentConversationWorkspaceId, workspaceId],
   );
-  /** 全目录交付固定合入各仓库创建任务开发线时记录的来源分支。 */
-  const targetBranchesByWorkspace = useMemo(() => Object.fromEntries((workspaceIndex?.items ?? []).map((workspace) => [workspace.id, workspace.sourceBranch])), [workspaceIndex?.items]);
+  /** 用户选择只属于当前窗口，刷新目录不覆盖已选目标。 */
+  const [selectedTargetBranches, setSelectedTargetBranches] = useState<Record<string, string>>({});
+  /** 未手动选择的仓库默认使用创建时记录的来源分支。 */
+  const targetBranchesByWorkspace = useMemo(
+    () => Object.fromEntries((workspaceIndex?.items ?? []).map((workspace) => [workspace.id, selectedTargetBranches[workspace.id] ?? workspace.sourceBranch])),
+    [workspaceIndex?.items, selectedTargetBranches],
+  );
   /** 整次交付覆盖当前目录全部仓库，文件勾选仅控制单独提交操作。 */
   const directoryWorkspaceIds = visibleWorkspaceItems.filter((workspace) => workspace.state !== 'discarded').map((workspace) => workspace.id);
   /** 缺失仓库详情不能从请求中被 flatMap 静默排除。 */
   const directoryUnavailable = !directoryWorkspaceIds.length || directoryWorkspaceIds.some((id) => !workspaceDetails[id] || workspaceDetails[id].reviewError || workspaceDetails[id].comparisonError);
-  /** 全目录交付冻结全部文件和各仓库的实际来源分支。 */
+  /** 全目录交付冻结全部文件和各仓库当前选择的目标分支。 */
   const directoryInput: Omit<GitDeliveryInput, 'settings'> = {
     scope: { kind: 'task', taskId: props.task.id },
     message,
@@ -243,7 +248,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   };
   /** 接纳结果未知时，同一份完整输入继续使用原幂等身份。 */
   const directoryRequest = useRef<{ json: string; key: string } | null>(null);
-  /** 提前列出来源分支不可用或仍有其他目标待办的仓库，不能静默跳过。 */
+  /** 提前列出目标分支不可用或仍有其他目标待办的仓库，不能静默跳过。 */
   const targetIssues = useMemo<BatchDeliveryResult[]>(
     () =>
       directoryWorkspaceIds.flatMap((selectedId) => {
@@ -1188,7 +1193,13 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       ))}
                     </>
                   }
-                  sourceBranches={directoryWorkspaceIds.map((id) => targetBranchesByWorkspace[id])}
+                  mergeTargets={directoryWorkspaceIds.map((id) => ({
+                    repositoryId: id,
+                    label: workspaceDetails[id]?.repositoryName || id,
+                    value: targetBranchesByWorkspace[id],
+                    branches: (workspaceDetails[id]?.targetBranches ?? []).filter((branch) => branch !== workspaceDetails[id]?.branchName),
+                  }))}
+                  onMergeTargetChange={(id, branch) => setSelectedTargetBranches((current) => ({ ...current, [id]: branch }))}
                   onCopyBranch={copyBranchName}
                   mergeDisabled={directoryUnavailable}
                   mode={mode}

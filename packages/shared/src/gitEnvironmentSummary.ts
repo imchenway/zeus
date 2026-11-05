@@ -32,8 +32,15 @@ export interface GitEnvironmentSummary {
   cwd: string;
   /** 当前工作树分支，多仓普通目录由界面显示仓库数量。 */
   branch: string | null;
-  /** 任务创建时的来源分支。 */
+  /** 当前工作区的来源分支；多仓独立会话只有来源一致时才聚合。 */
   sourceBranch: string | null;
+  /** 各仓创建时的来源；普通目录为空，历史未记录的来源为 null。 */
+  sourceBranches?: Array<{
+    /** 仓库在工作目录中的相对位置，根仓为点号。 */
+    repositoryRelativePath: string;
+    /** 创建时的来源引用；远端来源保留 remote 名称。 */
+    branch: string | null;
+  }>;
   /** 当前任务工作区，普通目录为空。 */
   workspace: GitEnvironmentWorkspace | null;
   /** 本次范围中的仓库数，包括已正常完成的仓库。 */

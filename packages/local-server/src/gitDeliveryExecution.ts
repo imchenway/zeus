@@ -211,7 +211,7 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
     )
       throw deliveryError('仓库分支快照无效。', undefined, 400);
     if (input.settings.merge && !repository.mergeBranch) throw deliveryError('请选择要合入的分支。', undefined, 400);
-    if (input.settings.merge && repository.mergeBranch === repository.expectedBranch) throw deliveryError('当前分支与来源分支相同，没有可执行的合入。', undefined, 400);
+    if (input.settings.merge && repository.mergeBranch === repository.expectedBranch) throw deliveryError('当前分支与目标分支相同，没有可执行的合入。', undefined, 400);
     if (
       !Array.isArray(repository.paths) ||
       repository.paths.length > 100_000 ||
@@ -331,7 +331,16 @@ export class GitDeliveryExecution {
           return reply.code(202).send(this.repository.view(previous));
         }
         const names: Record<string, string> = {};
-        for (const selection of input.repositories) names[selection.repositoryId] = (await this.resolve(request.params.projectId, input, selection)).name;
+        for (const selection of input.repositories) {
+          /** 接纳前校验目标属于该仓库，避免提交完成后才发现目标选错。 */
+          const context = await this.resolve(request.params.projectId, input, selection);
+          names[selection.repositoryId] = context.name;
+          if (input.settings.merge) {
+            const repository = await getGitRepositoryContext(context.repositoryPath ?? context.path);
+            const unborn = !repository.detached && !repository.headSha && repository.branch === selection.mergeBranch;
+            if (!repository.localBranches.includes(selection.mergeBranch) && !unborn) throw deliveryError('所选目标分支在本地不存在，请刷新后重新选择。');
+          }
+        }
         await this.assertDirectoryCoverage(input);
         for (const selection of input.postPushCommands ?? []) names[selection.commandId] = this.requirePostPushCommand(request.params.projectId, selection).title;
         const taskId = input.scope.kind === 'task' ? input.scope.taskId : this.options.conversations.getRecordById(input.scope.conversationId)?.taskId;
@@ -839,7 +848,7 @@ export class GitDeliveryExecution {
     const committedResult = committed?.commit;
     const committedHead = (committedResult?.result as { headSha?: string } | undefined)?.headSha ?? committedResult?.headSha;
     const mergedStep = previousSteps.find((item) => item.action === 'merge');
-    /** 合入推进的是来源分支，当前开发分支仍应停留在已交付的输入提交。 */
+    /** 合入推进的是目标分支，当前开发分支仍应停留在已交付的输入提交。 */
     const mergedHead = scope.kind === 'task' && mergedStep?.integrationId ? this.options.taskIntegrations.getById(mergedStep.integrationId)?.taskHeadSha : (mergedStep?.result?.merge as GitDeliveryMergeResult | undefined)?.sourceHeadSha;
     const expectedHead = mergedHead ?? (typeof committedHead === 'string' ? committedHead : selection.expectedHeadSha);
     if (snapshot.headSha !== expectedHead) throw deliveryError('运行范围之外出现了新提交，请重新审阅后运行。');
@@ -929,11 +938,11 @@ export class GitDeliveryExecution {
         await this.command(run, step, 'push', `/api/tasks/${scope.taskId}/integrations/${integration.id}/push`, workspaceGitCommandTypes.taskIntegrationPush, 'task_integration', integration.id, {});
       } else {
         if (!snapshot.remotes.length) throw deliveryError('仓库未配置远端。');
-        /** 启用合入时只推送已同步的来源分支；未启用合入才推送当前分支。 */
+        /** 启用合入时只推送已同步的目标分支；未启用合入才推送当前分支。 */
         const merge = mergedStep?.result?.merge as GitDeliveryMergeResult | undefined;
         const branch = run.input.settings.merge ? selection.mergeBranch : snapshot.branch;
         const headSha = await getGitBranchHead(context.repositoryPath ?? context.path, branch);
-        if (run.input.settings.merge && (!merge?.resultHeadSha || merge.targetBranch !== branch || headSha !== merge.resultHeadSha)) throw deliveryError('来源分支尚未完成本次合入或已出现新提交，不能推送。');
+        if (run.input.settings.merge && (!merge?.resultHeadSha || merge.targetBranch !== branch || headSha !== merge.resultHeadSha)) throw deliveryError('目标分支尚未完成本次合入或已出现新提交，不能推送。');
         /** 目标分支的上游独立于当前开发分支，不借用当前分支的远端目标。 */
         const upstream = run.input.settings.merge ? snapshot.branchUpstreams?.[branch] : snapshot.upstream;
         const remote = snapshot.remotes.find((name) => upstream?.startsWith(`${name}/`)) ?? snapshot.remotes[0]!;
@@ -1038,7 +1047,7 @@ export class GitDeliveryExecution {
       return true;
     }
     const merge = step.result?.merge as GitDeliveryMergeResult;
-    /** 接收合入的来源分支可以在另一 worktree 检出，也可以没有检出目录。 */
+    /** 接收合入的目标分支可以在另一 worktree 检出，也可以没有检出目录。 */
     const repositoryPath = context.repositoryPath ?? context.path;
     const repository = await getGitRepositoryContext(repositoryPath);
     /** 空仓库的来源分支尚无引用，首次交付仍可由原 Git 同步流程创建它。 */
@@ -1082,7 +1091,7 @@ export class GitDeliveryExecution {
       this.repository.updateStep(this.step(step), { state: 'waiting', conversationId, result: { ...this.step(step).result, manualResolution: false } });
       return false;
     }
-    if (targetHead !== merge.targetHeadSha) throw deliveryError('接收合入的来源分支已变化，已保留隔离结果，请核对后继续。');
+    if (targetHead !== merge.targetHeadSha) throw deliveryError('接收合入的目标分支已变化，已保留隔离结果，请核对后继续。');
     if (!merge.resultHeadSha) {
       const completed = await this.external(run, step, 'complete', { sourceHeadSha: merge.sourceHeadSha, targetHeadSha: merge.targetHeadSha }, () =>
         completeTaskIntegrationCommit({ integrationPath: merge.integrationPath, mode: 'merge', commitMessage: run.input.message || `Merge ${merge.sourceBranch}` }),
@@ -1106,9 +1115,9 @@ export class GitDeliveryExecution {
     /** 每个原任务仓库只允许一个交付开发线，避免原分支与冲突分支互相覆盖。 */
     const roots = new Map<string, (typeof workspaces)[number]>();
     for (const selection of input.repositories) {
-      /** 全目录交付只能使用当前开发线持久记录的来源分支。 */
+      /** 合入目标由本次请求冻结；工作区仍必须属于当前任务。 */
       const workspace = workspaces.find((candidate) => candidate.id === selection.repositoryId);
-      if (!workspace || selection.mergeBranch !== workspace.sourceBranch) throw deliveryError('完整交付必须合入每个仓库记录的来源分支，请刷新后继续。');
+      if (!workspace) throw deliveryError('交付工作区不属于当前任务，请刷新后继续。');
       /** 不通过分支后缀猜测冲突开发线来源。 */
       const root = resolveGitDeliveryRootWorkspace(workspaces, selection.repositoryId);
       if (!root) throw deliveryError('原工作目录关联缺失，请刷新交付范围后继续。');

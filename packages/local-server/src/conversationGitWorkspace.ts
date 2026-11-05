@@ -1,4 +1,5 @@
-import { discoverGitRepositories, getGitRepositoryContext } from '@zeus/git-core';
+import { discoverGitRepositories, getGitRepositoryContext, readGitBranchSource } from '@zeus/git-core';
+import type { GitEnvironmentSummary } from '@zeus/shared';
 import type { ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -56,6 +57,7 @@ export async function resolveConversationGitWorkspace(
         relativePath: '.',
         localPath: cwd,
         workspaceMode: 'direct' as const,
+        sourceBranches: [],
         repositories: repositories.map((repository) => ({ ...repository, repositoryPath: repository.localPath, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
       };
     }
@@ -63,6 +65,8 @@ export async function resolveConversationGitWorkspace(
     /** 只纳入环境里实际存在的 Git 根，不把容器目录或共享符号链接当仓库。 */
     const [sources, members] = await Promise.all([discoverGitRepositories(root), discoverGitRepositories(cwd)]);
     if (!members.length) throw unavailable();
+    /** 每个成员保留自己的来源；多仓库不能借用首仓来源。 */
+    const sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
     for (const member of members) {
       /** 相对布局和公共 Git 身份必须同时属于原项目。 */
       const source = sources.find((entry) => entry.relativePath === member.relativePath);
@@ -74,6 +78,7 @@ export async function resolveConversationGitWorkspace(
       if (!registeredPaths.includes(memberPath) || memberPath === (await realpath(source.localPath))) throw unavailable();
       const [projectGit, workspaceGit] = await Promise.all([commonGitDirectory(source.localPath), commonGitDirectory(memberPath)]);
       if (projectGit !== workspaceGit) throw unavailable();
+      sourceBranches.push({ repositoryRelativePath: member.relativePath, branch: workspace.detached ? null : await readGitBranchSource(member.localPath, workspace.branch) });
     }
     return {
       id: conversationRepositoryId(conversation.id, '.'),
@@ -81,6 +86,7 @@ export async function resolveConversationGitWorkspace(
       relativePath: '.',
       localPath: cwd,
       workspaceMode: 'worktree' as const,
+      sourceBranches,
       repositories: members.map((repository) => ({
         ...repository,
         repositoryPath: sources.find((source) => source.relativePath === repository.relativePath)!.localPath,

@@ -214,6 +214,8 @@ export class GitEnvironmentSummaryService {
         let sources: SummarySource[];
         /** 仅任务工作树带有工作区生命周期。 */
         let workspace: ZeusTaskWorkspaceRecord | undefined;
+        /** 任务和独立会话都按各仓持久记录提供来源。 */
+        let sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
         /** 已完成仓库仍属于整次交付范围。 */
         let repositoryCount = 0;
         /** 目录只来源于项目、工作区或独立会话的持久记录。 */
@@ -229,6 +231,7 @@ export class GitEnvironmentSummaryService {
           const selected = deliveryWorkspacesForConversationBranch(workspaces, workspace.id);
           if (!selected.length) throw new Error('任务工作区关联已失效，请在代码交付页检查。');
           repositoryCount = selected.length;
+          sourceBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: item.sourceBranch || null }));
           sources = selected.flatMap((item) => {
             // 正常完成或回收的仓库没有待交付工作树，不应把空 review 当作读取失败。
             if (['merged', 'reclaimed', 'discarded'].includes(item.state)) return [];
@@ -248,6 +251,7 @@ export class GitEnvironmentSummaryService {
             const repository = await resolveConversationGitWorkspace(project, scope.conversationId, this.options.conversations, this.options.submissions);
             cwd = repository.localPath;
             discovered = repository.repositories;
+            sourceBranches = repository.sourceBranches;
           } else discovered ??= await discoverGitRepositories(cwd);
           repositoryCount = discovered.length;
           sources = discovered.map((repository) => ({
@@ -314,7 +318,8 @@ export class GitEnvironmentSummaryService {
           projectId,
           cwd,
           branch: workspace?.branchName ?? null,
-          sourceBranch: workspace?.sourceBranch ?? null,
+          sourceBranch: workspace?.sourceBranch ?? (sourceBranches.length && sourceBranches.every((entry) => entry.branch === sourceBranches[0]!.branch) ? sourceBranches[0]!.branch : null),
+          sourceBranches,
           workspace: workspace
             ? { id: workspace.id, environmentId: workspace.environmentId, state: workspace.state, worktreePath: workspace.worktreePath, repositoryName: workspace.repositoryName, repositoryRelativePath: workspace.repositoryRelativePath }
             : null,

@@ -1,4 +1,5 @@
 import { displayedFilePath } from '../ui/filePathActions.js';
+import type { GitDeliverySelection, GitDeliverySettings } from '@zeus/shared';
 import { PushDialog } from './GitPushDialog.js';
 import { defaultPushTarget } from './GitRepositoryControls.js';
 import type { PushSelection, OperationTone } from './gitWorkbenchTypes.js';
@@ -83,6 +84,28 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   }
   /** 仓库快照在原生交付窗口内读取，包含当前分支、文件和提交事实。 */
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
+  /** 每个仓库独立保存窗口内的显式目标，刷新不覆盖用户选择。 */
+  const [selectedTargetBranches, setSelectedTargetBranches] = useState<Record<string, string>>({});
+  /** 接纳结果未知时，相同输入复用原请求身份。 */
+  const mergeRequest = useRef<{ json: string; key: string } | null>(null);
+  /** 来源为远端跟踪引用时，只默认选择已经存在的对应本地分支。 */
+  function mergeTargetBranch(repository: ProjectGitRepositoryWorkbenchItem): string {
+    if (selectedTargetBranches[repository.id] !== undefined) return selectedTargetBranches[repository.id]!;
+    const source = repository.sourceBranch;
+    if (!source) return '';
+    if (repository.snapshot.localBranches.includes(source)) return source;
+    const remote = repository.snapshot.remotes.find((name) => source.startsWith(`${name}/`));
+    const local = remote && repository.snapshot.remoteBranches.includes(source) ? source.slice(remote.length + 1) : '';
+    return repository.snapshot.localBranches.includes(local) ? local : '';
+  }
+  /** 单步和组合交付冻结同一组仓库、输入提交和用户目标。 */
+  const deliveryRepositories: GitDeliverySelection[] = (snapshot?.repositories ?? []).map((repository) => ({
+    repositoryId: repository.id,
+    paths: visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => file.path),
+    expectedBranch: repository.snapshot.branch,
+    expectedHeadSha: repository.snapshot.headSha,
+    mergeBranch: mergeTargetBranch(repository),
+  }));
   /** 已提交变化只比较真实上游，未配置上游时不伪造来源分支。 */
   const [committed, setCommitted] = useState<Record<string, GitDiffSummary>>({});
   /** 上游比较完成前保留仓库加载状态。 */
@@ -312,6 +335,34 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   );
   useEffect(() => () => generation.current?.abort(), [generationKey]);
 
+  /** 会话单独合入复用后台交付执行器，不夹带提交或推送。 */
+  async function mergeSelected(settings: GitDeliverySettings): Promise<void> {
+    if (!props.conversation || busyRef.current) return;
+    busyRef.current = 'merge';
+    setBusyAction('merge');
+    setError(null);
+    try {
+      /** 当前目标与收尾选择一并冻结；未知接纳不能产生第二次运行。 */
+      const input = {
+        scope: { kind: 'conversation' as const, conversationId: props.conversation.id },
+        message,
+        mode: 'merge' as const,
+        repositories: deliveryRepositories,
+        settings: { ...settings, commit: false, generateCommitMessage: false, merge: true, push: false, postPushCommandIds: [] },
+      };
+      const json = JSON.stringify(input);
+      if (mergeRequest.current?.json !== json) mergeRequest.current = { json, key: crypto.randomUUID() };
+      await props.conversation.client.startGitDeliveryRun(props.project.id, input, mergeRequest.current.key);
+      mergeRequest.current = null;
+      props.onClose?.();
+    } catch (reason) {
+      setError(reason);
+    } finally {
+      busyRef.current = null;
+      setBusyAction(null);
+    }
+  }
+
   /** 仓库与目录批量勾选复用同一入口，不改变审阅焦点。 */
   function toggleRepositories(ids: string[], checked: boolean): void {
     setSelectedIds((current) => (checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id))));
@@ -537,10 +588,17 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 commitCount={commitCount}
                 onCommit={() => void commitSelected(selected.filter((repository) => commitSelection.some((item) => item.repositoryId === repository.id)))}
                 commitFeedback={feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
-                sourceBranches={[]}
-                mergeDisabled
+                mergeTargets={snapshot.repositories.map((repository) => ({
+                  repositoryId: repository.id,
+                  label: repository.name,
+                  value: mergeTargetBranch(repository),
+                  branches: repository.snapshot.localBranches.filter((branch) => branch !== repository.snapshot.branch),
+                }))}
+                onMergeTargetChange={(id, branch) => setSelectedTargetBranches((current) => ({ ...current, [id]: branch }))}
+                mergeDisabled={!props.conversation || snapshot.repositories.some((repository) => repository.snapshot.detached || Boolean(repository.snapshot.integrationState) || repository.snapshot.conflictFiles.length > 0)}
                 mode="merge"
-                mergeCount={0}
+                mergeCount={props.conversation ? snapshot.repositories.length : 0}
+                onMerge={(settings) => void mergeSelected(settings)}
                 combination={
                   props.conversation ? (
                     <GitDeliveryRunControl
@@ -554,13 +612,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                         scope: { kind: 'conversation', conversationId: props.conversation.id },
                         message,
                         mode: 'merge',
-                        repositories: snapshot.repositories.map((repository) => ({
-                          repositoryId: repository.id,
-                          paths: visibleRepositoryFiles(repository, snapshot.repositories).map((file) => file.path),
-                          expectedBranch: repository.snapshot.branch,
-                          expectedHeadSha: repository.snapshot.headSha,
-                          mergeBranch: '',
-                        })),
+                        repositories: deliveryRepositories,
                       }}
                     />
                   ) : undefined

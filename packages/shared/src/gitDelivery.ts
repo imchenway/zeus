@@ -51,7 +51,7 @@ export interface GitDeliverySelection {
   expectedBranch: string;
   /** 用户审阅时的提交身份；首次提交可以为空。 */
   expectedHeadSha: string;
-  /** 当前分支交付到的来源分支；所有入口均将它作为合入目标。 */
+  /** 用户选择的本地合入目标；界面默认使用创建时的来源分支。 */
   mergeBranch: string;
 }
 
