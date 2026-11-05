@@ -45,10 +45,13 @@ jobs:
       # 沿用正式 Windows 打包入口的凭据名称。
       WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      # 安装 Electron 与打包工具的下载目录固定，缓存不包含签名证书。
-      electron_config_cache: ${{ runner.temp }}/zeus-electron-cache
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/zeus-electron-builder-cache
     steps:
+      - name: 设置 Electron 与打包工具缓存目录
+        # runner 临时目录在步骤执行时读取，并供后续下载缓存与打包步骤共用。
+        shell: pwsh
+        run: |
+          "electron_config_cache=$env:RUNNER_TEMP/zeus-electron-cache" >> $env:GITHUB_ENV
+          "ELECTRON_BUILDER_CACHE=$env:RUNNER_TEMP/zeus-electron-builder-cache" >> $env:GITHUB_ENV
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
