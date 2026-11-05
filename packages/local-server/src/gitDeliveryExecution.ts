@@ -125,6 +125,11 @@ function deliveryIdentity(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
 }
 
+/** 每个交付步骤的每次尝试对应唯一命令运行，身份可安全用于命令日志路径。 */
+function postPushCommandRunId(step: GitDeliveryStepRecord): string {
+  return `command_run_${deliveryIdentity(`${step.id}:${step.attempt}:confirmation`)}`;
+}
+
 /** 内部调用和 Renderer 使用同一命令信封协议。 */
 export function gitDeliveryCommand(commandType: string, scopeKind: CommandScopeKind, scopeId: string, operationIdentity: string, input: object) {
   return {
@@ -652,7 +657,9 @@ export class GitDeliveryExecution {
         const step = this.step(original);
         const message = error instanceof Error ? error.message : '推送后命令执行失败。';
         const receipt = step.commandId ? this.options.commands.inspectOutcome(step.commandId)?.attempts.at(-1)?.receipt : undefined;
-        const unknown = step.state === 'unknown' || (step.result?.pendingCommand && !receipt) || /OUTCOME_UNKNOWN|RESULT_MISSING/u.test(String((error as { code?: string }).code));
+        /** 命令中心参数校验在持久接纳和进程启动之前拒绝，不属于未知外部结果。 */
+        const rejectedBeforeWrite = (error as { code?: string }).code === 'ZEUS_COMMAND_CENTER_COMMAND_INVALID';
+        const unknown = !rejectedBeforeWrite && (step.state === 'unknown' || (step.result?.pendingCommand && !receipt) || /OUTCOME_UNKNOWN|RESULT_MISSING/u.test(String((error as { code?: string }).code)));
         this.repository.updateStep(step, { state: unknown ? 'unknown' : 'attention', message });
         return;
       }
@@ -661,10 +668,8 @@ export class GitDeliveryExecution {
 
   /** 启动使用原命令确认及执行入口，完成只认命令中心持久状态。 */
   private async executePostPushCommand(run: GitDeliveryRunRecord, original: GitDeliveryStepRecord): Promise<boolean> {
-    /** 确认身份也是原命令中心的运行身份，接纳响应丢失时仍能读回同一运行。 */
-    const runId = `${original.id}:${original.attempt}:confirmation`;
     /** 已开始命令在定义后续变化时仍核对自己的冻结快照。 */
-    const existing = new CommandRunRepository(this.options.db).getById(runId);
+    const existing = new CommandRunRepository(this.options.db).getById(postPushCommandRunId(original));
     if (existing && existing.status !== 'pending_confirmation') return this.observePostPushCommand(original, existing);
     if (original.state === 'unknown' || original.state === 'running') {
       await this.reconcile(original);
@@ -676,6 +681,8 @@ export class GitDeliveryExecution {
     this.requirePostPushCommand(run.projectId, selection);
     /** 身份和阶段先持久保存，再调用原运行入口。 */
     const step = this.step(original);
+    /** 核对明确未接纳的请求会推进尝试次数，运行身份必须取核对后的步骤。 */
+    const runId = postPushCommandRunId(step);
     this.repository.updateStep(step, { state: 'running', message: null });
     /** 命令确认紧邻启动生成，不会在漫长 Git 操作期间过期。 */
     const confirmation = await this.command(
@@ -729,7 +736,8 @@ export class GitDeliveryExecution {
     const snapshot = this.options.commands.inspectOutcome(step.commandId);
     const latest = snapshot?.attempts.at(-1);
     if (!snapshot || latest?.receipt?.outcome === 'failed_before_write' || latest?.receipt?.outcome === 'explicitly_rejected') {
-      this.repository.updateStep(step, { state: 'pending', attempt: step.attempt + 1, message: null });
+      /** 命令重试使用新运行身份，确认和启动回执不能跨尝试复用。 */
+      this.repository.updateStep(step, { state: 'pending', attempt: step.attempt + 1, message: null, ...(step.action === 'command' ? { commandId: null, result: null } : {}) });
       return;
     }
     if (latest?.receipt?.outcome !== 'accepted') {
@@ -1207,7 +1215,8 @@ export class GitDeliveryExecution {
     const step = this.step(original);
     const results = (step.result?.phases ?? {}) as Record<string, Record<string, unknown>>;
     if (results[phase]) return results[phase]!;
-    const operation = `${step.id}:${step.attempt}:${phase}`;
+    /** 命令中心确认协议要求操作身份与运行身份一致；其他阶段各自保持幂等身份。 */
+    const operation = type === commandCenterCommandTypes.confirmationCreate ? scopeId : `${step.id}:${step.attempt}:${phase}`;
     const body = gitDeliveryCommand(type, scopeKind, scopeId, operation, value);
     this.repository.updateStep(step, { commandId: body.command.commandId, result: { ...step.result, pendingCommand: { phase, kind: 'http', url, method, body } } });
     const result = await this.http(method, url, body);

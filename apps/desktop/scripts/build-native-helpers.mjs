@@ -101,6 +101,15 @@ async function compileSwift({ source, output, frameworks }) {
 
 /** Windows 安全与运行时助手均按当前目标架构编译，不复用其他平台二进制。 */
 async function buildWindowsHelpers() {
+  /** 两个助手使用独立目录并行编译；全部退出后再组装，任一失败都阻止打包。 */
+  const results = await Promise.allSettled([buildWindowsSecurityHelper(), buildWindowsRuntime()]);
+  /** 保留全部编译错误，不因首个失败留下仍在后台写文件的构建。 */
+  const failures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
+  if (failures.length) throw new AggregateError(failures, 'Windows 原生辅助程序构建失败。');
+}
+
+/** .NET 安全助手和 Git askpass 共用同一个按架构发布的可执行文件。 */
+async function buildWindowsSecurityHelper() {
   /** 独立发布目录防止 .NET 中间文件进入最终安装器。 */
   const publishDirectory = resolve(desktopRoot, '../../.tmp/windows-security-publish', process.arch);
   await executeNativeBuild('dotnet', [
@@ -120,6 +129,10 @@ async function buildWindowsHelpers() {
   await copyFile(resolve(publishDirectory, 'zeus-windows-security.exe'), resolve(outputDirectory, 'zeus-windows-security.exe'));
   // 文件名选择 askpass 入口，避免全局模式变量误导其他安全组件请求。
   await copyFile(resolve(publishDirectory, 'zeus-windows-security.exe'), resolve(outputDirectory, 'ZeusGitAskpass.exe'));
+}
+
+/** Rust 运行时单独编译，输出目录不与 .NET 或 CUA 构建共享。 */
+async function buildWindowsRuntime() {
   /** Rust 产物固定在当前工作树，不污染共享源码或其他架构。 */
   const targetDirectory = resolve(desktopRoot, '../../.tmp/windows-runtime-target', process.arch);
   /** 显式目标防止 ARM Windows 上的 x64 编译器静默生成错误架构。 */

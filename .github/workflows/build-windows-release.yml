@@ -45,6 +45,9 @@ jobs:
       # 沿用正式 Windows 打包入口的凭据名称。
       WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
       WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      # 安装 Electron 与打包工具的下载目录固定，缓存不包含签名证书。
+      electron_config_cache: ${{ runner.temp }}/zeus-electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/zeus-electron-builder-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,37 +77,72 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
+      - name: 恢复 Electron 与打包工具下载缓存
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.electron_config_cache }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: windows-downloads-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm install --frozen-lockfile
-      - name: 计算任务安装包的原生缓存身份
+      - name: 计算原生构建缓存身份
         id: cua_inputs
-        if: ${{ inputs.use_task_cache && inputs.build_installers }}
+        if: ${{ inputs.build_installers }}
         run: node apps/desktop/scripts/build-computer-native.mjs --cache-info | ForEach-Object { $_.Replace('\', '/') } >> $env:GITHUB_OUTPUT
-      - name: 恢复任务分支的 CUA 成品
+      - name: 恢复 CUA 编译成品
         id: cua_cache
-        if: ${{ inputs.use_task_cache && inputs.build_installers }}
+        if: ${{ inputs.build_installers }}
         uses: actions/cache/restore@v4
         continue-on-error: true
         with:
-          # 缓存必须精确匹配分支、架构、源码和工具链。
+          # 正式发布与任务缓存隔离；成品精确匹配架构、源码、补丁和工具链。
           path: ${{ steps.cua_inputs.outputs.artifact_path }}
-          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
-      - name: 清理未精确命中的任务原生成品
-        if: ${{ inputs.use_task_cache && inputs.build_installers && steps.cua_cache.outputs.cache-hit != 'true' }}
+          key: ${{ inputs.use_task_cache && format('windows-task-{0}', github.ref_name) || 'windows-release' }}-${{ steps.cua_inputs.outputs.native_key }}
+      - name: 清理未精确命中的原生成品
+        if: ${{ inputs.build_installers && steps.cua_cache.outputs.cache-hit != 'true' }}
         run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
+      - name: 恢复 Cargo 编译缓存
+        id: cua_cargo_cache
+        if: ${{ inputs.build_installers && steps.cua_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 包含宿主构建工具和目标架构产物，不包含 Cargo 凭据。
+          path: |
+            ${{ steps.cua_inputs.outputs.cargo_target_path }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ inputs.use_task_cache && format('windows-task-{0}', github.ref_name) || 'windows-release' }}-${{ steps.cua_inputs.outputs.cargo_key }}
+          restore-keys: ${{ inputs.use_task_cache && format('windows-task-{0}', github.ref_name) || 'windows-release' }}-${{ steps.cua_inputs.outputs.cargo_restore_key }}
       - name: 构建正式 Zeus 安装器
         if: ${{ inputs.build_installers }}
         run: pnpm package:windows:release
       - name: 非发布候选仅编译与核对原生产物
         if: ${{ !inputs.build_installers }}
         run: pnpm build:windows
-      - name: 保存已完成的任务原生成品
-        # 后续打包失败也可保留原生成品；复用时仍核对输入和文件摘要。
-        if: ${{ always() && inputs.use_task_cache && inputs.build_installers && steps.cua_inputs.outcome == 'success' && steps.cua_cache.outputs.cache-hit != 'true' && hashFiles(format('{0}/build-receipt.json', steps.cua_inputs.outputs.artifact_path)) != '' }}
+      - name: 保存已验证的 CUA 编译成品
+        # 正式缓存仅由 main 的成功安装包写入，任务缓存继续按分支隔离。
+        if: ${{ inputs.build_installers && (inputs.use_task_cache || github.ref == 'refs/heads/main') && steps.cua_cache.outputs.cache-hit != 'true' && steps.cua_cache.outputs.cache-primary-key != '' }}
         uses: actions/cache/save@v4
         continue-on-error: true
         with:
           path: ${{ steps.cua_inputs.outputs.artifact_path }}
-          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
+          key: ${{ steps.cua_cache.outputs.cache-primary-key }}
+      - name: 保存已验证的 Cargo 编译缓存
+        if: ${{ inputs.build_installers && (inputs.use_task_cache || github.ref == 'refs/heads/main') && steps.cua_cache.outputs.cache-hit != 'true' && steps.cua_cargo_cache.outputs.cache-hit != 'true' && steps.cua_cargo_cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            ${{ steps.cua_inputs.outputs.cargo_target_path }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ steps.cua_cargo_cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.build_installers }}
         with:

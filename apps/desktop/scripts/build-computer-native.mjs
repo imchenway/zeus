@@ -294,7 +294,8 @@ async function main() {
   console.log(`cargo_key=${inputs.cargoCacheKey}`);
   console.log(`cargo_restore_key=${inputs.cargoRestoreKey}`);
   console.log(`artifact_path=${relative(repositoryRoot, inputs.artifactDirectory)}`);
-  console.log(`cargo_target_path=${relative(repositoryRoot, inputs.targetDirectory)}/release`);
+  // Windows 显式指定 target，宿主构建工具和目标架构结果分处两个子目录，必须一并缓存。
+  console.log(`cargo_target_path=${relative(repositoryRoot, inputs.targetDirectory)}`);
 }
 
 // 导入构建模块不会执行 CI 命令入口。
