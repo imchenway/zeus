@@ -1,6 +1,16 @@
-import { assertValidGitBranchName, buildTaskEnvironmentRootPath, discoverGitRepositories, projectGitRepositoryId, cleanupPreparedTaskWorktree, getGitRepositoryContext, prepareTaskWorktree, type GitRepositoryContext } from '@zeus/git-core';
+import {
+  buildTaskBranchName,
+  assertValidGitBranchName,
+  buildTaskEnvironmentRootPath,
+  discoverGitRepositories,
+  projectGitRepositoryId,
+  cleanupPreparedTaskWorktree,
+  getGitRepositoryContext,
+  prepareTaskWorktree,
+  type GitRepositoryContext,
+} from '@zeus/git-core';
 import { defaultTaskBranchPrefix, isConversationWorktreeOptions, type ConversationWorktreeBranchOptions } from '@zeus/shared';
-import type { ZeusProjectRecord, ZeusProjectRepositoryRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
+import type { ZeusProjectRecord, ZeusProjectRepositoryRecord, ZeusProjectSharedPathRecord, ZeusTaskRecord } from '@zeus/storage';
 import { createHash } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -30,6 +40,7 @@ export async function prepareProjectConversationWorkspace(
   options?: unknown,
   taskBranchPrefix = defaultTaskBranchPrefix,
   members?: { repositories: ZeusProjectRepositoryRecord[]; sharedPaths: ZeusProjectSharedPathRecord[] },
+  task?: Pick<ZeusTaskRecord, 'taskCode' | 'title'>,
 ): Promise<string> {
   if (mode === undefined || mode === 'direct') return project.localPath;
   if (mode !== 'worktree') throw workspaceError('工作位置必须是项目目录或新建工作树。');
@@ -38,7 +49,7 @@ export async function prepareProjectConversationWorkspace(
   /** 重试同一首发请求仍指向同一环境。 */
   const identity = createHash('sha256').update(conversationId).digest('hex').slice(0, 20);
   /** 整个环境的路径不接受客户端输入。 */
-  const environmentRoot = buildTaskEnvironmentRootPath(project.localPath, project.slug, 'conversation', identity.slice(-16));
+  const environmentRoot = buildTaskEnvironmentRootPath(project.localPath, project.slug, task?.taskCode ?? 'conversation', identity.slice(-16));
   /** 项目模式要求完整仓库选择，避免漏仓后悄悄使用原项目目录。 */
   const selections = isConversationWorktreeOptions(options) && 'repositories' in options ? options.repositories : null;
   /** 所有分支检查完成前不创建任何工作树。 */
@@ -63,6 +74,8 @@ export async function prepareProjectConversationWorkspace(
           target,
           selections.find((selection) => selection.repositoryId === repository.id)!,
           taskBranchPrefix,
+          undefined,
+          task,
         ),
       );
     }
@@ -71,7 +84,7 @@ export async function prepareProjectConversationWorkspace(
     const context = await getGitRepositoryContext(project.localPath);
     if (!context.isRepository || resolve(context.topLevel) !== resolve(project.localPath)) throw workspaceError('请为项目内各 Git 仓库选择来源分支。', 'ZEUS_GIT_REPOSITORY_REQUIRED');
     const selection = isConversationWorktreeOptions(options) && !('repositories' in options) ? options : { sourceKind: 'local' as const, sourceRef: context.branch, branchName: `${taskBranchPrefix}/conversation-${identity}` };
-    preparations.push(await prepareSelection(project.localPath, environmentRoot, selection, taskBranchPrefix, context));
+    preparations.push(await prepareSelection(project.localPath, environmentRoot, selection, taskBranchPrefix, context, task));
   }
   /** 只有本次新环境才允许整理父仓内的嵌套仓目录。 */
   const newEnvironment = !existsSync(environmentRoot);
@@ -97,8 +110,8 @@ export async function prepareProjectConversationWorkspace(
         repositoryPath,
         repositoryContext: context,
         projectSlug: project.slug,
-        taskCode: 'conversation',
-        taskTitle: '会话',
+        taskCode: task?.taskCode ?? 'conversation',
+        taskTitle: task?.title ?? '会话',
         workspaceId: identity,
         worktreePath,
         branchName: selection.branchName,
@@ -143,11 +156,20 @@ export async function prepareProjectConversationWorkspace(
 }
 
 /** 复用单仓工作树的引用和占用检查，不在校验阶段修改仓库。 */
-async function prepareSelection(repositoryPath: string, worktreePath: string, requested: ConversationWorktreeBranchOptions, prefix: string, loaded?: GitRepositoryContext): Promise<ConversationRepositoryPreparation> {
+async function prepareSelection(
+  repositoryPath: string,
+  worktreePath: string,
+  requested: ConversationWorktreeBranchOptions,
+  prefix: string,
+  loaded?: GitRepositoryContext,
+  task?: Pick<ZeusTaskRecord, 'taskCode' | 'title'>,
+): Promise<ConversationRepositoryPreparation> {
   const context = loaded ?? (await getGitRepositoryContext(repositoryPath));
   if (!context.isRepository || resolve(context.topLevel) !== resolve(repositoryPath)) throw workspaceError('仓库目录已不可用，请刷新后重试。');
   const selection = { ...requested, sourceRef: requested.sourceRef.trim(), branchName: requested.branchName.trim() };
   const registered = context.worktrees.find((entry) => resolve(entry.path) === resolve(worktreePath));
+  // 任务分支复用推送命名；重试优先使用该目录已登记的名称。
+  if (task) selection.branchName = registered?.branch || buildTaskBranchName(task.taskCode, task.title, 1, prefix, (name) => context.localBranches.includes(name) || context.worktrees.some((entry) => entry.branch === name));
   const branchExists = context.localBranches.includes(selection.branchName);
   const existingBranch = Boolean(registered?.branch === selection.branchName && !registered.prunable && !registered.bare);
   if (registered && (!existingBranch || !existsSync(join(worktreePath, '.git')))) throw workspaceError('会话工作树登记已失效，请检查目录后重试。');
