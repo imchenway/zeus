@@ -2710,7 +2710,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       permissionMode,
       collaborationMode,
       projectId: project.id,
-      taskId: null,
+      taskId: deliveryWorkspace?.taskId ?? null,
       executionRoot,
     });
     const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
@@ -2741,7 +2741,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
-            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content, attachments) } : {}),
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => (deliveryWorkspace ? conversations.create(record) : createProjectConversationRecord(record, displayText || content, attachments)) } : {}),
             cwd: executionRoot,
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
@@ -2774,7 +2774,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
-            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content, attachments) } : {}),
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => (deliveryWorkspace ? conversations.create(record) : createProjectConversationRecord(record, displayText || content, attachments)) } : {}),
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             browserComments,
@@ -2896,6 +2896,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ? (conversations.getById(selectedConversationId)?.contextCapacityTokens ?? null)
           : null;
     assertContextCapacity(contextCapacityTokens);
+    /** 交付冲突复用来源任务，不生成另一项任务；重放仍沿用上方冻结的预留。 */
+    const deliveryTaskId = scope.startsWith('project-conversation:') && isNativeApiRecord(body) && body.source === 'delivery_conflict' ? resolveGitDeliveryConflictWorkspace(db, projectId, body.deliveryStepId).taskId : null;
     return {
       contextCapacityTokens,
       contextCapacitySource: contextCapacityTokens === null ? 'engine_default' : 'explicit',
@@ -2905,6 +2907,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       conversationId,
       submissionId: `conversation_submission_${createHash('sha256').update(`${operationId}\0submission`).digest('hex').slice(0, 24)}`,
       ...(scope.startsWith('project-conversation:') && isNativeApiRecord(body) && body.createTask === true ? { taskId: `task_${conversationId}` } : {}),
+      ...(deliveryTaskId ? { taskId: deliveryTaskId } : {}),
     };
   }
 

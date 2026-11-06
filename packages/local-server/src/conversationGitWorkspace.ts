@@ -1,4 +1,4 @@
-import { discoverGitRepositories, getGitRepositoryContext, readGitBranchSource } from '@zeus/git-core';
+import { discoverGitRepositories, getGitRepositoryContext, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
 import type { GitEnvironmentSummary } from '@zeus/shared';
 import type { ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
 import { execFile } from 'node:child_process';
@@ -35,7 +35,7 @@ export function conversationExecutionWorkspace(conversationId: string, submissio
 export async function resolveConversationGitWorkspace(
   project: ZeusProjectRecord,
   conversationId: string,
-  conversations: Pick<ConversationRepository, 'getRecordById'>,
+  conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
 ) {
   /** 错误身份保持稳定，文案适用于普通目录和独立工作树。 */
@@ -47,6 +47,28 @@ export async function resolveConversationGitWorkspace(
   if (!context || typeof context.projectLocalPath !== 'string') throw unavailable();
   try {
     const [root, cwd] = await Promise.all([realpath(project.localPath), realpath(context.projectLocalPath)]);
+    /** 交付隔离目录按持久步骤校验，不能用项目相对目录布局判定归属。 */
+    const conflict = conversations.getDeliveryConflictOrigin(conversation.id);
+    if (conflict) {
+      if ((await realpath(conflict.integrationPath)) !== cwd) throw unavailable();
+      const original: { repositories: Array<{ id: string; relativePath: string; localPath: string; repositoryPath: string }> } = await resolveConversationGitWorkspace(project, conflict.conversationId, conversations, submissions);
+      /** 普通目录交付还可使用服务端登记身份，路径必须属于原会话的已验证成员。 */
+      const registeredPath = conflict.repositoryPath ? await realpath(conflict.repositoryPath) : null;
+      const source = original.repositories.find((member) => member.id === conflict.repositoryId || projectGitRepositoryId(project.id, member.relativePath) === conflict.repositoryId || member.localPath === registeredPath);
+      const member = (await discoverGitRepositories(cwd)).find((entry) => entry.localPath === cwd);
+      if (!source || !member || (await commonGitDirectory(source.localPath)) !== (await commonGitDirectory(cwd))) throw unavailable();
+      const registered = await Promise.all(member.context.worktrees.filter((entry) => !entry.bare && !entry.prunable).map((entry) => realpath(entry.path).catch(() => null)));
+      if (!registered.includes(cwd) || cwd === (await realpath(source.localPath))) throw unavailable();
+      return {
+        id: conversationRepositoryId(conversation.id, '.'),
+        name: conversation.title || '冲突工作目录',
+        relativePath: '.',
+        localPath: cwd,
+        workspaceMode: 'worktree' as const,
+        sourceBranches: [],
+        repositories: [{ ...member, id: conversationRepositoryId(conversation.id, '.'), repositoryPath: source.repositoryPath, managedWorktree: false }],
+      };
+    }
     /** 普通模式只能复用所属项目的真实目录，不能借持久上下文指向其他目录。 */
     if (context.executionWorkspaceMode === 'direct' || (context.executionWorkspaceMode === undefined && cwd === root)) {
       if (cwd !== root) throw unavailable();
@@ -116,7 +138,7 @@ export function conversationRepositoryId(conversationId: string, relativePath: s
 export async function resolveConversationGitRepository(
   project: ZeusProjectRecord,
   repositoryKey: string,
-  conversations: Pick<ConversationRepository, 'getRecordById'>,
+  conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
 ) {
   /** 持久会话身份优先；成员后缀只参与身份匹配，绝不解码成磁盘路径。 */

@@ -1967,7 +1967,7 @@ export interface SessionHeaderSnapshot {
 
 export function createSessionHeaderSnapshot(conversation: NativeConversationChoice | null, task: SessionWorkspaceTask | null, owner?: SessionConversationOwner, language: 'zh-CN' | 'en-US' = 'zh-CN'): SessionHeaderSnapshot | null {
   if (!conversation) return null;
-  const taskId = task?.id ?? (owner?.kind === 'task' ? owner.taskId : null);
+  const taskId = task?.id ?? (owner?.kind === 'task' ? owner.taskId : conversation.taskId);
   const taskTitle = task?.title ?? (owner?.kind === 'task' ? owner.taskTitle : null);
   return {
     conversationId: conversation.id,
