@@ -2,11 +2,6 @@ appId: dev.hypha.zeus
 productName: Zeus
 artifactName: Zeus-${version}-${arch}.${ext}
 # Electron 版本由根 package.json 指定，打包入口显式传递，避免产物继续使用旧版本。
-electronLanguages:
-  - en
-  - en_GB
-  - zh_CN
-  - zh_TW
 directories:
   output: ../../dist
 # 相应源码和许可证由两端共用的打包入口随应用提供。
@@ -41,6 +36,12 @@ asarUnpack:
   - node_modules/@trycua/cua-driver-*/**
   - node_modules/@ubjs/**
 mac:
+  # macOS 使用 .lproj 名称；Windows 保留完整 .pak 语言资源，避免原生控件因缺失资源崩溃。
+  electronLanguages:
+    - en
+    - en_GB
+    - zh_CN
+    - zh_TW
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   minimumSystemVersion: '13.0'
