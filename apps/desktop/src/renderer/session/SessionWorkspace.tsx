@@ -3672,8 +3672,7 @@ export function NewConversationComposer(props: {
   const [tokenDraft] = useState(() => restoredDraft?.tokenDraft ?? { current: [] });
   /** 有未发送内容时保留草稿设置；空草稿重新读取最近使用的配置。 */
   const [runtimeProjectId, setRuntimeProjectId] = useState<string | null>(() =>
-    restoredDraft?.runtimeProjectId === props.owner?.projectId &&
-    (restoredDraft?.content.trim() || restoredDraft?.attachments.length || restoredDraft?.browserDraft?.submission || restoredDraft?.goalInputOpen)
+    restoredDraft?.runtimeProjectId === props.owner?.projectId && (restoredDraft?.content.trim() || restoredDraft?.attachments.length || restoredDraft?.browserDraft?.submission || restoredDraft?.goalInputOpen)
       ? (restoredDraft.runtimeProjectId ?? null)
       : null,
   );
