@@ -623,7 +623,8 @@ export function GitDeliveryWorkspace(props: {
       <div className="task-git-review-layout task-git-delivery-layout">
         {props.fileBrowser}
         {props.actions}
-        <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={25} max={65} />
+        <GitPaneSeparator name="delivery-actions" label={props.zh ? '调整操作区宽度' : 'Resize actions'} unit="px" initial={320} min={240} max={960} reverse />
+        <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={15} max={80} />
         <main className="task-git-review-main task-git-delivery-diff-main">
           <header className="task-git-review-pane-title">
             <strong tabIndex={0} data-file-path={props.selectedFile || undefined} data-icon-tooltip={props.diffTitle} data-file-status={props.fileStatus}>

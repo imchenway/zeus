@@ -790,6 +790,7 @@ function formatTaskSourceType(value: string, labels?: TaskSourceLabels): string 
     graph_node: '图谱节点',
     graph_view: '代码图谱',
     runtime_session: '运行会话',
+    conversation: '会话创建',
     template: '任务模板',
     graph_question: '图谱问答',
     zentao: '禅道',

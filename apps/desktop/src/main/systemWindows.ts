@@ -81,7 +81,7 @@ export function systemWindowOpenHandler(owner: BrowserWindow): Parameters<Electr
         });
         /** 主窗口退出时不留下无业务状态的空白子窗口。 */
         const destroy = (): void => {
-          if (!window.isDestroyed()) window.destroy();
+          if (!window.isDestroyed()) close();
         };
         /** 原页面重载或崩溃后，旧 React 树已经失效。 */
         const navigate = (_event: Electron.Event, _url: string, isInPlace: boolean, isMainFrame: boolean): void => {

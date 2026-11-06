@@ -67,6 +67,7 @@
 .macos-ai-app .task-detail-header-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 /* 常态没有表单边框；悬停、键盘焦点和展开状态仍可辨认。 */
@@ -478,7 +479,12 @@
     padding-inline: 20px;
   }
   .macos-ai-app .task-detail-titlebar {
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
+  }
+  /* 窄详情让标题占满首行，状态和推送操作保留完整点击区域。 */
+  .macos-ai-app .task-detail-title {
+    grid-column: 1 / -1;
   }
   .macos-ai-app .task-detail-title .task-inline-edit-trigger strong {
     font-size: 18px;

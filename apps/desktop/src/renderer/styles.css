@@ -4889,12 +4889,14 @@ a {
   outline: none;
 }
 .git-pane-separator.is-x {
-  width: 6px;
+  align-self: stretch;
+  width: 100%;
   min-height: 0;
   cursor: col-resize;
 }
 .git-pane-separator.is-y {
-  height: 6px;
+  justify-self: stretch;
+  height: 100%;
   min-width: 0;
   cursor: row-resize;
 }
@@ -4992,7 +4994,7 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 }
 .project-git-diff-window-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 18vw) minmax(0, 1fr);
+  grid-template-columns: minmax(0, clamp(160px, var(--git-diff-files, 24%), calc(100% - 286px))) 8px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
@@ -15946,16 +15948,22 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   opacity: 0.55;
 }
 
-/* 交付区上下分栏，差异横跨窗口；各上方面板独立滚动。 */
+/* 宽窗口的操作区占满右侧，文件和差异共享左侧高度并分别滚动。 */
 .macos-ai-app .task-git-delivery-layout {
-  grid-template-columns: minmax(0, 1fr) clamp(272px, 24vw, 340px);
-  grid-template-rows: minmax(140px, var(--git-delivery-height, 42%)) 7px minmax(0, 1fr);
-  grid-template-areas: 'files actions' 'separator separator' 'diff diff';
+  grid-template-columns: minmax(0, 1fr) 8px clamp(240px, var(--git-delivery-actions, 320px), calc(100% - 188px));
+  grid-template-rows: minmax(0, clamp(min(120px, 25%), var(--git-delivery-height, 42%), max(25%, calc(100% - 160px)))) 8px minmax(0, 1fr);
+  grid-template-areas: 'files width-separator actions' 'separator width-separator actions' 'diff width-separator actions';
+  overflow: hidden;
   min-block-size: 0;
 }
 
-.macos-ai-app .task-git-delivery-layout > .git-pane-separator {
+.macos-ai-app .task-git-delivery-layout > .git-separator-delivery-height {
   grid-area: separator;
+}
+
+.macos-ai-app .task-git-delivery-layout > .git-separator-delivery-actions {
+  grid-area: width-separator;
+  width: 8px;
 }
 
 .macos-ai-app .task-git-delivery-file-browser {
@@ -16262,7 +16270,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 /* 交付动作使用连续分组，减少嵌套卡片，让目标分支成为合入前的主信息。 */
 .macos-ai-app .task-git-delivery-actions {
   grid-area: actions;
+  min-inline-size: 0;
   min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   align-content: start;
   display: grid;
   gap: 5px;
@@ -17278,10 +17289,10 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
 }
 
-/* 小窗口仍保留上方左右分工，面板内容滚动而不挤压差异。 */
-@media (max-width: 820px) {
+/* 窄窗口让差异横跨底部，上方文件与操作分别滚动，不隐藏操作。 */
+@media (max-width: 900px) {
   .macos-ai-app .task-git-delivery-layout {
-    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-areas: 'files width-separator actions' 'separator separator separator' 'diff diff diff';
   }
 
   .macos-ai-app .task-git-delivery-actions {

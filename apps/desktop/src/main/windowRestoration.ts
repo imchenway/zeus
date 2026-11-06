@@ -117,8 +117,9 @@ export function applyRestoredMainWindowPlacement(input: {
         actualDisplay = input.getDisplayMatching(input.window.getBounds());
         corrected = true;
     }
+    // 原生窗口先可见，再进入最大化或全屏，避免隐藏窗口忽略系统展开请求。
+    input.reveal();
     if (input.restored.isMaximized) input.window.maximize();
     if (input.restored.isFullScreen) input.window.setFullScreen(true);
-    input.reveal();
     return {actualDisplayId: actualDisplay ? String(actualDisplay.id) : undefined, corrected};
 }
