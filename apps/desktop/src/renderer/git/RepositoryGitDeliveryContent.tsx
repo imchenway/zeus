@@ -106,9 +106,9 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     expectedHeadSha: repository.snapshot.headSha,
     mergeBranch: mergeTargetBranch(repository),
   }));
-  /** 会话成果与创建工作树时的来源分支比较，项目入口仍展示上游差异。 */
+  /** 所有入口都比较当前分支的固定起点，推送和合入不改变已提交成果。 */
   function committedBase(repository: ProjectGitRepositoryWorkbenchItem | undefined): string | undefined {
-    return (props.conversation && props.conversationWorkspaceMode !== 'direct' ? repository?.sourceBranch : repository?.snapshot.upstream) || undefined;
+    return repository?.snapshot.sourceHeadSha || undefined;
   }
   /** 文件清单与预览共享同一个已提交比较基线。 */
   const [committed, setCommitted] = useState<Record<string, GitDiffSummary>>({});
@@ -194,9 +194,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           /** 来源缺失必须显式报告，不能伪装成没有成果或退回推送上游。 */
           const base = committedBase(repository);
           if (base) return props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, base, 'current');
-          if (props.conversation && props.conversationWorkspaceMode !== 'direct')
-            return Promise.reject(new Error(zh ? '工作树的来源分支不可用，无法读取已提交成果。' : 'The worktree source branch is unavailable. Committed results cannot be loaded.'));
-          return Promise.resolve(null);
+          if (!repository.snapshot.headSha) return Promise.resolve(null);
+          return Promise.reject(new Error(zh ? '缺少分支创建记录，无法确定已提交成果范围。' : 'Branch creation history is unavailable. The committed result range cannot be determined.'));
         }),
       );
       if (revision !== readRevision.current) return;
@@ -543,7 +542,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 detailStates={{}}
                 diffScope={scope}
                 totalWorkingFiles={snapshot.repositories.reduce((count, repository) => count + visibleRepositoryFiles(repository, snapshot.repositories).length, 0)}
-                totalCommittedFiles={Object.values(committed).reduce((count, value) => count + value.files.length, 0)}
+                totalCommittedFiles={comparisonLoading || Object.keys(comparisonErrors).length ? null : Object.values(committed).reduce((count, value) => count + value.files.length, 0)}
                 focusedWorkspaceId={focus.repositoryId}
                 selectedFile={focus.path}
                 selectedWorkspaceIds={new Set(selectedIds)}
