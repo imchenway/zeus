@@ -66,7 +66,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const standaloneWindow = document.body.dataset.surface === 'task-git-delivery';
   /** 每个弹窗拥有独立可访问标题。 */
   const titleId = useId();
-  /** 工作区和上游比较使用相同目录边界，文件计数与树节点保持一致。 */
+  /** 工作区和已提交比较使用相同目录边界，文件计数与树节点保持一致。 */
   function fileInScope(path: string): boolean {
     return !props.pathPrefix || path === props.pathPrefix || path.startsWith(`${props.pathPrefix}/`);
   }
@@ -106,9 +106,13 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     expectedHeadSha: repository.snapshot.headSha,
     mergeBranch: mergeTargetBranch(repository),
   }));
-  /** 已提交变化只比较真实上游，未配置上游时不伪造来源分支。 */
+  /** 会话成果与创建工作树时的来源分支比较，项目入口仍展示上游差异。 */
+  function committedBase(repository: ProjectGitRepositoryWorkbenchItem | undefined): string | undefined {
+    return (props.conversation && props.conversationWorkspaceMode !== 'direct' ? repository?.sourceBranch : repository?.snapshot.upstream) || undefined;
+  }
+  /** 文件清单与预览共享同一个已提交比较基线。 */
   const [committed, setCommitted] = useState<Record<string, GitDiffSummary>>({});
-  /** 上游比较完成前保留仓库加载状态。 */
+  /** 成果比较完成前保留仓库加载状态。 */
   const [comparisonLoading, setComparisonLoading] = useState(false);
   /** 比较失败保留仓库级原因，其余仓库继续显示。 */
   const [comparisonErrors, setComparisonErrors] = useState<Record<string, string>>({});
@@ -184,9 +188,16 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       );
       initialized.current = true;
       setError(null);
-      /** 上游比较独立加载，不阻塞本机文件和差异的首屏。 */
+      /** 成果比较独立加载，不阻塞本机文件和差异的首屏。 */
       const comparisons = await Promise.allSettled(
-        next.repositories.map((repository) => (repository.snapshot.upstream ? props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, repository.snapshot.upstream, 'current') : Promise.resolve(null))),
+        next.repositories.map((repository) => {
+          /** 来源缺失必须显式报告，不能伪装成没有成果或退回推送上游。 */
+          const base = committedBase(repository);
+          if (base) return props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, base, 'current');
+          if (props.conversation && props.conversationWorkspaceMode !== 'direct')
+            return Promise.reject(new Error(zh ? '工作树的来源分支不可用，无法读取已提交成果。' : 'The worktree source branch is unavailable. Committed results cannot be loaded.'));
+          return Promise.resolve(null);
+        }),
       );
       if (revision !== readRevision.current) return;
       setComparisonLoading(false);
@@ -503,7 +514,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                     projectId: props.project.id,
                     repositoryId: focusedRepository.id,
                     path: focus.path,
-                    ...(scope === 'committed' ? { comparisonRef: focusedRepository.snapshot.upstream ?? undefined, comparisonMode: 'current' } : {}),
+                    ...(scope === 'committed' ? { comparisonRef: committedBase(focusedRepository), comparisonMode: 'current' } : {}),
                   }
                 : undefined
             }
@@ -516,7 +527,12 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                   projectId: props.project.id,
                   repositoryId,
                   path,
-                  ...(scope === 'committed' ? { comparisonRef: snapshot.repositories.find((repository) => repository.id === repositoryId)?.snapshot.upstream ?? undefined, comparisonMode: 'current' as const } : {}),
+                  ...(scope === 'committed'
+                    ? {
+                        comparisonRef: committedBase(snapshot.repositories.find((repository) => repository.id === repositoryId)),
+                        comparisonMode: 'current' as const,
+                      }
+                    : {}),
                 })}
                 onRefresh={() => refresh()}
                 onBusyChange={(busy) => {
@@ -542,11 +558,17 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 onOpenFile={(repositoryId, path) => {
                   void window.zeus
                     ?.openProjectGitDiffWindow?.({
+                      conversationId: props.conversationWorkspaceMode !== 'direct' ? props.conversation?.id : undefined,
                       projectId: props.project.id,
                       repositoryId,
                       filePath: path,
                       stage: 'combined',
-                      ...(scope === 'committed' ? { comparisonRef: snapshot.repositories.find((repository) => repository.id === repositoryId)?.snapshot.upstream ?? undefined, comparisonMode: 'current' } : {}),
+                      ...(scope === 'committed'
+                        ? {
+                            comparisonRef: committedBase(snapshot.repositories.find((repository) => repository.id === repositoryId)),
+                            comparisonMode: 'current',
+                          }
+                        : {}),
                     })
                     .catch((reason) => setError(reason));
                 }}
