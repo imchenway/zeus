@@ -1,3 +1,4 @@
+import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { FilePreview, FilePreviewDataContext, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
 import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
@@ -179,6 +180,7 @@ export function ProjectGitDiffWindow(props: {
                 })}
               </div>
             </aside>
+            <GitPaneSeparator name="diff-files" label={zh ? '调整文件列表宽度' : 'Resize file list'} initial={24} min={15} max={50} />
             {viewer}
           </div>
         ) : (

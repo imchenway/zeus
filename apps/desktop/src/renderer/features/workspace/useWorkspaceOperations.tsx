@@ -2000,6 +2000,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         statusDefinitions={activeTaskManagementStatusConfig.statuses}
         priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
         busy={updatingTaskBusy}
+        pushState={state.taskModelPushTaskId === taskDetailPaneTask.id && (state.taskModelPushEntry === 'checking' || state.taskModelPushEntry === 'error') ? state.taskModelPushEntry : undefined}
+        pushDisabled={taskDetailPaneTask.managementStatus === activeTaskManagementStatusConfig.roles.completedStatusId || taskDetailPaneTask.managementStatus === activeTaskManagementStatusConfig.roles.cancelledStatusId}
+        onPushNewConversation={(taskId) => void domainActions.openTaskModelPush(taskId)}
+        conversations={state.nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []}
+        conversationsLoading={state.nativeConversationChoiceTaskStates[taskDetailPaneTask.id]?.status === 'loading'}
+        conversationsError={state.nativeConversationChoiceTaskStates[taskDetailPaneTask.id]?.error}
+        onOpenConversation={(taskId, conversationId) => void domainActions.openTaskConversation(taskId, conversationId)}
+        onReloadConversations={(taskId) => void domainActions.refreshNativeConversationChoices(taskId).catch((error: unknown) => recordLocalError('task-conversation-refresh', error))}
         onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
         onUpdateTaskContent={updateTaskContent}
         onUpdateRelationships={updateTaskRelationships}

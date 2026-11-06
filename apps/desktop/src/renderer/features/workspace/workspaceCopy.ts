@@ -381,6 +381,7 @@ export const languageCopy = {
       },
       sourceLabels: {
         runtime_session: '运行会话',
+        conversation: '会话创建',
         template: '任务模板',
         manual: '手动创建',
         user: '手动创建',
@@ -1606,6 +1607,7 @@ export const languageCopy = {
       },
       sourceLabels: {
         runtime_session: 'Run',
+        conversation: 'Conversation',
         template: 'Task template',
         manual: 'Manual',
         user: 'Manual',

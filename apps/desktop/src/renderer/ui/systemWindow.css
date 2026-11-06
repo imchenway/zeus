@@ -2,6 +2,9 @@
 body[data-surface='system-window'] {
   margin: 0;
   min-width: 0;
+  min-height: 0;
+  width: 100vw;
+  height: 100dvh;
   overflow: hidden;
   background: var(--zeus-solid-surface-bg);
 }
@@ -47,6 +50,7 @@ body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-ze
 body[data-system-window='git-commit'] .project-git-commit-dialog > main {
   flex: 1;
   min-height: 0;
+  max-height: none;
   overflow: auto;
 }
 /* 标题和关闭由系统外壳提供；任务的项目身份与提交说明仍保留在正文。 */
@@ -64,4 +68,14 @@ body[data-surface='system-window'] .zeus-system-window-root .task-model-push-hea
   background: var(--zeus-solid-surface-bg);
   color: var(--zeus-product-text);
   border: 1px solid var(--zeus-product-line);
+}
+
+/* 系统工作窗口缩小时允许操作换行，阅读内容由自己的滚动区承载。 */
+body[data-surface='system-window'] :is(.project-git-commit-dialog, .file-preview-dialog, .task-model-push-modal) :is(header, footer) {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+body[data-surface='system-window'] :is(.file-preview, .file-preview-content, .task-model-push-body) {
+  min-inline-size: 0;
+  min-block-size: 0;
 }

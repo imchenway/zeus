@@ -37,7 +37,7 @@
 /* 双栏独立滚动，拖动分隔条沿用现有比例存储与键盘操作。 */
 .git-push-layout {
   display: grid;
-  grid-template-columns: minmax(0, var(--git-push-sidebar, 54%)) 6px minmax(0, 1fr);
+  grid-template-columns: minmax(0, clamp(220px, var(--git-push-sidebar, 54%), calc(100% - 226px))) 6px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
@@ -260,6 +260,8 @@
 /* 底部沿用共享按钮，更多选项与主操作组成一个清晰的分段按钮。 */
 .git-push-footer {
   display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
   align-items: center;
   gap: 14px;
   min-height: 58px;
@@ -273,6 +275,7 @@
 }
 .git-push-footer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-left: auto;
 }

@@ -986,6 +986,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskDetailPresentation(presentation);
     setTaskDetailPaneTaskId(taskId);
     const pending: Promise<void>[] = [loadTaskDetail(taskId)];
+    // 打开任何一种详情时读取原会话，失败由共享加载状态提供重试入口。
+    pending.push(
+      refreshNativeConversationChoices(taskId)
+        .then(() => undefined)
+        .catch((error: unknown) => recordLocalError('task-conversation-refresh', error)),
+    );
     if (props.onLoadTaskEvents) {
       pending.push(
         props

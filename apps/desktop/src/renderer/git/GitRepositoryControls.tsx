@@ -1,3 +1,4 @@
+import { useWindowDocument } from '../ui/windowDocument.js';
 import { executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from './repositoryBranchGroups.js';
 import './gitWorkspace.css';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
@@ -54,6 +55,9 @@ export function BranchSwitcher(props: {
   onOpenNewBranch?: (baseRef?: string, repositoryId?: string) => void;
   onOpenRevision?: () => void;
 }) {
+  /** 分支菜单跟随所在窗口的尺寸、焦点和键盘事件。 */
+  const document = useWindowDocument();
+  const window = document.defaultView!;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [position, setPosition] = useState({ left: 0, top: 0 });

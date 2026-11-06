@@ -1,3 +1,5 @@
+import type { NativeConversationChoice } from '../session/sessionTypes.js';
+import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { TaskDeadlineEditor } from './TaskDeadlineField.js';
 import { DotsThreeIcon } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
@@ -42,6 +44,16 @@ export interface TaskDetailPaneCopy {
   noRequest: string;
   eventsTitle: string;
   noEvents: string;
+  /** 推送及会话导航沿用任务工作区文案。 */
+  pushNewConversation: string;
+  taskActionChecking: string;
+  taskActionRetry: string;
+  taskActionTerminalHelp: string;
+  conversationsTitle: string;
+  conversationEmptyTitle: string;
+  conversationLoading: string;
+  archivedConversation: string;
+  retryConversationLoad: string;
   detailStatusSelectAria: string;
   primaryActionsTitle: string;
   metadataTitle: string;
@@ -84,6 +96,16 @@ export interface TaskDetailPaneContentProps {
   statusDefinitions: readonly TaskManagementStatusDefinition[];
   priorityOptions: ReadonlyArray<{ value: TaskPriority; label: string }>;
   busy: boolean;
+  /** 与任务表格一致的推送检查状态及终态限制。 */
+  pushState?: 'checking' | 'error';
+  pushDisabled: boolean;
+  onPushNewConversation: (taskId: string) => void;
+  /** 服务端返回的原会话记录，含可阅读的归档会话。 */
+  conversations: readonly NativeConversationChoice[];
+  conversationsLoading: boolean;
+  conversationsError?: string | null;
+  onOpenConversation: (taskId: string, conversationId: string) => void;
+  onReloadConversations: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
   onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
   onUpdateRelationships: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<TaskEditResult>;
@@ -777,6 +799,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const zh = props.language === 'zh-CN';
   const editCopy = taskEditCopies[props.language];
   const managementStatus = resolveTaskManagementStatus(props.task);
+  /** 会话按创建顺序展示任务的发展时间线。 */
+  const conversations = [...props.conversations].sort(compareConversationCreatedAsc);
+  /** 重试仍进入原推送流程，避免产生第二套提交状态。 */
+  const pushLabel = props.pushState === 'checking' ? props.copy.taskActionChecking : props.pushState === 'error' ? props.copy.taskActionRetry : props.copy.pushNewConversation;
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
   /** 任务详情的所有正文与标签字段共用即时预览和场景清理。 */
   const previews = usePendingResourcePreviews(
@@ -1210,6 +1236,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             />
           </span>
           <div className="task-detail-header-actions" aria-label={props.copy.primaryActionsTitle} onKeyDown={closeMoreActionsOnEscape}>
+            <Button
+              variant="primary"
+              size="compact"
+              busy={props.pushState === 'checking'}
+              disabled={props.busy || props.pushDisabled}
+              title={props.pushDisabled ? props.copy.taskActionTerminalHelp : undefined}
+              onClick={() => props.onPushNewConversation(props.task.id)}
+            >
+              {pushLabel}
+            </Button>
             <Button variant="secondary" size="compact" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} data-icon-tooltip={zh ? '更多任务操作' : 'More task actions'}>
               <DotsThreeIcon size={22} weight="bold" aria-hidden="true" />
             </Button>
@@ -1310,6 +1346,33 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <div className="task-detail-body">
           <section className="task-detail-requirements" aria-label={zh ? '任务说明' : 'Requirements'}>
             {taskOverview}
+          </section>
+          <section className="task-detail-block" aria-label={props.copy.conversationsTitle} aria-busy={props.conversationsLoading}>
+            <h2 className="task-detail-section-heading">{props.copy.conversationsTitle}</h2>
+            {props.conversationsError ? (
+              <div role="alert" className="task-inline-edit-feedback is-error">
+                {props.conversationsError}
+                <Button variant="secondary" size="compact" disabled={props.conversationsLoading} onClick={() => props.onReloadConversations(props.task.id)}>
+                  {props.copy.retryConversationLoad}
+                </Button>
+              </div>
+            ) : null}
+            {conversations.length ? (
+              <ul className="task-detail-linked-list">
+                {conversations.map((conversation) => (
+                  <li key={conversation.id}>
+                    <button type="button" className="task-detail-linked-task" onClick={() => props.onOpenConversation(props.task.id, conversation.id)}>
+                      <span>{conversation.title}</span>
+                      {conversation.archived ? <small>{props.copy.archivedConversation}</small> : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : props.conversationsLoading ? (
+              <p role="status">{props.copy.conversationLoading}</p>
+            ) : !props.conversationsError ? (
+              <p>{props.copy.conversationEmptyTitle}</p>
+            ) : null}
           </section>
           <section className="task-detail-attributes" aria-label={props.copy.metadataTitle}>
             <h2 className="task-detail-attributes-title">{props.copy.metadataTitle}</h2>

@@ -1,3 +1,4 @@
+import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
 import { resolveGitDeliveryConflictWorkspace } from './gitDeliveryExecution.js';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -514,7 +515,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
               sharedPaths: dependencies.projectSharedPaths.listByProject(input.project.id),
             },
             input.body.createTask === true && input.body.workspaceMode === 'worktree'
-              ? ensureProjectConversationTask({ id: input.reservedConversationId, projectId: input.project.id, title: displayText.slice(0, 60) || '专家群聊', permissionMode }, displayText || content)
+              ? ensureProjectConversationTask({ id: input.reservedConversationId, projectId: input.project.id, title: displayText.slice(0, 60) || '专家群聊', permissionMode }, displayText || content, attachments)
               : undefined,
           );
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
@@ -602,6 +603,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           modelId: selectedModel.model,
         },
         input.task ? undefined : displayText || content,
+        attachments,
       );
     }
     const parentConversation = conversation;
@@ -2490,34 +2492,50 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   /** 在准备 Git 目录前保存真实任务编号；失败重试复用同一任务。 */
-  function ensureProjectConversationTask(record: Pick<Parameters<ConversationRepository['create']>[0], 'id' | 'projectId' | 'title' | 'permissionMode'>, description: string): ZeusTaskRecord {
+  function ensureProjectConversationTask(
+    record: Pick<Parameters<ConversationRepository['create']>[0], 'id' | 'projectId' | 'title' | 'permissionMode'>,
+    description: string,
+    attachments: readonly NativeConversationAttachment[],
+  ): ZeusTaskRecord {
     return db.transaction(() => {
       /** 自动创建任务的身份与会话预留一致，不接受客户端指定任务。 */
       const taskId = `task_${record.id}`;
-      return (
-        tasks.getById(taskId) ??
-        tasks.create({
-          id: taskId,
-          projectId: record.projectId,
-          title: record.title,
-          taskType: 'task',
-          // 新对话已开始推进任务，初始状态复用项目的推送后状态（默认开发中）。
-          managementStatus: dependencies.resolveTaskManagementStatusConfigForProject(record.projectId).roles.pushedStatusId,
-          description,
-          createdFrom: 'conversation',
-          sourceContext: { conversationId: record.id },
-          allowCodeChanges: record.permissionMode !== 'read-only',
-          allowTests: record.permissionMode !== 'read-only',
-          allowGitCommit: false,
-        })
+      /** 重放请求保留任务已保存的内容和用户编辑。 */
+      const existing = tasks.getById(taskId);
+      if (existing) return existing;
+      /** 会话附件已通过路径授权校验，复用任务字段附件格式和数量约束。 */
+      const taskAttachments = normalizeWorkManagementTaskAttachments(
+        attachments.map((attachment) => ({
+          path: attachment.localPath,
+          name: attachment.name,
+          kind: attachment.mime === 'inode/directory' ? 'directory' : attachment.mime.startsWith('image/') ? 'image' : 'file',
+          field: 'description',
+          mimeType: attachment.mime,
+          size: attachment.size,
+        })),
       );
+      if (!taskAttachments) throw nativeApiError('ZEUS_INVALID_TASK_ATTACHMENTS', '任务描述最多支持 24 个有效附件。');
+      return tasks.create({
+        id: taskId,
+        projectId: record.projectId,
+        title: record.title,
+        taskType: 'task',
+        // 新对话已开始推进任务，初始状态复用项目的推送后状态（默认开发中）。
+        managementStatus: dependencies.resolveTaskManagementStatusConfigForProject(record.projectId).roles.pushedStatusId,
+        description,
+        createdFrom: 'conversation',
+        sourceContext: { conversationId: record.id, attachments: taskAttachments },
+        allowCodeChanges: record.permissionMode !== 'read-only',
+        allowTests: record.permissionMode !== 'read-only',
+        allowGitCommit: false,
+      });
     });
   }
 
   /** 直接目录在接纳时创建任务；工作树接纳复用准备目录前保存的任务。 */
-  function createProjectConversationRecord(record: Parameters<ConversationRepository['create']>[0], description?: string): ZeusConversationRecord {
+  function createProjectConversationRecord(record: Parameters<ConversationRepository['create']>[0], description: string | undefined, attachments: readonly NativeConversationAttachment[]): ZeusConversationRecord {
     return db.transaction(() => {
-      if (record.taskId && description !== undefined) ensureProjectConversationTask(record, description);
+      if (record.taskId && description !== undefined) ensureProjectConversationTask(record, description, attachments);
       return conversations.create(record);
     });
   }
@@ -2675,7 +2693,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           sharedPaths: dependencies.projectSharedPaths.listByProject(project.id),
         },
         reservation.taskId && body.workspaceMode === 'worktree'
-          ? ensureProjectConversationTask({ id: reservation.conversationId, projectId: project.id, title: (displayText || providerContent).slice(0, 120), permissionMode }, displayText || content)
+          ? ensureProjectConversationTask({ id: reservation.conversationId, projectId: project.id, title: (displayText || providerContent).slice(0, 120), permissionMode }, displayText || content, attachments)
           : undefined,
       ));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
@@ -2723,7 +2741,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
-            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content) } : {}),
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content, attachments) } : {}),
             cwd: executionRoot,
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
@@ -2756,7 +2774,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
-            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content) } : {}),
+            ...(reservation.taskId ? { taskId: reservation.taskId, createRecord: (record) => createProjectConversationRecord(record, displayText || content, attachments) } : {}),
             executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             browserComments,

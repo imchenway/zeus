@@ -458,7 +458,7 @@ type MenuBarUsageWindowPlacement = {
   x: number;
   y: number;
 };
-const taskGitDeliveryMinimumSize = { width: 920, height: 640 } as const;
+const taskGitDeliveryMinimumSize = { width: 560, height: 420 } as const;
 const automaticUpdateIntervalMs = 60 * 60_000;
 const automaticUpdateInitialDelayMs = 15_000;
 
@@ -1058,8 +1058,8 @@ async function openProjectGitDiffWindow(
     y: Math.round(workArea.y + (workArea.height - height) / 2),
     width,
     height,
-    minWidth: Math.min(760, width),
-    minHeight: Math.min(520, height),
+    minWidth: Math.min(560, width),
+    minHeight: Math.min(420, height),
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
