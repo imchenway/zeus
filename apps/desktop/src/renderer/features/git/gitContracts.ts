@@ -98,6 +98,8 @@ export interface ProjectGitRecentRef {
 }
 
 export interface ProjectGitRepositorySnapshot {
+  /** 当前分支创建时的固定提交；null 表示无法确定起点。 */
+  sourceHeadSha?: string | null;
   submodules?: { path: string; initialized: boolean }[];
   branch: string;
   detached: boolean;

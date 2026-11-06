@@ -1110,7 +1110,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   detailStates={detailStates}
                   diffScope={diffScope}
                   totalWorkingFiles={totalWorkingFiles}
-                  totalCommittedFiles={totalCommittedFiles}
+                  totalCommittedFiles={visibleWorkspaceItems.some((workspace) => !workspaceDetails[workspace.id] || detailStates[workspace.id] || workspaceDetails[workspace.id]?.comparisonError) ? null : totalCommittedFiles}
                   focusedWorkspaceId={workspaceId}
                   selectedFile={selectedFile}
                   selectedWorkspaceIds={selectedWorkspaceIdSet}

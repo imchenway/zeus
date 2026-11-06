@@ -439,6 +439,8 @@ export interface ProjectGitRecentRef {
 }
 
 export interface ProjectGitRepositorySnapshot {
+  /** 当前分支创建时的固定提交；null 表示无法确定起点。 */
+  sourceHeadSha?: string | null;
   submodules?: { path: string; initialized: boolean }[];
   integrationState?: 'merge' | 'rebase' | null;
   branch: string;
@@ -841,11 +843,36 @@ export async function readGitBranchSource(cwd: string, branchName: string): Prom
 }
 
 /** 新建独立会话分支时保存已核验的来源引用；分支重命名和删除沿用 Git 的配置生命周期。 */
-export async function recordGitBranchSource(cwd: string, branchName: string, sourceBranch: string): Promise<void> {
+export async function recordGitBranchSource(cwd: string, branchName: string, sourceBranch: string, sourceHeadSha?: string): Promise<void> {
   /** 来源可以是本地分支名或包含 remote 名称的远端跟踪分支名。 */
   const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
   const source = await assertGitBranchFormat(cwd, sourceBranch, 'source branch');
   await runGit(cwd, ['config', '--local', '--replace-all', `branch.${branch}.zeus-source-branch`, source]);
+  if (sourceHeadSha) await recordGitBranchSourceHead(cwd, branch, sourceHeadSha);
+}
+
+/** 读取固定分支起点；历史分支只采用明确的创建记录，不以移动的上游推测。 */
+async function readGitBranchSourceHead(cwd: string, branchName: string): Promise<string | null> {
+  /** 分支名先经 Git 校验，再用于配置键和完整引用。 */
+  const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
+  try {
+    /** 本地配置随分支重命名和删除，不受全局 Git 配置影响。 */
+    const result = await execFileAsync('git', ['config', '--local', '--get', `branch.${branch}.zeus-source-head`], { cwd, timeout: 15_000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+    return await resolveCommit(cwd, result.stdout.trim());
+  } catch (error) {
+    if ((error as { code?: number }).code !== 1) throw error;
+  }
+  /** reflog 中只有创建事件能证明原始起点；最旧的普通提交不能代替创建事件。 */
+  const reflog = await requireGitStdout(cwd, ['reflog', 'show', '--format=%H%x09%gs', localBranchRef(branch)]);
+  const creation = splitLines(reflog).find((line) => line.split('\t')[1]?.startsWith('branch: Created from '));
+  return creation ? resolveCommit(cwd, creation.split('\t')[0]!) : null;
+}
+
+/** 创建分支时保存固定提交，后续推送和合入不会移动成果比较起点。 */
+async function recordGitBranchSourceHead(cwd: string, branchName: string, sourceHeadSha: string): Promise<void> {
+  const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
+  const head = await resolveCommit(cwd, sourceHeadSha);
+  await runGit(cwd, ['config', '--local', '--replace-all', `branch.${branch}.zeus-source-head`, head]);
 }
 
 /**
@@ -3021,7 +3048,8 @@ export async function getGitStatus(cwd: string): Promise<GitStatusSummary> {
 export async function getProjectGitRepositorySnapshot(cwd: string): Promise<ProjectGitRepositorySnapshot> {
   const context = await getGitRepositoryContext(cwd);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
-  const [status, diff, stagedDiffText, unstagedDiffText, upstreamText, tagsText, headTagsText, reflogText, stashText, recentText] = await Promise.all([
+  const [sourceHeadSha, status, diff, stagedDiffText, unstagedDiffText, upstreamText, tagsText, headTagsText, reflogText, stashText, recentText] = await Promise.all([
+    context.detached || !context.headSha ? Promise.resolve(null) : readGitBranchSourceHead(context.topLevel, context.branch),
     getGitStatus(context.topLevel),
     getGitDiff(context.topLevel),
     readGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--cached', '--', '.']),
@@ -3069,6 +3097,7 @@ export async function getProjectGitRepositorySnapshot(cwd: string): Promise<Proj
     detached: context.detached,
     headTags: splitLines(headTagsText),
     headSha: context.headSha,
+    sourceHeadSha,
     upstream,
     integrationState: await readIntegrationState(context.topLevel),
     submodules: await readRegisteredSubmodules(context.topLevel),
@@ -3433,6 +3462,7 @@ async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAc
   // 切换始终使用 Git 的保护性检查，不自动贮藏、恢复或强制覆盖用户修改。
   try {
     const output = await operation();
+    if (action.type === 'create_branch' && context.headSha) await recordGitBranchSourceHead(repositoryPath, action.branchName, await resolveCommit(repositoryPath, 'HEAD'));
     return finishProjectGitAction(repositoryPath, action.type, output);
   } catch (error) {
     if (switchingAction) throw classifyGitSwitchFailure(switchingAction, error);

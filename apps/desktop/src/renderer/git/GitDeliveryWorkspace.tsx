@@ -106,7 +106,8 @@ export function DeliveryRepositoryFileTree(props: {
   detailStates: Record<string, 'loading' | 'error'>;
   diffScope: DiffScope;
   totalWorkingFiles: number;
-  totalCommittedFiles: number;
+  /** 未完成或失败的比较没有可靠计数，不能显示为零。 */
+  totalCommittedFiles: number | null;
   focusedWorkspaceId: string;
   selectedFile: string;
   selectedWorkspaceIds: Set<string>;
@@ -170,7 +171,7 @@ export function DeliveryRepositoryFileTree(props: {
             onClick={() => props.onScopeChange('committed')}
             disabled={props.disabled}
           >
-            <span>{props.zh ? '已提交成果' : 'Committed result'}</span> <small>{props.totalCommittedFiles}</small>
+            <span>{props.zh ? '已提交成果' : 'Committed result'}</span> <small>{props.totalCommittedFiles ?? '—'}</small>
           </button>
         </span>
       </header>

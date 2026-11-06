@@ -107,7 +107,8 @@ export async function prepareProjectConversationWorkspace(
       /** 恢复只使用目标仓当前 HEAD，不重新检出来源分支。 */
       const existingContext = existingBranch ? await getGitRepositoryContext(worktreePath) : null;
       preparing = preparation;
-      await prepareTaskWorktree({
+      /** 底层返回创建时解析的固定起点，不能重新读取已可能移动的来源分支。 */
+      const prepared = await prepareTaskWorktree({
         repositoryPath,
         repositoryContext: context,
         projectSlug: project.slug,
@@ -126,7 +127,7 @@ export async function prepareProjectConversationWorkspace(
       });
       if (!existingBranch) {
         /** 来源只在创建时冻结；复用工作树不能覆盖其原始来源。 */
-        await recordGitBranchSource(repositoryPath, selection.branchName, selection.sourceRef);
+        await recordGitBranchSource(repositoryPath, selection.branchName, selection.sourceRef, prepared.sourceHeadSha);
         created.push(preparation);
       }
       preparing = undefined;
