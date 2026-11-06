@@ -438,6 +438,9 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
   const projectId = parameters.get('projectId')?.trim();
   const repositoryId = parameters.get('repositoryId')?.trim();
   const filePath = snapshot?.filePath ?? parameters.get('filePath') ?? '';
+  /** 独立窗口复用交付页的会话客户端，历史、比较和刷新都读取原工作树。 */
+  const conversationId = parameters.get('conversationId');
+  const diffClient = conversationId ? { ...client, ...client.forConversationGit(conversationId) } : client;
   /** 任务来源必须同时指定工作区和比较范围。 */
   const taskId = parameters.get('taskId');
   /** 任务工作区与项目仓库使用不同的身份。 */
@@ -455,7 +458,7 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
     <>
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'ProjectGitDiffWindow')}>
         <ProjectGitDiffWindow
-          client={client}
+          client={diffClient}
           source={
             snapshot
               ? { kind: 'snapshot', path: snapshot.filePath, diff: snapshot.diff }

@@ -147,6 +147,8 @@ declare global {
       /** 任务工作区文件在独立窗口中只读查看。 */
       openTaskGitDiffWindow: (input: Extract<import('@zeus/shared').FilePreviewRequest, { kind: 'task-git' }>) => Promise<{ opened: true }>;
       openProjectGitDiffWindow: (input: {
+        /** 会话工作树沿用交付窗口的读取范围；普通项目省略。 */
+        conversationId?: string;
         projectId: string;
         repositoryId: string;
         filePath: string;

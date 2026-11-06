@@ -1021,7 +1021,11 @@ async function registerSourceWorkspace(owner: BrowserWindow, project: ProjectGit
 
 /** 项目与任务文件共用原生差异窗口，读取身份通过参数明确区分。 */
 /** 系统差异窗口复用持久化边界；快照模式不重新读取仓库或工作区。 */
-async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>, snapshot?: GitDiffSummary): Promise<{ opened: true }> {
+async function openProjectGitDiffWindow(
+  parent: BrowserWindow,
+  input: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }> & { /** 会话工作树的列表与仓库读取使用同一范围。 */ conversationId?: string },
+  snapshot?: GitDiffSummary,
+): Promise<{ opened: true }> {
   /** 业务身份与只读快照使用不同入口，快照地址不携带仓库读取参数。 */
   const rendererUrl = rendererEntryUrl(
     'project-git-diff',
@@ -1036,6 +1040,7 @@ async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<Fi
           }
         : {
             projectId: input.projectId,
+            ...(input.conversationId ? { conversationId: input.conversationId } : {}),
             repositoryId: input.repositoryId,
             filePath: input.path,
             stage: input.stage ?? 'combined',
@@ -1143,6 +1148,37 @@ function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   window.show();
   window.focus();
   app.focus({ steal: true });
+}
+
+/** 未指定任务工作区时，自动创建任务沿用持久来源会话的目录和窗口身份。 */
+async function resolveTaskGitDeliveryTarget(taskId: string): Promise<GitDeliveryWindowTarget> {
+  if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+  /** 记录从当前宿主读取，客户端不能指定来源会话或本机目录。 */
+  const config = await localServerRuntime.refreshConfig();
+  /** 读取任务及来源会话时保留接口失败，不降级到其他工作目录。 */
+  async function readRecord(path: string): Promise<Record<string, unknown>> {
+    /** 只访问当前认证宿主，读取最长等待 10 秒。 */
+    const response = await fetch(`${config.baseUrl}${path}`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10000) });
+    /** 响应先核对对象形状，再读取业务字段。 */
+    const value = (await response.json()) as Record<string, unknown>;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('代码交付来源记录无效。');
+    if (!response.ok) throw new Error(typeof value.message === 'string' ? value.message : '无法读取代码交付来源。');
+    return value;
+  }
+  /** 任务创建来源决定默认交付范围。 */
+  const task = await readRecord(`/api/tasks/${encodeURIComponent(taskId)}`);
+  if (task.id !== taskId || typeof task.projectId !== 'string') throw new Error('代码交付任务身份无效。');
+  if (task.createdFrom !== 'conversation') return { taskId };
+  /** 来源只取创建任务时保存的会话，不猜测最近会话或第一条开发线。 */
+  const source = JSON.parse(typeof task.sourceContextJson === 'string' ? task.sourceContextJson : '{}') as { conversationId?: unknown } | null;
+  if (!source || typeof source.conversationId !== 'string' || !source.conversationId) throw new Error('任务缺少来源会话，请从目标会话打开代码交付。');
+  /** 来源会话必须仍归属于该任务和项目。 */
+  const conversation = await readRecord(`/api/projects/${encodeURIComponent(task.projectId)}/conversations/${encodeURIComponent(source.conversationId)}/choice`);
+  if (conversation.id !== source.conversationId || conversation.taskId !== taskId || conversation.projectId !== task.projectId) throw new Error('代码交付来源会话不属于当前任务。');
+  if (conversation.workspaceMode === 'direct') return { projectId: task.projectId };
+  if (conversation.workspaceId || conversation.environmentId) return { taskId };
+  if (conversation.workspaceMode !== 'worktree') throw new Error('来源会话的工作目录尚未就绪。');
+  return { projectId: task.projectId, conversationId: source.conversationId };
 }
 
 /** 所有代码交付按钮共用窗口创建、尺寸记忆、安全配置及实例复用。 */
@@ -1918,7 +1954,7 @@ function setupIpc(): void {
       mainWindowTaskGitContexts.set(requestingWindow.id, context);
       broadcastTaskGitDeliveryCurrentContext(context);
     }
-    return openTaskGitDeliveryWindow(requestingWindow, { taskId: candidate.taskId });
+    return openTaskGitDeliveryWindow(requestingWindow, typeof candidate.workspaceId === 'string' ? { taskId: candidate.taskId } : await resolveTaskGitDeliveryTarget(candidate.taskId));
   });
   /** 仅主窗口或当前任务的交付窗口可以打开任务文件差异。 */
   ipcMain.handle('zeus:task-git-diff:open', async (event, input: unknown) => {
@@ -1943,6 +1979,14 @@ function setupIpc(): void {
     const required = ['projectId', 'repositoryId', 'filePath'] as const;
     for (const key of required) if (typeof candidate[key] !== 'string') throw new TypeError(`仓库差异窗口缺少 ${key}。`);
     requireProjectGitWorkbench(event, false, candidate.projectId as string);
+    /** 会话范围必须与仓库身份一致，服务端继续核验项目归属和真实目录。 */
+    if (
+      candidate.conversationId !== undefined &&
+      (typeof candidate.conversationId !== 'string' ||
+        !candidate.conversationId ||
+        (candidate.repositoryId !== `conversation:${candidate.conversationId}` && !(candidate.repositoryId as string).startsWith(`conversation:${candidate.conversationId}:`)))
+    )
+      throw new TypeError('会话工作树身份不匹配。');
     /** 快照上限沿用 Git 读取的 20 MiB；仅解析补丁，不执行其内容。 */
     let snapshot: GitDiffSummary | undefined;
     if (candidate.diffText !== undefined) {
@@ -1959,6 +2003,7 @@ function setupIpc(): void {
       {
         kind: 'project-git',
         projectId: candidate.projectId as string,
+        conversationId: candidate.conversationId as string | undefined,
         repositoryId: candidate.repositoryId as string,
         path: candidate.filePath as string,
         stage,
