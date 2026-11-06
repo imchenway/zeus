@@ -17,9 +17,9 @@ export interface NewConversationExecutionContextProps {
   projectId: string;
   projects: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   workspaceMode: 'direct' | 'worktree';
-  /** 首发时同时创建关联任务，默认关闭。 */
+  /** 首发时同时创建关联任务，按项目恢复最近选择。 */
   createTask: boolean;
-  /** 开关只修改草稿，发送前不创建任务。 */
+  /** 开关更新项目偏好，发送前不创建任务。 */
   onCreateTaskChange: (enabled: boolean) => void;
   /** 新工作树分支必须使用的当前全局前缀。 */
   taskBranchPrefix: string;
