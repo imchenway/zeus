@@ -58,7 +58,7 @@ export async function resolveConversationGitWorkspace(
         localPath: cwd,
         workspaceMode: 'direct' as const,
         sourceBranches: [],
-        repositories: repositories.map((repository) => ({ ...repository, repositoryPath: repository.localPath, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
+        repositories: repositories.map((repository) => ({ ...repository, repositoryPath: repository.localPath, managedWorktree: false, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
       };
     }
     if (cwd === root) throw unavailable();
@@ -67,19 +67,27 @@ export async function resolveConversationGitWorkspace(
     if (!members.length) throw unavailable();
     /** 每个成员保留自己的来源；多仓库不能借用首仓来源。 */
     const sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
+    /** 来源项目登记的工作树决定环境身份；新增仓库可操作，但不自动获得回收权限。 */
+    const managedPaths = new Set<string>();
     for (const member of members) {
-      /** 相对布局和公共 Git 身份必须同时属于原项目。 */
+      /** 新增仓库也必须是会话真实目录中的独立 Git 根。 */
       const source = sources.find((entry) => entry.relativePath === member.relativePath);
-      if (!source) throw unavailable();
-      const [repository, workspace, memberPath] = await Promise.all([getGitRepositoryContext(source.localPath), getGitRepositoryContext(member.localPath), realpath(member.localPath)]);
+      const [workspace, memberPath] = await Promise.all([getGitRepositoryContext(member.localPath), realpath(member.localPath)]);
       const child = relative(cwd, memberPath);
       if (isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`) || !workspace.isRepository || (await realpath(workspace.topLevel)) !== memberPath) throw unavailable();
-      const registeredPaths = await Promise.all(repository.worktrees.filter((entry) => !entry.bare && !entry.prunable).map((entry) => realpath(entry.path).catch(() => null)));
-      if (!registeredPaths.includes(memberPath) || memberPath === (await realpath(source.localPath))) throw unavailable();
-      const [projectGit, workspaceGit] = await Promise.all([commonGitDirectory(source.localPath), commonGitDirectory(memberPath)]);
-      if (projectGit !== workspaceGit) throw unavailable();
+      if (source) {
+        /** 原项目成员仍须匹配相对布局、工作树登记和公共 Git 身份，不能被新增仓库替换。 */
+        const repository = await getGitRepositoryContext(source.localPath);
+        const registeredPaths = await Promise.all(repository.worktrees.filter((entry) => !entry.bare && !entry.prunable).map((entry) => realpath(entry.path).catch(() => null)));
+        if (!registeredPaths.includes(memberPath) || memberPath === (await realpath(source.localPath))) throw unavailable();
+        const [projectGit, workspaceGit] = await Promise.all([commonGitDirectory(source.localPath), commonGitDirectory(memberPath)]);
+        if (projectGit !== workspaceGit) throw unavailable();
+        managedPaths.add(member.localPath);
+      }
       sourceBranches.push({ repositoryRelativePath: member.relativePath, branch: workspace.detached ? null : await readGitBranchSource(member.localPath, workspace.branch) });
     }
+    /** 新增仓库不能单独证明一个任意目录属于当前项目的会话工作树。 */
+    if (!managedPaths.size) throw unavailable();
     return {
       id: conversationRepositoryId(conversation.id, '.'),
       name: conversation.title || '会话工作树',
@@ -89,7 +97,8 @@ export async function resolveConversationGitWorkspace(
       sourceBranches,
       repositories: members.map((repository) => ({
         ...repository,
-        repositoryPath: sources.find((source) => source.relativePath === repository.relativePath)!.localPath,
+        repositoryPath: sources.find((source) => source.relativePath === repository.relativePath)?.localPath ?? repository.localPath,
+        managedWorktree: managedPaths.has(repository.localPath),
         id: conversationRepositoryId(conversation.id, repository.relativePath),
       })),
     };

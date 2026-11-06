@@ -35,6 +35,14 @@ export interface ConversationWorktreeCleanup extends ConversationWorktreeRecover
   force: boolean;
 }
 
+/** 回收计划与保留原因分开记录，目录不可回收不代表任务不能结束。 */
+export interface ConversationWorktreeInspection {
+  /** 身份已验证且允许进入回收流程的工作树。 */
+  worktrees: ConversationWorktreeCleanup[];
+  /** 未纳入回收的真实路径和原因，用于任务事件。 */
+  retainedWorktrees: Array<{ path: string; reason: string }>;
+}
+
 /** 只把明确不存在视为已经回收，权限和磁盘错误继续上报。 */
 async function pathExists(path: string): Promise<boolean> {
   return lstat(path).then(
@@ -47,13 +55,15 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 /** 归档与任务终态共用检查；其他未归档会话仍使用的目录保留。 */
-export async function inspectConversationWorktrees(ports: ConversationWorktreeLifecyclePorts, closing: ZeusConversationRecord[]): Promise<ConversationWorktreeCleanup[]> {
+export async function inspectConversationWorktrees(ports: ConversationWorktreeLifecyclePorts, closing: ZeusConversationRecord[]): Promise<ConversationWorktreeInspection> {
   /** 同一环境只扫描一次，专家子会话可能复用父会话目录。 */
   const inspected = new Set<string>();
   /** 当前操作允许关闭的会话集合。 */
   const closingIds = new Set(closing.map((conversation) => conversation.id));
   /** 经过目录归属验证的清理计划。 */
   const result: ConversationWorktreeCleanup[] = [];
+  /** 无法确认归属或未经登记的目录保留，不尝试修复或强制删除。 */
+  const retainedWorktrees: ConversationWorktreeInspection['retainedWorktrees'] = [];
   for (const conversation of closing) {
     if (conversation.workspaceId || conversation.environmentId) continue;
     /** 直接目录会话不拥有项目目录的删除权。 */
@@ -78,16 +88,31 @@ export async function inspectConversationWorktrees(ports: ConversationWorktreeLi
     const recovered = new ConversationWorktreeRecoveryRepository(ports.db).list(conversation.projectId, rootPath);
     if (recovered.length && !(await Promise.all(recovered.map((entry) => pathExists(entry.worktreePath)))).some(Boolean)) continue;
     /** 恢复行只由验证过 Git 公共目录与项目归属的会话产生。 */
-    const workspace = await resolveConversationGitWorkspace(project, conversation.id, ports.conversations, ports.conversationSubmissions);
-    const sources = await discoverGitRepositories(project.localPath);
+    let workspace: Awaited<ReturnType<typeof resolveConversationGitWorkspace>>;
+    try {
+      workspace = await resolveConversationGitWorkspace(project, conversation.id, ports.conversations, ports.conversationSubmissions);
+    } catch (error) {
+      if ((error as { code?: string })?.code !== 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE') throw error;
+      retainedWorktrees.push({ path: rootPath, reason: '会话工作区身份无法确认，目录已保留，需以后单独清理。' });
+      continue;
+    }
     for (const member of workspace.repositories) {
-      const source = sources.find((repository) => repository.relativePath === member.relativePath);
-      if (!source) throw new Error('来源仓库不可用，工作树已保留。');
+      /** 新增仓库及包含它的父工作树保留，避免回收父目录时连带删除未受管代码。 */
+      if (
+        !member.managedWorktree ||
+        workspace.repositories.some((entry) => {
+          const child = relative(member.localPath, entry.localPath);
+          return !entry.managedWorktree && child && !isAbsolute(child) && child !== '..' && !child.startsWith(`..${sep}`);
+        })
+      ) {
+        retainedWorktrees.push({ path: member.localPath, reason: '新增仓库或包含新增仓库的工作树已保留，需以后单独清理。' });
+        continue;
+      }
       const [git, clean] = await Promise.all([getGitRepositoryContext(member.localPath), getGitWorktreeClean(member.localPath)]);
-      result.push({ projectId: project.id, rootPath, repositoryPath: source.localPath, worktreePath: member.localPath, branchName: git.detached ? '' : git.branch, headSha: git.headSha, force: !clean });
+      result.push({ projectId: project.id, rootPath, repositoryPath: member.repositoryPath, worktreePath: member.localPath, branchName: git.detached ? '' : git.branch, headSha: git.headSha, force: !clean });
     }
   }
-  return result;
+  return { worktrees: result, retainedWorktrees };
 }
 
 /** 删除前保存恢复身份；复用任务完成时的 Git 清理，保留本地分支。 */

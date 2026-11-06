@@ -103,8 +103,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const executionContext = props.state.snapshot?.executionContext;
   /** 执行上下文保留只读审查、冲突处理等精确范围；Git 聚合摘要只补充尚未加载的目录。 */
   const cwd = executionContext?.cwd ?? summary?.cwd ?? null;
-  /** 普通目录有多个仓库时不把首仓分支冒充整个项目分支。 */
-  const branch = directWorkspace && (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
+  /** 任一目录模式有多个仓库时，不把首仓分支冒充整个工作区分支。 */
+  const branch = (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
   /** 摘要覆盖同一交付范围的全部活动仓库。 */
   const changes = summary ?? { files: 0, additions: 0, deletions: 0 };
   const conversationReady = !useTaskWorkspaces && workspaceState === 'ready' && Boolean(summary?.repositoryCount);
@@ -402,7 +402,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   <div className="session-quick-actions-row is-static" data-icon-tooltip={branch ?? undefined}>
                     <GitBranch aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
-                      <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
+                      <strong>
+                        {workspaceState === 'error'
+                          ? zh
+                            ? 'Git 状态读取失败'
+                            : 'Failed to read Git status'
+                          : (branch ?? (workspaceState === 'ready' && summary?.repositoryCount === 0 ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable'))}
+                      </strong>
                       {summary?.sourceBranches?.length ? (
                         summary.sourceBranches.map((source) => (
                           <small key={source.repositoryRelativePath} title={`${source.repositoryRelativePath}: ${source.branch ?? (zh ? '未记录' : 'Not recorded')}`}>
