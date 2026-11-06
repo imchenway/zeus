@@ -939,6 +939,8 @@ export interface NativeConversationMessage {
 }
 
 export interface NativeConversationChoice {
+  /** 自动冲突会话所属的原交付会话；普通会话为空。 */
+  deliverySourceConversationId?: string | null;
   /** 上下文窗口容量；空值使用默认。 */
   contextCapacityTokens?: number | null;
   workspaceMode?: 'direct' | 'worktree' | null;

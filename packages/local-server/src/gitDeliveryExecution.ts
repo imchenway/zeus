@@ -253,7 +253,11 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
 }
 
 /** 项目冲突会话只能使用已接纳步骤拥有的隔离目录。 */
-export function resolveGitDeliveryConflictWorkspace(db: ZeusDatabase, projectId: string, stepId: unknown): { localPath: string; workspaceMode: 'worktree'; permissionMode: 'auto' | 'full-access'; skillId: string | null } {
+export function resolveGitDeliveryConflictWorkspace(
+  db: ZeusDatabase,
+  projectId: string,
+  stepId: unknown,
+): { localPath: string; workspaceMode: 'worktree'; permissionMode: 'auto' | 'full-access'; skillId: string | null; taskId: string | null } {
   if (typeof stepId !== 'string') throw deliveryError('缺少冲突步骤身份。');
   /** 数据库身份来自先前经过范围校验的接纳记录。 */
   const row = db.get<{ runId: string }>('SELECT run_id AS runId FROM git_delivery_steps WHERE id = ?', [stepId]);
@@ -264,7 +268,12 @@ export function resolveGitDeliveryConflictWorkspace(db: ZeusDatabase, projectId:
     throw deliveryError('冲突步骤已失效或不属于当前项目。');
   /** 复用本次已接纳的权限和 Skill 选择，不允许另一个首发请求扩大权限。 */
   const settings = (step.result?.aiAuthorization ?? run.input.settings) as { permissionMode: 'auto' | 'full-access'; skillId?: string | null };
-  return { localPath: merge.integrationPath, workspaceMode: 'worktree', permissionMode: settings.permissionMode, skillId: settings.skillId ?? null };
+  /** 任务只能沿同项目来源会话取得，客户端不能指定关联任务。 */
+  const origin = db.get<{ taskId: string }>('SELECT task.id AS taskId FROM conversations origin JOIN tasks task ON task.id = origin.task_id AND task.project_id = origin.project_id WHERE origin.id = ? AND origin.project_id = ?', [
+    run.scope.conversationId,
+    projectId,
+  ]);
+  return { localPath: merge.integrationPath, workspaceMode: 'worktree', permissionMode: settings.permissionMode, skillId: settings.skillId ?? null, taskId: origin?.taskId ?? null };
 }
 
 /** 执行器只编排现有交付能力，窗口关闭后仍由宿主持有运行。 */
@@ -480,6 +489,12 @@ export class GitDeliveryExecution {
   /** 恢复只读取已保存事实，未知步骤不盲目重放。 */
   recover(): void {
     if (this.options.readOnly) return;
+    /** 包含已完成运行的旧冲突会话，按持久交付身份补齐任务关联。 */
+    for (const row of this.options.db.select<{ id: string }>(
+      'SELECT DISTINCT conversation.id FROM conversations conversation JOIN git_delivery_steps step ON step.conversation_id = conversation.id WHERE conversation.task_id IS NULL AND step.action = ?',
+      ['merge'],
+    ))
+      this.options.conversations.attachDeliveryConflictTask(row.id);
     for (const run of this.repository.unfinished()) {
       for (const step of run.steps) if (step.state === 'running') this.repository.updateStep(step, { state: 'unknown', message: '宿主已重启，请继续以核对原命令结果。' });
       this.repository.updateState(run.id, 'attention');
@@ -1089,6 +1104,7 @@ export class GitDeliveryExecution {
       const conversationId = (response.conversation as { id?: string } | undefined)?.id;
       if (!conversationId) throw deliveryError('冲突会话未返回持久身份。');
       this.repository.updateStep(this.step(step), { state: 'waiting', conversationId, result: { ...this.step(step).result, manualResolution: false } });
+      this.options.conversations.attachDeliveryConflictTask(conversationId);
       return false;
     }
     if (targetHead !== merge.targetHeadSha) throw deliveryError('接收合入的目标分支已变化，已保留隔离结果，请核对后继续。');

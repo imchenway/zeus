@@ -4,7 +4,11 @@ import type { NativeConversationChoice } from '../session/sessionTypes.js';
 type ConversationGitDeliveryTarget = Parameters<NonNullable<Window['zeus']>['openTaskGitDeliveryWindow']>[0];
 
 /** 普通目录任务交付项目仓库，任务工作树保留任务定位，独立会话保留会话身份。 */
-export function conversationGitDeliveryTarget(conversation: Pick<NativeConversationChoice, 'id' | 'projectId' | 'taskId' | 'workspaceMode' | 'workspaceId'>, workspaceId = conversation.workspaceId): ConversationGitDeliveryTarget {
+export function conversationGitDeliveryTarget(
+  conversation: Pick<NativeConversationChoice, 'id' | 'projectId' | 'taskId' | 'workspaceMode' | 'workspaceId' | 'deliverySourceConversationId'>,
+  workspaceId = conversation.workspaceId,
+): ConversationGitDeliveryTarget {
+  if (conversation.deliverySourceConversationId) return { projectId: conversation.projectId, conversationId: conversation.deliverySourceConversationId };
   // 同步创建任务的会话仍拥有自己的工作树，不冒充任务工作区。
   if (conversation.workspaceMode === 'worktree' && !workspaceId) return { projectId: conversation.projectId, conversationId: conversation.id };
   if (conversation.taskId && conversation.workspaceMode !== 'direct') return { taskId: conversation.taskId, workspaceId };

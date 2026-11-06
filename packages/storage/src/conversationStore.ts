@@ -1374,6 +1374,29 @@ export class ConversationRepository {
     );
   }
 
+  /** 冲突会话的来源由持久交付步骤确定，不能从标题或客户端路径推断。 */
+  getDeliveryConflictOrigin(conversationId: string): { conversationId: string; taskId: string | null; repositoryId: string; repositoryPath: string | null; integrationPath: string } | undefined {
+    return this.db.get(
+      `SELECT origin.id AS conversationId, task.id AS taskId, step.repository_id AS repositoryId, repository.local_path AS repositoryPath,
+              json_extract(step.result_json, '$.merge.integrationPath') AS integrationPath
+       FROM git_delivery_steps step JOIN git_delivery_runs run ON run.id = step.run_id
+       JOIN conversations conflict ON conflict.id = step.conversation_id AND conflict.project_id = run.project_id
+       JOIN conversations origin ON origin.id = run.scope_id AND origin.project_id = run.project_id
+       LEFT JOIN tasks task ON task.id = origin.task_id AND task.project_id = run.project_id
+       LEFT JOIN project_repositories repository ON repository.id = step.repository_id AND repository.project_id = run.project_id
+       WHERE conflict.id = ? AND run.scope_kind = 'conversation' AND step.action = 'merge'
+         AND origin.id <> conflict.id AND json_type(step.result_json, '$.merge.integrationPath') = 'text'
+       ORDER BY run.created_at DESC LIMIT 1`,
+      [conversationId],
+    );
+  }
+
+  /** 创建结果接管与宿主恢复共用任务关联，不覆盖已有任务，也不改变会话活动时间。 */
+  attachDeliveryConflictTask(conversationId: string): void {
+    const origin = this.getDeliveryConflictOrigin(conversationId);
+    if (origin?.taskId) this.db.execute('UPDATE conversations SET task_id = ? WHERE id = ? AND task_id IS NULL', [origin.taskId, conversationId]);
+  }
+
   getRecordById(conversationId: string): ZeusConversationRecord | undefined {
     const row = this.db.get<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE id = ?`, [conversationId]);
     return row ? mapConversationRow(row) : undefined;
