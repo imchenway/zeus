@@ -1,6 +1,6 @@
 import { FileSelectionQuestionContext, sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
 import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
-import { createInitialSessionState } from './sessionReducer.js';
+import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
 import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
@@ -3706,6 +3706,8 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  /** 创建回执到达前复用正文投影，原草稿仍保留用于失败恢复。 */
+  const [startingTranscript, setStartingTranscript] = useState<NativeSessionState | null>(null);
   /** 保留原有默认行为，只有用户开启时才创建任务。 */
   const [createTask, setCreateTask] = useState(() => restoredDraft?.createTask ?? false);
   const [workspaceMode, setWorkspaceMode] = useState<'direct' | 'worktree'>(() => restoredDraft?.workspaceMode ?? 'direct');
@@ -4035,6 +4037,26 @@ export function NewConversationComposer(props: {
     try {
       /** 网页截图与用户附件共用既有去重和发送通道。 */
       const submittedAttachments = mergeConversationAttachments(attachments, browserDraft.submission?.attachments ?? []);
+      /** 此身份只用于创建页显示，不参与服务端提交或回执匹配。 */
+      const previewMessageId = `draft-preview-${crypto.randomUUID()}`;
+      /** 先显示用户内容；创建任务、工作树和模型仍使用原有持久化请求。 */
+      const initialState = createInitialSessionState();
+      setStartingTranscript(
+        sessionReducer(initialState, {
+          type: 'send_started',
+          clientUserMessageId: previewMessageId,
+          durableClientUserMessageId: previewMessageId,
+          draft: submittedDisplayText,
+          attachments,
+          submittedAttachments,
+          browserSubmission: browserDraft.submission,
+          contextDraft: initialState.contextDraft,
+          browserComments: browserDraft.submission?.comments ?? [],
+          delivery: 'queue',
+          previousConversationState: initialState.conversationState,
+          startedAt: new Date().toISOString(),
+        }),
+      );
       let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
@@ -4113,6 +4135,8 @@ export function NewConversationComposer(props: {
       setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setSubmitting(false);
+      setStartingTranscript(null);
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }
 
@@ -4477,14 +4501,19 @@ export function NewConversationComposer(props: {
               ))}
             </section>
           ) : null}
-          {props.docked ? (
-            composer
-          ) : (
-            <section className="session-new-conversation">
-              <span className="session-new-conversation-spacer" aria-hidden="true" />
-              {composer}
-            </section>
-          )}
+          {startingTranscript ? (
+            <ConversationTranscript state={startingTranscript} language={props.language} transcriptHydrated creationStatus={{ state: 'creating', message: props.language === 'zh-CN' ? '正在创建会话' : 'Creating conversation' }} />
+          ) : null}
+          <div className="session-new-conversation-draft" hidden={Boolean(startingTranscript)}>
+            {props.docked ? (
+              composer
+            ) : (
+              <section className="session-new-conversation">
+                <span className="session-new-conversation-spacer" aria-hidden="true" />
+                {composer}
+              </section>
+            )}
+          </div>
         </div>
         <aside
           className="session-browser-sidecar session-context-sidecar"

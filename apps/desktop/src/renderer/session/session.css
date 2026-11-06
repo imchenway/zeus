@@ -7109,6 +7109,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
+/* 隐藏创建中的草稿时保留编辑器实例，失败后恢复正文、附件和结构化引用。 */
+.session-codex-parity-v1 .session-new-conversation-draft:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-new-conversation {
   display: flex;
   flex: 1 1 auto;
