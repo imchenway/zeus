@@ -119,6 +119,7 @@ import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { readProjectModelPreferences, singleConversationSkill, writeProjectConversationPreferences, writeProjectModelPreferences } from './projectModelPreferences.js';
+import { readProjectConversationCreationPreferences, writeProjectConversationCreationPreferences, type ProjectConversationCreationPreferences } from './projectConversationCreationPreferences.js';
 import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { hasAvailableConversationModel, resolveModelCapability } from './modelSelection.js';
@@ -1714,14 +1715,11 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
-  /** 创建任务的选择随草稿恢复。 */
-  createTask?: boolean;
   /** 浏览器身份、显示状态和批注随输入草稿一起恢复。 */
   browserDraft?: NewConversationBrowserDraft;
   /** 返回创建界面时恢复浏览器工作面。 */
   browserOpen?: boolean;
   worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
-  workspaceMode?: 'direct' | 'worktree';
   /** 草稿中的模型配置所属项目，切换项目时不能沿用。 */
   runtimeProjectId?: string;
   /** 推送记忆中已选择的 Skill。 */
@@ -3675,7 +3673,7 @@ export function NewConversationComposer(props: {
   /** 有未发送内容时保留草稿设置；空草稿重新读取最近使用的配置。 */
   const [runtimeProjectId, setRuntimeProjectId] = useState<string | null>(() =>
     restoredDraft?.runtimeProjectId === props.owner?.projectId &&
-    (restoredDraft?.content.trim() || restoredDraft?.attachments.length || restoredDraft?.browserDraft?.submission || restoredDraft?.goalInputOpen || restoredDraft?.workspaceMode === 'worktree')
+    (restoredDraft?.content.trim() || restoredDraft?.attachments.length || restoredDraft?.browserDraft?.submission || restoredDraft?.goalInputOpen)
       ? (restoredDraft.runtimeProjectId ?? null)
       : null,
   );
@@ -3706,9 +3704,13 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  /** 保留原有默认行为，只有用户开启时才创建任务。 */
-  const [createTask, setCreateTask] = useState(() => restoredDraft?.createTask ?? false);
-  const [workspaceMode, setWorkspaceMode] = useState<'direct' | 'worktree'>(() => restoredDraft?.workspaceMode ?? 'direct');
+  /** 创建方式按项目持久化，发送后清理草稿不会清理偏好。 */
+  const [creationPreferences, setCreationPreferences] = useState(() => readProjectConversationCreationPreferences(browserConversationStorage(), props.owner?.projectId ?? ''));
+  /** 提交与控件消费同一组创建选项。 */
+  const { createTask, workspaceMode } = creationPreferences;
+  useLayoutEffect(() => {
+    setCreationPreferences(readProjectConversationCreationPreferences(browserConversationStorage(), props.owner?.projectId ?? ''));
+  }, [props.owner?.projectId]);
   const [worktreeDrafts, setWorktreeDrafts] = useState<Record<string, ConversationWorktreeOptions>>(() => restoredDraft?.worktreeDrafts ?? {});
   const worktreeProjectId = props.owner?.kind === 'project' ? props.owner.projectId : undefined;
   const worktree = worktreeProjectId ? worktreeDrafts[worktreeProjectId] : undefined;
@@ -3729,6 +3731,17 @@ export function NewConversationComposer(props: {
     },
     [systemScope],
   );
+  /** 用户修改即保存，切换项目和重新打开创建入口时恢复。 */
+  function changeCreationPreferences(change: Partial<ProjectConversationCreationPreferences>): void {
+    /** 保留同项目未修改的另一项选择。 */
+    const next = { ...creationPreferences, ...change };
+    setCreationPreferences(next);
+    try {
+      writeProjectConversationCreationPreferences(browserConversationStorage(), props.owner?.projectId ?? '', next);
+    } catch (error) {
+      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+    }
+  }
   /** 成功创建前的准备故障按其真实结果更新，历史仍保留。 */
   const recoverDraftOperation = useCallback(
     (operation: import('@zeus/shared').ConversationSystemMessageInput['operation']): void => {
@@ -3746,8 +3759,6 @@ export function NewConversationComposer(props: {
       browserDraft,
       browserOpen,
       runtimeProjectId: runtimeProjectId ?? undefined,
-      createTask,
-      workspaceMode,
       worktreeDrafts,
       content,
       attachments,
@@ -3768,8 +3779,6 @@ export function NewConversationComposer(props: {
     browserDraft,
     browserOpen,
     runtimeProjectId,
-    createTask,
-    workspaceMode,
     worktreeDrafts,
     content,
     attachments,
@@ -3870,7 +3879,6 @@ export function NewConversationComposer(props: {
     setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
     setContextCapacityTokens(remembered?.contextCapacityTokens ?? null);
     setSkillId(remembered?.skillId ?? '');
-    setWorkspaceMode('direct');
     setRuntimeProjectId(projectId);
   }, [props.owner?.projectId, runtimeProjectId]);
 
@@ -4169,11 +4177,11 @@ export function NewConversationComposer(props: {
             projectId={props.owner.projectId}
             projects={props.projects}
             createTask={createTask}
-            onCreateTaskChange={setCreateTask}
+            onCreateTaskChange={(enabled) => changeCreationPreferences({ createTask: enabled })}
             workspaceMode={workspaceMode}
             worktree={worktree}
             onWorktreeChange={updateWorktree}
-            onWorkspaceModeChange={setWorkspaceMode}
+            onWorkspaceModeChange={(mode) => changeCreationPreferences({ workspaceMode: mode })}
             disabled={submitting}
             onSelectProject={props.onSelectProject}
             onLoadProjectGit={props.onLoadProjectGit}
