@@ -49,6 +49,7 @@ import {
 } from '../packages/local-server/src/workspaceGitCommandApplication.js';
 import { registerWorkspaceGitCommandRoutes, workspaceGitCommandRoutePolicy } from '../packages/local-server/src/workspaceGitCommandRoutes.js';
 import { resolveConversationGitWorkspace } from '../packages/local-server/src/conversationGitWorkspace.js';
+import { inspectConversationWorktrees } from '../packages/local-server/src/conversationWorktreeLifecycle.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-workspace-git-command-probe-'));
 const observed: Record<string, unknown> = {};
@@ -560,6 +561,37 @@ async function verifyConversationGitDirectories(db: ZeusDatabase, project: ZeusP
   const worktreeConversation = createDirectoryConversation('独立工作树', worktreePath, 'worktree');
   const worktree = await resolveConversationGitWorkspace(project, worktreeConversation.id, conversations, submissions);
   assertProbe(worktree.localPath === (await realpath(worktreePath)) && worktree.workspaceMode === 'worktree', '有效工作树必须保留原目录和模式。');
+  /** 中途创建独立仓库后，原仓和新增仓均可使用，父目录不能连带回收新增代码。 */
+  const addedPath = join(worktreePath, 'late-repository');
+  await mkdir(addedPath);
+  await promisify(execFile)('git', ['init', addedPath]);
+  try {
+    const expanded = await resolveConversationGitWorkspace(project, worktreeConversation.id, conversations, submissions);
+    const added = expanded.repositories.find((member) => member.relativePath === 'late-repository');
+    assertProbe(added && !added.managedWorktree && added.repositoryPath === (await realpath(addedPath)), '新增仓库必须可操作，不能借用原项目来源或自动获得回收权限。');
+    assertProbe(expanded.repositories.length === worktree.repositories.length + 1, '新增仓库不能使已有仓库失效。');
+    const cleanup = await inspectConversationWorktrees({ db, projects: new ProjectRepository(db), conversations, conversationSubmissions: submissions }, [worktreeConversation]);
+    assertProbe(!cleanup.worktrees.some((entry) => entry.worktreePath === expanded.localPath || entry.worktreePath === added?.localPath), '回收必须保留新增仓库及包含它的父工作树。');
+    assertProbe(
+      cleanup.retainedWorktrees.some((entry) => entry.path === added?.localPath),
+      '新增仓库的保留原因必须进入清理结果。',
+    );
+    /** 外部仓库的工作副本同样进入会话范围，来源身份不得指向原项目。 */
+    const externalPath = join(probeRoot, 'late-external-source');
+    const externalWorktree = join(worktreePath, 'late-external-worktree');
+    const execute = promisify(execFile);
+    await execute('git', ['init', externalPath]);
+    await execute('git', ['-C', externalPath, '-c', 'user.name=Zeus Probe', '-c', 'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '--allow-empty', '-m', 'initial']);
+    await execute('git', ['-C', externalPath, 'worktree', 'add', '--detach', externalWorktree]);
+    try {
+      const external = (await resolveConversationGitWorkspace(project, worktreeConversation.id, conversations, submissions)).repositories.find((member) => member.relativePath === 'late-external-worktree');
+      assertProbe(external && !external.managedWorktree && external.repositoryPath === (await realpath(externalWorktree)), '外部工作树必须使用自身 Git 身份。');
+    } finally {
+      await execute('git', ['-C', externalPath, 'worktree', 'remove', externalWorktree]);
+    }
+  } finally {
+    await rm(addedPath, { recursive: true, force: true });
+  }
   for (const [title, cwd, mode] of [
     ['普通目录越界', foreignPath, 'direct'],
     ['工作树越界', foreignPath, 'worktree'],
@@ -574,6 +606,12 @@ async function verifyConversationGitDirectories(db: ZeusDatabase, project: ZeusP
       rejected = (error as { code?: string }).code === 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE';
     }
     assertProbe(rejected, `${title}必须拒绝且保留稳定错误身份。`);
+    if (mode === 'worktree' && title === '工作树越界') {
+      /** Git 操作继续拒绝身份不符的目录，任务结束预检则保留目录并记录原因。 */
+      const closing = conversations.listRecordsByProject(project.id).filter((entry) => entry.id === conversation.id || entry.title === '普通目录越界');
+      const cleanup = await inspectConversationWorktrees({ db, projects: new ProjectRepository(db), conversations, conversationSubmissions: submissions }, closing);
+      assertProbe(cleanup.worktrees.length === 0 && cleanup.retainedWorktrees.some((entry) => entry.path === resolve(cwd)), '身份不符的工作区必须保留，不能阻断任务结束预检。');
+    }
   }
   return { direct: true, legacyDirect: true, worktree: true, foreignAndMissingRejected: true };
 }

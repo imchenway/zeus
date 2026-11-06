@@ -881,7 +881,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     }
     const taskConversations = conversations.listByTask(taskId);
     /** 新对话创建的任务也可能持有会话自有工作树。 */
-    const conversationWorktrees = includeConversationWorktrees ? await inspectConversationWorktrees(dependencies, [...conversations.listRecordsByTask(taskId), ...conversations.listRecordsByTask(taskId, { archived: true })]) : [];
+    const conversationInspection = includeConversationWorktrees
+      ? await inspectConversationWorktrees(dependencies, [...conversations.listRecordsByTask(taskId), ...conversations.listRecordsByTask(taskId, { archived: true })])
+      : { worktrees: [], retainedWorktrees: [] };
+    const conversationWorktrees = conversationInspection.worktrees;
     const activeConversationCount = taskConversations.filter((conversation) => taskConversationHasActiveWork(conversation)).length;
     const taskRuntimeSessions = runtimeSessions.list({ taskId, archived: false });
     const activeRuntimeSessionCount = taskRuntimeSessions.filter((session) => !runtimeSessionIsConfirmedTerminal(session)).length;
@@ -891,6 +894,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       conversations: taskConversations,
       runtimeSessions: taskRuntimeSessions,
       conversationWorktrees,
+      retainedConversationWorktrees: conversationInspection.retainedWorktrees,
       dirtyWorkspaceCount: workspacePlans.filter((entry) => entry.force).length + conversationWorktrees.filter((entry) => entry.force).length,
       activeConversationCount,
       activeRuntimeSessionCount,
@@ -909,13 +913,14 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     /** 任务、冲突分支和历史合入现场可能指向同一物理目录。 */
     const cleanupPaths = new Map<string, string>();
     for (const plan of cleanup.workspaces) if (plan.workspace.worktreePath) cleanupPaths.set(resolve(plan.workspace.worktreePath), plan.repositoryPath);
+    for (const plan of cleanup.conversationWorktrees) cleanupPaths.set(resolve(plan.worktreePath), plan.repositoryPath);
     for (const plan of cleanup.integrations) {
       for (const path of [plan.closeIntegration ? plan.integration.integrationPath : null, ...plan.attempts.map((attempt) => attempt.worktreePath)]) if (path) cleanupPaths.set(resolve(path), plan.repositoryPath);
     }
     /** 物理目录已不存在时只收口登记，不要求已删除的源仓库继续可用。 */
     const missingPaths = new Set<string>();
     /** 缺少来源仓库的目录可能是唯一代码副本，必须保留。 */
-    const orphanedPaths = new Set<string>();
+    const orphanedPaths = new Set<string>(cleanup.retainedConversationWorktrees.map((entry) => resolve(entry.path)));
     /** 同一源仓库只读取一次 Git 状态，不为每条历史记录重复扫描。 */
     const repositoryAvailability = new Map<string, boolean>();
     for (const [path, repositoryPath] of cleanupPaths) {
@@ -938,7 +943,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     // ponytail: 任务内路径逐项比较；资源规模增大时可改为目录树索引。
     const retainedPaths = [...cleanupPaths.keys()].filter((path) => !missingPaths.has(path) && [...orphanedPaths].some((orphan) => path === orphan || isPathInsideRoot(path, orphan) || isPathInsideRoot(orphan, path)));
     /** 路径和原因保留在现有资源记录与任务事件中，供后续独立清理。 */
-    const retainedReason = '来源仓库不可用，相关工作区目录已保留，需以后单独清理。';
+    const retainedReason = '仓库不可回收或包含需保留的目录，相关工作区已保留，需以后单独清理。';
     await Promise.all(
       cleanup.runtimeSessions.map(async (session) => {
         /** 检查准备清理之后的最新状态，已退出的进程无需再次停止。 */
@@ -1047,7 +1052,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         });
     }
 
-    removedWorktrees += await removeConversationWorktrees(db, cleanup.conversationWorktrees, beforeExternalWrite);
+    removedWorktrees += await removeConversationWorktrees(
+      db,
+      cleanup.conversationWorktrees.filter((plan) => !retainedPaths.includes(resolve(plan.worktreePath))),
+      beforeExternalWrite,
+    );
     for (const conversation of cleanup.conversations) conversations.archive(conversation.id);
     for (const session of cleanup.runtimeSessions) {
       const latest = runtimeSessions.getById(session.id);
@@ -1059,12 +1068,12 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       recordTaskEvent({
         taskId,
         eventType: archivedConversationId ? 'task.conversation_resources.cleaned' : 'task.terminal_resources.cleaned',
-        title: retainedPaths.length > 0 ? '会话已归档，部分工作区已保留' : archivedConversationId ? '会话归档资源已清理' : '任务终态资源已清理',
+        title: retainedPaths.length > 0 || cleanup.retainedConversationWorktrees.length > 0 ? '会话已归档，部分工作区已保留' : archivedConversationId ? '会话归档资源已清理' : '任务终态资源已清理',
         payload: {
           ...(archivedConversationId ? { conversationId: archivedConversationId } : {}),
           removedWorktrees,
           removedIntegrationWorktrees,
-          retainedWorktrees: retainedPaths.map((path) => ({ path, reason: retainedReason })),
+          retainedWorktrees: [...cleanup.retainedConversationWorktrees, ...retainedPaths.map((path) => ({ path, reason: retainedReason }))],
           archivedConversations: cleanup.conversations.length,
           archivedRuntimeSessions: cleanup.runtimeSessions.length,
           interrupted,
@@ -1086,6 +1095,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           conversations: [],
           runtimeSessions: [],
           conversationWorktrees: [],
+          retainedConversationWorktrees: [],
           dirtyWorkspaceCount: 0,
           activeConversationCount: 0,
           activeRuntimeSessionCount: 0,
@@ -1119,11 +1129,14 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       const attempts = plan.attempts.filter((attempt) => withinRoot(attempt.worktreePath));
       return closeIntegration || attempts.length ? [{ ...plan, closeIntegration, attempts }] : [];
     });
-    cleanup.conversationWorktrees = await inspectConversationWorktrees(dependencies, [current]);
+    const conversationInspection = await inspectConversationWorktrees(dependencies, [current]);
+    cleanup.conversationWorktrees = conversationInspection.worktrees;
+    cleanup.retainedConversationWorktrees = conversationInspection.retainedWorktrees;
     cleanup.conversations = [current];
     /** 只停止将要回收目录中的进程，不影响该任务其他工作目录。 */
     const cleanupRoots = [
       ...cleanup.workspaces.map(({ workspace }) => workspace.worktreePath),
+      ...cleanup.retainedConversationWorktrees.map((entry) => entry.path),
       ...cleanup.conversationWorktrees.map((entry) => entry.rootPath),
       ...cleanup.integrations.flatMap(({ integration, attempts, closeIntegration }) => [closeIntegration ? integration.integrationPath : null, ...attempts.map((attempt) => attempt.worktreePath)]),
     ].filter((path): path is string => Boolean(path));
