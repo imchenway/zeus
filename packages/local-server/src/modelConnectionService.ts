@@ -246,8 +246,9 @@ export function createModelConnectionService(options: {
     async list() {
       return hydrate();
     },
+    /** 单连接读取只核对该连接的凭据，不等待其他供应商的钥匙串。 */
     async get(id) {
-      return (await hydrate()).find((candidate) => candidate.id === id);
+      return (await hydrate(readStored().filter((candidate) => candidate.id === id)))[0];
     },
     async create(input) {
       const id = `model_connection_${randomUUID().replace(/-/gu, '')}`;

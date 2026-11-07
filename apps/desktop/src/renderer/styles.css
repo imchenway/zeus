@@ -15948,11 +15948,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   opacity: 0.55;
 }
 
-/* 宽窗口的操作区占满右侧，文件和差异共享左侧高度并分别滚动。 */
+/* 文件与操作共用上方高度，横向分隔条统一调整两区与底部差异的占比。 */
 .macos-ai-app .task-git-delivery-layout {
   grid-template-columns: minmax(0, 1fr) 8px clamp(240px, var(--git-delivery-actions, 320px), calc(100% - 188px));
   grid-template-rows: minmax(0, clamp(min(120px, 25%), var(--git-delivery-height, 42%), max(25%, calc(100% - 160px)))) 8px minmax(0, 1fr);
-  grid-template-areas: 'files width-separator actions' 'separator width-separator actions' 'diff width-separator actions';
+  grid-template-areas: 'files width-separator actions' 'separator separator separator' 'diff diff diff';
   overflow: hidden;
   min-block-size: 0;
 }
@@ -17286,17 +17286,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
   .macos-ai-app .task-git-merge-flow > b {
     display: none;
-  }
-}
-
-/* 窄窗口让差异横跨底部，上方文件与操作分别滚动，不隐藏操作。 */
-@media (max-width: 900px) {
-  .macos-ai-app .task-git-delivery-layout {
-    grid-template-areas: 'files width-separator actions' 'separator separator separator' 'diff diff diff';
-  }
-
-  .macos-ai-app .task-git-delivery-actions {
-    padding: 8px 12px;
   }
 }
 

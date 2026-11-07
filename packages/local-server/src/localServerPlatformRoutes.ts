@@ -1465,7 +1465,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
     modelCatalog: {
       hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,
-      listSelectableModels: () => modelConnections.listSelectableModels(),
+      listSelectableModels: (selectedModelRef) => modelConnections.listSelectableModels(selectedModelRef),
     },
     git: {
       readRepositoryContext: (localPath) => getGitRepositoryContext(localPath),

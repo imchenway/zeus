@@ -105,9 +105,10 @@ export function applyRestoredMainWindowPlacement(input: { window: WindowPlacemen
     actualDisplay = input.getDisplayMatching(input.window.getBounds());
     corrected = true;
   }
-  // 原生窗口先可见，再进入最大化或全屏，避免隐藏窗口忽略系统展开请求。
-  input.reveal();
+  // maximize 会直接展示最大化窗口；先 show 会把普通尺寸到最大化的变化暴露给用户。
   if (input.restored.isMaximized) input.window.maximize();
+  input.reveal();
+  // macOS 原生全屏通过独立 Space 异步切换，沿用系统全屏流程。
   if (input.restored.isFullScreen) input.window.setFullScreen(true);
   return { actualDisplayId: actualDisplay ? String(actualDisplay.id) : undefined, corrected };
 }
