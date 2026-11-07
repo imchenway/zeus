@@ -48,6 +48,8 @@ import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useCo
 import { ReadingStateScope, useReadingSnapshot, useReadingState } from '../ui/readingState.js';
 
 export interface ConversationTranscriptProps {
+  /** 创建前使用原草稿身份读取系统消息，不借用尚未生成的会话或任务身份。 */
+  draftSystemMessageScope?: string;
   /** 系统消息保存只写会话历史，不触发模型请求。 */
   onSaveSystemMessage?: (message: ConversationSystemMessageInput) => Promise<ConversationSystemMessage>;
   /** 主会话读取完整目录，独立子线程不传此入口。 */
@@ -266,7 +268,7 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 /** 会话身份隔离滚动、展开和动效状态；主会话与子线程共用同一切换边界。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   return (
-    <ReadingStateScope id={systemMessageScope(props.state.projectId ?? '', props.navigationId ?? props.state.conversationId)}>
+    <ReadingStateScope id={props.draftSystemMessageScope ?? systemMessageScope(props.state.projectId ?? '', props.navigationId ?? props.state.conversationId)}>
       <ConversationTranscriptContent {...props} />
     </ReadingStateScope>
   );
@@ -291,7 +293,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   /** 首次恢复的目标不随本次阅读过程中的保存而变化。 */
   const initialReading = useRef(savedReading.current).current;
   /** 产品会话隔离待确认消息，子线程只读投影不接管主会话写入。 */
-  const systemScope = systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
+  const systemScope = props.draftSystemMessageScope ?? systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
   /** 补写中的消息与权威回执共享身份。 */
   const pendingSystemMessages = useConversationSystemMessages(systemScope, props.onSaveSystemMessage, props.state.systemMessages);
   /** 恢复中的待确认记录覆盖同身份旧状态，但不复制一条消息。 */

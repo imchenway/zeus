@@ -175,8 +175,8 @@ export function ConversationInlineResource(
   const [busy, setBusy] = useState(false);
   /** 本次打开失败沿用消息中的可见错误说明。 */
   const [error, setError] = useState<unknown>(null);
-  /** 文件位置与展示文字分开，按当前界面语言显示。 */
-  const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
+  /** 文件位置使用统一英文格式，与文件名分开显示。 */
+  const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource) : null;
   /** 文件引用显示真实文件名，说明性链接文字不覆盖文件身份。 */
   const label = props.resource.kind === 'file' ? props.resource.projectRelativePath.split('/').at(-1) || props.resource.displayName : props.label;
   /** 位置只追加一次，保留未带行号的普通文件引用。 */
@@ -792,13 +792,13 @@ export function ResourceIcon(props: { resource: ConversationResource }) {
   return <Icon aria-hidden="true" weight="regular" />;
 }
 
-/** 行号依照界面语言显示，实际打开仍使用原始位置字段。 */
-function locationLabel(resource: Extract<ConversationResource, { kind: 'file' }>, language: SessionUiLanguage): string | null {
+/** 行号保留英文表达，实际打开仍使用原始位置字段。 */
+function locationLabel(resource: Extract<ConversationResource, { kind: 'file' }>): string | null {
   const line = resource.location?.line;
   const endLine = resource.location?.endLine;
   if (!line) return null;
-  if (endLine && endLine > line) return language === 'zh-CN' ? `第 ${line}–${endLine} 行` : `(lines ${line}–${endLine})`;
-  return language === 'zh-CN' ? `第 ${line} 行` : `(line ${line})`;
+  if (endLine && endLine > line) return `(lines ${line}–${endLine})`;
+  return `(line ${line})`;
 }
 
 /** 本地网页不能用“网站”暗示已发布，线上资源继续展示域名。 */

@@ -3308,7 +3308,6 @@
   min-inline-size: 0;
 }
 
-
 .session-codex-parity-v1 .session-generated-image-list {
   display: grid;
   gap: 12px;
@@ -8421,9 +8420,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   word-break: break-all;
 }
 
-/* 文件图标参与首行文字排版，不能沿用 Flex 图标的块级显示。 */
+/* 文件图标与首行文字垂直居中，长文件名仍按行内文本换行。 */
 .session-codex-parity-v1 .session-inline-resource-shell[data-resource-kind='file'] > button.session-inline-resource > svg {
   display: inline-block;
+  vertical-align: middle;
 }
 
 .session-codex-parity-v1 button.session-inline-resource {
