@@ -1269,7 +1269,6 @@ export function TaskModelPushModal(props: {
                 {pendingEnvironmentRepositories.length > 0 ? (
                   <details>
                     <summary>{zh ? `按需补入仓库（${pendingEnvironmentRepositories.length}）` : `Add repositories as needed (${pendingEnvironmentRepositories.length})`}</summary>
-                    <small>{zh ? '只有需要在当前任务中修改时才补入；现有环境可以直接继续。' : 'Add a repository only when this task needs to change it. The existing environment can continue as-is.'}</small>
                     <ul className="task-model-push-existing-repositories">
                       {pendingEnvironmentRepositories.map((repository) => (
                         <li key={repository.repositoryId}>

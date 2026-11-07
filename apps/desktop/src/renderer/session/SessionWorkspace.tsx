@@ -1,3 +1,4 @@
+import { Button } from '../ui/Button.js';
 import { FileSelectionQuestionContext, sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
 import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -217,6 +218,8 @@ export interface ProjectSessionWorkspaceStartInput {
 }
 
 export interface SessionWorkspaceActions {
+  /** 打开当前项目的新会话草稿，不恢复旧会话。 */
+  onNewConversation?: () => void;
   onStartConversation?: (
     input: SessionWorkspaceStartInput,
   ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
@@ -1798,9 +1801,8 @@ export interface SessionWorkspaceProps {
   actions?: SessionWorkspaceActions;
 }
 
+/** 终态任务的恢复操作及其进行中、失败状态。 */
 export interface SessionReadOnlyGate {
-  title: string;
-  description: string;
   actionLabel: string;
   busy?: boolean;
   error?: string | null;
@@ -2947,6 +2949,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onLoadInformation={actions.onLoadConversationInformation}
       />
     ) : null;
+  /** 恢复入口占用输入区位置；各类历史视图共用同一操作与错误反馈。 */
+  const taskReadOnlyAction = props.readOnlyGate ? (
+    <div className="session-composer-stack session-readonly-actions">
+      {legacy ? <LegacyConversationBanner language={props.language} /> : null}
+      <Button size="compact" busy={props.readOnlyGate.busy} onClick={() => void props.readOnlyGate?.onAction()}>
+        {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
+      </Button>
+      {props.readOnlyGate.error ? (
+        <div role="alert">
+          <VisibleApplicationError error={props.readOnlyGate.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
   /** 顶栏、正文与浏览器作为整体让出终端空间，保持各工作面的边界对齐。 */
   const primaryPane = (
     <>
@@ -3121,19 +3138,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </header>
       ) : null}
 
-      {props.readOnlyGate ? (
-        <section className="session-task-readonly-gate" role="note" aria-label={props.readOnlyGate.title}>
-          <span>
-            <strong>{props.readOnlyGate.title}</strong>
-            <small>{props.readOnlyGate.description}</small>
-            {props.readOnlyGate.error ? <VisibleApplicationError error={props.readOnlyGate.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
-          </span>
-          <button type="button" onClick={() => void props.readOnlyGate?.onAction()} disabled={props.readOnlyGate.busy} aria-busy={props.readOnlyGate.busy || undefined}>
-            {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
-          </button>
-        </section>
-      ) : null}
-
       {conversationSurfaceError ? (
         <p className="session-composer-unavailable" role="alert">
           <VisibleApplicationError error={conversationSurfaceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -3142,7 +3146,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
       {legacy && props.conversation ? (
         <>
-          <LegacyConversationBanner language={props.language} />
           {props.loadState === 'loading' ? (
             <p className="session-legacy-load-status" role="status" aria-live="polite">
               <span className="session-command-spinner" aria-hidden="true" />
@@ -3167,6 +3170,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               </LegacyConversationTranscript>
             </ReadingStateScope>
           ) : null}
+          {props.readOnlyGate ? (
+            taskReadOnlyAction
+          ) : (
+            <div className="session-composer-stack session-readonly-actions">
+              <LegacyConversationBanner language={props.language} />
+              {actions.onNewConversation ? (
+                <Button size="compact" onClick={actions.onNewConversation}>
+                  {copy.newConversation}
+                </Button>
+              ) : null}
+            </div>
+          )}
         </>
       ) : props.state ? (
         <>
@@ -3274,7 +3289,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       {props.language === 'zh-CN' ? '正在准备会话历史，当前内容已保留。' : 'Preparing conversation history. Your current content is preserved.'}
                     </p>
                   ) : null}
-                  {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
+                  {props.readOnlyGate ? (
+                    taskReadOnlyAction
+                  ) : props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
                     <>
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       <div className="session-composer-stack">
@@ -3454,6 +3471,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             ) : null}
           </MotionPresence>
         </>
+      ) : props.readOnlyGate ? (
+        taskReadOnlyAction
       ) : (
         <NewConversationComposer
           key={owner?.kind === 'task' ? `task:${props.task?.id}` : 'project'}

@@ -3543,72 +3543,16 @@
   font-size: 11px;
 }
 
-/* 终态任务会话保留完整历史，但继续交互必须与重新打开任务同一步完成。 */
-.session-task-readonly-gate {
-  align-items: center;
-  background: color-mix(in oklab, var(--session-control) 82%, transparent);
-  border-block-end: 0;
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-  padding: 10px 20px;
+/* 终态任务在输入区居中恢复，失败原因紧随操作显示。 */
+.session-codex-parity-v1 .session-composer-stack.session-readonly-actions {
+  justify-items: center;
+  margin-block-start: auto;
+  padding-block: 8px;
 }
 
-.session-task-readonly-gate > span {
-  display: grid;
-  gap: 2px;
-  min-inline-size: 0;
-}
-
-.session-task-readonly-gate strong {
-  color: var(--session-text);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.session-task-readonly-gate small,
-.session-task-readonly-gate em {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 16px;
-}
-
-.session-task-readonly-gate em {
-  color: var(--session-danger);
-}
-
-.session-task-readonly-gate button {
-  background: var(--session-control);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 7px;
-  color: var(--session-text);
-  flex: 0 0 auto;
-  font: inherit;
-  min-block-size: 28px;
-  padding-inline: 10px;
-}
-
-.session-task-readonly-gate button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--session-control-hover);
-}
-
-.session-task-readonly-gate button:focus-visible {
-  outline: 2px solid var(--session-focus);
-  outline-offset: 2px;
-}
-
-.session-task-readonly-gate button:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
-@media (max-width: 760px) {
-  .session-task-readonly-gate {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
+.session-readonly-actions > * {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* 非图片资源需要同时容纳文件名和打开方式；用户消息附件还需覆盖自身的紧凑图片列宽。 */
@@ -6033,7 +5977,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-pending-request,
-.session-codex-parity-v1 .session-legacy-banner,
 .session-codex-parity-v1 .session-transport-failure {
   background: var(--session-sidebar);
   border: 0;
@@ -7035,28 +6978,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   text-align: center;
 }
 
-.session-codex-parity-v1 .session-legacy-banner {
-  align-items: flex-start;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  inline-size: min(var(--session-thread-max), calc(100% - (2 * var(--session-gutter))));
-  margin: auto;
-  padding: 16px;
-}
-
-.session-codex-parity-v1 .session-legacy-banner p {
+/* 旧会话的续聊限制与底部操作相邻，不另占顶部横幅。 */
+.session-legacy-readonly {
   color: var(--session-text-muted);
-  line-height: 1.5;
-  margin-block: 5px 0;
-  max-inline-size: var(--session-markdown-max);
-}
-
-.session-codex-parity-v1 .session-legacy-banner button {
-  background: transparent;
-  border: 1px solid var(--session-line);
-  border-radius: 7px;
-  padding-inline: 10px;
+  font-size: 12px;
+  margin: 0;
 }
 
 .session-codex-parity-v1 .session-legacy-load-status {
@@ -7856,14 +7782,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     max-block-size: min(72vh, 640px);
   }
 
-  .session-codex-parity-v1 .session-legacy-banner {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
 
-  .session-codex-parity-v1 .session-legacy-banner button {
-    grid-column: 1 / -1;
-    justify-self: stretch;
-  }
 }
 
 @media (max-width: 559px) {
@@ -12457,11 +12376,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-workspace-root .session-subagent-empty strong {
   color: var(--session-text);
   font-size: 13px;
-}
-
-.session-workspace-root .session-subagent-empty small {
-  font-size: 11px;
-  line-height: 17px;
 }
 
 .session-workspace-root .session-subagent-error {

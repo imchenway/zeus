@@ -81,8 +81,35 @@ export function GoalPanel(props: GoalPanelProps) {
   /** 能力或操作缺失时只展示详情，不渲染空回调按钮。 */
   const readOnly = !props.capability.supported || !props.capability.enabled || !(props.onSave || props.onPause || props.onResume || props.onClear);
 
+  /** 只在创建引导或实际状态限制存在时提供说明。 */
+  const description = readOnly
+    ? zh
+      ? '当前会话仅可查看目标。'
+      : 'This conversation allows viewing the goal only.'
+    : props.goal?.status === 'paused'
+      ? zh
+        ? '后续自动执行已暂停，点击继续执行可恢复。'
+        : 'Automatic work is paused. Resume to continue.'
+      : props.goal?.status === 'blocked'
+        ? zh
+          ? '自动执行遇到阻碍，请查看会话中的原因，处理后继续执行。'
+          : 'Automatic work is blocked. Check the conversation, resolve the issue, then resume.'
+        : props.goal
+          ? null
+          : zh
+            ? '写清要达成什么、不能改什么、如何验证，以及何时停止。'
+            : 'Describe the goal, constraints, verification, and when to stop.';
+
   return (
-    <ModalPortal rootClassName="session-goal-portal-root" backdropClassName="session-goal-backdrop" dismissDisabled={props.busy} onDismiss={props.onDismiss} role="dialog" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <ModalPortal
+      rootClassName="session-goal-portal-root"
+      backdropClassName="session-goal-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onDismiss}
+      role="dialog"
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
+    >
       <section className="session-goal-panel zeus-solid-form-surface" data-modal-surface="dialog">
         <header className="session-goal-panel-header">
           <div>
@@ -90,27 +117,11 @@ export function GoalPanel(props: GoalPanelProps) {
           </div>
           {props.goal ? <span className={`session-goal-status is-${props.goal.status}`}>{statusLabels[props.goal.status][zh ? 'zh' : 'en']}</span> : null}
         </header>
-        <p id={descriptionId} className="session-goal-description">
-          {readOnly
-            ? zh
-              ? '当前会话仅可查看目标。'
-              : 'This conversation allows viewing the goal only.'
-            : props.goal?.status === 'paused'
-              ? zh
-                ? '后续自动执行已暂停，点击继续执行可恢复。'
-                : 'Automatic work is paused. Resume to continue.'
-              : props.goal?.status === 'blocked'
-                ? zh
-                  ? '自动执行遇到阻碍，请查看会话中的原因，处理后继续执行。'
-                  : 'Automatic work is blocked. Check the conversation, resolve the issue, then resume.'
-                : props.goal
-                  ? zh
-                    ? '查看执行状态，或调整目标内容。'
-                    : 'Review progress or edit the objective.'
-                  : zh
-                    ? '写清要达成什么、不能改什么、如何验证，以及何时停止。'
-                    : 'Describe the goal, constraints, verification, and when to stop.'}
-        </p>
+        {description ? (
+          <p id={descriptionId} className="session-goal-description">
+            {description}
+          </p>
+        ) : null}
         {props.error ? (
           <p className="session-goal-description" role="alert">
             <VisibleApplicationError error={props.error} language={zh ? 'zh-CN' : 'en'} />
