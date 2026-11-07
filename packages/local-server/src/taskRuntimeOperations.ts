@@ -1,4 +1,4 @@
-import { type AiRuntimeLogEntry, type AiRuntimeSession, isNonCodexAiCliAdapterId, parseModelRef } from '@zeus/ai-runtime';
+import { type AiRuntimeLogEntry, type AiRuntimeSession, type CodexTransportState, isNonCodexAiCliAdapterId, parseModelRef } from '@zeus/ai-runtime';
 import {
   buildTaskPushLayout,
   isTaskAttachmentField,
@@ -120,8 +120,14 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
 
   /** 先按实际目标确定执行服务，API 模型不启动或等待无关的 Codex。 */
   async function resolveConversationCapabilities(project: ZeusProjectRecord, selectedModelRef?: string | null): Promise<ConversationCapabilitiesSnapshot> {
+    /** 完整来源或当前 Codex 目录的精确身份可限定凭据读取；旧裸模型名仍需查全目录消歧。 */
+    const requestedIdentity = selectedModelRef?.trim();
+    /** 已就绪目录只读，不为判断模型归属启动运行时。 */
+    const transport: CodexTransportState = codexAppServerManager.getState();
+    /** Codex 精确身份不匹配任何外部连接，因此不会触发无关 Keychain 读取。 */
+    const modelScope = requestedIdentity && (parseModelRef(requestedIdentity) || (transport.type === 'ready' && transport.capabilities.models.some((model) => model.id === requestedIdentity))) ? requestedIdentity : undefined;
     /** 本地目录包含已配置连接和既有 Codex 世代，不发送供应商请求。 */
-    const capabilities: ConversationCapabilitiesSnapshot = await conversationCapabilityQueries.readConversation(project.id, { readProviderAccount: false });
+    const capabilities: ConversationCapabilitiesSnapshot = await conversationCapabilityQueries.readConversation(project.id, { readProviderAccount: false, selectedModelRef: modelScope });
     /** 显式选择优先，省略时使用同一目录返回的全局默认模型。 */
     const identity = selectedModelRef?.trim() || capabilities.preferredModel;
     /** 使用完整来源身份匹配；裸模型名只能唯一命中。 */
@@ -132,7 +138,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     if (reference && reference.sourceId !== 'codex') throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '所选模型连接已不可用，请重新选择模型。');
     if (codexNativeEnabled) await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
     /** 冷启动后读取同代目录；无模型继续返回明确错误，不让调用方解引用空选择。 */
-    const resolved: ConversationCapabilitiesSnapshot = codexNativeEnabled ? await conversationCapabilityQueries.readConversation(project.id) : capabilities;
+    const resolved: ConversationCapabilitiesSnapshot = codexNativeEnabled ? await conversationCapabilityQueries.readConversation(project.id, { selectedModelRef: modelScope }) : capabilities;
     if (resolved.models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     return resolved;
   }

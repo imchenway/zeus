@@ -59,7 +59,8 @@ interface ConversationCapabilityQueryPorts {
   modelCatalog: {
     /** 只读连接元数据，不重复读取钥匙串。 */
     hasConfiguredProvider(): boolean;
-    listSelectableModels(): Promise<SelectableConnectionModel[]>;
+    /** 指定模型时只读取对应连接凭据，目录页面省略参数读取全部。 */
+    listSelectableModels(selectedModelRef?: string): Promise<SelectableConnectionModel[]>;
   };
   git: TaskPushGitReadPort;
   taskContext: {
@@ -138,7 +139,7 @@ export class ConversationCapabilityQueryApplication {
   constructor(private readonly ports: ConversationCapabilityQueryPorts) {}
 
   /** 项目能力读取共用既有目录；内部模型预检可以跳过账号查询。 */
-  async readConversation(projectId: string, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
+  async readConversation(projectId: string, options: { readProviderAccount?: boolean; selectedModelRef?: string } = {}): Promise<ConversationCapabilitiesSnapshot> {
     return this.readExisting(this.requireProject(projectId), options);
   }
 
@@ -270,7 +271,7 @@ export class ConversationCapabilityQueryApplication {
   }
 
   /** 目录查询只读本地账户缓存，单一供应商账号故障不能阻断其他来源。 */
-  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
+  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean; selectedModelRef?: string } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     /** 缓存缺失属于未知状态，只有其他读取异常才将 Codex 标记为不可用。 */
@@ -283,7 +284,7 @@ export class ConversationCapabilityQueryApplication {
             return this.unavailableCodexAccount();
           })
         : Promise.resolve(this.unavailableCodexAccount()),
-      this.ports.modelCatalog.listSelectableModels(),
+      this.ports.modelCatalog.listSelectableModels(options.selectedModelRef),
     ]);
     try {
       /** 账号故障只影响 Codex，独立供应商仍使用自己的目录与可用性证据。 */
