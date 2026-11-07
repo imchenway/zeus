@@ -233,9 +233,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
             </aside>
           ) : null}
           <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
-            {!loadingThread && thread && threadItems.length === 0 ? (
-              <SubagentEmpty title={zh ? '暂无可显示内容' : 'No visible content'} />
-            ) : null}
+            {!loadingThread && thread && threadItems.length === 0 ? <SubagentEmpty title={zh ? '暂无可显示内容' : 'No visible content'} /> : null}
             {transcriptState ? <ConversationTranscript state={transcriptState} language={props.language} historyOnly={!activeStatuses.has(thread!.agent.status)} transcriptHydrated /> : null}
           </section>
         </div>
