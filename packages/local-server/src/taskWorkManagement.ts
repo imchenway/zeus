@@ -1892,6 +1892,10 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   }
   const supplementalInfo = await buildAgentSupplementalInfo(options, run, [...currentSkills.nativeSkills, ...currentSkills.pluginSkills]);
   const supplementalAttachments = Array.isArray(run.entrypointSnapshot.supplementalAttachments) ? run.entrypointSnapshot.supplementalAttachments : [];
+  /** 自动化新建任务的需求正文就是用户提示词，内部员工上下文只供模型执行。 */
+  const taskSource = safeJsonParse(task.sourceContextJson);
+  /** 使用运行冻结的正文，避免任务后续编辑改变本次发送的显示内容。 */
+  const displayText = isRecord(taskSource) && taskSource.type === 'automation' ? run.contextManifest.task.description : undefined;
   const body: Record<string, unknown> = {
     mode: 'create',
     model: model.id,
@@ -1904,6 +1908,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     ...(typeof run.entrypointSnapshot.autonomyObjective === 'string' && run.entrypointSnapshot.autonomyObjective ? { goalObjective: run.entrypointSnapshot.autonomyObjective } : {}),
     workMode: run.entrypointSnapshot.workMode === 'plan' ? 'plan' : 'default',
     supplementalInfo,
+    ...(displayText?.trim() ? { displayText } : {}),
     ...(supplementalAttachments.length > 0 ? { supplementalAttachments } : {}),
     workspace,
     ...(pluginReferences.length > 0 ? { pluginReferences } : {}),

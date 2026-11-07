@@ -470,7 +470,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const articleRef = useRef<HTMLElement | null>(null);
   const role = itemRole(props.item);
   const recoveredRequestUserInput = role === 'request' && normalizeType(props.item.type) === 'requestuserinput' && props.item.payload.recovery === 'content_only';
-  const taskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
+  /** 显式显示正文优先，内部任务布局仍保留在发送快照中供模型使用。 */
+  const hasDisplayText = typeof props.item.payload.displayText === 'string' && Boolean(props.item.payload.displayText.trim());
+  /** Provider 回显和历史快照均携带同一份任务显示正文。 */
+  const persistedTaskPushLayout = role === 'user' ? taskPushMessageLayout(props.item.payload.taskPushLayout) : null;
+  const taskPushLayout = hasDisplayText || persistedTaskPushLayout?.displayText?.trim() ? null : persistedTaskPushLayout;
   /** 持久批注自带截图身份，统一交给专属预览，普通附件继续原有流程。 */
   const browserComments = role === 'user' && Array.isArray(props.item.payload.browserComments) ? (props.item.payload.browserComments as ZeusBrowserComment[]) : [];
   /** 防止同一批注截图又出现一张无法读取的普通附件卡。 */
@@ -997,6 +1001,9 @@ export function transcriptItemText(item: NativeSessionItemBuffer, language: Sess
   if (typeof item.payload.displayText === 'string' && item.payload.displayText.trim()) return item.payload.displayText;
   const historicalContent = isRecord(item.payload.content) ? item.payload.content : null;
   if (typeof historicalContent?.displayText === 'string' && historicalContent.displayText.trim()) return historicalContent.displayText;
+  /** 结构化任务回显可能不含顶层 displayText，沿用任务快照中的用户原文。 */
+  const taskLayout = taskPushMessageLayout(item.payload.taskPushLayout ?? historicalContent?.taskPushLayout);
+  if (typeof taskLayout?.displayText === 'string' && taskLayout.displayText.trim()) return taskLayout.displayText;
   if (normalizeType(item.type) === 'reasoning') {
     if (item.text.trim()) return item.text;
     return transcriptTextFragments(item.payload.summary).join('\n\n');
