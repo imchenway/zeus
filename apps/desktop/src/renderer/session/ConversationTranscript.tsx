@@ -656,19 +656,26 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const [readingTurnLoaded, setReadingTurnLoaded] = useState(false);
   /** 按需补读不随普通正文重绘重新发起。 */
   const loadReadingTurn = useStableOptionalCallback(props.onLoadNavigationTurn);
-  /** 只在已水合且原锚点确实缺失时补读。 */
+  /** 只为静态历史阅读补回缺失锚点；跟随最新消息时无需恢复旧位置。 */
   const readingTurnMissing = Boolean(
-    historyHydrated && initialReading?.turnId && initialReading.latestItem === latestReadingSignature && initialReading.anchor.rowKey && !turnRowsByKey.has(initialReading.anchor.rowKey) && !readingTurnLoaded,
+    historyHydrated &&
+    initialReading?.following === false &&
+    initialReading.turnId &&
+    initialReading.latestItem === latestReadingSignature &&
+    initialReading.anchor.rowKey &&
+    !turnRowsByKey.has(initialReading.anchor.rowKey) &&
+    !readingTurnLoaded,
   );
   // 原锚点补读完成前不展示错误的默认位置。
-  if (readingTurnMissing && loadReadingTurn && initialReading?.following === false) canRevealHistoryRef.current = false;
+  if (readingTurnMissing && loadReadingTurn) canRevealHistoryRef.current = false;
   useEffect(() => {
     if (!readingTurnMissing || !initialReading?.turnId || !loadReadingTurn) return;
     /** 切走后不再把迟到回执写入已卸载视图。 */
     let active = true;
     void loadReadingTurn(initialReading.turnId)
       .catch((error) => {
-        if (active) recordSystemMessage(systemScope, error, 'navigation', '阅读位置恢复失败。');
+        // 正文恢复失败归属原轮次，目录刷新成功不能将其误标为已恢复。
+        if (active) recordSystemMessage(systemScope, error, 'navigation_body', '阅读位置恢复失败。', { turnId: initialReading.turnId });
       })
       .finally(() => {
         if (active) setReadingTurnLoaded(true);

@@ -2830,42 +2830,49 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadNavigationTurn(turnId: string): Promise<void> {
     /** 连接重建后旧请求不再复用。 */
     const generation = connectionToken;
-    /** 本地和 Provider 轮次别名共用同一份分页请求。 */
-    const turn = await loadTurnReadIdentity(turnId, generation);
-    /** 轮次身份与代次共同隔离按需读取。 */
-    const key = `${generation}:${turn.id}`;
-    /** 点击与进入视口可能同时请求同一轮。 */
-    const existing = navigationTurnLoads.get(key);
-    if (existing) return existing;
-    /** 页只合并展示投影，不推进实时同步进度。 */
-    const request = (async () => {
-      /** 沿用已有按轮次模型历史接口。 */
-      const load = options.client.loadNativeConversationTurnModelHistoryV2;
-      if (!load || !state.snapshot?.snapshotV2) throw new Error('会话正文尚未就绪，请重试。');
-      /** 冻结游标必须严格前进，失败不能无界重试。 */
-      const seenCursors = new Set<string>();
-      while (true) {
-        // 页面与游标可能仍在等待位置接管；只有实际归约完成后才能决定下一页。
-        await waitForTranscriptPlacementRecovery(generation);
-        /** 导航沿已有连续范围和读取方向补齐，不重新从第一页覆盖进度。 */
-        const paging = turnReadPaging(state.snapshot, turn, 'historyByTurn');
-        if (paging?.loaded && !paging.hasMore) return;
-        /** 空游标代表该轮第一页。 */
-        const cursor = paging?.nextCursor ?? '';
-        if (seenCursors.has(cursor)) throw new Error('历史正文分页没有推进。');
-        seenCursors.add(cursor);
-        /** 展开过程时已选择的方向继续使用，首个导航请求按正序开始。 */
-        const direction = paging?.direction ?? turnReadPaging(state.snapshot, turn, 'processByTurn')?.direction ?? 'forward';
-        await loadTurnHistoryPageV2(turn, direction);
-      }
-    })();
-    navigationTurnLoads.set(key, request);
-    /** 失败保留在调用方的局部状态，允许下一次明确重试。 */
-    const clear = () => {
-      if (navigationTurnLoads.get(key) === request) navigationTurnLoads.delete(key);
-    };
-    void request.then(clear, clear);
-    return request;
+    try {
+      /** 本地和 Provider 轮次别名共用同一份分页请求。 */
+      const turn = await loadTurnReadIdentity(turnId, generation);
+      /** 轮次身份与代次共同隔离按需读取。 */
+      const key = `${generation}:${turn.id}`;
+      /** 点击与进入视口可能同时请求同一轮。 */
+      const existing = navigationTurnLoads.get(key);
+      if (existing) return await existing;
+      /** 页只合并展示投影，不推进实时同步进度。 */
+      const request = (async () => {
+        /** 沿用已有按轮次模型历史接口。 */
+        const load = options.client.loadNativeConversationTurnModelHistoryV2;
+        if (!load || !state.snapshot?.snapshotV2) throw new Error('会话正文尚未就绪，请重试。');
+        /** 冻结游标必须严格前进，失败不能无界重试。 */
+        const seenCursors = new Set<string>();
+        while (true) {
+          // 页面与游标可能仍在等待位置接管；只有实际归约完成后才能决定下一页。
+          await waitForTranscriptPlacementRecovery(generation);
+          /** 导航沿已有连续范围和读取方向补齐，不重新从第一页覆盖进度。 */
+          const paging = turnReadPaging(state.snapshot, turn, 'historyByTurn');
+          if (paging?.loaded && !paging.hasMore) return;
+          /** 空游标代表该轮第一页。 */
+          const cursor = paging?.nextCursor ?? '';
+          if (seenCursors.has(cursor)) throw new Error('历史正文分页没有推进。');
+          seenCursors.add(cursor);
+          /** 展开过程时已选择的方向继续使用，首个导航请求按正序开始。 */
+          const direction = paging?.direction ?? turnReadPaging(state.snapshot, turn, 'processByTurn')?.direction ?? 'forward';
+          await loadTurnHistoryPageV2(turn, direction);
+        }
+      })();
+      navigationTurnLoads.set(key, request);
+      /** 失败保留在调用方的局部状态，允许下一次明确重试。 */
+      const clear = () => {
+        if (navigationTurnLoads.get(key) === request) navigationTurnLoads.delete(key);
+      };
+      void request.then(clear, clear);
+      return await request;
+    } catch (error) {
+      // 已关闭的控制器不再拥有阅读请求；连接换代沿当前分页继续，不向用户报告内部取消。
+      if (disposed) return;
+      if (generation !== connectionToken) return loadNavigationTurn(turnId);
+      throw error;
+    }
   }
 
   function dispatchV2Snapshot(snapshot: NativeConversationSnapshot): void {
@@ -3115,7 +3122,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const loadProcess = options.client.loadNativeConversationProcessV2;
     const generation = connectionToken;
     /** 完整目录为深历史提供准确身份，导航与展开不能按别名各自读取。 */
-    const turn = await loadTurnReadIdentity(turnIdentity, generation);
+    const turn = await loadTurnReadIdentity(turnIdentity, generation).catch((error: unknown) => {
+      // 连接换代或关闭后由当前视图接管，旧身份请求不产生可见错误。
+      if (disposed || generation !== connectionToken) return null;
+      throw error;
+    });
+    if (!turn || disposed || generation !== connectionToken) return;
     const current = state.snapshot;
     if (!loadProcess || !current?.snapshotV2 || !current.v2Paging) return;
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
