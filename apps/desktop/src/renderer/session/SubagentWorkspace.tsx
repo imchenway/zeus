@@ -234,18 +234,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           ) : null}
           <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
             {!loadingThread && thread && threadItems.length === 0 ? (
-              <SubagentEmpty
-                title={zh ? '暂无可显示内容' : 'No visible content'}
-                description={
-                  thread.historyBoundary.state === 'unavailable'
-                    ? zh
-                      ? '暂时没有可显示的智能体工作内容。'
-                      : 'No work from this agent is available to display yet.'
-                    : zh
-                      ? '这个智能体还没有发来消息。'
-                      : 'This agent has not sent any messages yet.'
-                }
-              />
+              <SubagentEmpty title={zh ? '暂无可显示内容' : 'No visible content'} />
             ) : null}
             {transcriptState ? <ConversationTranscript state={transcriptState} language={props.language} historyOnly={!activeStatuses.has(thread!.agent.status)} transcriptHydrated /> : null}
           </section>
@@ -253,7 +242,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       ) : (
         <section ref={listScroll} className="session-subagent-list" aria-live="polite">
           {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
-          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} description={zh ? '此对话尚未创建子智能体。' : 'This conversation has no subagents yet.'} /> : null}
+          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} /> : null}
           {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
           {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已完成' : 'Done'} items={grouped.done} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
         </section>
@@ -365,12 +354,12 @@ function SubagentLoading(props: { label: string }) {
   );
 }
 
-function SubagentEmpty(props: { title: string; description: string }) {
+/** 智能体列表与会话空状态仅显示一条状态文字。 */
+function SubagentEmpty(props: { title: string }) {
   return (
     <div className="session-subagent-empty">
       <UsersThree aria-hidden="true" weight="regular" />
       <strong>{props.title}</strong>
-      <small>{props.description}</small>
     </div>
   );
 }
