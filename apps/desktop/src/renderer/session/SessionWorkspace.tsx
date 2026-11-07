@@ -4,7 +4,6 @@ import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
 import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
-import { SystemMessageNotice } from './ConversationTranscript.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
@@ -1323,7 +1322,8 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
-  bindDraftSystemMessages(options.input.owner.projectId, choice.taskId, choice.id);
+  // 项目入口的来源始终是项目草稿，自动创建的任务只属于目标会话。
+  bindDraftSystemMessages(options.input.owner.projectId, null, choice.id);
   // 继承目录时不把尚未加载的工作树事实猜成项目直连。
   if (!request.inheritConversationId || request.workspaceMode) choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
@@ -3705,6 +3705,8 @@ export function NewConversationComposer(props: {
   const [submitting, setSubmitting] = useState(false);
   /** 创建回执到达前复用正文投影，原草稿仍保留用于失败恢复。 */
   const [startingTranscript, setStartingTranscript] = useState<NativeSessionState | null>(null);
+  /** 草稿错误与首发消息共用正文组件，未发送时没有用户消息。 */
+  const [emptyDraftTranscript] = useState(createInitialSessionState);
   /** 创建方式按项目持久化，发送后清理草稿不会清理偏好。 */
   const [creationPreferences, setCreationPreferences] = useState(() => readProjectConversationCreationPreferences(browserConversationStorage(), props.owner?.projectId ?? ''));
   /** 提交与控件消费同一组创建选项。 */
@@ -4501,15 +4503,14 @@ export function NewConversationComposer(props: {
       </header>
       <div ref={browserLayoutRef} className="session-conversation-browser-layout" data-browser-open={browserVisible || undefined} data-browser-expanded={(browserVisible && browserExpanded) || undefined}>
         <div className="session-conversation-pane">
-          {draftSystemMessages.length ? (
-            <section className="session-transcript" role="log" aria-label={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system messages'}>
-              {draftSystemMessages.map((message) => (
-                <SystemMessageNotice key={message.id} message={message} language={props.language} />
-              ))}
-            </section>
-          ) : null}
-          {startingTranscript ? (
-            <ConversationTranscript state={startingTranscript} language={props.language} transcriptHydrated creationStatus={{ state: 'creating', message: props.language === 'zh-CN' ? '正在创建会话' : 'Creating conversation' }} />
+          {startingTranscript || draftSystemMessages.length ? (
+            <ConversationTranscript
+              state={startingTranscript ?? emptyDraftTranscript}
+              draftSystemMessageScope={systemScope}
+              language={props.language}
+              transcriptHydrated
+              creationStatus={startingTranscript ? { state: 'creating', message: props.language === 'zh-CN' ? '正在创建会话' : 'Creating conversation' } : undefined}
+            />
           ) : null}
           <div className="session-new-conversation-draft" hidden={Boolean(startingTranscript)}>
             {props.docked ? (
