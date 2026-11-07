@@ -355,7 +355,7 @@ export function registerInputSuggestionRoutes(options: {
             cancellation = 'settings_changed';
             return false;
           }
-          if (inputSuggestionSourcesFingerprint(currentSources) !== context.sourcesFingerprint) {
+          if (inputSuggestionSourcesFingerprint(currentSources, context.sourceSelection) !== context.sourcesFingerprint) {
             cancellation = 'sources_changed';
             return false;
           }

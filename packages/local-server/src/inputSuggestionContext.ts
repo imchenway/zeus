@@ -18,7 +18,7 @@ type SuggestionRepository = Pick<ConversationSnapshotV2Repository, 'listModelHis
 
 /** 缓存仅持有有界的已发送原文投影，不保存草稿或生成结果。 */
 interface CachedHistory {
-  /** 顺序重建、流重建或资料修改均使原文候选失效。 */
+  /** 顺序或事件流重建使原文候选失效。 */
   revision: string;
   /** 增量读取从本次冻结水位继续，不重复扫描已有正文。 */
   throughSequence: number;
@@ -30,9 +30,11 @@ interface CachedHistory {
   assistants: ConversationModelHistoryPageItem[];
 }
 
-/** 资料正文及有效状态共同决定身份，删除记忆也会改变结果。 */
-export function inputSuggestionSourcesFingerprint(sources: InputSuggestionSources): string {
-  return createHash('sha256').update(JSON.stringify(sources)).digest('hex');
+/** 固定本次检索条件，只比较实际生成材料；更新时间等存储元数据不使建议过期。 */
+export function inputSuggestionSourcesFingerprint(sources: InputSuggestionSources, selection: { projectId?: string; query?: string; state?: string } = {}): string {
+  return createHash('sha256')
+    .update(JSON.stringify([sources.agentRules, renderSources(sources, selection.projectId, selection.query ?? '', selection.state ?? '')]))
+    .digest('hex');
 }
 
 /** 超长原文保留首尾并标明缺口，避免只保留开头而丢掉末尾修正。 */
@@ -150,15 +152,13 @@ export function createInputSuggestionContextReader(repository: SuggestionReposit
     },
     /** 草稿只用于当前请求的相关性选择，不写入缓存。 */
     read(input: { snapshot: ConversationSnapshotV2 | null; projectId?: string; sources: InputSuggestionSources; draft?: string }) {
-      /** 每次重新解析记忆和任务，资料撤销或变更可立即使缓存失效。 */
-      const sourcesFingerprint = inputSuggestionSourcesFingerprint(input.sources);
       /** 新草稿可以没有会话，但仍可参考当前项目的已确认偏好。 */
       const snapshot = input.snapshot;
       /** 缓存键包含权威项目与会话身份。 */
       const key = snapshot ? JSON.stringify([snapshot.conversation.projectId, snapshot.conversation.id]) : '';
       /** 位置和事件流重建必须重读原文，不能沿用旧句柄。 */
-      const revision = JSON.stringify([snapshot?.orderEpoch, snapshot?.eventStreamGeneration, sourcesFingerprint]);
-      /** 旧候选仅在来源相同时用于增量读取。 */
+      const revision = JSON.stringify([snapshot?.orderEpoch, snapshot?.eventStreamGeneration]);
+      /** 历史缓存只保存对话候选；任务和记忆每次重新取材，不影响历史增量读取。 */
       const previous = snapshot && cache.get(key)?.revision === revision ? cache.get(key) : undefined;
       /** 无会话时不创建或持久化会话身份。 */
       let history = previous;
@@ -198,6 +198,10 @@ export function createInputSuggestionContextReader(repository: SuggestionReposit
       const state = !turn ? '尚无运行轮次。' : turn.status === 'failed' || turn.status === 'interrupted' || turn.hasError ? '本轮失败或中断。' : turn.status === 'completed' ? '本轮回复已结束。' : '本轮仍在进行。';
       /** 任务和记忆单独占用最多 4,000 字符。 */
       const support = renderSources(input.sources, input.projectId, query, state);
+      /** 生成后沿用同一检索词、项目和状态，避免把后台状态变化混入资料校验。 */
+      const sourceSelection = { projectId: input.projectId, query, state };
+      /** 与提示词共用过滤和裁剪，记忆撤销或过期导致有效材料变化时仍使结果失效。 */
+      const sourcesFingerprint = inputSuggestionSourcesFingerprint(input.sources, sourceSelection);
       /** 最新回复先使用助手额度，避免关键问题被旧回复平均分走预算。 */
       const assistant = snapshot ? renderMessages(repository, snapshot.conversation.id, (history?.assistants ?? []).slice(-1), 3_996) : [];
       /** 旧回复只使用最新回复剩余的额度，助手分区总量保持不变。 */
@@ -217,7 +221,7 @@ export function createInputSuggestionContextReader(repository: SuggestionReposit
       const dialogue = [...user, ...assistant, ...executionText]
         .sort((left, right) => (left.item.messageCreatedAt ?? left.item.confirmedAt).localeCompare(right.item.messageCreatedAt ?? right.item.confirmedAt) || left.item.sequence - right.item.sequence)
         .map((entry) => entry.text);
-      return { text: [support, ...dialogue].join('\n\n'), hasDialogue: users.length > 0, sourcesFingerprint };
+      return { text: [support, ...dialogue].join('\n\n'), hasDialogue: users.length > 0, sourcesFingerprint, sourceSelection };
     },
   };
 }
