@@ -15,7 +15,7 @@ export interface ProjectModelPreferences {
   workMode: NativeCollaborationMode;
   /** 当前模型最近使用的权限模式。 */
   permissionMode: NativePermissionMode;
-  /** 推送和新会话共用的单选 Skill 身份；空串表示不使用。 */
+  /** 任务推送表单的单选 Skill 身份；空串表示不使用，新会话不自动沿用。 */
   skillId?: string;
   /** 任务推送选择的直接目录或工作树。 */
   workspaceMode?: 'direct' | 'worktree';

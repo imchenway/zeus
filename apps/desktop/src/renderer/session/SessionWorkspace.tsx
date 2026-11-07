@@ -10,7 +10,7 @@ import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
-import { temporaryWorkspaceId, isConversationWorktreeOptions, splitZeusSkillIds, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
+import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -121,7 +121,6 @@ import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, 
 import { readProjectModelPreferences, singleConversationSkill, writeProjectConversationPreferences, writeProjectModelPreferences } from './projectModelPreferences.js';
 import { readProjectConversationCreationPreferences, writeProjectConversationCreationPreferences, type ProjectConversationCreationPreferences } from './projectConversationCreationPreferences.js';
 import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
-import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { hasAvailableConversationModel, resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
@@ -1725,8 +1724,6 @@ export interface NewConversationDraft {
   worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
   /** 草稿中的模型配置所属项目，切换项目时不能沿用。 */
   runtimeProjectId?: string;
-  /** 推送记忆中已选择的 Skill。 */
-  skillId?: string;
   /** 上下文容量以 Token 为单位，空值使用模型默认。 */
   contextCapacityTokens?: number | null;
   content: string;
@@ -3715,10 +3712,6 @@ export function NewConversationComposer(props: {
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
   /** 当前模型的上下文容量以 Token 为单位。 */
   const [contextCapacityTokens, setContextCapacityTokens] = useState<number | null>(() => restoredDraft?.contextCapacityTokens ?? null);
-  /** 显示并提交项目记住的 Skill。 */
-  const [skillId, setSkillId] = useState(() => restoredDraft?.skillId ?? '');
-  /** Skill 目录按项目读取，客户端身份随读取入口保持稳定。 */
-  const skillClient = useMemo(() => (props.onLoadSkills ? { loadSkills: props.onLoadSkills } : null), [props.onLoadSkills]);
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3790,7 +3783,6 @@ export function NewConversationComposer(props: {
       selectedEffort,
       serviceTierSelection,
       contextCapacityTokens,
-      skillId,
       goalInputOpen,
       goalObjective,
       tokenDraft,
@@ -3810,7 +3802,6 @@ export function NewConversationComposer(props: {
     selectedEffort,
     serviceTierSelection,
     contextCapacityTokens,
-    skillId,
     goalInputOpen,
     goalObjective,
     tokenDraft,
@@ -3900,7 +3891,6 @@ export function NewConversationComposer(props: {
     setCollaborationMode(remembered?.workMode ?? 'default');
     setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
     setContextCapacityTokens(remembered?.contextCapacityTokens ?? null);
-    setSkillId(remembered?.skillId ?? '');
     setRuntimeProjectId(projectId);
   }, [props.owner?.projectId, runtimeProjectId]);
 
@@ -3990,7 +3980,6 @@ export function NewConversationComposer(props: {
     setContextCapacityTokens(remembered?.contextCapacityTokens ?? null);
     setPermissionMode(remembered?.permissionMode ?? 'auto');
     setCollaborationMode(remembered?.workMode ?? 'default');
-    setSkillId(remembered?.skillId ?? '');
   }
 
   /** 创建会话并在受理后记录实际选择。 */
@@ -4050,16 +4039,8 @@ export function NewConversationComposer(props: {
       return;
     }
     suggestion.dismiss();
-    /** 已记住的 Skill 与正文中的显式引用共用现有协议。 */
-    const rememberedSkills = splitZeusSkillIds(skillId ? [skillId] : []);
-    if (rememberedSkills.invalidIds.length) {
-      setLocalError(props.language === 'zh-CN' ? '已记住的 Skill 无效，请重新选择。' : 'The remembered skill is invalid. Select it again.');
-      return;
-    }
-    /** 原生 Skill 身份去重后使用原有会话协议。 */
-    const skillReferences = [...new Set([...structured.skillReferences.map((item) => item.id), ...rememberedSkills.nativeSkillIds])].map((id) => ({ id }));
-    /** 插件 Skill 保留独立协议，并避免重复提交同一身份。 */
-    const pluginReferences = [...structured.pluginReferences, ...rememberedSkills.pluginReferences.filter((item) => !structured.pluginReferences.some((selected) => selected.kind === item.kind && selected.id === item.id))];
+    /** 新会话只提交输入框中显式选择的 Skill 和插件。 */
+    const { skillReferences, pluginReferences } = structured;
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -4150,7 +4131,7 @@ export function NewConversationComposer(props: {
             contextCapacityTokens,
             workMode: collaborationMode,
             permissionMode,
-            skillId: skillId || singleConversationSkill({ skillReferences, pluginReferences }) || '',
+            skillId: singleConversationSkill({ skillReferences, pluginReferences }) ?? remembered?.skillId ?? '',
             ...(remembered?.workspaceMode ? { workspaceMode: remembered.workspaceMode } : {}),
           });
         } catch (error) {
@@ -4200,19 +4181,6 @@ export function NewConversationComposer(props: {
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
       />
       {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
-      {skillId ? (
-        <div className="session-new-conversation-skill">
-          <SkillSelector
-            client={skillClient}
-            projectId={props.owner?.projectId}
-            value={skillId}
-            onChange={setSkillId}
-            language={props.language}
-            disabled={submitting || !props.owner}
-            ariaLabel={props.language === 'zh-CN' ? '会话使用的 Skill' : 'Skill for this conversation'}
-          />
-        </div>
-      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
