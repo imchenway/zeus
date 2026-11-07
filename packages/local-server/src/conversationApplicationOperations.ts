@@ -3469,6 +3469,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
+        /** 显示正文与完整任务输入分开保存，内部上下文仍交给 Provider。 */
+        const displayText = body.displayText === undefined ? undefined : normalizeComposerDisplayText(body.displayText, taskPushPrompt);
+        if (displayText) taskPushLayout.displayText = displayText;
         const goalObjective = parseGoalObjective((body as Record<string, unknown>).goalObjective);
         if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
         const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushPrompt, body.pluginReferences);
@@ -3501,6 +3504,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             ...(taskStage ? { conversationTitle: `${taskStage.title}：${task.title}` } : {}),
             cwd: executionCwd,
             prompt: taskPushPrompt,
+            ...(displayText ? { displayText } : {}),
             taskPushLayout,
             model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
             ...(selectedEffort ? { effort: selectedEffort } : {}),

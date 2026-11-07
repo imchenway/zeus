@@ -122,6 +122,8 @@ export interface TaskPushLayoutTaskBlock {
 /** 排队、Provider 派发和已发消息共用的任务首发快照。 */
 export interface TaskPushMessageLayout {
   kind: 'task_push';
+  /** 会话展示的用户原文；不参与模型任务输入的组装。 */
+  displayText?: string;
   blocks: TaskPushLayoutTaskBlock[];
   supplementalInfo: string;
   supplementalAttachments: TaskPushSupplementalAttachment[];
