@@ -72,12 +72,12 @@ export interface GitApiClient {
     signal?: AbortSignal,
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
-  loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  loadProjectGitWorkbench: (projectId: string, includePatches?: boolean) => Promise<ProjectGitWorkbenchSnapshot>;
   loadConversationGitHistory: (projectId: string, repositoryId: string, offset: number, ref?: string) => Promise<{ commits: NonNullable<GitStatusSummary['recentCommits']>; hasMore: boolean }>;
   loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
   /** 按来源分支和目标远端读取本地推送预览。 */
   loadProjectGitPushPreview: (projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput) => Promise<ProjectGitPushPreview>;
-  loadProjectGitComparisonDiff: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
+  loadProjectGitComparisonDiff: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree', path?: string, summaryOnly?: boolean) => Promise<GitDiffSummary>;
   executeProjectGitAction: (projectId: string, repositoryId: string, input: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   loadProjectGitDiff: (projectId: string) => Promise<GitDiffSummary>;
   createProjectGitSnapshot: (projectId: string, taskId: string) => Promise<ProjectGitSnapshotResult>;
@@ -155,8 +155,9 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
       return result;
     },
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
-    loadProjectGitWorkbench: async (projectId) => {
-      const snapshot = await (bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ''}`));
+    loadProjectGitWorkbench: async (projectId, includePatches = true) => {
+      const snapshot = await (bridge()?.loadWorkbench(projectId, includePatches) ??
+        transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench?includePatches=${includePatches}${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ''}`));
       /** 列表可包含多个仓库，但每一项必须属于请求中的会话。 */
       if (conversationId) snapshot.repositories.forEach((repository) => scopedRepositoryId(repository.id));
       return snapshot;
@@ -172,9 +173,11 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
       transport.request<ProjectGitPushPreview>(
         `${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/push-preview?${new URLSearchParams({ sourceBranch: input.sourceBranch, remote: input.remote, targetBranch: input.targetBranch, offset: String(input.offset ?? 0) })}`,
       ),
-    loadProjectGitComparisonDiff: async (projectId, repositoryId, ref, mode) =>
-      bridge()?.loadComparison(projectId, repositoryId, ref, mode) ??
-      transport.request<GitDiffSummary>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),
+    loadProjectGitComparisonDiff: async (projectId, repositoryId, ref, mode, path, summaryOnly = false) =>
+      bridge()?.loadComparison(projectId, repositoryId, ref, mode, path, summaryOnly) ??
+      transport.request<GitDiffSummary>(
+        `${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}&summaryOnly=${summaryOnly}${path !== undefined ? `&path=${encodeURIComponent(path)}` : ''}`,
+      ),
     executeProjectGitAction: async (projectId, repositoryId, input) => {
       scopedRepositoryId(repositoryId);
       const nativeBridge = bridge();

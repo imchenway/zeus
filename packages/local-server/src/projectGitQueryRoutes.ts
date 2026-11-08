@@ -12,9 +12,9 @@ export function registerProjectGitQueryRoutes(options: { server: FastifyInstance
     }
   });
 
-  options.server.get('/api/projects/:projectId/git/workbench', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { conversationId?: string } }>, reply) => {
+  options.server.get('/api/projects/:projectId/git/workbench', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { conversationId?: string; includePatches?: string } }>, reply) => {
     try {
-      return await options.application.readWorkbench(request.params.projectId, request.query.conversationId);
+      return await options.application.readWorkbench(request.params.projectId, request.query.conversationId, request.query.includePatches !== 'false');
     } catch (error) {
       return sendNativeQueryRouteError(reply, error);
     }
@@ -30,9 +30,9 @@ export function registerProjectGitQueryRoutes(options: { server: FastifyInstance
 
   options.server.get(
     '/api/projects/:projectId/git/workbench/repositories/:repositoryId/compare',
-    async (request: FastifyRequest<{ Params: { projectId: string; repositoryId: string }; Querystring: { ref?: string; mode?: string } }>, reply) => {
+    async (request: FastifyRequest<{ Params: { projectId: string; repositoryId: string }; Querystring: { ref?: string; mode?: string; path?: string; summaryOnly?: string } }>, reply) => {
       try {
-        return await options.application.readComparison(request.params.projectId, request.params.repositoryId, request.query.ref, request.query.mode);
+        return await options.application.readComparison(request.params.projectId, request.params.repositoryId, request.query.ref, request.query.mode, request.query.path, request.query.summaryOnly === 'true');
       } catch (error) {
         return sendNativeQueryRouteError(reply, error);
       }

@@ -923,11 +923,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readStatus: readGitStatus,
       readDiff: readGitDiff,
       readHistory: getProjectGitHistory,
-      readRepositorySnapshot: (localPath) => getProjectGitRepositorySnapshot(localPath),
+      readRepositorySnapshot: getProjectGitRepositorySnapshot,
       readCommit: (localPath, commitHash) => getProjectGitCommitDetail(localPath, commitHash),
       /** 预览不会刷新远端或写入仓库。 */
       readPushPreview: getProjectGitPushPreview,
-      readComparison: (localPath, ref, mode) => getProjectGitComparisonDiff(localPath, ref, mode),
+      readComparison: getProjectGitComparisonDiff,
     },
     now,
   });

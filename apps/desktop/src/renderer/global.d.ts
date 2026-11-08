@@ -161,14 +161,14 @@ declare global {
       }) => Promise<{ opened: true }>;
       /** 按调用窗口身份读取展示快照，不接受其他窗口或本机路径。 */
       loadProjectGitDiffSnapshot: () => Promise<{ filePath: string; diff: import('./apiClient.js').GitDiffSummary }>;
-      loadProjectGitWorkbench: (projectId: string) => Promise<import('./apiClient.js').ProjectGitWorkbenchSnapshot>;
+      loadProjectGitWorkbench: (projectId: string, includePatches?: boolean) => Promise<import('./apiClient.js').ProjectGitWorkbenchSnapshot>;
       /** 只读获取当前项目的耐久 Git 操作历史页。 */
       loadProjectGitOperations: (input: { projectId: string; cursor?: string }) => Promise<import('./apiClient.js').ProjectGitOperationPage>;
       loadProjectGitHistory: (input: { projectId: string; repositoryId: string; offset: number; ref?: string }) => Promise<{ commits: import('./apiClient.js').ProjectGitRepositorySnapshot['recentCommits']; hasMore: boolean }>;
       loadProjectGitCommit: (input: { projectId: string; repositoryId: string; commitHash: string }) => Promise<import('./apiClient.js').ProjectGitCommitDetail>;
       /** 按指定远端目标读取待推送范围。 */
       loadProjectGitPushPreview: (input: { projectId: string; repositoryId: string; selection: import('./apiClient.js').ProjectGitPushPreviewInput }) => Promise<import('./apiClient.js').ProjectGitPushPreview>;
-      loadProjectGitComparisonDiff: (input: { projectId: string; repositoryId: string; ref: string; mode: 'current' | 'working-tree' }) => Promise<import('./apiClient.js').GitDiffSummary>;
+      loadProjectGitComparisonDiff: (input: { projectId: string; repositoryId: string; ref: string; mode: 'current' | 'working-tree'; path?: string; summaryOnly?: boolean }) => Promise<import('./apiClient.js').GitDiffSummary>;
       cancelProjectGitAction: (repositoryId: string) => Promise<{ cancelled: boolean }>;
       executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
       onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
