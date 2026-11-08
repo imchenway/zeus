@@ -201,7 +201,7 @@ class ComposerTableWidget extends WidgetType {
 }
 
 /** 原文、选区或结构化引用变化时更新排版；始终由同一个 Markdown 语法树解释格式。 */
-export function composerMarkdownPreview(tokens: () => StructuredToken[], language: 'zh-CN' | 'en-US') {
+export function composerMarkdownPreview(tokens: () => StructuredToken[], language: 'zh-CN' | 'en-US', composing: () => boolean) {
   /** ponytail: 按输入全文计算装饰；超长恢复草稿出现卡顿时再按可见范围更新。 */
   function decorations(state: EditorState): DecorationSet {
     /** 一次有序合并所有行样式、内联格式和引用标签。 */
@@ -211,7 +211,7 @@ export function composerMarkdownPreview(tokens: () => StructuredToken[], languag
     syntaxTree(state).iterate({
       enter: ({ name, from, to, node }) => {
         if (name === 'Table') {
-          ranges.push(Decoration.replace({ block: true, widget: new ComposerTableWidget(state.sliceDoc(from, to), from, tableRows(state, node), language, state.readOnly) }).range(from, to));
+          ranges.push(Decoration.replace({ block: true, inclusive: false, widget: new ComposerTableWidget(state.sliceDoc(from, to), from, tableRows(state, node), language, state.readOnly) }).range(from, to));
           return false;
         }
         /** 按语法节点添加字号和字形，未闭合的 Markdown 保留可输入原文。 */
@@ -243,7 +243,12 @@ export function composerMarkdownPreview(tokens: () => StructuredToken[], languag
   }
   return StateField.define<DecorationSet>({
     create: decorations,
-    update: (_current, transaction) => decorations(transaction.state),
-    provide: (field) => EditorView.decorations.from(field),
+    // 组词期间只映射原范围，不能把正在输入的原生文本节点替换成表格或隐藏标记。
+    update: (current, transaction) => composing() ? current.map(transaction.changes) : decorations(transaction.state),
+    provide: (field) => [
+      EditorView.decorations.from(field),
+      // 表格原文不可见，方向键应跳过整块，单元格仍由自己的输入控件编辑。
+      EditorView.atomicRanges.of((view) => view.state.field(field).update({ filter: (_from, _to, decoration) => decoration.spec.widget instanceof ComposerTableWidget })),
+    ],
   });
 }
