@@ -1782,9 +1782,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     const taskReadOnlyGate =
       (nativeSessionTaskReadOnly || selectedNativeConversation?.archived) && nativeSessionTask && selectedNativeConversation
         ? {
-            actionLabel: nativeSessionTaskReadOnly
-              ? (appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务' : 'Reopen task')
-              : (appShellSettings.appLanguage === 'zh-CN' ? '恢复会话' : 'Restore conversation'),
+            actionLabel: nativeSessionTaskReadOnly ? (appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务' : 'Reopen task') : appShellSettings.appLanguage === 'zh-CN' ? '恢复会话' : 'Restore conversation',
             busy: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'busy',
             error: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'error' ? taskConversationReopenState.error : null,
             onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),

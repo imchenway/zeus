@@ -3070,7 +3070,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           if (isNativeApiRecord(reference) && typeof reference.id === 'string' && typeof reference.updatedAt === 'string') archivedVersions.set(reference.id, reference.updatedAt);
         }
       }
-      return conversations.listRecordsByTask(taskId, { archived: true })
+      return conversations
+        .listRecordsByTask(taskId, { archived: true })
         .filter((conversation) => archivedVersions.get(conversation.id) === conversation.updatedAt)
         .map((conversation) => conversation.id);
     },
