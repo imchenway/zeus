@@ -1932,8 +1932,7 @@ function setupIpc(): void {
       )
         throw new TypeError('代码交付目录范围无效。');
       /** 真实仓库必须归属当前项目，路径筛选不扩大仓库权限。 */
-      const snapshot = await requireProjectGitWorkbench(event, false, candidate.projectId).loadWorkbench(candidate.projectId);
-      if (!snapshot.repositories.some((repository) => repository.id === candidate.repositoryId)) throw new Error('代码交付仓库不属于当前项目。');
+      await requireProjectGitWorkbench(event, false, candidate.projectId).validateDeliveryScope(candidate.projectId, candidate.repositoryId);
       return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId, repositoryId: candidate.repositoryId, ...(typeof candidate.pathPrefix === 'string' ? { pathPrefix: candidate.pathPrefix } : {}) });
     }
     if (candidate.pathPrefix !== undefined) throw new TypeError('目录筛选必须绑定仓库。');
@@ -1941,7 +1940,7 @@ function setupIpc(): void {
       if (typeof candidate.projectId !== 'string' || !candidate.projectId.trim() || candidate.workspaceId !== undefined) throw new TypeError('代码交付项目身份无效。');
       if (candidate.conversationId === undefined) {
         /** 项目范围由主进程重新发现，Renderer 不能传入任意本机目录。 */
-        await requireProjectGitWorkbench(event, false, candidate.projectId).loadWorkbench(candidate.projectId);
+        await requireProjectGitWorkbench(event, false, candidate.projectId).validateDeliveryScope(candidate.projectId);
         return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId });
       }
       if (typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('代码交付会话身份无效。');
@@ -2023,9 +2022,9 @@ function setupIpc(): void {
     if (!snapshot) throw new Error('当前窗口没有差异快照。');
     return snapshot;
   });
-  ipcMain.handle('zeus:project-git:load-workbench', (event, projectId: unknown) => {
-    if (typeof projectId !== 'string') throw new TypeError('项目 Git 工作台请求缺少项目身份。');
-    return requireProjectGitWorkbench(event, false, projectId).loadWorkbench(projectId);
+  ipcMain.handle('zeus:project-git:load-workbench', (event, projectId: unknown, includePatches: unknown = true) => {
+    if (typeof projectId !== 'string' || typeof includePatches !== 'boolean') throw new TypeError('项目 Git 工作台请求缺少项目身份或读取范围无效。');
+    return requireProjectGitWorkbench(event, false, projectId).loadWorkbench(projectId, includePatches);
   });
   ipcMain.handle('zeus:project-git:load-history', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('历史请求无效。');
@@ -2073,7 +2072,15 @@ function setupIpc(): void {
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.ref !== 'string' || (candidate.mode !== 'current' && candidate.mode !== 'working-tree')) {
       throw new TypeError('项目 Git 比较请求身份无效。');
     }
-    return requireProjectGitWorkbench(event, false, candidate.projectId).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
+    if ((candidate.path !== undefined && typeof candidate.path !== 'string') || (candidate.summaryOnly !== undefined && typeof candidate.summaryOnly !== 'boolean')) throw new TypeError('项目 Git 比较范围无效。');
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadComparison(
+      candidate.projectId,
+      candidate.repositoryId,
+      candidate.ref,
+      candidate.mode,
+      candidate.path as string | undefined,
+      candidate.summaryOnly as boolean | undefined,
+    );
   });
   ipcMain.handle('zeus:project-git:cancel-action', (event, repositoryId: unknown) => {
     requireProjectGitWorkbench(event, true);

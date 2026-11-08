@@ -10,12 +10,12 @@ export interface ProjectGitReadEffectPort {
   /** 以下端口只允许 Git 读取，不得 fetch、checkout、更新索引或写入 Core DB。 */
   readStatus(localPath: string): Promise<GitStatusSummary>;
   readDiff(localPath: string): Promise<GitDiffSummary>;
-  readRepositorySnapshot(localPath: string): Promise<unknown>;
+  readRepositorySnapshot(localPath: string, includePatches?: boolean): Promise<unknown>;
   readCommit(localPath: string, commitHash: string): Promise<unknown>;
   /** 只读推送范围，与提交查询保持同一仓库隔离边界。 */
   readPushPreview(localPath: string, input: ProjectGitPushPreviewInput): Promise<unknown>;
   readHistory(localPath: string, offset: number, ref?: string): Promise<unknown>;
-  readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree'): Promise<unknown>;
+  readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree', path?: string, summaryOnly?: boolean): Promise<unknown>;
 }
 
 interface ProjectGitQueryPorts {
@@ -48,7 +48,7 @@ export class ProjectGitQueryApplication {
     return this.ports.effects.readDiff(scope.path);
   }
 
-  async readWorkbench(projectId: string, conversationId?: string): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
+  async readWorkbench(projectId: string, conversationId?: string, includePatches = true): Promise<{ projectId: string; projectName: string; refreshedAt: string; repositories: Array<Record<string, unknown>> }> {
     const project = this.requireProject(projectId);
     /** 会话来源与环境卡片复用同一份已核验记录。 */
     const workspace = conversationId ? await this.ports.resolveConversationWorkspace(project, conversationId) : null;
@@ -59,7 +59,7 @@ export class ProjectGitQueryApplication {
       relativePath: repository.relativePath,
       localPath: repository.localPath,
       sourceBranch: workspace?.sourceBranches?.find((source) => source.repositoryRelativePath === repository.relativePath)?.branch ?? null,
-      snapshot: await this.ports.effects.readRepositorySnapshot(repository.localPath),
+      snapshot: await this.ports.effects.readRepositorySnapshot(repository.localPath, includePatches),
     }));
     return { projectId: project.id, projectName: project.name, refreshedAt: this.ports.now().toISOString(), repositories: items };
   }
@@ -76,11 +76,11 @@ export class ProjectGitQueryApplication {
     return this.ports.effects.readPushPreview(repository.localPath, input);
   }
 
-  async readComparison(projectId: string, repositoryId: string, rawRef: string | undefined, rawMode: string | undefined): Promise<unknown> {
+  async readComparison(projectId: string, repositoryId: string, rawRef: string | undefined, rawMode: string | undefined, path?: string, summaryOnly = false): Promise<unknown> {
     const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
     const ref = rawRef?.trim();
     if (!ref) throw queryError('ZEUS_GIT_REF_REQUIRED', 'A comparison branch is required.');
-    return this.ports.effects.readComparison(repository.localPath, ref, rawMode === 'working-tree' ? 'working-tree' : 'current');
+    return this.ports.effects.readComparison(repository.localPath, ref, rawMode === 'working-tree' ? 'working-tree' : 'current', path, summaryOnly);
   }
 
   async readHistory(projectId: string, repositoryId: string, offset: number, ref?: string) {

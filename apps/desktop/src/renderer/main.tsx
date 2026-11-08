@@ -564,7 +564,7 @@ async function hydrateRenderer(): Promise<void> {
             loadCommit: (projectId, repositoryId, commitHash) => window.zeus!.loadProjectGitCommit({ projectId, repositoryId, commitHash }),
             /** 推送预览与实际操作使用同一桌面仓库解析器。 */
             loadPushPreview: (projectId, repositoryId, selection) => window.zeus!.loadProjectGitPushPreview({ projectId, repositoryId, selection }),
-            loadComparison: (projectId, repositoryId, ref, mode) => window.zeus!.loadProjectGitComparisonDiff({ projectId, repositoryId, ref, mode }),
+            loadComparison: (projectId, repositoryId, ref, mode, path, summaryOnly) => window.zeus!.loadProjectGitComparisonDiff({ projectId, repositoryId, ref, mode, path, summaryOnly }),
             execute: (projectId, repositoryId, action) => window.zeus!.executeProjectGitAction({ projectId, repositoryId, action }),
           },
         }

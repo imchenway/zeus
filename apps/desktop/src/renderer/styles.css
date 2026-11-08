@@ -15896,6 +15896,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: minmax(0, 1fr);
 }
 
+/* 首屏沿用任务页骨架线与交付布局，不阻塞窗口关闭或制造可点击占位。 */
+.macos-ai-app .git-delivery-loading-lines {
+  padding: 16px;
+  align-content: start;
+  max-inline-size: 560px;
+}
+
 .macos-ai-app .task-git-delivery-load-state {
   min-block-size: 0;
   block-size: 100%;

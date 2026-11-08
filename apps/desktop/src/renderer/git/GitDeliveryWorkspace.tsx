@@ -79,10 +79,44 @@ export interface DeliveryRepositoryGroup {
 
 /** 本机读取失败保留重试，不能把未加载误报为没有变化。 */
 export function InitialLoadState(props: { zh: boolean; error?: unknown; onRetry?: () => void }) {
+  if (!props.error)
+    return (
+      <div className="task-git-delivery-content" role="status" aria-label={props.zh ? '正在读取本机 Git 信息' : 'Loading local Git information'} aria-busy="true">
+        <div className="task-git-review-layout task-git-delivery-layout" aria-hidden="true">
+          <section className="task-git-delivery-file-browser">
+            <header className="task-git-review-pane-title">
+              <strong>{props.zh ? '本机未提交' : 'Local uncommitted'}</strong>
+            </header>
+            <div className="task-loading-skeleton-stack git-delivery-loading-lines">
+              <span className="task-loading-skeleton-line" />
+              <span className="task-loading-skeleton-line" />
+              <span className="task-loading-skeleton-line short" />
+            </div>
+          </section>
+          <section className="task-git-delivery-actions">
+            <header className="task-git-review-pane-title">
+              <strong>{props.zh ? '提交文件' : 'Commit files'}</strong>
+            </header>
+            <div className="task-loading-skeleton-stack git-delivery-loading-lines">
+              <span className="task-loading-skeleton-line" />
+              <span className="task-loading-skeleton-line short" />
+            </div>
+          </section>
+          <main className="task-git-review-main task-git-delivery-diff-main">
+            <header className="task-git-review-pane-title">
+              <strong>{props.zh ? '差异对比' : 'Diff'}</strong>
+            </header>
+            <div className="task-loading-skeleton-stack git-delivery-loading-lines">
+              <span className="task-loading-skeleton-line" />
+              <span className="task-loading-skeleton-line short" />
+            </div>
+          </main>
+        </div>
+      </div>
+    );
   return (
     <section className="task-git-delivery-load-state" role={props.error ? 'alert' : 'status'}>
-      {props.error ? <VisibleApplicationError error={props.error} language={props.zh ? 'zh-CN' : 'en'} /> : <strong>{props.zh ? '正在读取本机 Git 信息…' : 'Loading local Git information…'}</strong>}
-      {!props.error ? <small>{props.zh ? '这里只读取本机分支、提交和工作区，不会连接远端仓库。' : 'This reads local branches, commits, and worktrees without contacting a remote repository.'}</small> : null}
+      <VisibleApplicationError error={props.error} language={props.zh ? 'zh-CN' : 'en'} />
       {props.onRetry ? (
         <Button variant="secondary" size="compact" onClick={props.onRetry}>
           {props.zh ? '重新读取' : 'Retry'}

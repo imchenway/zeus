@@ -68,20 +68,25 @@ export class ProjectGitWorkbenchService {
   private readonly activeRepositories = new Set<string>();
   constructor(private readonly loadProject: (projectId: string) => Promise<ProjectGitProjectIdentity>) {}
 
-  async loadWorkbench(projectId: string): Promise<ProjectGitWorkbenchSnapshot> {
+  /** 打开窗口只核对归属，不提前生成窗口随后还会读取的完整快照。 */
+  async validateDeliveryScope(projectId: string, repositoryId?: string): Promise<void> {
+    if (repositoryId !== undefined) await this.resolveRepository(projectId, repositoryId);
+    else await this.requireProject(projectId);
+  }
+
+  /** 文件列表读取可跳过补丁，完整工作台仍保留原有快照。 */
+  async loadWorkbench(projectId: string, includePatches = true): Promise<ProjectGitWorkbenchSnapshot> {
     const project = await this.requireProject(projectId);
     const repositories = await discoverGitRepositories(project.localPath);
     return {
       projectId: project.id,
       projectName: project.name,
       refreshedAt: new Date().toISOString(),
-      repositories: await mapWithConcurrency(repositories, async (repository) => ({
-        ...(await loadNavigationMetadata(repository.localPath)),
-        id: projectGitRepositoryId(project.id, repository.relativePath),
-        name: repository.name,
-        relativePath: repository.relativePath,
-        snapshot: await getProjectGitRepositorySnapshot(repository.localPath),
-      })),
+      repositories: await mapWithConcurrency(repositories, async (repository) => {
+        /** 导航元数据与工作区状态互不依赖，在既有并发上限内一起读取。 */
+        const [navigation, snapshot] = await Promise.all([loadNavigationMetadata(repository.localPath), getProjectGitRepositorySnapshot(repository.localPath, includePatches)]);
+        return { ...navigation, id: projectGitRepositoryId(project.id, repository.relativePath), name: repository.name, relativePath: repository.relativePath, snapshot };
+      }),
     };
   }
 
@@ -118,10 +123,10 @@ export class ProjectGitWorkbenchService {
     return getProjectGitPushPreview(resolved.repository.localPath, input);
   }
 
-  async loadComparison(projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree'): Promise<GitDiffSummary> {
+  async loadComparison(projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!ref.trim()) throw projectGitError('ZEUS_GIT_REF_REQUIRED', '必须选择一个比较分支。');
-    return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode);
+    return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode, path, summaryOnly);
   }
 
   /** 桌面仓库身份由自身发现服务校验，不与宿主数据库的登记 ID 混用。 */

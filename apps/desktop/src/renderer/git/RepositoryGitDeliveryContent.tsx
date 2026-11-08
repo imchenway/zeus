@@ -159,7 +159,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     const revision = ++readRevision.current;
     try {
       /** 保存后必须重新读取，不能复用写入前发起的共享请求。 */
-      const complete = await props.client.loadProjectGitWorkbench(props.project.id);
+      const complete = await props.client.loadProjectGitWorkbench(props.project.id, false);
       if (revision !== readRevision.current) return;
       /** 写入与展示仅使用入口限定后的真实仓库。 */
       const next = scopedSnapshot(complete);
@@ -193,7 +193,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         next.repositories.map((repository) => {
           /** 来源缺失必须显式报告，不能伪装成没有成果或退回推送上游。 */
           const base = committedBase(repository);
-          if (base) return props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, base, 'current');
+          if (base) return props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, base, 'current', undefined, true);
           if (!repository.snapshot.headSha) return Promise.resolve(null);
           return Promise.reject(new Error(zh ? '缺少分支创建记录，无法确定已提交成果范围。' : 'Branch creation history is unavailable. The committed result range cannot be determined.'));
         }),
@@ -276,12 +276,36 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     setFocus({ repositoryId: first?.workspace.id ?? '', path: first?.files[0]?.path ?? '' });
   }, [groups, focus.repositoryId, focus.path]);
 
-  /** 当前可见文件直接过滤已读取补丁，不发起会随渲染重复启动的请求。 */
+  /** 单文件补丁独立读取，文件树不等待全部正文。 */
   const focusedRepository = snapshot?.repositories.find((repository) => repository.id === focus.repositoryId);
-  /** 差异来源与文件树使用同一仓库身份。 */
-  const diffSource = scope === 'working' ? focusedRepository?.snapshot.diff : committed[focus.repositoryId];
-  /** 保留补丁信息，同时只呈现当前文件。 */
-  const diff = diffSource ? { ...diffSource, files: [focus.path], fileDiffs: diffSource.fileDiffs.filter((file) => file.newPath === focus.path || file.oldPath === focus.path) } : null;
+  /** 键随文件、范围及刷新变化，旧请求不能展示到新选择。 */
+  const diffKey = JSON.stringify([props.project.id, focus.repositoryId, focus.path, scope, snapshot?.refreshedAt]);
+  /** 已提交文件使用固定起点，工作区比较包括暂存与未暂存变化。 */
+  const diffBase = scope === 'working' ? 'HEAD' : committedBase(focusedRepository);
+  /** 结果绑定请求身份，切换文件的首帧即显示局部加载。 */
+  const [fileDiff, setFileDiff] = useState<{ key: string; diff: GitDiffSummary | null } | null>(null);
+  useEffect(() => {
+    if (!open || !focus.repositoryId || !focus.path || !diffBase) return;
+    /** 清理后忽略旧文件和旧快照的结果。 */
+    let cancelled = false;
+    void props.client
+      .loadProjectGitComparisonDiff(props.project.id, focus.repositoryId, diffBase, scope === 'working' ? 'working-tree' : 'current', focus.path)
+      .then((diff) => {
+        if (!cancelled) setFileDiff({ key: diffKey, diff });
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setFileDiff({ key: diffKey, diff: null });
+        setError(reason);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, props.client, props.project.id, focus.repositoryId, focus.path, scope, diffBase, diffKey]);
+  /** 只有当前请求的结果可进入差异组件。 */
+  const diff = fileDiff?.key === diffKey ? fileDiff.diff : null;
+  /** 读取失败结束局部加载，并使用页面现有错误和重试入口。 */
+  const diffLoading = Boolean(focus.path && diffBase && fileDiff?.key !== diffKey);
   /** 合入与推送仅使用勾选仓库。 */
   const selected = snapshot?.repositories.filter((repository) => selectedIds.includes(repository.id)) ?? [];
   /** 冲突仓库不能提交，其余仓库仍可交付。 */
@@ -502,7 +526,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
             selectedFile={focus.path}
             diffTitle={focusedRepository ? `${focusedRepository.name} / ${focus.path}` : zh ? '差异对比' : 'Diff'}
-            diffLoading={false}
+            diffLoading={diffLoading}
             diff={diff}
             revision={snapshot.refreshedAt}
             onFileSaved={() => refresh()}
