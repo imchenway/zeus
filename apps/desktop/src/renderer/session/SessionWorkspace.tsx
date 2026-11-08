@@ -150,7 +150,7 @@ export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 
 /** 首发确认后，将草稿标签和已提交批注交给真实会话。 */
 export interface NewConversationBrowserDraft {
-  /** 草稿浏览器的独立归属身份。 */
+  /** 草稿的独立归属身份，浏览器资源和创建前系统消息共用。 */
   conversationId: string;
   /** 待发送批注；仅浏览网页时为空。 */
   submission: ZeusBrowserPreparedSubmission | null;
@@ -1206,8 +1206,8 @@ export async function startNativeConversationWithDurableAcceptance<T>(options: {
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Native conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = nativeConversationChoiceFromAcceptance(acceptance, options.input.task);
-  // 只用本次耐久创建回执迁移草稿消息，不依据界面当前选中的会话猜测。
-  bindDraftSystemMessages(options.input.task.projectId, options.input.task.id, choice.id);
+  // 仅迁移本次提交的草稿；侧栏追问等无草稿入口不能接走主输入区错误。
+  if (options.input.browserDraft) bindDraftSystemMessages(options.input.task.projectId, options.input.browserDraft.conversationId, choice.id);
   // acceptance 导航属于 durable 边界，必须先于摘要刷新发生。
   await options.onAccepted(choice);
   try {
@@ -1324,8 +1324,8 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
-  // 项目入口的来源始终是项目草稿，自动创建的任务只属于目标会话。
-  bindDraftSystemMessages(options.input.owner.projectId, null, choice.id);
+  // 自动创建任务不改变源草稿身份，无草稿入口不迁移其他新会话的错误。
+  if (options.input.browserDraft) bindDraftSystemMessages(options.input.owner.projectId, options.input.browserDraft.conversationId, choice.id);
   // 继承目录时不把尚未加载的工作树事实猜成项目直连。
   if (!request.inheritConversationId || request.workspaceMode) choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
@@ -3736,8 +3736,8 @@ export function NewConversationComposer(props: {
     [worktreeProjectId],
   );
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
-  /** 创建前消息归属项目及任务草稿，重启后仍保留。 */
-  const systemScope = systemMessageScope(props.owner?.projectId ?? '', null, props.owner?.kind === 'task' ? props.owner.taskId : null);
+  /** 恢复同一草稿时保留错误，新草稿使用独立身份，不读取项目或任务遗留记录。 */
+  const systemScope = systemMessageScope(props.owner?.projectId ?? '', null, browserDraft.conversationId);
   const draftSystemMessages = useConversationSystemMessages(systemScope);
   /** 空值只清理调用方的临时状态，不能删除已发生的系统消息。 */
   const setLocalError = useCallback(
