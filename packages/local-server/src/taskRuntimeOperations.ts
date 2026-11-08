@@ -248,11 +248,12 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
   }
 
   /** 项目目录不可读时移除该授权根，仍可投影托管附件和仓库发现错误。 */
+  /** 任务原附件与补充附件共用服务端受信目录，接受由会话创建任务时保留的附件。 */
   function taskPushTrustedAttachmentRoots(projectLocalPath: string): string[] {
     try {
-      return [realpathSync(projectLocalPath), ...(taskAttachmentRoot ? [taskAttachmentRoot] : [])];
+      return [...new Set([realpathSync(projectLocalPath), ...trustedConversationAttachmentRoots])];
     } catch {
-      return taskAttachmentRoot ? [taskAttachmentRoot] : [];
+      return [...trustedConversationAttachmentRoots];
     }
   }
 
@@ -375,7 +376,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       attachments.push(normalizedAttachment);
       promptAttachments.push({ key, name: attachment.name, kind, mimeType: attachment.mime, size: actualSize });
     }
-    const allowedRoots = [realpathSync(projectLocalPath), ...trustedConversationAttachmentRoots].filter((root, index, roots) => roots.indexOf(root) === index);
+    const allowedRoots = taskPushTrustedAttachmentRoots(projectLocalPath);
     return { attachments, allowedRoots: attachments.length > 0 ? allowedRoots : [], promptAttachments };
   }
 

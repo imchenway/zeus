@@ -1057,7 +1057,12 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       cleanup.conversationWorktrees.filter((plan) => !retainedPaths.includes(resolve(plan.worktreePath))),
       beforeExternalWrite,
     );
-    for (const conversation of cleanup.conversations) conversations.archive(conversation.id);
+    /** 记录本次自动归档的精确版本，恢复时不触碰后来手动重新归档的会话。 */
+    const archivedConversationRefs = cleanup.conversations.map((conversation) => {
+      /** 归档后的版本用于区分后续手动操作。 */
+      const archived = conversations.archive(conversation.id);
+      return { id: archived.id, updatedAt: archived.updatedAt };
+    });
     for (const session of cleanup.runtimeSessions) {
       const latest = runtimeSessions.getById(session.id);
       if (!latest) continue;
@@ -1075,6 +1080,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           removedIntegrationWorktrees,
           retainedWorktrees: [...cleanup.retainedConversationWorktrees, ...retainedPaths.map((path) => ({ path, reason: retainedReason }))],
           archivedConversations: cleanup.conversations.length,
+          archivedConversationRefs,
           archivedRuntimeSessions: cleanup.runtimeSessions.length,
           interrupted,
           cancelled,

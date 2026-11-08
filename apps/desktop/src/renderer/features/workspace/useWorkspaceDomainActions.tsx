@@ -2270,7 +2270,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     // 前一次写入未结束时，改回原状态也必须排队，不能当作无变化丢弃。
-    if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !taskMutationQueuesRef.current.has(taskId))) return;
+    if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !options.reopenConversationId && !taskMutationQueuesRef.current.has(taskId))) return;
     /** 每次选择持有独立身份，较早的请求结束不能清除较晚选择的加载反馈。 */
     const pending = { status };
     setPendingTaskStatuses((current) => ({ ...current, [taskId]: pending }));
@@ -2310,7 +2310,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           (resolveTaskManagementStatus(currentTask) === projectStatusConfig.roles.completedStatusId || resolveTaskManagementStatus(currentTask) === projectStatusConfig.roles.cancelledStatusId) &&
           status !== projectStatusConfig.roles.completedStatusId &&
           status !== projectStatusConfig.roles.cancelledStatusId;
-        if (reopeningTask) await refreshNativeConversationChoices(taskId);
+        if (reopeningTask || options.reopenConversationId) {
+          await Promise.all([refreshNativeConversationChoices(taskId), refreshArchivedConversations()]);
+          setFocusedArchivedConversation(null);
+        }
         clearOptimisticTerminalStatus();
         setActionState('idle');
         return { kind: 'updated', task: updatedTask };
@@ -2338,13 +2341,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     });
   }
 
+  /** 终态任务与指定会话一起恢复；已打开的任务保留当前状态，只恢复会话。 */
   async function reopenTaskFromConversation(taskId: string, conversationId: string): Promise<void> {
     const task = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((candidate) => candidate.id === taskId);
     if (!task) return;
     const statusConfig = resolveTaskManagementStatusConfig(appShellSettings);
     setTaskConversationReopenState({ conversationId, status: 'busy' });
     try {
-      const result = await updateTaskManagementStatus(taskId, statusConfig.roles.defaultStatusId, {
+      /** 已在开发中的任务恢复会话时不重置管理状态。 */
+      const currentStatus = resolveTaskManagementStatus(task);
+      /** 只有终态需要重新打开任务。 */
+      const terminal = currentStatus === statusConfig.roles.completedStatusId || currentStatus === statusConfig.roles.cancelledStatusId;
+      const result = await updateTaskManagementStatus(taskId, terminal ? statusConfig.roles.defaultStatusId : currentStatus, {
         expectedUpdatedAt: task.updatedAt,
         reopenConversationId: conversationId,
       });
