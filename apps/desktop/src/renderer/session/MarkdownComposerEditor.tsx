@@ -83,6 +83,8 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
   const undoSlot = useRef(new Compartment());
   /** 标识外部草稿回写，避免再次通知调用方。 */
   const applying = useRef(false);
+  /** 从原生组合输入开始到最终文本收取期间，保持 Markdown 装饰的 DOM 边界。 */
+  const composing = useRef(false);
 
   useLayoutEffect(() => {
     if (!hostRef.current) return;
@@ -101,7 +103,7 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           drawSelection(),
           markdownListKeymap,
           keymap.of([{ key: 'Shift-Enter', run: insertNewline }, ...defaultKeymap, ...historyKeymap]),
-          composerMarkdownPreview(() => latest.current.tokens, latest.current.language),
+          composerMarkdownPreview(() => latest.current.tokens, latest.current.language, () => composing.current),
           composerInlineCompletion(() => ({ draft: latest.current.value, text: latest.current.completion, menuOpen: Boolean(latest.current.listboxId), onActiveChange: latest.current.onCompletionActiveChange })),
           options.current.of([]),
           EditorView.updateListener.of((update) => {
@@ -205,7 +207,7 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
   useLayoutEffect(() => {
     /** 本地输入的回显不替换文档；发送清空同时清理撤销，避免下一轮撤销恢复已发消息。 */
     const view = viewRef.current;
-    if (!view || view.composing) return;
+    if (!view || composing.current || view.composing) return;
     if (view.state.doc.toString() === props.value) {
       // 标签的偏移也会随输入更新，空事务只刷新装饰而不动文档和选区。
       view.dispatch({});
@@ -232,11 +234,16 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
         // 单元格文本由原生输入控件粘贴，避免按外层光标位置写进别的正文。
         if (!(event.target instanceof HTMLInputElement)) props.onPaste?.(event);
       }}
-      onCompositionStart={props.onCompositionStart}
+      onCompositionStartCapture={(event) => {
+        // 单元格拥有独立原生输入；仅正文组合输入需要冻结 CodeMirror 的装饰。
+        composing.current = !(event.target instanceof HTMLInputElement);
+        props.onCompositionStart();
+      }}
       onCompositionEnd={() => {
         // 等待编辑器收取最终组合文本，再解除调用方的草稿持久化保护。
         requestAnimationFrame(() => {
           if (viewRef.current) {
+            composing.current = false;
             latest.current.onCompositionEnd(viewRef.current.state.doc.toString());
             // 输入法结束后刷新焦点条件，最终上屏事务可能仍处于组合输入标记内。
             viewRef.current.dispatch({});
