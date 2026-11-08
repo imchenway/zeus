@@ -3709,17 +3709,30 @@ JSON.stringify(references);`,
   }
 }
 
+/** 缩略图与完整预览共用会话附件授权及任务附件真实路径边界。 */
+async function resolveAttachmentPreviewSource(resource: { localPath?: string; uploadRef?: string }): Promise<{ path: string; root: string } | null> {
+  /** 会话资源解析器校验授权凭据或会话附件目录，并返回真实路径。 */
+  const granted = await conversationInputResources?.resolve(resource);
+  if (granted) return { path: granted, root: dirname(granted) };
+  if (typeof resource.localPath !== 'string' || !isInsideTaskAttachmentDirectory(resource.localPath)) return null;
+  /** 任务附件继续限制符号链接解析后的路径，不能借链接读取目录外文件。 */
+  const path = await realpath(resource.localPath);
+  return isInsideTaskAttachmentDirectory(path) ? { path, root: taskAttachmentDirectory() } : null;
+}
+
+/** 读取已授权的任务图片，包括自动创建任务引用的会话附件。 */
 async function loadSavedTaskAttachmentPreview(path: string): Promise<{ previewUrl: string; mimeType: string } | null> {
-  if (typeof path !== 'string' || !isInsideTaskAttachmentDirectory(path)) return null;
-  const mimeType = filePreviewMime(path);
+  /** 两种预览沿用同一附件来源，不要求复制会话图片。 */
+  const source = await resolveAttachmentPreviewSource({ localPath: path });
+  if (!source) return null;
+  const mimeType = filePreviewMime(source.path);
   if (!mimeType.startsWith('image/')) return null;
-  const canonical = await realpath(path);
-  if (!isInsideTaskAttachmentDirectory(canonical) || (await stat(canonical)).size > filePreviewLimits.image) return null;
-  const data = await readFile(canonical);
+  if ((await stat(source.path)).size > filePreviewLimits.image) return null;
+  const data = await readFile(source.path);
   const previewUrl = data.length && filePreviewKind(mimeType) === 'image' ? `data:${mimeType};base64,${data.toString('base64')}` : undefined;
   if (previewUrl) return { previewUrl, mimeType };
   try {
-    const convertedImage = nativeImage.createFromPath(path);
+    const convertedImage = nativeImage.createFromPath(source.path);
     if (convertedImage.isEmpty()) return null;
     const convertedPreviewUrl = buildTaskAttachmentPreviewDataUrl(convertedImage.toPNG(), 'image/png');
     return convertedPreviewUrl ? { previewUrl: convertedPreviewUrl, mimeType: 'image/png' } : null;
@@ -4044,10 +4057,10 @@ async function initializeApplication(): Promise<void> {
         return projectGitWorkbench.loadFilePreview(input);
       }
       if (input.kind === 'attachment') {
-        const granted = await conversationInputResources?.resolve(input);
-        const path = granted || (typeof input.localPath === 'string' && isInsideTaskAttachmentDirectory(input.localPath) ? input.localPath : null);
-        if (!path) throw new Error('附件授权无效或文件已经移除。');
-        return { sides: [{ name: basename(path), label: '附件', path, root: granted ? dirname(path) : taskAttachmentDirectory() }] };
+        /** 与任务缩略图使用相同的受信附件来源。 */
+        const source = await resolveAttachmentPreviewSource(input);
+        if (!source) throw new Error('附件授权无效或文件已经移除。');
+        return { sides: [{ name: basename(source.path), label: '附件', ...source }] };
       }
       if (!localServerRuntime) throw new Error('文件服务尚未就绪。');
       const config = await localServerRuntime.refreshConfig();
