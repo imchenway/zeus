@@ -103,7 +103,11 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           drawSelection(),
           markdownListKeymap,
           keymap.of([{ key: 'Shift-Enter', run: insertNewline }, ...defaultKeymap, ...historyKeymap]),
-          composerMarkdownPreview(() => latest.current.tokens, latest.current.language, () => composing.current),
+          composerMarkdownPreview(
+            () => latest.current.tokens,
+            latest.current.language,
+            () => composing.current,
+          ),
           composerInlineCompletion(() => ({ draft: latest.current.value, text: latest.current.completion, menuOpen: Boolean(latest.current.listboxId), onActiveChange: latest.current.onCompletionActiveChange })),
           options.current.of([]),
           EditorView.updateListener.of((update) => {

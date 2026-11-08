@@ -244,7 +244,7 @@ export function composerMarkdownPreview(tokens: () => StructuredToken[], languag
   return StateField.define<DecorationSet>({
     create: decorations,
     // 组词期间只映射原范围，不能把正在输入的原生文本节点替换成表格或隐藏标记。
-    update: (current, transaction) => composing() ? current.map(transaction.changes) : decorations(transaction.state),
+    update: (current, transaction) => (composing() ? current.map(transaction.changes) : decorations(transaction.state)),
     provide: (field) => [
       EditorView.decorations.from(field),
       // 表格原文不可见，方向键应跳过整块，单元格仍由自己的输入控件编辑。
