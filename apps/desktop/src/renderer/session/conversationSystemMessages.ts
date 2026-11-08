@@ -23,9 +23,9 @@ let initialized = false;
 /** 本地存储暂不可写时，后续连接恢复继续保存同一账本。 */
 let dirty = false;
 
-/** 会话身份和草稿身份不可互换。 */
-export function systemMessageScope(projectId: string, conversationId?: string | null, taskId?: string | null): string {
-  return JSON.stringify([projectId, conversationId ? 'conversation' : 'draft', conversationId ?? taskId ?? 'project']);
+/** 草稿使用自身独立身份，不能用项目或任务身份让不同草稿共享错误。 */
+export function systemMessageScope(projectId: string, conversationId?: string | null, draftId?: string | null): string {
+  return JSON.stringify([projectId, conversationId ? 'conversation' : 'draft', conversationId ?? draftId ?? 'project']);
 }
 
 /** 向已有页面发布持久待确认记录变化。 */
@@ -134,9 +134,10 @@ export function recoverSystemMessageOperation(scope: string, operation: Conversa
 }
 
 /** 新会话获得耐久接纳后迁移草稿消息，迁移顺序保证刷新不会丢记录。 */
-export function bindDraftSystemMessages(projectId: string, taskId: string | null, conversationId: string): void {
-  /** 来源只由本次创建的项目和任务确定，不扫描其他草稿。 */
-  const draftScope = systemMessageScope(projectId, null, taskId);
+export function bindDraftSystemMessages(projectId: string, draftId: string | null, conversationId: string): void {
+  if (!draftId) return;
+  /** 只迁移本次提交携带的草稿，不接纳项目或任务遗留的无归属记录。 */
+  const draftScope = systemMessageScope(projectId, null, draftId);
   /** 目标必须使用接纳回执中的产品会话身份。 */
   const scope = systemMessageScope(projectId, conversationId);
   /** 先写目标，再移除来源；中断后重复迁移依靠消息身份去重。 */
