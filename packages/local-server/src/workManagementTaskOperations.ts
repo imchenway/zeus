@@ -44,11 +44,13 @@ export interface TaskManagementStatusPlan<TCleanup, TConversation extends Reopen
   fromStatus: TaskManagementStatus;
   targetStatus: TaskManagementStatus;
   cleanup: TCleanup | null;
-  reopenTarget: TConversation | null;
+  /** 此次恢复的会话；显式选择优先，否则取任务自动归档且版本未变的会话。 */
+  reopenTargets: TConversation[];
 }
 
 export interface TaskManagementStatusEffect<TConversation extends ReopenableTaskConversation> {
-  restoredConversation: TConversation | null;
+  /** 已完成恢复的会话，用于逐条记录审计。 */
+  restoredConversations: TConversation[];
 }
 
 interface TaskBoardPropertyMutation {
@@ -95,6 +97,8 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       cleanupRequiresConfirmation(cleanup: TCleanup): { required: boolean; dirtyWorkspaceCount: number; activeConversationCount: number; activeRuntimeSessionCount: number };
       closeTerminalResources(taskId: string, cleanup: TCleanup): Promise<void>;
       listTaskConversationHistory(taskId: string, projectId: string): TConversation[];
+      /** 只返回有任务自动归档来源、且此后未被改动的会话身份。 */
+      listAutoArchivedConversationIds(taskId: string): string[];
       restoreTaskConversation(conversation: TConversation): Promise<TConversation | null>;
       validateRuntimeAction(action: TaskRuntimeCommandAction, task: ZeusTaskRecord, project: ZeusProjectRecord): void;
       invokeRuntimeAction(action: Extract<TaskRuntimeCommandAction, 'run' | 'continue'>, task: ZeusTaskRecord, project: ZeusProjectRecord, operationIdentity: string): Promise<TRuntimeEffect>;
@@ -130,6 +134,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     };
   }
 
+  /** 校验状态变更，并确定终态清理或精确会话恢复的范围。 */
   async prepareManagementStatus(taskId: string, input: UpdateTaskManagementStatusCommandInput): Promise<PreparedConditionalTaskOperation<TaskManagementStatusPlan<TCleanup, TConversation>>> {
     assertExactKeys(input, ['confirmWorktreeCleanup', 'expectedUpdatedAt', 'reopenConversationId', 'status'], 'Task management status input', true);
     if (!this.options.isConfiguredManagementStatus(this.requireTask(taskId).projectId, input.status)) {
@@ -150,7 +155,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     const targetStatus = input.status as TaskManagementStatus;
     // 使用项目真实完成状态，在任何会话关闭或工作区清理前检查缺陷。
     if (targetStatus === statusConfig.roles.completedStatusId) this.options.tasks.assertCanComplete(existing.id);
-    if (targetStatus === existing.managementStatus) {
+    if (targetStatus === existing.managementStatus && !input.reopenConversationId) {
       return {
         resourceId: existing.id,
         requiresExternal: false,
@@ -161,7 +166,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
           fromStatus: existing.managementStatus,
           targetStatus,
           cleanup: null,
-          reopenTarget: null,
+          reopenTargets: [],
         },
       };
     }
@@ -182,13 +187,17 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
         });
       }
     }
-    let reopenTarget: TConversation | null = null;
-    if (this.options.isManagementStatusTerminal(existing) && !targetIsTerminal) {
+    /** 显式恢复可用于已经重新打开的任务；普通状态更新只在离开终态时自动恢复。 */
+    const reopenTargets: TConversation[] = [];
+    if (!targetIsTerminal && (this.options.isManagementStatusTerminal(existing) || input.reopenConversationId)) {
       const history = this.options.listTaskConversationHistory(existing.id, existing.projectId);
       const requestedId = input.reopenConversationId?.trim();
-      // 状态变更本身不代表用户选择了某条历史会话；只有显式指定才恢复精确会话。
-      reopenTarget = requestedId ? (history.find((conversation) => conversation.id === requestedId) ?? null) : null;
-      if (requestedId && !reopenTarget) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The selected conversation does not belong to this task.');
+      /** 用户明确指定的会话可恢复历史记录，不要求存在自动归档事件。 */
+      const requested = requestedId ? history.find((conversation) => conversation.id === requestedId) : undefined;
+      if (requestedId && !requested) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The selected conversation does not belong to this task.');
+      /** 显式恢复单个会话时无需扫描其他自动归档来源。 */
+      const automaticIds = new Set(requested ? [] : this.options.listAutoArchivedConversationIds(existing.id));
+      reopenTargets.push(...(requested ? [requested] : history.filter((conversation) => automaticIds.has(conversation.id))).filter((conversation) => conversation.archived));
     }
     const state = {
       taskId: existing.id,
@@ -197,15 +206,23 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       fromStatus: existing.managementStatus,
       targetStatus,
       cleanup,
-      reopenTarget,
+      reopenTargets,
     };
-    return { resourceId: existing.id, requiresExternal: cleanup !== null || Boolean(reopenTarget?.archived), state };
+    return { resourceId: existing.id, requiresExternal: cleanup !== null || reopenTargets.length > 0, state };
   }
 
+  /** 完成资源操作后才允许提交任务状态；任一恢复失败都会保留错误。 */
   async invokeManagementStatus(plan: TaskManagementStatusPlan<TCleanup, TConversation>): Promise<TaskManagementStatusEffect<TConversation>> {
     if (plan.cleanup !== null) await this.options.closeTerminalResources(plan.taskId, plan.cleanup);
-    const restoredConversation = plan.reopenTarget?.archived ? await this.options.restoreTaskConversation(plan.reopenTarget) : null;
-    return { restoredConversation };
+    /** 顺序恢复，沿用每个 Provider 的工作区准备及失败处理。 */
+    const restoredConversations: TConversation[] = [];
+    for (const conversation of plan.reopenTargets) {
+      /** Provider 返回的恢复记录是审计依据。 */
+      const restored = await this.options.restoreTaskConversation(conversation);
+      if (!restored) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The conversation could not be restored.');
+      restoredConversations.push(restored);
+    }
+    return { restoredConversations };
   }
 
   mutateManagementStatus(plan: TaskManagementStatusPlan<TCleanup, TConversation>, effect: TaskManagementStatusEffect<TConversation> | null, context: WorkManagementTaskCommandContext): ZeusTaskRecord {
@@ -228,14 +245,14 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
         payload: { taskId: updated.id, projectId: updated.projectId, from: existing.managementStatus, to: updated.managementStatus, commandId: context.commandId },
       });
     }
-    if (effect?.restoredConversation) {
+    for (const restoredConversation of effect?.restoredConversations ?? []) {
       this.options.appendAuditLog({
         actorType: context.actor.kind,
         ...(context.actor.id ? { actorRef: context.actor.id } : {}),
         action: 'conversation.restored',
         resourceType: 'conversation',
-        resourceId: effect.restoredConversation.id,
-        payload: { projectId: effect.restoredConversation.projectId, taskId: updated.id, conversationId: effect.restoredConversation.id, reason: 'task_reopened', commandId: context.commandId },
+        resourceId: restoredConversation.id,
+        payload: { projectId: restoredConversation.projectId, taskId: updated.id, conversationId: restoredConversation.id, reason: 'task_reopened', commandId: context.commandId },
       });
     }
     if (updated.managementStatus !== existing.managementStatus) {
@@ -302,7 +319,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     const removeTagOccurrenceOnly = existing.tags.length > 0 && ((groupBy === 'tags' && input.target.groupId === taskBoardEmptyGroupId) || (subgroupBy === 'tags' && targetSubgroupId === taskBoardEmptyGroupId));
     return {
       resourceId: existing.id,
-      requiresExternal: managementStatusPlan !== null && (managementStatusPlan.cleanup !== null || Boolean(managementStatusPlan.reopenTarget?.archived)),
+      requiresExternal: managementStatusPlan !== null && (managementStatusPlan.cleanup !== null || managementStatusPlan.reopenTargets.length > 0),
       state: {
         projectId: project.id,
         taskId: existing.id,
@@ -322,7 +339,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
   }
 
   invokeTaskBoardMove(plan: TaskBoardMovePlan<TCleanup, TConversation>): Promise<TaskManagementStatusEffect<TConversation>> {
-    return plan.managementStatusPlan ? this.invokeManagementStatus(plan.managementStatusPlan) : Promise.resolve({ restoredConversation: null });
+    return plan.managementStatusPlan ? this.invokeManagementStatus(plan.managementStatusPlan) : Promise.resolve({ restoredConversations: [] });
   }
 
   mutateTaskBoardMove(plan: TaskBoardMovePlan<TCleanup, TConversation>, effect: TaskManagementStatusEffect<TConversation> | null, context: WorkManagementTaskCommandContext): { task: ZeusTaskRecord; board: TaskBoardViewSnapshot } {

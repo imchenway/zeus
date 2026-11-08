@@ -7,7 +7,7 @@ import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
 import { resolveConversationGitRepository, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
-import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
+import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
@@ -3054,6 +3054,26 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }),
     closeTerminalResources: closeTaskResourcesForTerminalStatus,
     listTaskConversationHistory: (taskId, projectId) => conversationChoiceQueries.listTaskHistory(taskId, projectId),
+    listAutoArchivedConversationIds: (taskId) => {
+      /** 后来的手动归档覆盖旧来源；版本比对防止把再次归档的会话自动恢复。 */
+      const archivedVersions = new Map<string, string>();
+      for (const event of taskEvents.listByTask(taskId)) {
+        if (event.eventType !== 'task.terminal_resources.cleaned' && event.eventType !== 'task.conversation_resources.cleaned') continue;
+        /** 事件正文按现有容错解析读取；旧记录没有归档身份时不推测来源。 */
+        const payload = parseJsonObject(event.payloadJson);
+        if (event.eventType === 'task.conversation_resources.cleaned') {
+          if (typeof payload.conversationId === 'string') archivedVersions.delete(payload.conversationId);
+          continue;
+        }
+        if (!Array.isArray(payload.archivedConversationRefs)) continue;
+        for (const reference of payload.archivedConversationRefs) {
+          if (isNativeApiRecord(reference) && typeof reference.id === 'string' && typeof reference.updatedAt === 'string') archivedVersions.set(reference.id, reference.updatedAt);
+        }
+      }
+      return conversations.listRecordsByTask(taskId, { archived: true })
+        .filter((conversation) => archivedVersions.get(conversation.id) === conversation.updatedAt)
+        .map((conversation) => conversation.id);
+    },
     restoreTaskConversation: async (conversation) => {
       if (!conversation.archived) return conversation;
       if (conversation.transportKind === 'codex_native') {

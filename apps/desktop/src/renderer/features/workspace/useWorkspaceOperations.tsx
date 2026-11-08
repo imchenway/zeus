@@ -1780,9 +1780,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   /** 保留既有会话控制器与新建、重试、归档阅读的实际入口。 */
   function renderNativeConversationWorkspaceContent(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     const taskReadOnlyGate =
-      nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
+      (nativeSessionTaskReadOnly || selectedNativeConversation?.archived) && nativeSessionTask && selectedNativeConversation
         ? {
-            actionLabel: appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务' : 'Reopen task',
+            actionLabel: nativeSessionTaskReadOnly
+              ? (appShellSettings.appLanguage === 'zh-CN' ? '重新打开任务' : 'Reopen task')
+              : (appShellSettings.appLanguage === 'zh-CN' ? '恢复会话' : 'Restore conversation'),
             busy: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'busy',
             error: taskConversationReopenState?.conversationId === selectedNativeConversation.id && taskConversationReopenState.status === 'error' ? taskConversationReopenState.error : null,
             onAction: () => reopenTaskFromConversation(nativeSessionTask.id, selectedNativeConversation.id),
