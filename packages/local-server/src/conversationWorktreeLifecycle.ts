@@ -8,7 +8,7 @@ import {
   type ZeusConversationRecord,
   type ZeusDatabase,
 } from '@zeus/storage';
-import { lstat } from 'node:fs/promises';
+import { lstat, readdir } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -166,10 +166,14 @@ export async function restoreConversationWorktrees(ports: ConversationWorktreeLi
   if (plans.some((plan) => !sources.some((source) => resolve(source.localPath) === resolve(plan.repositoryPath)))) throw new Error('来源仓库已变化，无法恢复会话工作树。');
   for (const plan of plans) {
     if (await pathExists(plan.worktreePath)) {
-      /** 已存在目录必须仍是该 Git 根，普通目录不能冒充恢复成功。 */
-      const repository = await getGitRepositoryContext(plan.worktreePath);
-      if (!repository.isRepository || resolve(repository.topLevel) !== resolve(plan.worktreePath)) throw new Error('原工作树目录已被其他内容占用，恢复记录已保留。');
-      continue;
+      /** 文件和符号链接不能作为恢复目标，避免写入其他目录。 */
+      if (!(await lstat(plan.worktreePath)).isDirectory()) throw new Error('原工作树目录已被其他内容占用，恢复记录已保留。');
+      /** 父仓检出会生成空的子模块目录；空目录继续重建，非空目录必须已有 Git 根身份。 */
+      if ((await readdir(plan.worktreePath)).length > 0) {
+        const repository = await getGitRepositoryContext(plan.worktreePath);
+        if (!repository.isRepository || resolve(repository.topLevel) !== resolve(plan.worktreePath)) throw new Error('原工作树目录已被其他内容占用，恢复记录已保留。');
+        continue;
+      }
     }
     if (plan.branchName) {
       const source = await getGitRepositoryContext(plan.repositoryPath);
