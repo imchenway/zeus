@@ -57,14 +57,14 @@ export function createAutomationNotificationService(options: AutomationNotificat
 
   /** 同次运行按会话去重，未创建会话的执行保留独立异常。 */
   function describe(run: AutomationRunRecord): AutomationNotificationDraft[] {
-    /** 源队列只收纳需要查看的结果状态。 */
-    const status = run.status as AutomationNotificationStatus;
+    /** 部分派发异常显示受阻，真实运行状态仍保留串行队列占位。 */
+    const status: AutomationNotificationStatus = run.status === 'dispatching' ? 'blocked' : (run.status as AutomationNotificationStatus);
     /** 名称按触发时修订解释，不依赖当前规则是否已删除。 */
     const automationName = options.tasks.getRevision(run.automationRevisionId)?.snapshot.name ?? options.tasks.getById(run.automationId)?.name ?? run.automationId;
     /** 每个会话只能有一条通知，同次运行不同会话互不覆盖。 */
     const items = new Map<string, AutomationNotificationDraft>();
     /** 恢复仍沿用原运行的真实派发进度。 */
-    const canResume = (run.status === 'blocked' || run.status === 'outcome_unknown') && !run.dispatchCompletedAt && run.dispatchTargets.some((target) => target.status === 'pending' || target.status === 'accepting');
+    const canResume = options.runs.canResumeDispatch(run);
 
     /** 摘要只携带真实项目和会话，不制造替代会话。 */
     function add(key: string, projectId: string, conversationId: string | null, reason?: string | null): void {
@@ -90,7 +90,8 @@ export function createAutomationNotificationService(options: AutomationNotificat
       });
     }
 
-    for (const reference of run.executionReferences) {
+    /** 部分派发异常只提醒未接纳目标，不把已接纳工作标记为受阻。 */
+    for (const reference of run.status === 'dispatching' ? [] : run.executionReferences) {
       /** 冻结目标提供准确项目，即使项目目录后来改变也不串到别处。 */
       const target = run.dispatchTargets.find((entry) => entry.reference?.kind === reference.kind && entry.reference.id === reference.id && entry.reference.generation === reference.generation);
       /** 无目标的旧记录保留原运行归属。 */
@@ -145,7 +146,8 @@ export function createAutomationNotificationService(options: AutomationNotificat
     }
     if (!run.executionReferences.length && run.conversationId) add('run', run.projectId, run.conversationId);
     // 部分项目尚未接纳时，即使已有其他会话，也保留失败原因和恢复入口。
-    if (canResume) for (const target of run.dispatchTargets.filter((entry) => entry.status === 'pending' || entry.status === 'accepting')) add(`target:${target.projectId}`, target.projectId, null, target.reason);
+    if (canResume || run.status === 'dispatching')
+      for (const target of run.dispatchTargets.filter((entry) => entry.status === 'pending' || entry.status === 'accepting')) add(`target:${target.projectId}`, target.projectId, null, target.reason);
     if (!items.size) add('run', run.projectId, null, run.errorMessage ?? run.dispatchTargets.find((target) => target.reason)?.reason);
     return [...items.values()];
   }
@@ -186,7 +188,7 @@ export function createAutomationNotificationService(options: AutomationNotificat
         return {
           ...item,
           ...(missing ? { conversationId: null, errorCode: 'ZEUS_AUTOMATION_CONVERSATION_NOT_FOUND', errorMessage: '原会话已不存在或归属已变化。' } : {}),
-          canResume: Boolean(run && (run.status === 'blocked' || run.status === 'outcome_unknown') && !run.dispatchCompletedAt && run.dispatchTargets.some((target) => target.status === 'pending' || target.status === 'accepting')),
+          canResume: Boolean(run && options.runs.canResumeDispatch(run)),
         };
       });
       return page;

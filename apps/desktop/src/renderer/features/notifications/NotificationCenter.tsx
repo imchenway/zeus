@@ -219,6 +219,22 @@ export function NotificationCenter({
                         <p className="automation-notification-description">
                           {item.source === 'automation' && item.errorMessage ? <VisibleApplicationError error={{ code: item.errorCode, message: item.errorMessage }} language={zh ? 'zh-CN' : 'en'} /> : description}
                         </p>
+                        {item.source === 'automation' && item.canResume ? (
+                          <Button
+                            size="compact"
+                            className="automation-notification-resume"
+                            disabled={Boolean(model.busyId)}
+                            busy={model.busyId === `resume:${item.id}`}
+                            aria-label={zh ? `恢复“${title}”的剩余项目` : `Resume remaining projects for ${title}`}
+                            onClick={() => {
+                              void model.resume(item).then((resumed) => {
+                                if (resumed) surface.current?.focus({ preventScroll: true });
+                              });
+                            }}
+                          >
+                            {zh ? '恢复剩余项目' : 'Resume remaining projects'}
+                          </Button>
+                        ) : null}
                       </li>
                     );
                   })}

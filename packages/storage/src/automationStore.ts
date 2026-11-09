@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseAutomationOnceAt, temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
 import { randomId } from './randomId.js';
-import { migrateAutomationNotifications } from './automationNotificationStore.js';
+import { migrateAutomationDispatchNotifications, migrateAutomationNotifications } from './automationNotificationStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const automationSchemaMigrationId = '20260829_0374_automation_tasks_v1';
@@ -563,6 +563,7 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
   migrateAutomationTaskCreationGrants(db);
   migrateAutomationConversationRules(db);
   migrateAutomationNotifications(db);
+  migrateAutomationDispatchNotifications(db);
 }
 
 /** 旧普通会话只保留历史，规则需显式改选员工动作才可再次启用。 */
@@ -819,6 +820,8 @@ export class AutomationTaskRepository {
     }
     const timestamp = nowIso();
     this.db.execute(`UPDATE automation_tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, id]);
+    /** 从规则列表继续时同步清除旧派发异常，新的失败再产生独立通知修订。 */
+    if (status === 'active') this.db.execute("UPDATE automation_runs SET error_code = NULL, error_message = NULL WHERE automation_id = ? AND status = 'dispatching'", [id]);
     const updated = this.getById(id);
     if (!updated) throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
     return updated;
@@ -1298,8 +1301,37 @@ export class AutomationRunRepository {
     /** 已接纳数量不能代替冻结目标完整性。 */
     const run = this.ensureDispatchTargets(id);
     if (run.dispatchTargets.some((target) => target.status !== 'accepted' && target.status !== 'skipped')) throw new Error('ZEUS_AUTOMATION_DISPATCH_INCOMPLETE: 仍有目标没有明确处理结果。');
-    this.db.execute("UPDATE automation_runs SET status = 'running', dispatch_completed_at = COALESCE(dispatch_completed_at, ?), updated_at = ? WHERE id = ? AND status IN ('dispatching', 'running')", [nowIso(), nowIso(), id]);
+    this.db.execute(
+      "UPDATE automation_runs SET status = 'running', dispatch_completed_at = COALESCE(dispatch_completed_at, ?), error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ? AND status IN ('dispatching', 'running')",
+      [nowIso(), nowIso(), id],
+    );
     return this.getById(id)!;
+  }
+
+  /** 部分接纳失败时原子暂停规则并记录通知来源，不释放正在执行的工作。 */
+  pauseDispatch(id: string, errorCode: string, errorMessage: string): AutomationRunRecord {
+    return this.db.transaction(() => {
+      /** 只更新仍由原派发占用的运行，终态不会被迟到异常改写。 */
+      const run = this.getById(id);
+      if (!run) throw new Error('ZEUS_AUTOMATION_RUN_NOT_FOUND: 自动化运行不存在。');
+      if (run.status !== 'dispatching') return run;
+      new AutomationTaskRepository(this.db).setStatus(run.automationId, 'paused');
+      this.db.execute('UPDATE automation_runs SET unread = 1, error_code = ?, error_message = ?, updated_at = ? WHERE id = ?', [errorCode, errorMessage, nowIso(), id]);
+      return this.getById(id)!;
+    });
+  }
+
+  /** 界面与恢复命令共用原目标资格，删除或身份迁移后的规则不能被恢复。 */
+  canResumeDispatch(run: AutomationRunRecord): boolean {
+    /** 派发中的运行仅在规则暂停时提供人工恢复，日额度等待仍由调度器处理。 */
+    const task = new AutomationTaskRepository(this.db).getById(run.automationId);
+    return Boolean(
+      task &&
+      !run.dispatchCompletedAt &&
+      run.dispatchTargets.some((target) => target.status === 'pending' || target.status === 'accepting') &&
+      !run.dispatchTargets.some((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:')) &&
+      (['blocked', 'outcome_unknown'].includes(run.status) || (run.status === 'dispatching' && task.status === 'paused')),
+    );
   }
 
   /** 原运行恢复后只处理缺失目标；终态历史保存在尝试和核对记录。 */
@@ -1307,8 +1339,9 @@ export class AutomationRunRepository {
     return this.db.transaction(() => {
       /** 恢复明确限制为存在逐目标范围的部分派发。 */
       const run = this.getById(id);
-      if (!run || !['blocked', 'outcome_unknown'].includes(run.status) || run.dispatchTargets.length === 0 || run.dispatchCompletedAt) throw new Error('ZEUS_AUTOMATION_RESUME_UNAVAILABLE: 当前运行没有可恢复的剩余目标。');
+      if (!run) throw new Error('ZEUS_AUTOMATION_RESUME_UNAVAILABLE: 当前运行没有可恢复的剩余目标。');
       if (run.dispatchTargets.some((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:'))) throw new Error('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED: 员工身份已迁移，本次未开始部分请重新运行。');
+      if (!this.canResumeDispatch(run)) throw new Error('ZEUS_AUTOMATION_RESUME_UNAVAILABLE: 当前运行没有可恢复的剩余目标。');
       /** 同规则的其他在途工作必须先结束，避免重叠副作用。 */
       if (this.listActive(run.automationId).some((active) => active.id !== id)) throw new Error('ZEUS_AUTOMATION_RESUME_BUSY: 同一自动化仍有其他运行。');
       /** 原终态时间与原因旁路保留，当前完成时间等待后续准确结果。 */
@@ -1316,7 +1349,12 @@ export class AutomationRunRepository {
         JSON.stringify({ previousStatus: run.status, checkedAt: nowIso(), reason: run.errorMessage ?? '用户沿原运行恢复剩余目标。', completedAt: run.completedAt }),
         id,
       ]);
-      this.db.execute("UPDATE automation_runs SET status = 'queued', queue_position = 0, completed_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?", [nowIso(), id]);
+      /** 已有部分工作时保留派发占位，不能在恢复保存期间放行后继运行。 */
+      this.db.execute('UPDATE automation_runs SET status = ?, queue_position = 0, completed_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?', [
+        run.status === 'dispatching' ? 'dispatching' : 'queued',
+        nowIso(),
+        id,
+      ]);
       new AutomationTaskRepository(this.db).setStatus(run.automationId, 'active');
       return this.getById(id)!;
     });

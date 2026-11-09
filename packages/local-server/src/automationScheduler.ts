@@ -292,7 +292,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           options.runs.updateDispatchTarget(running.id, { ...target, status: accepted ? 'accepted' : accepted === false ? 'skipped' : 'pending', reference: accepted || null, reason: accepted ? null : target.reason });
         } catch (error) {
           if (!(error instanceof Error) || !error.message.startsWith('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN:')) throw error;
-          options.tasks.setStatus(running.automationId, 'paused');
+          options.runs.pauseDispatch(running.id, errorCode(error), error.message);
           await options.save();
           return;
         }
@@ -390,14 +390,14 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
             options.runs.updateDispatchTarget(running.id, { ...target, status: 'pending', reason: error instanceof Error ? error.message : String(error) });
             /** 部分接纳遇到日额度耗尽时保留原占位并等待下一自然日，其他错误仍需人工恢复。 */
             if (options.runs.getById(running.id)?.executionReferences.length) {
-              if (errorCode(error) !== 'ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED') options.tasks.setStatus(running.automationId, 'paused');
+              if (errorCode(error) !== 'ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED') options.runs.pauseDispatch(running.id, errorCode(error), error instanceof Error ? error.message : String(error));
             } else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
           } catch (reconciliationError) {
             /** 接纳事实待核对时同样保留原占位和身份，不能放行后继运行。 */
-            options.tasks.setStatus(running.automationId, 'paused');
             /** 使用当前目标事实，避免把已记账的引用覆盖为未接纳。 */
             const currentTarget = options.runs.getById(running.id)?.dispatchTargets.find((entry) => entry.projectId === target.projectId);
             if (currentTarget) options.runs.updateDispatchTarget(running.id, { ...currentTarget, reason: reconciliationError instanceof Error ? reconciliationError.message : String(reconciliationError) });
+            options.runs.pauseDispatch(running.id, errorCode(reconciliationError), reconciliationError instanceof Error ? reconciliationError.message : String(reconciliationError));
           }
           await options.save();
           return;

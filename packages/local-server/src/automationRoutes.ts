@@ -119,7 +119,18 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
 
   /** 明确恢复沿原冻结目标继续，不创建新的触发身份或重跑已接纳项目。 */
   server.post('/api/automation-runs/:runId/resume', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
-    return mutate(request, reply, () => ({ statusCode: 202, body: runs.resumeDispatch(request.params.runId) }));
+    return mutate(request, reply, () => {
+      /** 原运行决定要恢复的规则，不采用界面当前选中的自动化。 */
+      const run = runs.getById(request.params.runId);
+      /** 只有实际暂停的规则需要跳过暂停期间错过的排程。 */
+      const task = run ? tasks.getById(run.automationId) : undefined;
+      /** 先验证后继时间，非法计划不能先激活原运行。 */
+      const nextRunAt = task?.status === 'paused' ? computeNextRun(task, new Date(options.now())) : undefined;
+      /** 工作引用和目标仍由仓库沿原身份恢复。 */
+      const resumed = runs.resumeDispatch(request.params.runId);
+      if (nextRunAt !== undefined) tasks.setNextRun(resumed.automationId, nextRunAt);
+      return { statusCode: 202, body: resumed };
+    });
   });
 
   /** 先补齐结果，再一次确认全部未读；同幂等键重放不会清除后来新增的提醒。 */
