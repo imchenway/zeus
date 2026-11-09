@@ -204,7 +204,7 @@ export class GitEnvironmentSummaryService {
           .map((path) => path.split(sep).join('/')),
       }));
     }
-    const summary: GitEnvironmentSummary = {
+    const summary: Omit<GitEnvironmentStatus, 'dirty'> = {
       projectId,
       cwd,
       branch: workspace?.branchName ?? null,
@@ -215,17 +215,13 @@ export class GitEnvironmentSummaryService {
         : null,
       repositoryCount,
       repositoryName: discovered?.[0]?.name,
-      files: 0,
-      additions: 0,
-      deletions: 0,
     };
     return { sources, summary, discovered };
   }
 
   /** 环境卡片只读取分支与是否有更改，不建立目录监听或生成差异统计。 */
   private async readStatus(projectId: string, scope: GitEnvironmentScope): Promise<GitEnvironmentStatus> {
-    const { sources, summary } = await this.resolveScope(projectId, scope);
-    const { files, additions, deletions, ...status } = summary;
+    const { sources, summary: status } = await this.resolveScope(projectId, scope);
     let dirty = false;
     for (const source of sources) {
       if (source.path === status.cwd || (!scope.taskId && !status.branch)) {
@@ -307,7 +303,9 @@ export class GitEnvironmentSummaryService {
       let cachedPreview = false;
       try {
         const resolved = await this.resolveScope(projectId, scope, discovered);
-        const { sources, summary } = resolved;
+        const { sources } = resolved;
+        /** 差异计数仅在交付订阅中初始化，随后逐仓聚合。 */
+        const summary: GitEnvironmentSummary = { ...resolved.summary, files: 0, additions: 0, deletions: 0 };
         const cwd = summary.cwd;
         discovered = resolved.discovered;
         if (!scope.taskId) {
