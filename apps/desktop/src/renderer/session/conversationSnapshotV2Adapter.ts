@@ -113,7 +113,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
       state: snapshot.conversation.providerState,
     },
     agent: choice.agent ?? {
-      kind: snapshot.conversation.agentKind === 'codex' || snapshot.conversation.agentKind === 'pi' || snapshot.conversation.agentKind === 'claude' ? snapshot.conversation.agentKind : null,
+      kind: snapshot.conversation.agentKind === 'codex' || snapshot.conversation.agentKind === 'pi' || snapshot.conversation.agentKind === 'copilot' || snapshot.conversation.agentKind === 'claude' ? snapshot.conversation.agentKind : null,
       transport: null,
       supportStatus: 'unavailable',
       capabilitySnapshotId: null,

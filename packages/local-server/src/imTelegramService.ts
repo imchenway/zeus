@@ -97,7 +97,7 @@ interface ImTaskMessageView {
 export interface ImTelegramPresetSnapshot {
   ref: ImAgentPresetRef;
   name: string;
-  agentKind: 'codex' | 'pi';
+  agentKind: 'codex' | 'pi' | 'copilot';
   model: string | null;
   reasoningEffort: string | null;
   permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access';

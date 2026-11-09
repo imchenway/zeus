@@ -39,7 +39,7 @@ import { migrateEmployeeMemorySchema } from './employeeMemoryMigration.js';
 import { migrateLongTermMemorySchema } from './longTermMemoryStore.js';
 import { migratePluginStoreSchema } from './pluginStore.js';
 import { migrateTaskEventFileProjectionSchema } from './taskEventFileProjectionStore.js';
-import { migrateTaskStageSchema } from './taskStageStore.js';
+import { migrateTaskStageCopilotSchema, migrateTaskStageSchema } from './taskStageStore.js';
 import { migrateTaskWorkReviewSchema } from './taskWorkReviewStore.js';
 import { migrateTaskWorkDeploymentSchema } from './taskWorkDeploymentStore.js';
 import { migrateTaskWorkPlanningSchema } from './taskWorkPlanningStore.js';
@@ -1050,6 +1050,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateTaskWorkSchema(zeusDb);
     migrateTaskWorkWorkspaceBindingSchema(zeusDb);
     migrateTaskWorkPlanningSchema(zeusDb);
+    migrateTaskStageCopilotSchema(zeusDb);
     migrateTaskWorkReviewSchema(zeusDb);
     migrateTaskWorkDeploymentSchema(zeusDb);
     migrateDigitalTeamWorkflowSchema(zeusDb);

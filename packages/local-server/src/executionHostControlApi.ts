@@ -48,6 +48,7 @@ interface ExecutionHostControlApiOptions {
     requestProviderTurnStop(input: { conversationId: string; providerThreadId: string; providerTurnId: string; stopCommandId: string; confirmationTimeoutMs: number }): Promise<CodexProviderStopRequestResult>;
   };
   piCoordinator: { interruptTurn(input: { conversation: ZeusConversationRecord; providerTurnId: string }): Promise<unknown> };
+  copilotCoordinator: { interruptTurn(input: { conversation: ZeusConversationRecord; providerTurnId: string }): Promise<unknown> };
   goals: ConversationGoalRepository;
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
@@ -167,8 +168,8 @@ function prepareStopActiveWork(options: ExecutionHostControlApiOptions, parsed: 
       agentKind: conversation?.agentKind ?? 'codex',
       invoke: async () => {
         if (!conversation) return Promise.reject(new Error('活动轮次缺少本机会话身份。'));
-        if (conversation.agentKind === 'pi') {
-          await options.piCoordinator.interruptTurn({ conversation, providerTurnId: input.providerTurnId });
+        if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
+          await (conversation.agentKind === 'copilot' ? options.copilotCoordinator : options.piCoordinator).interruptTurn({ conversation, providerTurnId: input.providerTurnId });
           return { terminalConfirmed: true };
         }
         if (!conversation.providerThreadId) return Promise.reject(new Error('活动轮次缺少 Provider 会话身份。'));

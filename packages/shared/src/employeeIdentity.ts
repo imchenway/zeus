@@ -17,7 +17,7 @@ export interface EmployeeConfiguration {
   /** 是否读取经过治理的员工经验。 */
   memoryEnabled?: boolean;
   /** 默认执行后端。 */
-  agentKind?: 'codex' | 'pi';
+  agentKind?: 'codex' | 'pi' | 'copilot';
   /** 稳定模型身份；空值继承项目默认。 */
   model?: string | null;
   /** 默认推理级别；空值使用模型默认。 */

@@ -46,7 +46,7 @@ export interface ComposerRuntimeSettings {
   /** 下一轮选择的上下文容量。 */
   contextCapacityTokens?: number | null;
   model: string;
-  agentKind?: 'codex' | 'pi';
+  agentKind?: 'codex' | 'pi' | 'copilot';
   effort?: string;
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;
@@ -197,7 +197,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
-  const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
+  const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'copilot' ? 'GitHub Copilot' : selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
   const inputLabel = copy.input(providerLabel);
   const settingsWritable = props.readOnly !== true && props.inputBlocked !== true && Boolean(selectedCapability);
   const modelSelectionWritable = props.readOnly !== true && props.inputBlocked !== true && modelPresentation.options.length > 0;

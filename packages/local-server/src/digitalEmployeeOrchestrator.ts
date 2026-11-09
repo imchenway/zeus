@@ -997,8 +997,8 @@ function deliveryStageLabel(stage: 'commit' | 'push' | 'merge'): string {
   return '合入';
 }
 
-function isCapabilityModel(value: unknown): value is { id: string; model: string; agentKind: 'codex' | 'pi'; available: boolean } {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.model === 'string' && (value.agentKind === 'codex' || value.agentKind === 'pi') && typeof value.available === 'boolean';
+function isCapabilityModel(value: unknown): value is { id: string; model: string; agentKind: 'codex' | 'pi' | 'copilot'; available: boolean } {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.model === 'string' && (value.agentKind === 'codex' || value.agentKind === 'pi' || value.agentKind === 'copilot') && typeof value.available === 'boolean';
 }
 
 function isRepositoryCapability(value: unknown): value is { id: string; name: string; suggestedBranchName: string; sourceRefs: Array<{ ref: string; kind: string; current: boolean }> } {

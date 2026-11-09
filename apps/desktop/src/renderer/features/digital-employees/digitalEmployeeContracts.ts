@@ -4,7 +4,7 @@ import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
 
-export type DigitalEmployeeAgentKind = 'codex' | 'pi';
+export type DigitalEmployeeAgentKind = 'codex' | 'pi' | 'copilot';
 export type DigitalEmployeePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type DigitalEmployeeWorkMode = 'default' | 'plan';
 export type DigitalEmployeeAutomationTriggerKind = 'immediate' | 'once' | 'daily' | 'weekly' | 'interval' | 'task_created' | 'task_updated' | 'task_status_changed' | 'code_changed';

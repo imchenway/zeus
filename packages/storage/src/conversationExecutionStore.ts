@@ -20,7 +20,8 @@ const outputRateMeasurementCondition = `r.measurement_complete = 1
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
-export type ConversationRuntimeKind = 'codex' | 'pi';
+/** 执行片段使用实际 Provider 身份决定恢复和归档边界。 */
+export type ConversationRuntimeKind = 'codex' | 'pi' | 'copilot';
 export type ConversationSegmentState = 'provisional' | 'current' | 'sealed' | 'abandoned';
 export type ConversationSwitchState = 'preflight' | 'provisional' | 'outcome_unknown' | 'accepted' | 'failed' | 'cancelled';
 export type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
@@ -1752,7 +1753,7 @@ export class ConversationExecutionRepository {
     const providerItemId =
       stringOrNull(content.providerItemId) ??
       stringOrNull(input.toolPairId) ??
-      (content.agentKind === 'pi' || this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind === 'pi' ? stringOrNull(content.stageId) : null) ??
+      (content.agentKind === 'pi' || content.agentKind === 'copilot' || ['pi', 'copilot'].includes(this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind ?? '') ? stringOrNull(content.stageId) : null) ??
       stringOrNull(reasoning.itemId) ??
       stringOrNull(reasoning.providerItemId);
     const reasoningBlock = input.role === 'assistant' && reasoning.readableSummary === true;
@@ -1930,7 +1931,7 @@ function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): v
     `SELECT id, agent_kind, provider_id, provider_thread_id, provider_thread_path, provider_model,
             provider_protocol_version, provider_binary_version, native_session_path, created_at
        FROM conversations
-      WHERE provider_thread_id IS NOT NULL AND agent_kind IN ('codex', 'pi')
+      WHERE provider_thread_id IS NOT NULL AND agent_kind IN ('codex', 'pi', 'copilot')
       ORDER BY created_at, id`,
   );
   for (const row of rows) {

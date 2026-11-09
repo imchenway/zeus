@@ -35,6 +35,9 @@ asarUnpack:
   - node_modules/@trycua/cua-driver/**
   - node_modules/@trycua/cua-driver-*/**
   - node_modules/@ubjs/**
+  # Copilot SDK 的原生 CLI 和 koffi 绑定从真实文件路径启动。
+  - node_modules/@github/copilot-sdk-*/**
+  - node_modules/koffi/**
 mac:
   # macOS 使用 .lproj 名称；Windows 保留完整 .pak 语言资源，避免原生控件因缺失资源崩溃。
   electronLanguages:

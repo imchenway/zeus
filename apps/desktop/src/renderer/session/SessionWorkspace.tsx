@@ -177,7 +177,7 @@ export interface SessionWorkspaceStartInput {
   serviceTierSelection: NativeServiceTierSelection;
   model?: string;
   effort?: string;
-  agentKind?: 'codex' | 'pi';
+  agentKind?: 'codex' | 'pi' | 'copilot';
   goalObjective?: string;
   skillId?: string;
   pluginReferences?: PluginSkillReference[];
@@ -341,7 +341,7 @@ type StartNativeConversationPayload =
       serviceTier?: string | null;
       model?: string;
       effort?: string;
-      agentKind?: 'codex' | 'pi';
+      agentKind?: 'codex' | 'pi' | 'copilot';
       goalObjective?: string;
       skillId?: string;
       pluginReferences?: PluginSkillReference[];
@@ -1662,7 +1662,7 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
           typeof request.model === 'string' &&
           Boolean(request.model) &&
           (request.effort === undefined || typeof request.effort === 'string') &&
-          (request.agentKind === 'codex' || request.agentKind === 'pi'))) &&
+          (request.agentKind === 'codex' || request.agentKind === 'pi' || request.agentKind === 'copilot'))) &&
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier) &&

@@ -151,7 +151,7 @@ export interface ContextDispatchEnvelope {
 }
 
 export interface ProviderDispatchContextCompilerInput {
-  provider: 'codex' | 'pi';
+  provider: 'codex' | 'pi' | 'copilot';
   conversationId: string;
   submissionId: string;
   projectId: string;

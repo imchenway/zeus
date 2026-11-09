@@ -13,6 +13,8 @@ import {
   type AgentProviderPayloadDiagnostic,
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
+  CopilotRuntimeDriver,
+  type CopilotRuntimeManager,
   createPiRuntimeWorkerDriver,
   isPiToolImageReference,
   modelConnectionRequestEndpoint,
@@ -146,6 +148,10 @@ interface PiRunContext {
 }
 
 export interface CreatePiNativeConversationCoordinatorOptions {
+  /** 共享 SDK 会话编排的实际 Provider 身份；Pi 调用保持默认。 */
+  runtimeKind?: 'pi' | 'copilot';
+  /** Copilot 运行时由 Core 创建并拥有，普通 Pi 会话不读取该端口。 */
+  copilotRuntimeManager?: CopilotRuntimeManager;
   /** 各模型共用工作目录恢复与产品归档边界。 */
   ensureExecutionContext: CreateCodexNativeConversationCoordinatorOptions['ensureExecutionContext'];
   /** 原生会话操作前校验实际模型预算。 */
@@ -251,11 +257,16 @@ const piHistoryCompactionInstructions = '只压缩 Zeus 导入的不可信既有
 
 /** Pi SDK 会话的 Zeus 宿主：会话、消息、工具和审批都以 Zeus 为权威状态。 */
 export function createPiNativeConversationCoordinator(options: CreatePiNativeConversationCoordinatorOptions) {
+  /** 两个 SDK 运行时共用持久派发和工具 broker，但保持各自的账户与原生会话。 */
+  const runtimeKind = options.runtimeKind ?? 'pi';
+  if (runtimeKind === 'copilot' && !options.copilotRuntimeManager) throw new Error('Copilot SDK 会话缺少托管运行时。');
+  /** Provider ID 不借用 Pi 的模型连接身份。 */
+  const managedProviderId = (sourceId: string | null): string => runtimeKind === 'copilot' ? 'copilot' : `pi:${sourceId ?? 'custom'}`;
   /** Pi 的实时增量与完成消息共用同一来源说明，避免显示阶段切换时身份漂移。 */
   function piProviderPresentation(run: PiRunContext) {
     /** 来源名称只用于展示，稳定关联仍使用 sourceId 与 modelId。 */
-    const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? 'Pi';
-    return { agentKind: 'pi', modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
+    const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? (runtimeKind === 'copilot' ? 'GitHub Copilot' : 'Pi');
+    return { agentKind: runtimeKind, modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
   }
 
   /** 每次真实模型响应开始时锁定目录；缺价刷新在后台进行。 */
@@ -270,7 +281,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const runs = new Map<string, PiRunContext>();
   const interruptedRuns = new Set<string>();
   const processProjector = new TurnProcessProjector(options.execution);
-  const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
+  const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText, runtimeKind);
   const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
   const zeusToolBroker =
@@ -339,7 +350,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       pending.resolve(input.response);
     },
   };
-  const driver = createPiRuntimeWorkerDriver({
+  const driver = runtimeKind === 'copilot'
+    ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
+    : createPiRuntimeWorkerDriver({
     adapterVersion: 'zeus-pi-worker',
     agentDirectory: options.agentDirectory,
     sessionDirectory: options.sessionDirectory,
@@ -347,7 +360,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     toolBroker: broker,
     ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
     now: options.now,
-  });
+    });
   /** 同轮图片落盘、消息投影和终态按原事件顺序完成，不阻塞其他会话。 */
   const eventTails = new Map<string, Promise<void>>();
   const unsubscribe = driver.subscribe((event) => {
@@ -377,7 +390,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     eventTails.set(runId, tail);
   });
 
-  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
+  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses' | 'copilot-sdk'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key' | 'github_oauth'; endpoint: string | null } {
+    if (runtimeKind === 'copilot') return { api: 'copilot-sdk', authenticationScheme: 'github_oauth', endpoint: 'copilot://managed-account' };
     const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
     const configuredModel = connection?.models.find((candidate) => candidate.id === model.modelId);
     const protocolFamily = configuredModel?.protocolFamily ?? 'openai_completions';
@@ -389,7 +403,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** 优先读取排队时冻结的协议族，避免运行中模型目录变更造成展示语义漂移。 */
-  function projectionProtocolFamily(run: PiRunContext, segment: { executionSnapshotId: string | null }): ModelProtocolFamily {
+  function projectionProtocolFamily(run: PiRunContext, segment: { executionSnapshotId: string | null }): ModelProtocolFamily | 'copilot_sdk' {
+    if (runtimeKind === 'copilot') return 'copilot_sdk';
     const frozenProtocol = segment.executionSnapshotId ? options.execution.getExecutionSnapshot(segment.executionSnapshotId)?.protocolFamily : null;
     if (frozenProtocol === 'anthropic_messages' || frozenProtocol === 'openai_responses' || frozenProtocol === 'openai_completions') return frozenProtocol;
     const api = adapterRouteForModel({ sourceId: run.sourceId, modelId: run.modelId, displayName: run.modelId }).api;
@@ -458,10 +473,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   async function startConversation(input: StartPiConversationInput) {
     await options.transcripts.waitUntilReady(input.conversationId);
     const existingConversation = options.conversations.getById(input.conversationId);
-    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== 'pi' && !input.segmentLifecycle?.requiresNewSegment))) {
+    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== runtimeKind && !input.segmentLifecycle?.requiresNewSegment))) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
     }
-    options.validateContextCapacity(existingConversation?.contextCapacityTokens ?? input.contextCapacityTokens ?? null, input.model.sourceId, input.model.modelId, 'pi');
+    options.validateContextCapacity(existingConversation?.contextCapacityTokens ?? input.contextCapacityTokens ?? null, input.model.sourceId, input.model.modelId, runtimeKind);
     if (existingConversation?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     if (existingConversation && !input.holdDispatch) {
       /** 切换模型后首次派发也先恢复原任务目录，再准备工具和模型请求。 */
@@ -492,17 +507,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.taskId ? { taskId: input.taskId } : {}),
           ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
           ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
+          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || (runtimeKind === 'copilot' ? 'Copilot 会话' : 'Pi 会话'),
           summary: input.prompt.slice(0, 240),
           status: 'starting',
           transportKind: 'codex_native',
-          providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+          providerId: managedProviderId(input.model.sourceId),
           providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
           providerState: 'unbound',
           permissionMode: input.permissionMode,
           collaborationMode: input.workMode ?? 'default',
-          agentKind: 'pi',
-          agentTransport: 'rpc',
+          agentKind: runtimeKind,
+          agentTransport: runtimeKind === 'copilot' ? 'sdk' : 'rpc',
           modelSourceId: input.model.sourceId ?? undefined,
           modelId: input.model.modelId,
         });
@@ -541,7 +556,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
-            agentKind: 'pi',
+            agentKind: runtimeKind,
             thinkingLevel: input.thinkingLevel,
             permissionMode: input.permissionMode,
             holdDispatch: true,
@@ -568,17 +583,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.taskId ? { taskId: input.taskId } : {}),
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || 'Pi 会话',
+        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || (runtimeKind === 'copilot' ? 'Copilot 会话' : 'Pi 会话'),
         summary: input.prompt.slice(0, 240),
         status: 'starting',
         transportKind: 'codex_native',
-        providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+        providerId: managedProviderId(input.model.sourceId),
         providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
         providerState: 'unbound',
         permissionMode: input.permissionMode,
         collaborationMode: input.workMode ?? 'default',
-        agentKind: 'pi',
-        agentTransport: 'rpc',
+        agentKind: runtimeKind,
+        agentTransport: runtimeKind === 'copilot' ? 'sdk' : 'rpc',
         modelSourceId: input.model.sourceId ?? undefined,
         modelId: input.model.modelId,
       });
@@ -621,7 +636,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             ...(input.executionWorkspaceMode ? { executionWorkspaceMode: input.executionWorkspaceMode } : {}),
             model: input.model.modelId,
             modelSourceId: input.model.sourceId,
-            agentKind: 'pi',
+            agentKind: runtimeKind,
             thinkingLevel: input.thinkingLevel,
             ...(attachmentInput.allowedRoots.length > 0 ? { allowedAttachmentRoots: attachmentInput.allowedRoots } : {}),
             ...(writableRoots.length ? { writableRoots } : {}),
@@ -679,7 +694,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerMetadata = { ...piPluginMetadata(pluginPreparation, historyCompaction ? null : input.segmentLifecycle?.portableContext), zeusSkills: skillCatalog };
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
-            provider: 'pi',
+            provider: runtimeKind,
             conversationId: input.conversationId,
             submissionId: input.submissionId,
             projectId: input.projectId,
@@ -756,22 +771,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               input.segmentLifecycle.nativeSessionReady({
                 nativeSessionId: session.nativeSessionId,
                 nativeSessionPath: session.nativeSessionPath,
-                providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+                providerId: managedProviderId(input.model.sourceId),
                 providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-                providerProtocolVersion: piRuntimeWorkerProtocolVersion,
-                providerBinaryVersion: piSdkBinaryVersion,
+                providerProtocolVersion: runtimeKind === 'copilot' ? 'copilot-sdk' : piRuntimeWorkerProtocolVersion,
+                providerBinaryVersion: runtimeKind === 'copilot' ? null : piSdkBinaryVersion,
                 observedAt: createdAt,
               });
               return;
             }
-            options.conversations.bindPiProvider(input.conversationId, {
-              providerId: `pi:${input.model.sourceId ?? 'custom'}`,
+            options.conversations.bindManagedProvider(input.conversationId, {
+              agentKind: runtimeKind,
+              providerId: managedProviderId(input.model.sourceId),
               providerThreadId: session.nativeSessionId,
               ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
               providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
               providerState: 'active',
-              providerProtocolVersion: piRuntimeWorkerProtocolVersion,
-              providerBinaryVersion: piSdkBinaryVersion,
+              providerProtocolVersion: runtimeKind === 'copilot' ? 'copilot-sdk' : piRuntimeWorkerProtocolVersion,
+              providerBinaryVersion: runtimeKind === 'copilot' ? null : piSdkBinaryVersion,
               modelSourceId: input.model.sourceId,
               modelId: input.model.modelId,
             });
@@ -827,7 +843,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         await historyCompaction.lifecycle.completeContextCompaction({
           summary: imported.summary,
           usage: imported.usage,
-          evidence: { adapter: 'pi_sdk', method: 'AgentSession.compact', batches: imported.batches, plannedInputTokens: historyCompaction.plan.estimatedInputTokens },
+          evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', method: 'AgentSession.compact', batches: imported.batches, plannedInputTokens: historyCompaction.plan.estimatedInputTokens },
           completedAt: options.now(),
         });
         compactionFinished = true;
@@ -857,7 +873,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         },
         providerGenerationId: session.runtimeInstanceId,
       });
-      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: session.runtimeInstanceId });
+      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: runtimeKind, providerGenerationId: session.runtimeInstanceId });
       run = await driver.startRun({
         contextCapacityTokens: submission.executionSnapshotId
           ? ((parseJsonRecord(options.execution.getExecutionSnapshot(submission.executionSnapshotId)?.contextCapacityJson ?? 'null').contextCapacityTokens as number | null) ?? null)
@@ -888,7 +904,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               submissionId: submission.id,
               layer: 'runtime_acknowledged',
               configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
-              evidence: { adapter: 'pi_sdk', readback: acceptance.contextCapacity },
+              evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', readback: acceptance.contextCapacity },
               observedAt: acceptance.acceptedAt,
             });
           if (input.segmentLifecycle) {
@@ -918,7 +934,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                     completedAt: null,
                     createdAt,
                     updatedAt: acceptance.acceptedAt,
-                    agentKind: 'pi',
+                    agentKind: runtimeKind,
                     nativeRunId: acceptance.nativeRunId,
                   });
                   if (!input.internalOperation) {
@@ -951,7 +967,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-                  { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
                   options.now(),
                 ),
             }
@@ -986,7 +1002,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         completedAt: null,
         createdAt,
         updatedAt: run.acceptedAt,
-        agentKind: 'pi',
+        agentKind: runtimeKind,
         nativeRunId: run.nativeRunId,
       });
     if (!acceptedTurnProjection) {
@@ -1023,7 +1039,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
-    publishAcceptedUserProjection(options.providerItems.getByProvider(session.nativeSessionId, `pi_user_${input.clientUserMessageId}`), input.cwd);
+    publishAcceptedUserProjection(options.providerItems.getByProvider(session.nativeSessionId, `${runtimeKind}_user_${input.clientUserMessageId}`), input.cwd);
     publish('conversation.queue.changed', input.conversationId, { turnId: run.nativeRunId, submissionId: submission.id });
     return { conversationId: input.conversationId, submissionId: submission.id, providerThreadId: session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
   }
@@ -1057,7 +1073,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const queuedSubmission = options.submissions.getById(input.submissionId);
     const capacitySnapshot = queuedSubmission?.executionSnapshotId ? options.execution.getExecutionSnapshot(queuedSubmission.executionSnapshotId) : undefined;
     const contextCapacityTokens = capacitySnapshot ? ((parseJsonRecord(capacitySnapshot.contextCapacityJson).contextCapacityTokens as number | null) ?? null) : input.conversation.contextCapacityTokens;
-    options.validateContextCapacity(contextCapacityTokens, input.model.sourceId, input.model.modelId, 'pi');
+    options.validateContextCapacity(contextCapacityTokens, input.model.sourceId, input.model.modelId, runtimeKind);
     let context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
     await options.transcripts.waitUntilReady(input.conversation.id);
     const createdAt = options.now();
@@ -1100,7 +1116,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         context: {
           model: input.model.modelId,
           modelSourceId: input.model.sourceId,
-          agentKind: 'pi',
+          agentKind: runtimeKind,
           thinkingLevel: input.thinkingLevel,
           projectLocalPath: cwd,
           ...(allowedResourceRoots.length ? { allowedAttachmentRoots: allowedResourceRoots } : {}),
@@ -1188,7 +1204,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       }
       compiledDispatchContext = options.compileDispatchContext
         ? await options.compileDispatchContext({
-            provider: 'pi',
+            provider: runtimeKind,
             conversationId: input.conversation.id,
             submissionId: submission.id,
             projectId: context.projectId,
@@ -1223,7 +1239,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         },
         providerGenerationId: context.session.runtimeInstanceId,
       });
-      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: 'pi', providerGenerationId: context.session.runtimeInstanceId });
+      input.segmentLifecycle?.bindCommandDelivery({ outboxId: runCommand.outboxId, providerId: runtimeKind, providerGenerationId: context.session.runtimeInstanceId });
       run = await driver.startRun({
         contextCapacityTokens,
         session: context.session,
@@ -1252,7 +1268,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               submissionId: submission.id,
               layer: 'runtime_acknowledged',
               configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
-              evidence: { adapter: 'pi_sdk', readback: acceptance.contextCapacity },
+              evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', readback: acceptance.contextCapacity },
               observedAt: acceptance.acceptedAt,
             });
           if (input.segmentLifecycle) {
@@ -1282,7 +1298,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                     completedAt: null,
                     createdAt,
                     updatedAt: acceptance.acceptedAt,
-                    agentKind: 'pi',
+                    agentKind: runtimeKind,
                     nativeRunId: acceptance.nativeRunId,
                   });
                   appendUserProjection(
@@ -1318,7 +1334,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-                  { adapter: 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
                   options.now(),
                 ),
             }
@@ -1375,7 +1391,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         completedAt: null,
         createdAt,
         updatedAt: run.acceptedAt,
-        agentKind: 'pi',
+        agentKind: runtimeKind,
         nativeRunId: run.nativeRunId,
       });
     if (!acceptedTurnProjection) {
@@ -1410,7 +1426,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
     await options.db.save();
     publish('conversation.turn.started', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id, status: 'running', startedAt: run.acceptedAt });
-    publishAcceptedUserProjection(options.providerItems.getByProvider(context.session.nativeSessionId, `pi_user_${input.clientUserMessageId}`), context.cwd);
+    publishAcceptedUserProjection(options.providerItems.getByProvider(context.session.nativeSessionId, `${runtimeKind}_user_${input.clientUserMessageId}`), context.cwd);
     publish('conversation.queue.changed', input.conversation.id, { turnId: run.nativeRunId, submissionId: submission.id });
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: context.session.nativeSessionId, providerTurnId: run.nativeRunId, status: 'active' as const };
   }
@@ -1477,7 +1493,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           projectLocalPath: cwd,
           model: input.model.modelId,
           modelSourceId: input.model.sourceId,
-          agentKind: 'pi',
+          agentKind: runtimeKind,
           workMode: input.workMode ?? input.conversation.collaborationMode,
           thinkingLevel: input.thinkingLevel,
           permissionMode: input.permissionMode ?? input.conversation.permissionMode,
@@ -1508,7 +1524,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (options.planActions.listByConversation(conversationId).some((request) => request.status === 'pending')) return;
     if ([...runs.values()].some((run) => run.conversationId === conversationId)) return;
     const conversation = options.conversations.getById(conversationId);
-    if (!conversation?.nativeSessionId || conversation.archived || conversation.agentKind !== 'pi') return;
+    if (!conversation?.nativeSessionId || conversation.archived || conversation.agentKind !== runtimeKind) return;
     const next = options.submissions.listQueueByConversation(conversationId).find((submission) => submission.status === 'queued' && !submission.providerTurnId);
     if (!next || next.executionSnapshotId) return;
     const persisted = asRecord(JSON.parse(next.inputJson));
@@ -1615,7 +1631,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         browserCommentContent: input.browserCommentContent,
         conversationContext: input.conversationContext,
         ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
-        context: { agentKind: 'pi', projectLocalPath: context.cwd, workMode: context.workMode, permissionMode: context.permissionMode },
+        context: { agentKind: runtimeKind, projectLocalPath: context.cwd, workMode: context.workMode, permissionMode: context.permissionMode },
         delivery: 'steer_now',
         expectedTurnId: input.expectedTurnId,
       },
@@ -1856,7 +1872,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               textContent: pending.textContent,
               startedAt: pending.startedAt,
               updatedAt: event.createdAt,
-              agentKind: 'pi',
+              agentKind: runtimeKind,
               nativeItemId: run.currentStageId,
             });
             /** 终态事件统一持久化；分片只更新仓储并广播，避免按 Token 频率反复刷盘。 */
@@ -1900,7 +1916,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
       const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
       /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
-      const recorded = options.usageLedger.findByProviderTurn(`pi:${run.sourceId}`, run.providerThreadId, run.providerTurnId);
+      const recorded = options.usageLedger.findByProviderTurn(managedProviderId(run.sourceId), run.providerThreadId, run.providerTurnId);
       if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
         run.priceRequests = recorded.estimate.requests;
         run.usage = { ...recorded.usage };
@@ -1921,7 +1937,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           : unavailablePriceEstimate(run.modelId, 0));
       if (!recordedRequest) run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
       options.usageLedger.upsert({
-        providerId: `pi:${run.sourceId}`,
+        providerId: managedProviderId(run.sourceId),
         accountScopeId: run.sourceId,
         projectId: run.projectId,
         conversationId: run.conversationId,
@@ -1959,7 +1975,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           turnId: run.turnId,
           segmentId: segment.id,
           requestKind: run.modelRequestCount === 0 ? 'inference' : 'tool_continuation',
-          observationIdentity: `pi:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
+          observationIdentity: `${runtimeKind}:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
           modelId: run.modelId,
           contextWindow,
           ...rawUsage,
@@ -2012,7 +2028,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           payload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
           textContent: text,
           updatedAt: event.createdAt,
-          agentKind: 'pi' as const,
+          agentKind: runtimeKind,
           nativeItemId: messageStageId,
         };
         /** 部分正文失败后仍保留原文，但不能把它写成已确认的模型历史。 */
@@ -2028,7 +2044,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           conversationId: run.conversationId,
           role: 'assistant',
           content: text,
-          source: 'pi_sdk',
+          source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
           metadata: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
           createdAt: event.createdAt,
           providerThreadId: event.nativeSessionId ?? run.providerThreadId,
@@ -2108,7 +2124,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         createdAt: existingTurn?.createdAt ?? event.createdAt,
         updatedAt: event.createdAt,
         ...(failed ? { error: payload } : {}),
-        agentKind: 'pi',
+        agentKind: runtimeKind,
         nativeRunId: run.providerTurnId,
       });
       if (interrupted) {
@@ -2136,7 +2152,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (run.priceRequests.length > 0) {
         const estimate = aggregateRequestPrices(run.priceRequests);
         options.usageLedger.upsert({
-          providerId: `pi:${run.sourceId}`,
+          providerId: managedProviderId(run.sourceId),
           accountScopeId: run.sourceId,
           projectId: run.projectId,
           conversationId: run.conversationId,
@@ -2176,7 +2192,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           providerPlanItemId: options.providerItems.getById(createdPlan.planItemId)?.providerItemId,
         });
       if (usageSnapshot) {
-        options.publish('usage.changed', { providerId: `pi:${run.sourceId}`, conversationId: run.conversationId, updatedAt: event.createdAt });
+        options.publish('usage.changed', { providerId: managedProviderId(run.sourceId), conversationId: run.conversationId, updatedAt: event.createdAt });
         publish('conversation.provider.token_usage.updated', run.conversationId, { ...usageSnapshot });
       }
       publish('conversation.turn.completed', run.conversationId, {
@@ -2239,15 +2255,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     /** Provider 回显也核对持久来源，所有 Pi 发送入口共用同一展示边界。 */
     const submission = options.submissions.listByConversation(conversationId).find((entry) => entry.clientMessageId === clientMessageId);
     if (submission && parseJsonRecord(submission.inputJson).internalOperation === true) return undefined;
-    const itemId = `pi_user_${clientMessageId}`;
+    const itemId = `${runtimeKind}_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     // 先保存客户端身份，Provider 来源才能与已接纳的用户历史共用同一过程归属。
     const message = options.conversations.appendMessage({
       conversationId,
       role: 'user',
       content,
-      source: 'pi_sdk',
-      metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
+      metadata: { clientUserMessageId: clientMessageId, agentKind: runtimeKind, cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
       createdAt: messageCreatedAt,
       providerThreadId: threadId,
       providerTurnId,
@@ -2262,11 +2278,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId: itemId,
       itemType: 'userMessage',
       phase: 'prework',
-      payload: { messageCreatedAt: message.createdAt, clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      payload: { messageCreatedAt: message.createdAt, clientUserMessageId: clientMessageId, agentKind: runtimeKind, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
       textContent: content,
       completedAt: createdAt,
       updatedAt: createdAt,
-      agentKind: 'pi',
+      agentKind: runtimeKind,
       nativeItemId: itemId,
     });
   }
@@ -2675,9 +2691,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let repaired = 0;
     for (const conversation of options.conversations.listNativeBound()) {
       for (const message of conversation.messages) {
-        if (message.role !== 'assistant' || message.source !== 'pi_sdk' || !message.providerThreadId || !message.providerItemId) continue;
+        if (message.role !== 'assistant' || message.source !== (runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk') || !message.providerThreadId || !message.providerItemId) continue;
         const item = options.providerItems.getByProvider(message.providerThreadId, message.providerItemId);
-        if (!item || item.agentKind !== 'pi' || item.itemType !== 'agentMessage' || item.status !== 'completed' || item.textContent === message.content) continue;
+        if (!item || item.agentKind !== runtimeKind || item.itemType !== 'agentMessage' || item.status !== 'completed' || item.textContent === message.content) continue;
         options.providerItems.replaceCompletedPiAgentMessage({
           providerThreadId: message.providerThreadId,
           providerItemId: message.providerItemId,
@@ -2695,7 +2711,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const sessionRoot = resolve(options.sessionDirectory);
     for (const conversation of options.conversations.listNativeIdentityCandidates()) {
       if (
-        conversation.agentKind === 'pi' ||
+        conversation.agentKind === runtimeKind ||
         !conversation.providerThreadId ||
         !conversation.providerThreadPath ||
         !conversation.nativeSessionId ||
@@ -2704,7 +2720,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         conversation.providerThreadId !== conversation.nativeSessionId ||
         conversation.providerThreadPath !== conversation.nativeSessionPath ||
         !isPathInsideDirectory(conversation.nativeSessionPath, sessionRoot) ||
-        !conversation.messages.some((message) => isPersistedPiMessageEvidence(message, conversation.nativeSessionId!))
+        !conversation.messages.some((message) => isPersistedPiMessageEvidence(message, conversation.nativeSessionId!, runtimeKind))
       ) {
         continue;
       }
@@ -2728,7 +2744,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '工具消息没有对应的活动轮次。');
     const timestamp = options.now();
     const providerItemId = `pi_${itemType}_${run.providerTurnId}_${request.toolCallId}`;
-    const metadata = { ...payload, phase: 'commentary', agentKind: 'pi', modelId: run.modelId, modelSourceId: run.sourceId };
+    const metadata = { ...payload, phase: 'commentary', agentKind: runtimeKind, modelId: run.modelId, modelSourceId: run.sourceId };
     const item = options.providerItems.upsertCompleted({
       conversationId: context.conversationId,
       turnId: run.turnId,
@@ -2742,14 +2758,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'completed',
       completedAt: timestamp,
       updatedAt: timestamp,
-      agentKind: 'pi',
+      agentKind: runtimeKind,
       nativeItemId: providerItemId,
     });
     options.conversations.appendMessage({
       conversationId: context.conversationId,
       role: 'assistant',
       content: text,
-      source: 'pi_sdk',
+      source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
       metadata,
       createdAt: timestamp,
       providerThreadId: run.providerThreadId,
@@ -2789,7 +2805,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (request.signal?.aborted) throw piError('ZEUS_PI_TOOL_ABORTED', 'Pi 工具请求已中止。');
     const timestamp = options.now();
     const activeTurn = options.turns.getById(activeRun.turnId);
-    if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'waiting', completedAt: null, updatedAt: timestamp, agentKind: 'pi', nativeRunId: activeRun.providerTurnId });
+    if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'waiting', completedAt: null, updatedAt: timestamp, agentKind: runtimeKind, nativeRunId: activeRun.providerTurnId });
     options.conversations.updateAgentRuntime(context.conversationId, { providerState: 'waiting', status: 'running' });
     const persisted = options.requests.upsert({
       conversationId: context.conversationId,
@@ -2797,7 +2813,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       transportGenerationId: request.session.runtimeInstanceId,
       providerRequestId: request.requestId,
       requestKind: kind,
-      payload: { agentKind: 'pi', ...payload },
+      payload: { agentKind: runtimeKind, ...payload },
       status: 'pending',
       createdAt: timestamp,
     });
@@ -2874,7 +2890,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   function requirePiConversation(conversationId: string): ZeusConversationWithMessagesRecord {
     const conversation = options.conversations.getById(conversationId);
-    if (!conversation || conversation.transportKind !== 'codex_native' || conversation.agentKind !== 'pi') {
+    if (!conversation || conversation.transportKind !== 'codex_native' || conversation.agentKind !== runtimeKind) {
       throw piError('ZEUS_PI_CONVERSATION_NOT_FOUND', 'Pi native conversation was not found.');
     }
     return conversation;
@@ -2928,7 +2944,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await options.db.save();
     publish('conversation.thread.archived', conversation.id, {
       providerState: conversation.providerState,
-      agentKind: 'pi',
+      agentKind: runtimeKind,
     });
   }
 
@@ -2940,7 +2956,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     await options.db.save();
     publish('conversation.thread.unarchived', conversation.id, {
       providerState: conversation.providerState,
-      agentKind: 'pi',
+      agentKind: runtimeKind,
     });
   }
 
@@ -3180,7 +3196,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
               projectTurn: () => {
                 const turn = options.turns.getById(run.turnId);
-                if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: 'pi', nativeRunId: input.providerTurnId });
+                if (turn) options.turns.upsert({ ...turn, status: 'interrupted', completedAt: timestamp, updatedAt: timestamp, agentKind: runtimeKind, nativeRunId: input.providerTurnId });
                 settleInterruptedRun(run, timestamp);
                 options.conversations.markAttentionUnread(run.conversationId, {
                   kind: 'interrupted',
@@ -3260,7 +3276,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!activeRun || activeRun.turnId !== request.turnId) throw piError('ZEUS_PI_QUESTION_TURN_CHANGED', '原问题所属轮次已结束，不能向其他轮次提交回答。');
       const activeTurn = activeRun ? options.turns.getById(activeRun.turnId) : undefined;
       const timestamp = options.now();
-      if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'running', completedAt: null, updatedAt: timestamp, agentKind: 'pi', nativeRunId: activeRun?.providerTurnId ?? null });
+      if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'running', completedAt: null, updatedAt: timestamp, agentKind: runtimeKind, nativeRunId: activeRun?.providerTurnId ?? null });
       options.conversations.updateAgentRuntime(request.conversationId, { providerState: 'active', status: 'running' });
       options.requests.resolve(request.id, { response: input.response, resolvedAt: options.now() });
       await options.db.save();
@@ -3590,10 +3606,10 @@ function isPathInsideDirectory(path: string, directory: string): boolean {
   }
 }
 
-function isPersistedPiMessageEvidence(message: { source: string; providerThreadId: string | null; metadataJson: string }, nativeSessionId: string): boolean {
-  if (message.source !== 'pi_sdk' || message.providerThreadId !== nativeSessionId) return false;
+function isPersistedPiMessageEvidence(message: { source: string; providerThreadId: string | null; metadataJson: string }, nativeSessionId: string, runtimeKind: 'pi' | 'copilot'): boolean {
+  if (message.source !== (runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk') || message.providerThreadId !== nativeSessionId) return false;
   try {
-    return asRecord(JSON.parse(message.metadataJson)).agentKind === 'pi';
+    return asRecord(JSON.parse(message.metadataJson)).agentKind === runtimeKind;
   } catch {
     return false;
   }
@@ -3602,7 +3618,7 @@ function isPersistedPiMessageEvidence(message: { source: string; providerThreadI
 /** 为一次完整 Assistant 响应生成稳定且不会与同轮其他响应冲突的展示阶段身份。 */
 function piAssistantStageId(message: Record<string, unknown>, event: AgentRuntimeEvent): string {
   const providerIdentity = [message.responseId, message.id].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-  return `pi_message_${providerIdentity ?? `${event.nativeRunId ?? 'run'}_${event.sequence}`}`;
+  return `${event.agentKind}_message_${providerIdentity ?? `${event.nativeRunId ?? 'run'}_${event.sequence}`}`;
 }
 
 /** 提取 Assistant 响应中需要继承同一展示阶段的工具调用身份。 */
