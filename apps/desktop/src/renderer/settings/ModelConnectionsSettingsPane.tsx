@@ -43,6 +43,7 @@ const PI_THINKING_LEVELS: ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medi
 
 const templateDefaults: Record<ModelConnectionTemplateId, { name: string; baseUrl: string; modelsPath: string; thinkingFormat: ModelThinkingFormat }> = {
   custom: { name: '', baseUrl: '', modelsPath: '/models', thinkingFormat: 'openai' },
+  kilo: { name: 'Kilo', baseUrl: 'https://ai-gateway.kilo.ai/api/v1', modelsPath: '/models', thinkingFormat: 'openrouter' },
   deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelsPath: '/models', thinkingFormat: 'deepseek' },
   bailian: { name: '阿里云百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', modelsPath: '/models', thinkingFormat: 'qwen' },
   kimi: { name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', modelsPath: '/models', thinkingFormat: 'openai' },
@@ -597,6 +598,7 @@ export function ModelConnectionsSettingsPane(props: {
                 onChange={applyTemplate}
                 options={[
                   { value: 'custom', label: zh ? '自定义兼容供应商' : 'Custom compatible provider' },
+                  { value: 'kilo', label: 'Kilo' },
                   { value: 'deepseek', label: 'DeepSeek' },
                   { value: 'bailian', label: zh ? '阿里云百炼' : 'Alibaba Bailian' },
                   { value: 'kimi', label: 'Kimi' },
@@ -801,7 +803,7 @@ export function ModelConnectionsSettingsPane(props: {
                   prices={current?.pricingCatalog?.prices.filter((price) => price.model === model.id)}
                   expanded={expandedModelIds.has(model.id)}
                   onToggle={() => setModelsExpanded([model.id], !expandedModelIds.has(model.id))}
-                  readOnly={draft.templateId !== 'custom'}
+                  readOnly={draft.templateId !== 'custom' && draft.templateId !== 'kilo'}
                   onChange={(next) => updateModel(model.id, () => next)}
                   onRemove={() => changeDraft({ ...draft, models: draft.models.filter((candidate) => candidate.id !== model.id) })}
                   reasoning={{ client: props.client, connectionId: draft.id, onSaved: () => reloadConnections(draft.id ?? undefined) }}
@@ -1352,7 +1354,7 @@ function ModelDefinitionEditor(props: {
               </div>
               <div>
                 <dt>{zh ? '认证方式' : 'Authentication'}</dt>
-                <dd>{authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}</dd>
+                <dd>{authenticationLabel(model.authenticationScheme, zh)}</dd>
               </div>
               <div>
                 <dt>{zh ? '上下文窗口' : 'Context window'}</dt>
@@ -1375,7 +1377,7 @@ function ModelDefinitionEditor(props: {
                     props.onChange({
                       ...model,
                       protocolFamily,
-                      authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'protocol_default' : model.authenticationScheme,
+                      authenticationScheme: protocolFamily !== 'anthropic_messages' && model.authenticationScheme === 'x_api_key' ? 'bearer' : model.authenticationScheme,
                     })
                   }
                   options={[
@@ -1395,8 +1397,7 @@ function ModelDefinitionEditor(props: {
                   disabled={props.readOnly}
                   onChange={(authenticationScheme) => props.onChange({ ...model, authenticationScheme })}
                   options={[
-                    { value: 'protocol_default', label: zh ? '协议默认' : 'Protocol default' },
-                    { value: 'bearer', label: 'Authorization: Bearer' },
+                    { value: 'bearer', label: authenticationLabel('bearer', zh) },
                     { value: 'x_api_key', label: 'x-api-key', disabled: model.protocolFamily !== 'anthropic_messages' },
                   ]}
                 />
@@ -1432,7 +1433,7 @@ function createModel(id: string, thinkingFormat: ModelThinkingFormat): ModelConn
     maxTokens: 8_192,
     speedLabel,
     protocolFamily: 'openai_completions',
-    authenticationScheme: 'protocol_default',
+    authenticationScheme: 'bearer',
     capability: {
       reasoning: {
         state: 'unverified',
@@ -1457,14 +1458,14 @@ function protocolLabel(protocolFamily: ModelProtocolFamily): string {
   return 'OpenAI Chat Completions';
 }
 
-function authenticationLabel(protocolFamily: ModelProtocolFamily, authenticationScheme: ModelAuthenticationScheme, zh: boolean): string {
-  if (authenticationScheme === 'bearer') return 'Authorization: Bearer';
+/** 认证列表和详情共用同一标签，直接在默认选项后标注默认。 */
+function authenticationLabel(authenticationScheme: ModelAuthenticationScheme, zh: boolean): string {
   if (authenticationScheme === 'x_api_key') return 'x-api-key';
-  return protocolFamily === 'anthropic_messages' ? (zh ? '协议默认 · x-api-key' : 'Protocol default · x-api-key') : zh ? '协议默认 · Bearer' : 'Protocol default · Bearer';
+  return zh ? 'Authorization: Bearer（默认）' : 'Authorization: Bearer (default)';
 }
 
 function modelRouteLabel(model: ModelConnectionModel, zh: boolean): string {
-  return `${protocolLabel(model.protocolFamily)} · ${authenticationLabel(model.protocolFamily, model.authenticationScheme, zh)}`;
+  return `${protocolLabel(model.protocolFamily)} · ${authenticationLabel(model.authenticationScheme, zh)}`;
 }
 
 function cloneModel(model: ModelConnectionModel): ModelConnectionModel {

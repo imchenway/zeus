@@ -4306,9 +4306,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 显式显示或刷新才检查官方数据，普通读取始终无网络及持久化副作用。 */
   server.post('/api/usage-overview/refresh', async (request: FastifyRequest<{ Body: { force?: boolean } }>, reply) => {
     if (request.body?.force !== undefined && typeof request.body.force !== 'boolean') return reply.code(400).send({ error: 'ZEUS_USAGE_REFRESH_INVALID' });
-    if (codexAppServerManager.getState().type === 'ready') {
-      await codexUsageService.refreshOfficialUsage(request.body?.force === true ? 15_000 : 10 * 60_000);
-    }
+    /** 各供应源独立刷新，Kilo 不以 Codex 运行状态作为查询前提。 */
+    const maxAgeMs = request.body?.force === true ? 15_000 : 10 * 60_000;
+    await Promise.all([modelConnections.kiloUsage.refreshDue(maxAgeMs), codexAppServerManager.getState().type === 'ready' ? codexUsageService.refreshOfficialUsage(maxAgeMs) : Promise.resolve()]);
     return usageOverviewService.read();
   });
 

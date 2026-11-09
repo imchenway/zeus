@@ -4,9 +4,11 @@ import { modelConnectionTemplates, type ModelConnectionRecord } from '@zeus/ai-r
 import { estimateModelPrice, type ModelPrice, type ModelPricingCatalog, type TokenUsageBreakdown } from '@zeus/shared';
 import type { SettingRepository } from '@zeus/storage';
 import { normalizePricingUrl, readPricingDocument } from './modelPricingDocument.js';
+import { isKiloConnection, kiloModelsUrl } from './kiloAccountUsage.js';
 
 /** 内置连接的公开来源，模型列表从页面读取。 */
 export const builtInPricingUrls: Record<string, string> = {
+  kilo: kiloModelsUrl,
   deepseek: 'https://api-docs.deepseek.com/quick_start/pricing/',
   bailian: 'https://help.aliyun.com/zh/model-studio/model-pricing',
   kimi: 'https://platform.kimi.com/docs/pricing/chat',
@@ -42,6 +44,7 @@ export function createModelPricingService(options: {
   /** 来源必须绑定当前连接配置，换页面后不继续套用旧站价格。 */
   function source(connection: ModelConnectionRecord): string | null {
     if (connection.pricingUrl) return connection.pricingUrl;
+    if (isKiloConnection(connection)) return kiloModelsUrl;
     if (connection.templateId === 'custom') return null;
     return new URL(connection.baseUrl).origin === new URL(modelConnectionTemplates[connection.templateId].baseUrl).origin ? (builtInPricingUrls[connection.templateId] ?? null) : null;
   }
@@ -72,11 +75,12 @@ export function createModelPricingService(options: {
       try {
         normalizePricingUrl(url);
         /** 公开价目读取不附带连接密钥或浏览器登录凭据。 */
-        const builtIn = url === builtInPricingUrls[connection.templateId];
+        const kilo = isKiloConnection(connection) && url === kiloModelsUrl;
+        const builtIn = !kilo && url === builtInPricingUrls[connection.templateId];
         let document = builtIn ? await readBuiltInPricingPage(connection.templateId === 'kimi' ? `${url}.md` : url, controller.signal) : await readPricingDocument(url, controller.signal);
         /** New API 的公开数据协议由程序校验，不按站点品牌或模型名称硬编码。 */
-        let recognized: ReturnType<typeof parseNewApiPricing> = builtIn ? parseBuiltInModelPrices(connection.templateId, document) : null;
-        if (!builtIn && /new[ -]?api|\/static\/js\/|\/assets\//iu.test(document)) {
+        let recognized: ReturnType<typeof parseNewApiPricing> = kilo ? parseKiloPricing(JSON.parse(document)) : builtIn ? parseBuiltInModelPrices(connection.templateId, document) : null;
+        if (!recognized && !builtIn && /new[ -]?api|\/static\/js\/|\/assets\//iu.test(document)) {
           try {
             const data = await readPricingDocument(new URL('/api/pricing', url).href, controller.signal);
             recognized = parseNewApiPricing(JSON.parse(data));
@@ -174,6 +178,42 @@ export function createModelPricingService(options: {
       await Promise.allSettled(active.values());
     },
   };
+}
+
+/** Kilo 官方价格以美元/Token 返回；缓存缺价保持未知，绝不套用其他供应商同名模型单价。 */
+function parseKiloPricing(value: unknown): { prices: ModelPrice[]; unavailableModels: string[] } {
+  const data = record(value).data;
+  if (!Array.isArray(data)) throw new Error('Kilo 模型价格目录缺少 data 数组。');
+  const prices: ModelPrice[] = [];
+  const unavailableModels: string[] = [];
+  /** 官方单价是十进制字符串；空值、负值和非法数值不转换成免费。 */
+  const rate = (value: unknown): number | null => {
+    if (typeof value !== 'string' || !/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(value)) return null;
+    const result = Number(value) * 1_000_000;
+    return Number.isFinite(result) && result >= 0 ? result : null;
+  };
+  for (const entry of data) {
+    const model = record(entry);
+    if (typeof model.id !== 'string' || !model.id.trim()) continue;
+    const pricing = record(model.pricing);
+    const input = rate(pricing.prompt);
+    const output = rate(pricing.completion);
+    // 混合按次、图片或独立推理计费超出现有 Token 账本能力，不能显示为完整估算。
+    const extraCharge = ['request', 'image', 'internal_reasoning'].some((field) => pricing[field] != null && rate(pricing[field]) !== 0);
+    if (input === null || output === null || extraCharge || (pricing.discount != null && pricing.discount !== 0)) {
+      unavailableModels.push(model.id);
+      continue;
+    }
+    prices.push({
+      model: model.id,
+      currency: 'USD',
+      perMillion: { input, output, cachedInput: rate(pricing.input_cache_read), cacheWrite: rate(pricing.input_cache_write) },
+      perRequest: null,
+      basis: 'Kilo 官方 Token 单价；不含搜索等额外服务费用。',
+      evidence: JSON.stringify({ model: model.id, pricing, unit: 'USD/token' }),
+    });
+  }
+  return { prices, unavailableModels };
 }
 
 /** 未知页面仅提取无条件普通公开价；程序验证原文和转换，不运行生成代码。 */

@@ -1,4 +1,5 @@
 import { createModelPricingService } from './modelPricingService.js';
+import { createKiloAccountUsageService } from './kiloAccountUsage.js';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import {
@@ -72,6 +73,8 @@ export interface ModelConnectionDiagnostic {
 }
 
 export interface ModelConnectionService {
+  /** Kilo 官方账户余额和 Pass 周期额度，与本地费用账本分别维护。 */
+  kiloUsage: ReturnType<typeof createKiloAccountUsageService>;
   /** 公开价格服务，与密钥和模型配置隔离。 */
   pricing: ReturnType<typeof createModelPricingService>;
   /** 手工读取价格后返回连接展示状态。 */
@@ -134,6 +137,9 @@ export function createModelConnectionService(options: {
   function connectionsForModel(selectedModelRef?: string): ModelConnectionRecord[] {
     return readStored().filter((connection) => !selectedModelRef || (connection.enabled && connection.models.some((model) => model.enabled && modelRef(connection.id, model.id) === selectedModelRef)));
   }
+
+  /** 账户查询只复用已保存的连接密钥，不通过前端的密钥查看接口。 */
+  const kiloUsage = createKiloAccountUsageService({ connections: readStored, readApiKey: (id) => options.secretStore.getSecret(modelConnectionSecretAccount(id)), now, fetch: fetcher });
 
   /** 使用现有连接的模型能力读取价格，页面内容不进入任何用户会话。 */
   const pricing = createModelPricingService({
@@ -234,6 +240,7 @@ export function createModelConnectionService(options: {
   }
 
   return {
+    kiloUsage,
     pricing,
     async refreshPricing(id) {
       const connection = await requireConnection(id);
@@ -430,7 +437,7 @@ export function createModelConnectionService(options: {
 }
 
 function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConnectionRequest {
-  const templateId: ModelConnectionTemplateId = input.templateId === 'deepseek' || input.templateId === 'bailian' || input.templateId === 'kimi' || input.templateId === 'zai' ? input.templateId : 'custom';
+  const templateId: ModelConnectionTemplateId = input.templateId === 'deepseek' || input.templateId === 'bailian' || input.templateId === 'kimi' || input.templateId === 'zai' || input.templateId === 'kilo' ? input.templateId : 'custom';
   const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
   return {
     ...input,

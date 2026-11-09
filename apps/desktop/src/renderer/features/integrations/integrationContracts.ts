@@ -19,7 +19,7 @@ export interface SecuritySecretsSnapshot {
   externalApiKey: SecretPresence;
 }
 
-export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai' | 'kilo';
 
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 
@@ -33,7 +33,8 @@ export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'togeth
 
 export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
 
-export type ModelAuthenticationScheme = 'protocol_default' | 'bearer' | 'x_api_key';
+/** 模型请求使用明确的认证头；默认采用 Authorization: Bearer。 */
+export type ModelAuthenticationScheme = 'bearer' | 'x_api_key';
 
 export interface ModelCapabilityEvidence {
   source: 'template' | 'catalog' | 'manual' | 'probe';

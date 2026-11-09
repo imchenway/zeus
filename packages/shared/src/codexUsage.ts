@@ -178,6 +178,32 @@ export interface UsageOverviewRangeSummary {
   complete: boolean;
 }
 
+/** Kilo Pass 本周期额度，金额单位均为美元；与账户充值余额分别统计。 */
+export interface KiloPassUsage {
+  /** 本周期付费基础额度。 */
+  currentPeriodBaseCreditsUsd: number;
+  /** 本周期已发放的赠送额度。 */
+  currentPeriodBonusCreditsUsd: number;
+  /** 官方统计的本周期消耗。 */
+  currentPeriodUsageUsd: number;
+  /** 下次账单时间；官方未提供时为空。 */
+  nextBillingAt: string | null;
+}
+
+/** Kilo 官方账户快照；查询失败保留已有数据并标明错误，不生成零额度。 */
+export interface KiloAccountUsage {
+  /** 账户可用余额，单位美元；尚未成功查询时为空。 */
+  balanceUsd: number | null;
+  /** 没有有效订阅或尚未取得订阅数据时为空，失败由 error 区分。 */
+  pass: KiloPassUsage | null;
+  /** 最近一次查询结束时间；尚未查询时为空。 */
+  checkedAt: string | null;
+  /** 任一数据查询失败或超过刷新间隔时为真。 */
+  stale: boolean;
+  /** 查询失败的安全摘要，不含接口正文或凭据。 */
+  error: string | null;
+}
+
 export interface UsageProviderSummary {
   providerId: string;
   sourceId: string;
@@ -190,6 +216,8 @@ export interface UsageProviderSummary {
   rateLimitWindows: CodexOfficialRateWindow[];
   officialCreditBalance: string | null;
   officialCreditsUnlimited: boolean;
+  /** 仅 Kilo 官方连接提供，保持充值余额与 Pass 额度各自的计量口径。 */
+  kiloAccount?: KiloAccountUsage;
   accountTodayTokens: number | null;
   accountSevenDayTokens: number | null;
   dailyAccount: Array<{ date: string; totalTokens: number }> | null;

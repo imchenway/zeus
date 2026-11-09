@@ -377,13 +377,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     eventTails.set(runId, tail);
   });
 
-  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses'; authenticationScheme: 'protocol_default' | 'bearer' | 'x_api_key'; endpoint: string | null } {
+  /** 将模型配置投影为运行诊断使用的协议、实际认证方式与端点。 */
+  function adapterRouteForModel(model: AgentModelIdentity): { api: 'anthropic-messages' | 'openai-completions' | 'openai-responses'; authenticationScheme: 'bearer' | 'x_api_key'; endpoint: string | null } {
     const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
     const configuredModel = connection?.models.find((candidate) => candidate.id === model.modelId);
     const protocolFamily = configuredModel?.protocolFamily ?? 'openai_completions';
     return {
       api: protocolFamily === 'anthropic_messages' ? 'anthropic-messages' : protocolFamily === 'openai_responses' ? 'openai-responses' : 'openai-completions',
-      authenticationScheme: configuredModel?.authenticationScheme ?? 'protocol_default',
+      authenticationScheme: configuredModel?.authenticationScheme ?? 'bearer',
       endpoint: connection ? modelConnectionRequestEndpoint(connection.baseUrl, protocolFamily) : null,
     };
   }

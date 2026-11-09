@@ -418,6 +418,16 @@ body:has(.menu-bar-usage-root),
   overflow-wrap: anywhere;
 }
 
+/* 账户总余额单独成行；窄窗口允许金额换行，不与 Pass 百分比争用列宽。 */
+.menu-bar-usage-kilo-balance {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .menu-bar-usage-quota-group {
   display: grid;
   min-inline-size: 0;
