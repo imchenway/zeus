@@ -1986,6 +1986,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation | NativeConversationStartFailure> {
+    /** 创建回执只能接续发起时的导航，不能覆盖之后的会话选择。 */
+    const selectionRevision = nativeConversationSelectionRevision.current;
     const client = props.nativeConversationClient;
     if (!client) {
       const message = 'Codex native app-server client is unavailable.';
@@ -2036,7 +2038,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             };
           });
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-          if (activeProjectIdRef.current !== input.task.projectId) return;
+          if (activeProjectIdRef.current !== input.task.projectId || selectionRevision !== nativeConversationSelectionRevision.current) return;
           setSelectedNativeConversationId(choice.id);
           setSelectedNativeConversationPresentation('interactive');
           setConversationDraftOpen(false);
@@ -2073,6 +2075,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   async function startProjectConversation(input: ProjectSessionWorkspaceStartInput): Promise<boolean | NativeConversationStartFailure> {
+    /** 创建回执只能接续发起时的导航，不能覆盖之后的会话选择。 */
+    const selectionRevision = nativeConversationSelectionRevision.current;
     const client = props.nativeConversationClient;
     const projectId = input.owner.projectId;
     if (!client) {
@@ -2103,8 +2107,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], choice) }));
           }
           setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
-          // A 项目的迟到 acceptance 只能写回 A 的缓存，不能抢走用户已切换到 B 项目的画布。
-          if (activeProjectIdRef.current !== projectId) return;
+          // 迟到回执继续更新目录，但不覆盖用户之后选择的项目、会话或新草稿。
+          if (activeProjectIdRef.current !== projectId || selectionRevision !== nativeConversationSelectionRevision.current) return;
           setTaskDetail(undefined);
           setSelectedNativeConversationId(choice.id);
           setSelectedNativeConversationPresentation('interactive');
@@ -2164,6 +2168,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         activeProjectIdRef.current = workspace.id;
         setProjectDetail(workspace);
       }
+      nativeConversationSelectionRevision.current += 1;
       resetProjectCreateDialog();
       // 新对话只是本地会话草稿入口，不能复用任务创建接口，否则会误生成 ZEU 编号的正式任务。
       // 离开任务页时不改状态筛选，返回后继续使用当前项目最后一次显式选择。
@@ -2197,6 +2202,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       }
     }
     if (!project || project.id === activeProjectIdRef.current) return;
+    nativeConversationSelectionRevision.current += 1;
     // 新会话项目选择与全局当前项目使用同一事实；只切换执行上下文，不卸载 composer，保留未发送文字和附件。
     activeProjectIdRef.current = project.id;
     setProjectDetail(project);
