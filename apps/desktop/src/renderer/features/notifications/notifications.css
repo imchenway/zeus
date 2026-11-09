@@ -169,6 +169,11 @@
   margin: 4px 0 0;
   white-space: pre-wrap;
 }
+/* 恢复动作置于异常下方，窄窗中不挤占标题和时间。 */
+.macos-ai-app .automation-notification-resume.zeus-button[data-button-size='compact'] {
+  margin-block-start: 6px;
+  white-space: normal;
+}
 /* 异常摘要最多两行，独立的完整说明按钮始终可见。 */
 .macos-ai-app .automation-notification-description .application-error-inline {
   display: flex;

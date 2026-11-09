@@ -78,6 +78,40 @@ export function migrateAutomationNotifications(db: ZeusDatabasePort): void {
   });
 }
 
+/** 部分派发失败沿用结果通知，运行本身仍占用原串行队列。 */
+export function migrateAutomationDispatchNotifications(db: ZeusDatabasePort): void {
+  /** 此迁移扩展通知来源，并补齐尚未进入通知的暂停派发。 */
+  const migrationId = '20261109_1007_automation_dispatch_notifications';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute('DROP TRIGGER automation_notification_update');
+    db.execute(`CREATE TRIGGER automation_notification_update AFTER UPDATE OF status, unread, error_code, error_message, execution_references_json, conversation_id, dispatch_targets_json, dispatch_completed_at ON automation_runs
+      WHEN NEW.unread = 1 AND (NEW.status IN ('awaiting_review', 'succeeded', 'failed', 'blocked', 'cancelled', 'outcome_unknown')
+        OR (NEW.status = 'dispatching' AND NEW.error_code IS NOT NULL))
+      AND (OLD.status IS NOT NEW.status OR OLD.unread = 0 OR OLD.error_code IS NOT NEW.error_code
+        OR OLD.error_message IS NOT NEW.error_message OR OLD.execution_references_json IS NOT NEW.execution_references_json
+        OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.dispatch_targets_json IS NOT NEW.dispatch_targets_json OR OLD.dispatch_completed_at IS NOT NEW.dispatch_completed_at)
+      BEGIN UPDATE automation_runs SET notification_revision = notification_revision + 1, notification_occurred_at = NEW.updated_at,
+        notification_source_json = json_object('status', NEW.status, 'errorCode', NEW.error_code, 'errorMessage', NEW.error_message,
+          'conversationId', NEW.conversation_id, 'executionReferences', json(NEW.execution_references_json),
+          'dispatchTargets', json(NEW.dispatch_targets_json), 'dispatchCompletedAt', NEW.dispatch_completed_at)
+        WHERE id = NEW.id; END`);
+    db.execute(`UPDATE automation_runs SET unread = 1, error_code = 'ZEUS_AUTOMATION_DISPATCH_INCOMPLETE', error_message = (
+        SELECT json_extract(target.value, '$.reason') FROM json_each(dispatch_targets_json) target
+        WHERE json_extract(target.value, '$.status') IN ('pending', 'accepting') AND json_extract(target.value, '$.reason') IS NOT NULL LIMIT 1)
+      WHERE status = 'dispatching' AND error_code IS NULL
+        AND EXISTS (SELECT 1 FROM automation_tasks task WHERE task.id = automation_runs.automation_id AND task.status = 'paused')
+        AND EXISTS (SELECT 1 FROM json_each(dispatch_targets_json) target
+          WHERE json_extract(target.value, '$.status') IN ('pending', 'accepting') AND json_extract(target.value, '$.reason') IS NOT NULL)`);
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '部分派发异常通知与暂停运行补齐',
+      createHash('sha256').update(migrationId).digest('hex'),
+      new Date().toISOString(),
+    ]);
+  });
+}
+
 /** 通知与原运行共用数据库，已读确认不会修改其他会话。 */
 export class AutomationNotificationRepository {
   /** 使用调用方的事务和耐久提交边界。 */

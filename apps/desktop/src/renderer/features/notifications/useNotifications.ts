@@ -223,6 +223,26 @@ export function useNotifications(input: {
         setBusyId(null);
       }
     },
+    /** 恢复成功后仅确认点击时的通知修订，失败时保留异常和原运行入口。 */
+    async resume(item: AutomationNotification): Promise<boolean> {
+      if (actionInFlight.current || !client || !item.canResume) return false;
+      actionInFlight.current = true;
+      setBusyId(`resume:${item.id}`);
+      setActionError(null);
+      try {
+        await client.resumeAutomationRun(item.runId);
+        await client.acknowledgeAutomationNotification(item.id, item.revision);
+        await refresh();
+        return true;
+      } catch (error) {
+        setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
+        await refresh();
+        return false;
+      } finally {
+        actionInFlight.current = false;
+        setBusyId(null);
+      }
+    },
     /** 单条图标可确认任意通知，不导航、不恢复或启动任何工作。 */
     async markRead(item: NotificationItem): Promise<void> {
       if (actionInFlight.current || !client) return;
