@@ -107,7 +107,7 @@ export function createModelPricingService(options: {
         const hash = createHash('sha256')
           .update(recognized ? document : text)
           .digest('hex');
-        if (hash === previous?.documentHash && previous.retrievedAt) catalog = { ...catalog, retrievedAt: options.now(), error: previous.error };
+        if (hash === previous?.documentHash && previous.retrievedAt) catalog = { ...catalog, retrievedAt: options.now() };
         else {
           if (!recognized) {
             const result = await options.extract(connection, text, extractionPrompt, controller.signal);
@@ -124,8 +124,10 @@ export function createModelPricingService(options: {
             if (changed) recognized!.unavailableModels.push(price.model);
             return !changed;
           });
-          catalog = { ...catalog, retrievedAt: options.now(), documentHash: hash, ...recognized, error: recognized.unavailableModels.length ? '部分模型计价条件不明确或价格变化异常，暂不估算。' : null };
+          catalog = { ...catalog, retrievedAt: options.now(), documentHash: hash, ...recognized };
         }
+        /** 成功读取后清除旧网络错误；正文未变时仍保留缺价模型的计价警告。 */
+        catalog.error = catalog.unavailableModels.length ? '部分模型计价条件不明确或价格变化异常，暂不估算。' : null;
         nextAttempt.set(connection.id, Date.parse(options.now()) + 60 * 60_000);
       } catch (error) {
         catalog.error = error instanceof Error ? error.message : '价格页面读取失败。';
