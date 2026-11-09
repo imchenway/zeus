@@ -520,10 +520,12 @@ function canRebindPreWriteState(state) {
   return ['initialized', 'notes_generated'].includes(state.phase) && state.releaseCommit === null && state.gateSummaryPath === null && state.publishResultPath === null;
 }
 
+/** 未公开版本可接续同一 main 历史上的修复提交，旧门禁结果必须重新生成。 */
 function rebindUnpublishedReleaseRepair(state, headSha) {
-  const recoveringUnpushedCommit = state.phase === 'release_committed' && !state.gateSummaryPath;
+  /** 本地门禁尚未完成时，候选仍可能已由其他入口推送。 */
+  const recoveringBeforeGate = state.phase === 'release_committed' && !state.gateSummaryPath;
   const recoveringFailedPushedCommit = state.phase === 'main_pushed' && Boolean(state.gateSummaryPath);
-  if ((!recoveringUnpushedCommit && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
+  if ((!recoveringBeforeGate && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
   if (git(['status', '--short'])) return false;
   if (readMatchingPackageVersion() !== state.version) return false;
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) return false;
@@ -531,10 +533,9 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   const remoteMainSha = resolveRemoteReference('refs/heads/main');
   if (!remoteMainSha) return false;
   const previousReleaseIsOnRemote = capture('git', ['merge-base', '--is-ancestor', state.releaseCommit, remoteMainSha], true).status === 0;
-  if (recoveringUnpushedCommit && previousReleaseIsOnRemote) return false;
   const localMainContainsRemote = capture('git', ['merge-base', '--is-ancestor', remoteMainSha, headSha], true).status === 0;
-  if (recoveringFailedPushedCommit && (!previousReleaseIsOnRemote || !localMainContainsRemote)) return false;
-  if (recoveringFailedPushedCommit) assertNoActiveReleaseWorkflow(headSha);
+  if (!localMainContainsRemote || (recoveringFailedPushedCommit && !previousReleaseIsOnRemote)) return false;
+  if (previousReleaseIsOnRemote) assertNoActiveReleaseWorkflow(headSha);
   assertAncestor(state.baseTag, headSha);
   state.sourceHead = headSha;
   state.releaseCommit = headSha;
@@ -543,7 +544,7 @@ function rebindUnpublishedReleaseRepair(state, headSha) {
   syncReleaseNotesSnapshot(state);
   state.phase = 'release_committed';
   writeState(state);
-  const recoverySource = recoveringFailedPushedCommit ? '已推送但未公开' : '尚未推送';
+  const recoverySource = previousReleaseIsOnRemote ? '已推送但未公开' : '尚未推送';
   console.log(`${recoverySource}的 ${state.tag} 发布状态已重新绑定到修复提交 ${headSha.slice(0, 12)}。`);
   return true;
 }
