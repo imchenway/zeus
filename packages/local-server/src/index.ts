@@ -2017,6 +2017,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   // 关闭服务时等待补价任务退出，避免数据库关闭后继续后台写入。
   server.addHook('onClose', () => codexUsageService.dispose());
+  /** 关闭时取消 Kilo 账户查询，避免请求跨越宿主生命周期。 */
+  server.addHook('onClose', () => modelConnections.kiloUsage.dispose());
   const usageOverviewService = createUsageOverviewService({
     ledger: codexUsageLedger,
     codexUsage: codexUsageService,
@@ -2030,7 +2032,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let usageRefreshInFlight: Promise<void> | undefined;
   const refreshOfficialUsageInBackground = async (): Promise<void> => {
     // 定价来自公开页面，不需要启动 Codex 或等待账户登录。
-    await Promise.all([codexUsageService.refreshMissingPricing(), modelConnections.pricing.refreshDue()]);
+    await Promise.all([codexUsageService.refreshMissingPricing(), modelConnections.pricing.refreshDue(), modelConnections.kiloUsage.refreshDue()]);
+    publishRealtimeEvent('usage.changed', { scope: 'official', updatedAt: now().toISOString() });
     // 后台用量刷新只能复用已经由用户操作启动的 Codex，应用首次打开不得为读取用量而执行外部 CLI。
     if (codexAppServerManager.getState().type !== 'ready') return;
     const official = await codexUsageService.refreshOfficialUsage();

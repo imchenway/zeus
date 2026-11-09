@@ -17,6 +17,7 @@ import {
   type UsageOverviewRangeSummary,
   type UsageProviderAnalytics,
   type UsageProviderSummary,
+  type KiloAccountUsage,
 } from '@zeus/shared';
 import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, type ConversationOutputRateMeasurement, type ConversationExecutionRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
 import type { CodexUsageService } from './codexUsageService.js';
@@ -61,13 +62,15 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const pricingStatus = options.codexUsage.pricingStatus();
     const readAt = now();
     const connections = options.modelConnections.listMetadata();
+    /** 官方 Kilo 快照与本地账本一起参与缓存身份，余额变化无需等待新会话。 */
+    const kiloAccounts = new Map(connections.map((connection) => [connection.id, options.modelConnections.kiloUsage.read(connection)]));
     const revision = options.ledger.readRevision();
     /** 请求计时不属于费用账本修订，必须纳入缓存身份才能及时显示新速率。 */
     const outputMeasurements = options.execution.listOutputRateMeasurements();
     const key =
       JSON.stringify(connections.map((connection) => options.modelConnections.pricing.read(connection))) +
       JSON.stringify(pricingStatus) +
-      JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, outputMeasurements]);
+      JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, [...kiloAccounts], outputMeasurements]);
     if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const outputRateByTurn = indexOutputRateMeasurements(outputMeasurements);
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
@@ -77,15 +80,19 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     /** 每个供应源只分组一次，具体时间范围在汇总阶段裁剪。 */
     const groups = new Map(groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId)));
     const history = options.ledger.listOverviewProviders();
-    const providerIds = new Set([...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []), ...history.map((entry) => entry.providerId)]);
+    const providerIds = new Set([
+      ...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []),
+      ...history.map((entry) => entry.providerId),
+      ...connections.filter((connection) => kiloAccounts.get(connection.id)).map((connection) => `api:${connection.id}`),
+    ]);
     const providers = [...providerIds]
       .map((providerId) => {
-        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], outputRateByTurn, readAt, official, connectionNames, connectionsById });
+        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], outputRateByTurn, readAt, official, connectionNames, connectionsById, kiloAccount: kiloAccounts.get(providerId.replace(/^api:/u, '')) });
         const bounds = history.find((entry) => entry.providerId === providerId);
         if (bounds) {
           provider.collectionStartedAt = bounds.firstAt;
           provider.cacheUsageAvailable ||= bounds.hasCache === 1;
-          provider.updatedAt = providerId === 'codex' && official.fetchedAt && official.fetchedAt > bounds.lastAt ? official.fetchedAt : bounds.lastAt;
+          if (bounds.lastAt > provider.updatedAt) provider.updatedAt = bounds.lastAt;
         }
         const connection = connectionsById.get(providerId.replace(/^api:/u, ''));
         const source = providerId === 'codex' ? codexPricingUrl : connection ? options.modelConnections.pricing.source(connection) : null;
@@ -135,7 +142,17 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         const rangeRows = rows.filter((row) => !since || row.occurredAt >= since);
         /** 明细按项目和模型共同筛选。 */
         const filteredRows = rangeRows.filter((row) => (!input.projectId || row.projectId === input.projectId) && (!input.model || row.model === input.model));
-        const provider = buildProviderSummary({ providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById });
+        const connectionForAccount = connectionsById.get(providerId.replace(/^api:/u, ''));
+        const provider = buildProviderSummary({
+          providerId,
+          rows,
+          outputRateByTurn,
+          readAt,
+          official,
+          connectionNames,
+          connectionsById,
+          kiloAccount: connectionForAccount ? options.modelConnections.kiloUsage.read(connectionForAccount) : undefined,
+        });
         const pricingRows = filteredRows.length > 0 ? filteredRows : rows;
         const catalogDates = [...new Set(pricingRows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
         const connection = connectionsById.get(providerId.replace(/^api:/u, ''));
@@ -201,6 +218,8 @@ function buildProviderSummary(input: {
   official: Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>;
   connectionNames: Map<string, string>;
   connectionsById: Map<string, ReturnType<ModelConnectionService['listMetadata']>[number]>;
+  /** Kilo 账户总余额和 Pass 周期额度，不用于改写本地请求费用。 */
+  kiloAccount?: KiloAccountUsage;
 }): UsageProviderSummary {
   const { providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById } = input;
   const isCodex = providerId === 'codex';
@@ -227,23 +246,24 @@ function buildProviderSummary(input: {
     providerId,
     sourceId,
     name: isCodex ? 'Codex' : (connectionName ?? sourceId),
-    kind: isCodex ? 'subscription' : 'api',
+    kind: isCodex || input.kiloAccount?.pass ? 'subscription' : 'api',
     deleted: !isCodex && !connectionName,
     cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
-    planType: isCodex ? official.planType : null,
-    officialState: isCodex ? official.state : null,
+    planType: isCodex ? official.planType : input.kiloAccount?.pass ? 'Kilo Pass' : null,
+    officialState: isCodex ? official.state : input.kiloAccount ? (input.kiloAccount.checkedAt && !input.kiloAccount.error ? 'available' : 'unavailable') : null,
     rateLimitWindows: isCodex ? official.rateLimitWindows : [],
     officialCreditBalance: isCodex ? official.creditBalance : null,
     officialCreditsUnlimited: isCodex ? official.creditsUnlimited : false,
+    ...(input.kiloAccount ? { kiloAccount: input.kiloAccount } : {}),
     accountTodayTokens: accountDays?.find((day) => day.date === today)?.totalTokens ?? null,
     accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
     dailyAccount: accountDays,
     overviewRanges,
     dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries, outputRateByTurn) })) satisfies CodexLocalUsageDay[],
     collectionStartedAt: rows[0]?.occurredAt ?? null,
-    updatedAt: isCodex && official.fetchedAt && official.fetchedAt > latestLocalAt ? official.fetchedAt : latestLocalAt,
-    stale: isCodex ? official.stale : false,
-    error: isCodex ? official.error : null,
+    updatedAt: [latestLocalAt, isCodex ? (official.fetchedAt ?? '') : (input.kiloAccount?.checkedAt ?? '')].sort().at(-1)!,
+    stale: isCodex ? official.stale : (input.kiloAccount?.stale ?? false),
+    error: isCodex ? official.error : (input.kiloAccount?.error ?? null),
   };
 }
 

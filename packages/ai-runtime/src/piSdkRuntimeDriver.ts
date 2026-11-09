@@ -1303,7 +1303,7 @@ function withModelTransport(
     }));
   }
   const optionsFor = (model: Model<Api>, options: StreamOptions | undefined): StreamOptions => {
-    const authenticated = applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default') ?? {};
+    const authenticated = applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'bearer') ?? {};
     const originalOnPayload = authenticated.onPayload;
     return {
       ...authenticated,
@@ -1325,6 +1325,7 @@ function withModelTransport(
   };
 }
 
+/** Bearer 认证直接设置请求头，并阻止 SDK 从 apiKey 再生成 x-api-key。 */
 export function applyModelAuthentication(options: StreamOptions | undefined, authenticationScheme: ModelAuthenticationScheme): StreamOptions | undefined {
   if (authenticationScheme !== 'bearer' || !options?.apiKey) return options;
   return {

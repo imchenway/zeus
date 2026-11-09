@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
-import type { CodexOfficialRateWindow, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
+import type { CodexOfficialRateWindow, KiloAccountUsage, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
@@ -652,6 +652,7 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
 function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: Language }) {
   /** 保持官方额度与本地用量独立，不为没有额度的供应商制造空态。 */
   const { provider, language } = props;
+  if (provider.kiloAccount) return <KiloAccountSummary account={provider.kiloAccount} language={language} />;
   /** 只在 Codex 订阅有正数余额时展示，始终附在额度百分比下方。 */
   const showCredits = isCodexSubscriptionUsage(provider) && provider.officialState === 'available' && hasPositiveCodexCredits(provider.officialCreditBalance);
   if (provider.rateLimitWindows.length === 0) return null;
@@ -707,6 +708,49 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
           </section>
         );
       })}
+    </section>
+  );
+}
+
+/** 账户充值余额与 Pass 本周期额度分开展示，沿用菜单栏的额度条和金额格式。 */
+function KiloAccountSummary(props: { account: KiloAccountUsage; language: Language }) {
+  const { account, language } = props;
+  const zh = language === 'zh-CN';
+  const pass = account.pass;
+  /** 赠送额度仅使用官方已发放金额，不预估未来奖励。 */
+  const total = pass ? pass.currentPeriodBaseCreditsUsd + pass.currentPeriodBonusCreditsUsd : 0;
+  const remaining = pass ? Math.max(0, total - pass.currentPeriodUsageUsd) : null;
+  const percent = remaining !== null && total > 0 ? Math.min(100, (remaining / total) * 100) : null;
+  const nextBilling = pass?.nextBillingAt ? Date.parse(pass.nextBillingAt) / 1_000 : null;
+  return (
+    <section className="menu-bar-usage-account-card" aria-label={zh ? 'Kilo 账户额度' : 'Kilo account credits'}>
+      <div className="menu-bar-usage-kilo-balance">
+        <span>{zh ? '账户余额' : 'Account balance'}</span>
+        <strong>{account.balanceUsd === null ? '—' : formatCostAmount(account.balanceUsd, 'USD', language)}</strong>
+      </div>
+      {pass ? (
+        <section className="menu-bar-usage-quota-group" aria-label="Kilo Pass">
+          <h3>Kilo Pass</h3>
+          <div className="menu-bar-usage-account-quota">
+            <span className="menu-bar-usage-quota-duration">{zh ? '本周期剩余' : 'Period remaining'}</span>
+            <span className="menu-bar-usage-progress" role="progressbar" aria-label={zh ? 'Kilo Pass 本周期剩余额度' : 'Kilo Pass remaining credits'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
+              <i style={{ inlineSize: `${percent ?? 0}%` }} />
+            </span>
+            <strong>{percent === null ? '—' : formatPercent(percent / 100, language)}</strong>
+            <div className="menu-bar-usage-quota-meta" data-with-credits="true">
+              <time dateTime={pass.nextBillingAt ?? undefined}>{nextBilling === null ? '—' : formatReset(nextBilling, language, zh ? '续费' : 'Renews')}</time>
+              <span className="menu-bar-usage-account-credits">
+                {formatCostAmount(remaining!, 'USD', language)} / {formatCostAmount(total, 'USD', language)}
+              </span>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {account.error || account.stale ? (
+        <div className="menu-bar-usage-notice" data-tone={account.error ? 'warning' : undefined} role="status">
+          {account.error ? (zh ? account.error : 'Kilo account refresh failed.') : zh ? '额度待刷新' : 'Credits awaiting refresh'}
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -6,7 +6,7 @@ import { QWEN_TOKEN_PLAN_CN_MODELS } from '@earendil-works/pi-ai/providers/qwen-
 import { ZAI_MODELS } from '@earendil-works/pi-ai/providers/zai.models';
 import { readOfficialModelVersion } from './modelVersionNames.js';
 
-export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai';
+export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai' | 'kilo';
 
 export type ModelCapabilityState = 'supported' | 'unsupported' | 'unverified';
 
@@ -16,7 +16,8 @@ export type OpenAiThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'toget
 
 export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
 
-export type ModelAuthenticationScheme = 'protocol_default' | 'bearer' | 'x_api_key';
+/** 模型请求使用明确的认证头；默认采用 Authorization: Bearer。 */
+export type ModelAuthenticationScheme = 'bearer' | 'x_api_key';
 
 export interface ModelCapabilityEvidence {
   source: 'template' | 'catalog' | 'manual' | 'probe';
@@ -184,9 +185,17 @@ const automaticModelCatalogs: Record<ModelConnectionTemplateId, Readonly<Record<
   bailian: normalizeModelCatalog(QWEN_TOKEN_PLAN_CN_MODELS),
   kimi: normalizeModelCatalog(MOONSHOTAI_MODELS),
   zai: normalizeModelCatalog(ZAI_MODELS),
+  // Kilo 的可用模型由其在线目录决定，不借用其他渠道的容量声明。
+  kilo: {},
 };
 
 export const modelConnectionTemplates: Record<Exclude<ModelConnectionTemplateId, 'custom'>, { name: string; baseUrl: string; modelsPath: string; thinkingFormat: OpenAiThinkingFormat }> = {
+  kilo: {
+    name: 'Kilo',
+    baseUrl: 'https://ai-gateway.kilo.ai/api/v1',
+    modelsPath: '/models',
+    thinkingFormat: 'openrouter',
+  },
   deepseek: {
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
@@ -348,7 +357,7 @@ export function createConfiguredModelDefinition(id: string, input: Partial<Confi
       maxTokens: input.maxTokens ?? 8_192,
       speedLabel: input.speedLabel ?? inferSpeedLabel(normalizedId),
       protocolFamily: input.protocolFamily ?? 'openai_completions',
-      authenticationScheme: input.authenticationScheme ?? 'protocol_default',
+      authenticationScheme: input.authenticationScheme ?? 'bearer',
       capability:
         input.capability ??
         ({
@@ -438,11 +447,11 @@ export function modelConnectionRequestEndpoint(baseUrl: string, protocolFamily: 
 }
 
 /**
- * 认证摆放方式属于语义路由。默认方式保持旧快照身份；显式覆盖后使用新的凭据槽身份，避免排队任务静默改头。
+ * 凭据槽包含实际认证方式，避免排队任务在认证头改变后静默沿用旧路由。
  */
 export function modelConnectionCredentialSlotId(connectionId: string, authenticationScheme: ModelAuthenticationScheme): string {
   const base = `model-connection:${normalizeIdentifier(connectionId, '连接 ID')}`;
-  return authenticationScheme === 'protocol_default' ? base : `${base}:${authenticationScheme}`;
+  return `${base}:${authenticationScheme}`;
 }
 
 function normalizeConfiguredModels(value: readonly ConfiguredModelDefinition[], fallbackThinkingFormat: OpenAiThinkingFormat): ConfiguredModelDefinition[] {
@@ -472,8 +481,8 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
   const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
-  const requestedAuthenticationScheme: ModelAuthenticationScheme = value.authenticationScheme === 'bearer' ? 'bearer' : value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'protocol_default';
-  const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' || requestedAuthenticationScheme !== 'x_api_key' ? requestedAuthenticationScheme : 'protocol_default';
+  /** 缺省或旧配置中的 protocol_default 统一使用 Bearer；仅 Anthropic 允许显式选择 x-api-key。 */
+  const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' && value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'bearer';
   return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, protocolFamily, authenticationScheme, capability };
 }
 
@@ -799,7 +808,7 @@ function normalizeCapabilityState(value: unknown): ModelCapabilityState {
 }
 
 function normalizeTemplateId(value: unknown): ModelConnectionTemplateId {
-  return value === 'deepseek' || value === 'bailian' || value === 'kimi' || value === 'zai' ? value : 'custom';
+  return value === 'deepseek' || value === 'bailian' || value === 'kimi' || value === 'zai' || value === 'kilo' ? value : 'custom';
 }
 
 function normalizeModelBaseUrl(value: unknown): string {
