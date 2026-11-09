@@ -362,24 +362,6 @@
   white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-quick-actions-diff {
-  align-items: center;
-  display: inline-flex;
-  font-size: 12px;
-  gap: 5px;
-}
-
-.session-codex-parity-v1 .session-quick-actions-diff b {
-  color: var(--session-success);
-  font-weight: 620;
-}
-
-.session-codex-parity-v1 .session-quick-actions-diff i {
-  color: var(--session-danger);
-  font-style: normal;
-  font-weight: 620;
-}
-
 .session-codex-parity-v1 .session-quick-actions-sources {
   border-block-start: 0;
   margin-block-start: 8px;

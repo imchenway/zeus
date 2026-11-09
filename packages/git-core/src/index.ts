@@ -1151,11 +1151,14 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
 }
 
 /** 只读取工作区是否干净，避免为能力列表生成完整差异。 */
-export async function getGitWorktreeClean(cwd: string, ignoredPaths: string[] = []): Promise<boolean> {
+export async function getGitWorktreeClean(cwd: string, ignoredPaths: string[] = [], nestedPaths: string[] = []): Promise<boolean> {
   const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
   const pathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
   // 能力读取和后台发现不得让 Git 顺便刷新索引文件。
-  return (await runGit(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', ...pathspec])).stdout.length === 0;
+  const porcelain = (await runGit(cwd, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '-uall', '--', ...pathspec])).stdout;
+  if (!nestedPaths.length) return porcelain.length === 0;
+  // 嵌套仓库自身单独检查，只忽略父仓的未跟踪目录占位，保留父仓已跟踪文件。
+  return !parseGitPorcelainEntries(porcelain).some((file) => !(file.indexStatus === '?' && file.path.endsWith('/') && nestedPaths.includes(file.path.slice(0, -1))));
 }
 
 function gitDiffStatSummary(stdout: string, statuses: GitFileStatus[]): GitDiffSummary {

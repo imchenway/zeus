@@ -80,7 +80,7 @@ export function useGitDeliveryRefresh(options: {
       unsubscribe = subscribeEvents(
         (event) => {
           if (!active || current !== generation) return;
-          // 缓存预览供环境卡片立即显示；交付窗口只响应重新核对后的摘要。
+          // 交付窗口只响应重新核对后的摘要，忽略等待后台刷新中的缓存事件。
           if (event.type === 'git.summary.updated' && (event.payload.summary as GitEnvironmentSummary).projectId === projectId) schedule();
           else if (event.type === 'git.summary.error') latest.current.onError(new Error(String(event.payload.message ?? 'Git 状态读取失败。')));
         },

@@ -54,3 +54,9 @@ export interface GitEnvironmentSummary {
   /** 已暂存与未暂存的删除行数。 */
   deletions: number;
 }
+
+/** 环境卡片按需读取的状态，不包含文件数量或差异行数。 */
+export interface GitEnvironmentStatus extends Omit<GitEnvironmentSummary, 'files' | 'additions' | 'deletions'> {
+  /** 范围内任一仓库存在已暂存、未暂存或未跟踪更改。 */
+  dirty: boolean;
+}

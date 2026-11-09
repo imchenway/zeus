@@ -5,8 +5,8 @@ import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { deliveryWorkspacesForConversationBranch, type GitEnvironmentScope, type GitEnvironmentSummary } from '@zeus/shared';
-import { buildTaskEnvironmentRootPath, discoverGitRepositories, getGitCommonDirectory, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
+import { deliveryWorkspacesForConversationBranch, type GitEnvironmentScope, type GitEnvironmentSummary, type GitEnvironmentStatus } from '@zeus/shared';
+import { buildTaskEnvironmentRootPath, discoverGitRepositories, getGitCommonDirectory, getGitWorktreeClean, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
 import type { ProjectRepository, TaskRepository, TaskEnvironmentRepository, TaskWorkspaceRepository, ConversationRepository, ConversationSubmissionRepository, ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { conversationRepositoryId, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import type { ConversationRealtimeSocket } from './conversationSyncRoutes.js';
@@ -35,9 +35,9 @@ interface SummaryEntry {
   request?: Promise<TaskWorkspaceReview>;
   /** 上次成功结果，后台刷新失败不覆盖它。 */
   snapshot?: TaskWorkspaceReview;
-  /** 活跃卡片共享这些文件监听器。 */
+  /** 活跃交付窗口共享这些文件监听器。 */
   watchers: FSWatcher[];
-  /** 对应卡片的合并刷新入口。 */
+  /** 对应交付订阅的合并刷新入口。 */
   listeners: Set<() => void>;
   /** 监听失效时仅对仍被订阅的工作树补充核对。 */
   fallback?: ReturnType<typeof setInterval>;
@@ -55,7 +55,7 @@ interface SummarySource {
   nestedPaths?: string[];
 }
 
-/** 卡片摘要服务只读 Git，短期保留最近访问的工作树以复用目录监听和快照。 */
+/** Git 状态服务提供卡片按需读取与交付窗口订阅，共用工作区身份校验。 */
 export class GitEnvironmentSummaryService {
   /** 同一工作树和排除范围跨窗口共享初始化与读取。 */
   private readonly entries = new Map<string, { promise: Promise<SummaryEntry>; listeners: Set<() => void> }>();
@@ -92,6 +92,13 @@ export class GitEnvironmentSummaryService {
 
   /** 使用现有本机 WebSocket 认证，连接生命周期即摘要订阅生命周期。 */
   register(): void {
+    this.options.server.get('/api/projects/:projectId/git/environment-status', async (request, reply) => {
+      const scope = request.query as GitEnvironmentScope;
+      if (Object.values(scope).some((value) => typeof value !== 'string' || !value || value.length > 200) || (scope.taskId && scope.conversationId) || (scope.workspaceId && !scope.taskId)) {
+        return reply.code(400).send({ message: 'Invalid Git environment scope' });
+      }
+      return this.readStatus((request.params as { projectId: string }).projectId, scope);
+    });
     this.options.server.get('/api/projects/:projectId/git/summary-events', { websocket: true }, (socket, request) => {
       /** 连接尚未读取目录时也必须先验证宿主令牌。 */
       const subscriber = socket as ConversationRealtimeSocket;
@@ -136,6 +143,97 @@ export class GitEnvironmentSummaryService {
     for (const watcher of entry.watchers) watcher.close();
     clearInterval(entry.fallback);
     if (this.entries.get(entry.key)?.listeners === entry.listeners) this.entries.delete(entry.key);
+  }
+
+  /** 卡片读取与交付订阅共用持久身份校验和仓库范围。 */
+  private async resolveScope(projectId: string, scope: GitEnvironmentScope, discovered?: Array<Pick<Awaited<ReturnType<typeof discoverGitRepositories>>[number], 'localPath' | 'relativePath' | 'name'>>) {
+    /** 项目路径可能被设置页修改，读取前使用最新记录。 */
+    const project = this.options.projects.getById(projectId);
+    if (!project) throw new Error('项目已不存在。');
+    let sources: SummarySource[];
+    /** 仅任务工作树带有工作区生命周期。 */
+    let workspace: ZeusTaskWorkspaceRecord | undefined;
+    /** 任务和独立会话都按各仓持久记录提供来源。 */
+    let sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
+    /** 已完成仓库仍属于整次交付范围。 */
+    let repositoryCount = 0;
+    /** 目录只来源于项目、工作区或独立会话的持久记录。 */
+    let cwd = project.localPath;
+    if (scope.taskId) {
+      const task = this.options.tasks.getById(scope.taskId);
+      if (!task || task.projectId !== projectId) throw new Error('任务不属于当前项目。');
+      const workspaces = this.options.workspaces.listByTask(task.id);
+      // 缺失绑定且存在多个任务环境时不能任意选一条开发线。
+      if (!scope.workspaceId && new Set(workspaces.filter((item) => item.kind !== 'conflict').map((item) => item.environmentId ?? item.branchName)).size > 1) throw new Error('会话未绑定唯一任务工作目录，请在代码交付页选择工作区。');
+      workspace = scope.workspaceId ? workspaces.find((item) => item.id === scope.workspaceId) : (workspaces.find((item) => item.state === 'ready') ?? workspaces[0]);
+      if (!workspace) throw new Error('任务工作目录不可用，请在代码交付页检查。');
+      const selected = deliveryWorkspacesForConversationBranch(workspaces, workspace.id);
+      if (!selected.length) throw new Error('任务工作区关联已失效，请在代码交付页检查。');
+      repositoryCount = selected.length;
+      sourceBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: item.sourceBranch || null }));
+      sources = selected.flatMap((item) => {
+        // 正常完成或回收的仓库没有待交付工作树，不应把空 review 当作读取失败。
+        if (['merged', 'reclaimed', 'discarded'].includes(item.state)) return [];
+        if (!item.worktreePath) throw new Error('任务工作目录丢失，请在代码交付页检查。');
+        return [{ id: item.id, path: item.worktreePath, ignoredPaths: this.options.ignoredPaths(item) }];
+      });
+      /** 工作目录沿用执行上下文的环境根；冲突工作区保留自身隔离目录。 */
+      const environment = workspace.environmentId ? this.options.environments.getById(workspace.environmentId) : undefined;
+      if (environment && (environment.projectId !== projectId || environment.taskId !== task.id)) throw new Error('任务环境不属于当前任务。');
+      cwd =
+        workspace.kind === 'conflict'
+          ? (workspace.worktreePath ?? workspace.repositoryPath ?? project.localPath)
+          : resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
+    } else {
+      if (scope.conversationId) {
+        /** 会话摘要与代码交付使用同一组已核验仓库。 */
+        const repository = await resolveConversationGitWorkspace(project, scope.conversationId, this.options.conversations, this.options.submissions);
+        cwd = repository.localPath;
+        discovered = repository.repositories;
+        sourceBranches = repository.sourceBranches;
+      } else discovered ??= await discoverGitRepositories(cwd);
+      repositoryCount = discovered.length;
+      sources = discovered.map((repository) => ({
+        id: scope.conversationId ? conversationRepositoryId(scope.conversationId, repository.relativePath) : `project_git_repository_${createHash('sha256').update(`${projectId}\0${repository.relativePath}`).digest('hex').slice(0, 24)}`,
+        path: repository.localPath,
+        ignoredPaths: [],
+        nestedPaths: discovered!
+          .filter((nested) => nested.localPath !== repository.localPath)
+          .map((nested) => relative(repository.localPath, nested.localPath))
+          .filter((path) => path && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+          .map((path) => path.split(sep).join('/')),
+      }));
+    }
+    const summary: GitEnvironmentSummary = {
+      projectId,
+      cwd,
+      branch: workspace?.branchName ?? null,
+      sourceBranch: workspace?.sourceBranch ?? (sourceBranches.length && sourceBranches.every((entry) => entry.branch === sourceBranches[0]!.branch) ? sourceBranches[0]!.branch : null),
+      sourceBranches,
+      workspace: workspace
+        ? { id: workspace.id, environmentId: workspace.environmentId, state: workspace.state, worktreePath: workspace.worktreePath, repositoryName: workspace.repositoryName, repositoryRelativePath: workspace.repositoryRelativePath }
+        : null,
+      repositoryCount,
+      repositoryName: discovered?.[0]?.name,
+      files: 0,
+      additions: 0,
+      deletions: 0,
+    };
+    return { sources, summary, discovered };
+  }
+
+  /** 环境卡片只读取分支与是否有更改，不建立目录监听或生成差异统计。 */
+  private async readStatus(projectId: string, scope: GitEnvironmentScope): Promise<GitEnvironmentStatus> {
+    const { sources, summary } = await this.resolveScope(projectId, scope);
+    const { files, additions, deletions, ...status } = summary;
+    let dirty = false;
+    for (const source of sources) {
+      if (source.path === status.cwd || (!scope.taskId && !status.branch)) {
+        status.branch = (await readGit('git', ['branch', '--show-current'], { cwd: source.path, timeout: 15_000 })).stdout.trim() || null;
+      }
+      if (!dirty) dirty = !(await getGitWorktreeClean(source.path, source.ignoredPaths, source.nestedPaths));
+    }
+    return { ...status, dirty };
   }
 
   /** 只向连接发送变化后的摘要；短时写入合并，持续写入最多等待一秒。 */
@@ -205,65 +303,14 @@ export class GitEnvironmentSummaryService {
       pending = false;
       /** 本次有效目录集合决定哪些旧监听可以释放。 */
       const used = new Set<string>();
-      /** 缓存预览只供卡片展示，不触发代码交付窗口重复读取完整状态。 */
+      /** 失效快照只发送缓存事件，不触发交付窗口重复读取完整状态。 */
       let cachedPreview = false;
       try {
-        /** 项目路径可能被设置页修改，读取前使用最新记录。 */
-        const project = this.options.projects.getById(projectId);
-        if (!project) throw new Error('项目已不存在。');
-        let sources: SummarySource[];
-        /** 仅任务工作树带有工作区生命周期。 */
-        let workspace: ZeusTaskWorkspaceRecord | undefined;
-        /** 任务和独立会话都按各仓持久记录提供来源。 */
-        let sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
-        /** 已完成仓库仍属于整次交付范围。 */
-        let repositoryCount = 0;
-        /** 目录只来源于项目、工作区或独立会话的持久记录。 */
-        let cwd = project.localPath;
-        if (scope.taskId) {
-          const task = this.options.tasks.getById(scope.taskId);
-          if (!task || task.projectId !== projectId) throw new Error('任务不属于当前项目。');
-          const workspaces = this.options.workspaces.listByTask(task.id);
-          // 缺失绑定且存在多个任务环境时不能任意选一条开发线。
-          if (!scope.workspaceId && new Set(workspaces.filter((item) => item.kind !== 'conflict').map((item) => item.environmentId ?? item.branchName)).size > 1) throw new Error('会话未绑定唯一任务工作目录，请在代码交付页选择工作区。');
-          workspace = scope.workspaceId ? workspaces.find((item) => item.id === scope.workspaceId) : (workspaces.find((item) => item.state === 'ready') ?? workspaces[0]);
-          if (!workspace) throw new Error('任务工作目录不可用，请在代码交付页检查。');
-          const selected = deliveryWorkspacesForConversationBranch(workspaces, workspace.id);
-          if (!selected.length) throw new Error('任务工作区关联已失效，请在代码交付页检查。');
-          repositoryCount = selected.length;
-          sourceBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: item.sourceBranch || null }));
-          sources = selected.flatMap((item) => {
-            // 正常完成或回收的仓库没有待交付工作树，不应把空 review 当作读取失败。
-            if (['merged', 'reclaimed', 'discarded'].includes(item.state)) return [];
-            if (!item.worktreePath) throw new Error('任务工作目录丢失，请在代码交付页检查。');
-            return [{ id: item.id, path: item.worktreePath, ignoredPaths: this.options.ignoredPaths(item) }];
-          });
-          /** 工作目录沿用执行上下文的环境根；冲突工作区保留自身隔离目录。 */
-          const environment = workspace.environmentId ? this.options.environments.getById(workspace.environmentId) : undefined;
-          if (environment && (environment.projectId !== projectId || environment.taskId !== task.id)) throw new Error('任务环境不属于当前任务。');
-          cwd =
-            workspace.kind === 'conflict'
-              ? (workspace.worktreePath ?? workspace.repositoryPath ?? project.localPath)
-              : resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
-        } else {
-          if (scope.conversationId) {
-            /** 会话摘要与代码交付使用同一组已核验仓库。 */
-            const repository = await resolveConversationGitWorkspace(project, scope.conversationId, this.options.conversations, this.options.submissions);
-            cwd = repository.localPath;
-            discovered = repository.repositories;
-            sourceBranches = repository.sourceBranches;
-          } else discovered ??= await discoverGitRepositories(cwd);
-          repositoryCount = discovered.length;
-          sources = discovered.map((repository) => ({
-            id: scope.conversationId ? conversationRepositoryId(scope.conversationId, repository.relativePath) : `project_git_repository_${createHash('sha256').update(`${projectId}\0${repository.relativePath}`).digest('hex').slice(0, 24)}`,
-            path: repository.localPath,
-            ignoredPaths: [],
-            nestedPaths: discovered!
-              .filter((nested) => nested.localPath !== repository.localPath)
-              .map((nested) => relative(repository.localPath, nested.localPath))
-              .filter((path) => path && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path))
-              .map((path) => path.split(sep).join('/')),
-          }));
+        const resolved = await this.resolveScope(projectId, scope, discovered);
+        const { sources, summary } = resolved;
+        const cwd = summary.cwd;
+        discovered = resolved.discovered;
+        if (!scope.taskId) {
           if (!active) return;
           if (!directoryWatcher) {
             /** 监听故障不阻止已有仓库摘要显示，恢复后自动停止兜底发现。 */
@@ -314,21 +361,6 @@ export class GitEnvironmentSummaryService {
           }
         }
         /** 聚合前逐仓读取，窗口间由共享 entry 合并在途请求。 */
-        const summary: GitEnvironmentSummary = {
-          projectId,
-          cwd,
-          branch: workspace?.branchName ?? null,
-          sourceBranch: workspace?.sourceBranch ?? (sourceBranches.length && sourceBranches.every((entry) => entry.branch === sourceBranches[0]!.branch) ? sourceBranches[0]!.branch : null),
-          sourceBranches,
-          workspace: workspace
-            ? { id: workspace.id, environmentId: workspace.environmentId, state: workspace.state, worktreePath: workspace.worktreePath, repositoryName: workspace.repositoryName, repositoryRelativePath: workspace.repositoryRelativePath }
-            : null,
-          repositoryCount,
-          repositoryName: discovered?.[0]?.name,
-          files: 0,
-          additions: 0,
-          deletions: 0,
-        };
         for (const source of sources) {
           if (!active) return;
           const entry = await this.entry(source, schedule);

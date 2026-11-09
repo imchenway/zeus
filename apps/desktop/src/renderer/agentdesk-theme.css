@@ -3329,7 +3329,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 经典布局新增真实网格列，避免工具覆盖内容、滚动条或窗口按钮。 */
-.macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > .project-workspace-tool-rail {
+.macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > .project-workspace-tool-rail:not(.project-workspace-search-rail) {
   grid-column: -2 / -1;
   grid-row: 1 / -1;
   padding-block-start: 44px;

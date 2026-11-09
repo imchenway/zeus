@@ -1,4 +1,4 @@
-import type { GitDeliveryInput, GitDeliveryRun, TaskManagementStatusDefinition } from '@zeus/shared';
+import type { GitEnvironmentScope, GitEnvironmentStatus, GitDeliveryInput, GitDeliveryRun, TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   CreateGitConfirmationRequest,
   ExecuteGitOperationRequest,
@@ -26,6 +26,8 @@ import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js
 export type GitCommitModelOption = CodexTaskPushModelCapability & { label: string };
 
 export interface GitApiClient {
+  /** 环境卡片按需读取是否有未提交更改，不订阅实时差异统计。 */
+  loadGitEnvironmentStatus(projectId: string, scope: GitEnvironmentScope, signal?: AbortSignal): Promise<GitEnvironmentStatus>;
   /** 后台交付查询只返回同一真实入口的记录。 */
   loadGitDeliveryRuns(projectId: string, scopeId: string): Promise<{ items: GitDeliveryRun[] }>;
   /** 读取真实项目管理状态。 */
@@ -114,6 +116,11 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     return transport.request<ExecutedGitOperationResult>(`${projectGitPath(projectId)}/${operation}`, jsonRequest('POST', body));
   };
   return {
+    loadGitEnvironmentStatus: (projectId, scope, signal) => {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(scope)) if (value) query.set(key, value);
+      return transport.request(`/api/projects/${encodeURIComponent(projectId)}/git/environment-status?${query}`, { signal });
+    },
     loadGitDeliveryRuns: (projectId, scopeId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-runs?${new URLSearchParams({ scopeId })}`),
     loadGitDeliveryOptions: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-options`),
     startGitDeliveryRun: (projectId, input, key) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-runs`, { ...jsonRequest('POST', input), headers: { 'idempotency-key': key } }),
