@@ -1,10 +1,13 @@
 import { RuntimeCopyButton } from './RuntimeDetails.js';
+import { IconTooltip } from '../ui/IconTooltip.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
+import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { fileIconForKind, fileIconKindForName } from '../code/FileTypeIcon.js';
@@ -12,12 +15,15 @@ import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCod
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
+import { MinusCircleIcon as MinusCircle } from '@phosphor-icons/react/dist/csr/MinusCircle';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -120,6 +126,19 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   /** 只区分是否有未提交更改，不读取或显示文件数及差异行数。 */
   const dirty = summary?.dirty ?? false;
+  /** 交付行用图形和语义色区分 Git 状态，完整含义供悬停和读屏读取。 */
+  const deliveryStatus =
+    workspaceState === 'idle' || workspaceState === 'loading'
+      ? { icon: CircleNotch, state: 'loading', label: zh ? '正在读取 Git 状态…' : 'Loading Git status…' }
+      : workspaceState === 'error'
+        ? { icon: WarningCircle, state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
+        : dirty
+          ? { icon: GitDiff, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
+          : summary?.repositoryCount
+            ? { icon: CheckCircle, state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
+            : { icon: MinusCircle, state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
+  /** 保持状态图标的组件身份，加载时复用会话已有的旋转及减弱动画规则。 */
+  const DeliveryStatusIcon = deliveryStatus.icon;
   /** 进入页面不依赖预读成功；加载和目录错误由交付页呈现并提供重试。 */
   const canOpenDelivery = Boolean(conversationGitClient || (useTaskWorkspaces && props.onOpenGitDelivery));
   const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
@@ -413,13 +432,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     aria-label={zh ? '浏览器' : 'Browser'}
                     aria-pressed={props.browserOpen}
                     aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
+                    data-icon-tooltip={platformShortcutLabel('⌘⇧B')}
                     onClick={(event) => toggleTool(event.currentTarget, props.onToggleBrowser)}
                   >
                     <GlobeSimple aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '浏览器' : 'Browser'}</strong>
                     </span>
-                    <span className="session-quick-actions-shortcut">{platformShortcutLabel('⌘⇧B')}</span>
                   </button>
 
                   {props.onToggleTerminal ? (
@@ -429,13 +448,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       aria-label={zh ? '会话终端' : 'Conversation terminal'}
                       aria-pressed={props.terminalOpen}
                       aria-keyshortcuts="Control+`"
+                      data-icon-tooltip="Ctrl+`"
                       onClick={(event) => toggleTool(event.currentTarget, props.onToggleTerminal)}
                     >
                       <TerminalWindow aria-hidden="true" weight="regular" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '会话终端' : 'Conversation terminal'}</strong>
                       </span>
-                      <span className="session-quick-actions-shortcut">Ctrl+`</span>
                     </button>
                   ) : null}
 
@@ -443,7 +462,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <FileCode aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '代码审查' : 'Code review'}</strong>
-                      <small>{codeReviewUnavailableReason ?? (zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation')}</small>
                     </span>
                     <ArrowSquareOut aria-hidden="true" weight="regular" />
                   </button>
@@ -458,28 +476,17 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <GithubLogo aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
-                      <small>
-                        {workspaceState === 'idle' || workspaceState === 'loading'
-                          ? zh
-                            ? '正在读取 Git 状态…'
-                            : 'Loading Git status…'
-                          : workspaceState === 'error'
-                            ? zh
-                              ? 'Git 状态读取失败'
-                              : 'Failed to load Git status'
-                            : dirty
-                              ? zh
-                                ? '有未提交更改'
-                                : 'Uncommitted changes'
-                              : summary?.repositoryCount
-                                ? zh
-                                  ? '工作区干净'
-                                  : 'Working tree clean'
-                                : zh
-                                  ? '非 Git 目录'
-                                  : 'Not a Git repository'}
-                      </small>
                     </span>
+                    <IconTooltip label={deliveryStatus.label}>
+                      <DeliveryStatusIcon
+                        role="img"
+                        aria-label={deliveryStatus.label}
+                        className={`session-quick-actions-delivery-status${deliveryStatus.state === 'loading' ? ' session-conversation-state-spinner' : ''}`}
+                        data-state={deliveryStatus.state}
+                        size={17}
+                        weight="regular"
+                      />
+                    </IconTooltip>
                   </button>
                 </div>
 

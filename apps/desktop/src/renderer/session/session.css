@@ -321,11 +321,21 @@
   background: var(--session-selected);
 }
 
-/* 快捷键放在工具行右侧，窄卡片优先保留工具名称。 */
-.session-quick-actions-shortcut {
+/* 交付状态同时使用图形和语义色，加载及非 Git 目录沿用中性色。 */
+.session-quick-actions-delivery-status {
   color: var(--session-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
+}
+
+.session-quick-actions-delivery-status[data-state='dirty'] {
+  color: var(--session-warning);
+}
+
+.session-quick-actions-delivery-status[data-state='clean'] {
+  color: var(--session-success);
+}
+
+.session-quick-actions-delivery-status[data-state='error'] {
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
@@ -7764,8 +7774,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
     max-block-size: min(72vh, 640px);
   }
-
-
 }
 
 @media (max-width: 559px) {

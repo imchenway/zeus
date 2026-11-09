@@ -175,6 +175,7 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
 
   /** 独立审查不可用时保留人工请求，不能自动放行 Copilot 工具。 */
   async reviewPermission(_input: PiPermissionReviewInput): Promise<PiPermissionReviewResult> {
+    void _input;
     return { decision: 'manual', reason: 'Copilot 独立权限审查暂不可用，请人工确认。', tokensUsed: null, usage: null };
   }
 
@@ -251,6 +252,7 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
 
   /** SDK 世代故障后只恢复传输，不重发任何可能已写出的请求。 */
   async recoverRuntime(_input: { reason: 'explicit_user_action' | 'explicit_runtime_need' }): Promise<AgentRuntimeHealthSnapshot> {
+    void _input;
     this.lifecycle = 'recovering';
     for (const binding of this.bindings.values()) binding.unsubscribe();
     this.bindings.clear();
@@ -262,6 +264,7 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
 
   /** 宿主关闭时断开各会话并停止托管进程，保留 SDK 的历史文件。 */
   async close(_input: { mode: 'handoff' | 'final' }): Promise<void> {
+    void _input;
     this.lifecycle = 'closing';
     for (const binding of this.bindings.values()) {
       binding.unsubscribe();
