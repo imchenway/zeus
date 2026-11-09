@@ -1312,17 +1312,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               checkedAt: copilotRuntimeManager.readAccount()?.checkedAt ?? null,
             };
           })()
-      : input.provider === 'codex'
-        ? requireCodexDispatchModelBudget(input.modelId, input.providerGenerationId)
-        : input.modelSourceId === null
-          ? {
-              contextWindowTokens: 256_000,
-              reservedOutputTokens: 8_192,
-              contextWindowSource: `${piSdkBinaryVersion}_runtime_fallback_256000`,
-              reservedOutputSource: `${piSdkBinaryVersion}_runtime_fallback_8192`,
-              checkedAt: null,
-            }
-          : null;
+        : input.provider === 'codex'
+          ? requireCodexDispatchModelBudget(input.modelId, input.providerGenerationId)
+          : input.modelSourceId === null
+            ? {
+                contextWindowTokens: 256_000,
+                reservedOutputTokens: 8_192,
+                contextWindowSource: `${piSdkBinaryVersion}_runtime_fallback_256000`,
+                reservedOutputSource: `${piSdkBinaryVersion}_runtime_fallback_8192`,
+                checkedAt: null,
+              }
+            : null;
     if (!budget) throw nativeApiError('ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE', 'Provider 没有可核验的上下文窗口，已拒绝注入未受预算约束的上下文。');
     if (!Number.isSafeInteger(input.fixedRequestUtf8Bytes) || input.fixedRequestUtf8Bytes < 0 || !Number.isSafeInteger(input.providerBootstrapUtf8Bytes) || input.providerBootstrapUtf8Bytes < 0) {
       throw nativeApiError('ZEUS_CONTEXT_INPUT_SIZE_INVALID', 'Provider 待发请求或启动前缀规模无效，已拒绝上下文编译。');
@@ -1352,7 +1352,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       exact: false,
       source: null,
       checkedAt: budget.checkedAt,
-      reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : input.provider === 'copilot' ? 'Copilot SDK 未提供发送前完整请求的精确 token-count；只使用运行后的真实 usage。' : `${piSdkBinaryVersion} 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。`,
+      reason:
+        input.provider === 'codex'
+          ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。'
+          : input.provider === 'copilot'
+            ? 'Copilot SDK 未提供发送前完整请求的精确 token-count；只使用运行后的真实 usage。'
+            : `${piSdkBinaryVersion} 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。`,
     };
     const envelope = await contextDispatch.compileForDispatch({
       project: { id: project.id, localPath: project.localPath },
@@ -1456,7 +1461,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (budget === null) return;
     const state = codexAppServerManager.getState();
     const connection = modelConnections.listMetadata().find((entry) => entry.id === sourceId);
-    const policy = resolveContextCapacityPolicy(state.type === 'ready' ? state.capabilities : null, connection, modelId, runtime, runtime === 'copilot' ? copilotRuntimeManager.readModels().find((model) => model.id === modelId)?.capabilities.limits.max_context_window_tokens ?? null : null);
+    const policy = resolveContextCapacityPolicy(
+      state.type === 'ready' ? state.capabilities : null,
+      connection,
+      modelId,
+      runtime,
+      runtime === 'copilot' ? (copilotRuntimeManager.readModels().find((model) => model.id === modelId)?.capabilities.limits.max_context_window_tokens ?? null) : null,
+    );
     assertContextCapacitySupported(budget, policy.contextWindow);
     if (!policy.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', policy.reason);
   }
@@ -1471,124 +1482,124 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** Pi 与 Copilot 共用持久会话编排，运行时、账户和目标控制按真实身份创建。 */
   const createSdkCoordinator = (runtimeKind: 'pi' | 'copilot') =>
     createPiNativeConversationCoordinator({
-        runtimeKind,
-        copilotRuntimeManager,
-        /** 消息到达时读取已经准备好的资源目录，按真实执行根复用公共登记。 */
-        syncItemResources: (item, projectRoot) =>
-          syncConversationResources(
-            {
-              projectId: conversations.getById(item.conversationId)!.projectId,
-              projectRoot,
-              registeredProjectRoot: projects.getById(conversations.getById(item.conversationId)!.projectId)?.localPath ?? undefined,
-              conversationId: item.conversationId,
-              turnId: item.turnId,
-              item,
-              payload: parseJsonObject(item.payloadJson),
-              text: item.textContent,
-              trustedAttachmentRoots: trustedConversationAttachmentRoots,
-              artifactsDirectory: dataLayout.artifactsDirectory,
-              now: item.updatedAt,
-            },
-            conversationResources,
-          ),
-        // 延后到实际派发时读取已完成装配的共用恢复入口。
-        ensureExecutionContext: (input) => ensureNativeConversationExecutionContext(input),
-        validateContextCapacity: validateNativeContextCapacity,
-        db,
-        commandDeliveries,
-        conversations,
-        turns: conversationTurns,
-        providerItems: conversationProviderItems,
-        submissions: conversationSubmissions,
-        requests: conversationRequests,
-        transcripts: conversationTranscripts,
-        planActions: conversationPlanActions,
-        executeSubagentTool: (input) => conversationOperations.executeSubagentTool(input),
-        stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
-        goals: createPiGoalApplication({
-          runtimeKind,
-          db,
-          goals: conversationGoals,
-          controls: conversationRuntime,
-          conversations,
-          submissions: conversationSubmissions,
-          turns: conversationTurns,
-          requests: conversationRequests,
-          plans: conversationPlanActions,
-          items: conversationProviderItems,
-          enqueue: (input) => {
-            if (!submitPluginHookContinuation) throw new Error('目标续跑的提交队列尚未就绪。');
-            return submitPluginHookContinuation(input);
+      runtimeKind,
+      copilotRuntimeManager,
+      /** 消息到达时读取已经准备好的资源目录，按真实执行根复用公共登记。 */
+      syncItemResources: (item, projectRoot) =>
+        syncConversationResources(
+          {
+            projectId: conversations.getById(item.conversationId)!.projectId,
+            projectRoot,
+            registeredProjectRoot: projects.getById(conversations.getById(item.conversationId)!.projectId)?.localPath ?? undefined,
+            conversationId: item.conversationId,
+            turnId: item.turnId,
+            item,
+            payload: parseJsonObject(item.payloadJson),
+            text: item.textContent,
+            trustedAttachmentRoots: trustedConversationAttachmentRoots,
+            artifactsDirectory: dataLayout.artifactsDirectory,
+            now: item.updatedAt,
           },
-          publish: (conversationId) =>
-            publishNativeConversationEvent('conversation.goal.updated', {
-              conversationId,
-              goal: conversationGoals.get(conversationId),
-              timeline: conversationGoals.listEvents(conversationId),
-              usageComplete: conversationRuntime.getGoalControl(conversationId)?.usageComplete ?? false,
-            }),
-          now: () => now().toISOString(),
-        }),
-        modelConnections,
-        usageLedger: codexUsageLedger,
-        agentDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
-        loadSkills: loadConversationSkills,
-        processes: createConversationToolProcesses({
-          runtime: () => aiRuntimeManager,
-          bindings: conversationRuntime,
-          sessions: runtimeSessions,
-          events: terminalEvents,
-          save: () => db.save(),
-          scratchRoot: join(runtimeSessionDirectory, 'command-scratch'),
-          /** 广域工作区不能递归授权 Zeus 私有树；明确 Skill/附件根另行按当前会话授权。 */
-          privateDirectories: [dataLayout.root, ...(options.codexHome ? [options.codexHome] : [])],
-          /** 即使显式请求读取，也不允许受限命令获得当前宿主凭据、数据库或浏览器登录状态。 */
-          privateRoots: [
-            dataLayout.database,
-            `${dataLayout.database}-wal`,
-            `${dataLayout.database}-shm`,
-            `${dataLayout.database}-journal`,
-            dataLayout.localConfig,
-            dataLayout.rootIdentity,
-            dataLayout.conversationAttachmentGrantSecret,
-            join(dataLayout.runtimeDirectory, 'secrets'),
-            dataLayout.executionHost,
-            dataLayout.profileDirectory,
-            dataLayout.backupsDirectory,
-            dataLayout.localLogs,
-            dataLayout.pluginData,
-            dataLayout.pluginRuntime,
-            dataLayout.piConfig,
-            dataLayout.piSessions,
-            join(dataLayout.root, 'copilot'),
-            ...['auth.json', 'config.toml', 'sessions', 'archived_sessions', 'sqlite', 'logs', 'app-server-daemon'].map((name) => join(options.codexHome ?? dataLayout.codexHome, name)),
-          ],
-          environment: () => buildRuntimeProcessEnv(),
-        }),
-        sessionDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot', 'sessions') : piSessionDirectory,
-        now: () => now().toISOString(),
-        publish: publishNativeConversationEvent,
-        redactSensitiveText,
-        execution: conversationExecution,
-        toolResults: conversationToolResults,
-        sourceContexts: conversationSources,
-        plugins: zeusConversationPluginRuntime,
-        browserAutomation: options.browserAutomation,
-        workTools: nativeWorkTools,
-        auditNativeTool: async (event) => {
-          auditLogs.append({
-            actorType: 'zeus_native_tool',
-            actorRef: event.threadId,
-            action: `native_tool.${event.phase}`,
-            resourceType: 'conversation',
-            resourceId: event.conversationId,
-            payload: { ...event },
-            createdAt: now().toISOString(),
-          });
-          await db.save();
+          conversationResources,
+        ),
+      // 延后到实际派发时读取已完成装配的共用恢复入口。
+      ensureExecutionContext: (input) => ensureNativeConversationExecutionContext(input),
+      validateContextCapacity: validateNativeContextCapacity,
+      db,
+      commandDeliveries,
+      conversations,
+      turns: conversationTurns,
+      providerItems: conversationProviderItems,
+      submissions: conversationSubmissions,
+      requests: conversationRequests,
+      transcripts: conversationTranscripts,
+      planActions: conversationPlanActions,
+      executeSubagentTool: (input) => conversationOperations.executeSubagentTool(input),
+      stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
+      goals: createPiGoalApplication({
+        runtimeKind,
+        db,
+        goals: conversationGoals,
+        controls: conversationRuntime,
+        conversations,
+        submissions: conversationSubmissions,
+        turns: conversationTurns,
+        requests: conversationRequests,
+        plans: conversationPlanActions,
+        items: conversationProviderItems,
+        enqueue: (input) => {
+          if (!submitPluginHookContinuation) throw new Error('目标续跑的提交队列尚未就绪。');
+          return submitPluginHookContinuation(input);
         },
-        compileDispatchContext: compileProviderDispatchContext,
-      });
+        publish: (conversationId) =>
+          publishNativeConversationEvent('conversation.goal.updated', {
+            conversationId,
+            goal: conversationGoals.get(conversationId),
+            timeline: conversationGoals.listEvents(conversationId),
+            usageComplete: conversationRuntime.getGoalControl(conversationId)?.usageComplete ?? false,
+          }),
+        now: () => now().toISOString(),
+      }),
+      modelConnections,
+      usageLedger: codexUsageLedger,
+      agentDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
+      loadSkills: loadConversationSkills,
+      processes: createConversationToolProcesses({
+        runtime: () => aiRuntimeManager,
+        bindings: conversationRuntime,
+        sessions: runtimeSessions,
+        events: terminalEvents,
+        save: () => db.save(),
+        scratchRoot: join(runtimeSessionDirectory, 'command-scratch'),
+        /** 广域工作区不能递归授权 Zeus 私有树；明确 Skill/附件根另行按当前会话授权。 */
+        privateDirectories: [dataLayout.root, ...(options.codexHome ? [options.codexHome] : [])],
+        /** 即使显式请求读取，也不允许受限命令获得当前宿主凭据、数据库或浏览器登录状态。 */
+        privateRoots: [
+          dataLayout.database,
+          `${dataLayout.database}-wal`,
+          `${dataLayout.database}-shm`,
+          `${dataLayout.database}-journal`,
+          dataLayout.localConfig,
+          dataLayout.rootIdentity,
+          dataLayout.conversationAttachmentGrantSecret,
+          join(dataLayout.runtimeDirectory, 'secrets'),
+          dataLayout.executionHost,
+          dataLayout.profileDirectory,
+          dataLayout.backupsDirectory,
+          dataLayout.localLogs,
+          dataLayout.pluginData,
+          dataLayout.pluginRuntime,
+          dataLayout.piConfig,
+          dataLayout.piSessions,
+          join(dataLayout.root, 'copilot'),
+          ...['auth.json', 'config.toml', 'sessions', 'archived_sessions', 'sqlite', 'logs', 'app-server-daemon'].map((name) => join(options.codexHome ?? dataLayout.codexHome, name)),
+        ],
+        environment: () => buildRuntimeProcessEnv(),
+      }),
+      sessionDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot', 'sessions') : piSessionDirectory,
+      now: () => now().toISOString(),
+      publish: publishNativeConversationEvent,
+      redactSensitiveText,
+      execution: conversationExecution,
+      toolResults: conversationToolResults,
+      sourceContexts: conversationSources,
+      plugins: zeusConversationPluginRuntime,
+      browserAutomation: options.browserAutomation,
+      workTools: nativeWorkTools,
+      auditNativeTool: async (event) => {
+        auditLogs.append({
+          actorType: 'zeus_native_tool',
+          actorRef: event.threadId,
+          action: `native_tool.${event.phase}`,
+          resourceType: 'conversation',
+          resourceId: event.conversationId,
+          payload: { ...event },
+          createdAt: now().toISOString(),
+        });
+        await db.save();
+      },
+      compileDispatchContext: compileProviderDispatchContext,
+    });
   const piNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('pi');
   const copilotNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('copilot');
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
@@ -1787,7 +1798,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
     /** 所有恢复入口共用预算门禁，禁止先恢复 Provider 再发现能力已失效。 */
     validateContextCapacity: (conversation: import('@zeus/storage').ZeusConversationRecord) =>
-      validateNativeContextCapacity(conversation.contextCapacityTokens, conversation.modelSourceId, conversation.modelId ?? conversation.providerModel ?? '', conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex'),
+      validateNativeContextCapacity(
+        conversation.contextCapacityTokens,
+        conversation.modelSourceId,
+        conversation.modelId ?? conversation.providerModel ?? '',
+        conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex',
+      ),
     conversationExperts,
     conversationSubmissions,
     conversations,
@@ -2219,7 +2235,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const account = await copilotRuntimeManager.refreshAccount();
         const models = account.authenticated ? await copilotRuntimeManager.refreshModels() : [];
         const model = models.find((candidate) => candidate.id === frozen.modelId);
-        if (frozen.connectionId || frozen.credentialSlotId !== 'copilot-managed-account' || frozen.endpointIdentity !== 'copilot://managed-account' || frozen.protocolFamily !== 'copilot_sdk' || !model || model.policy?.state === 'disabled' || model.policy?.state === 'unconfigured') {
+        if (
+          frozen.connectionId ||
+          frozen.credentialSlotId !== 'copilot-managed-account' ||
+          frozen.endpointIdentity !== 'copilot://managed-account' ||
+          frozen.protocolFamily !== 'copilot_sdk' ||
+          !model ||
+          model.policy?.state === 'disabled' ||
+          model.policy?.state === 'unconfigured'
+        ) {
           const pausedAt = now().toISOString();
           conversationSubmissions.updateStatus(head.id, 'paused', {
             pausedReason: 'semantic_route_changed',
@@ -2284,7 +2308,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           readableReasoningSummary: true,
           // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
           media: true,
-          contextWindow: configuredModel?.contextWindow ?? (frozen.runtimeKind === 'copilot' ? copilotRuntimeManager.readModels().find((model) => model.id === frozen.modelId)?.capabilities.limits.max_context_window_tokens ?? null : null),
+          contextWindow: configuredModel?.contextWindow ?? (frozen.runtimeKind === 'copilot' ? (copilotRuntimeManager.readModels().find((model) => model.id === frozen.modelId)?.capabilities.limits.max_context_window_tokens ?? null) : null),
           currentInputUtf8Bytes: Buffer.byteLength(content, 'utf8'),
         },
         userHistoryContent: {

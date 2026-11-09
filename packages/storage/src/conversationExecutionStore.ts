@@ -1753,7 +1753,11 @@ export class ConversationExecutionRepository {
     const providerItemId =
       stringOrNull(content.providerItemId) ??
       stringOrNull(input.toolPairId) ??
-      (content.agentKind === 'pi' || content.agentKind === 'copilot' || ['pi', 'copilot'].includes(this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind ?? '') ? stringOrNull(content.stageId) : null) ??
+      (content.agentKind === 'pi' ||
+      content.agentKind === 'copilot' ||
+      ['pi', 'copilot'].includes(this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind ?? '')
+        ? stringOrNull(content.stageId)
+        : null) ??
       stringOrNull(reasoning.itemId) ??
       stringOrNull(reasoning.providerItemId);
     const reasoningBlock = input.role === 'assistant' && reasoning.readableSummary === true;

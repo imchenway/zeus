@@ -322,9 +322,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     trustedConversationAttachmentRoots,
   } = dependencies;
   /** SDK 会话按持久 Agent 身份选择原生协调器，其他运行时仍由 Codex 路径处理。 */
-  const sdkCoordinator = (kind: 'pi' | 'copilot') => kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
+  const sdkCoordinator = (kind: 'pi' | 'copilot') => (kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator);
   /** 目录投影不改变真实 Provider 身份。 */
-  const providerIdForModel = (model: { agentKind: 'codex' | 'pi' | 'copilot'; sourceId?: string | null }) => model.agentKind === 'pi' ? `pi:${model.sourceId ?? 'custom'}` : model.agentKind;
+  const providerIdForModel = (model: { agentKind: 'codex' | 'pi' | 'copilot'; sourceId?: string | null }) => (model.agentKind === 'pi' ? `pi:${model.sourceId ?? 'custom'}` : model.agentKind);
 
   type ExpertMention = { employeeId: string; settings?: EmployeeWorkSettings };
   type SkillReference = { id: string };
@@ -846,7 +846,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (!submission.providerTurnId && ['queued', 'paused'].includes(submission.status)) conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
       const conversation = conversations.getById(child.id)!;
       // 子回合结束后仍可能留下后台命令或目标续跑，显式停止须清理其自身归属。
-      if (conversationGoals.get(child.id)?.status === 'active') await (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? sdkCoordinator(conversation.agentKind) : codexNativeCoordinator).pauseGoal({ conversationId: child.id });
+      if (conversationGoals.get(child.id)?.status === 'active')
+        await (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? sdkCoordinator(conversation.agentKind) : codexNativeCoordinator).pauseGoal({ conversationId: child.id });
       if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
         sdkCoordinator(conversation.agentKind).stopOwnedProcesses(child.id);
       }
@@ -3049,7 +3050,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         readableReasoningSummary: true,
         // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
         media: true,
-        contextWindow: resolvedRoute.configuredModel?.contextWindow ?? (plan.agentKind === 'copilot' ? copilotRuntimeManager.readModels().find((model) => model.id === plan.model.modelId)?.capabilities.limits.max_context_window_tokens ?? null : null),
+        contextWindow:
+          resolvedRoute.configuredModel?.contextWindow ?? (plan.agentKind === 'copilot' ? (copilotRuntimeManager.readModels().find((model) => model.id === plan.model.modelId)?.capabilities.limits.max_context_window_tokens ?? null) : null),
         currentInputUtf8Bytes:
           Buffer.byteLength(appendConversationResourceContext(plan.prompt, plan.browserCommentContent, plan.browserComments, plan.conversationContext), 'utf8') +
           Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),

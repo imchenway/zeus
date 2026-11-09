@@ -152,7 +152,9 @@ export class ConversationCapabilityQueryApplication {
   async readDigitalEmployee(): Promise<DigitalEmployeeCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels(), this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
+    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels(), this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map(
+      (model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }),
+    );
     const preferred = this.ports.readDefaultModel();
     const snapshot = {
       preferredModel: preferred ? (resolveModelCapability(models, preferred)?.id ?? preferred) : (models.find((model) => model.available !== false)?.id ?? null),
@@ -259,7 +261,10 @@ export class ConversationCapabilityQueryApplication {
   ): Promise<ConversationCapabilitiesSnapshot> {
     const connectionCatalog = preloadedConnectionCatalog ?? (await this.ports.modelCatalog.listSelectableModels());
     // 项目不再维护模型白名单；供应商中启用的模型全局可用，真实能力以运行探针结果为准。
-    const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog, this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
+    const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog, this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map((model) => ({
+      ...model,
+      contextCapacity: this.ports.readContextCapacitySupport?.(model),
+    }));
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
     const defaultModel = this.ports.readDefaultModel();
     // 新项目沿用 Zeus 全局默认模型；会话/推送模型由各入口的“记住上次选择”覆盖。

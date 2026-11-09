@@ -24,7 +24,16 @@ import type {
 } from './agentRuntimeContracts.js';
 import { CopilotRuntimeManager } from './copilotRuntimeManager.js';
 import { CopilotSdkEventAdapter } from './copilotSdkEventAdapter.js';
-import { readPiBuiltinToolCatalog, type PiPermissionReviewInput, type PiPermissionReviewResult, type PiPortableHistoryImportInput, type PiPortableHistoryImportResult, type PiSdkRuntimeDriver, type PiZeusToolBroker, type PiZeusToolDefinitionSpec } from './piSdkRuntimeDriver.js';
+import {
+  readPiBuiltinToolCatalog,
+  type PiPermissionReviewInput,
+  type PiPermissionReviewResult,
+  type PiPortableHistoryImportInput,
+  type PiPortableHistoryImportResult,
+  type PiSdkRuntimeDriver,
+  type PiZeusToolBroker,
+  type PiZeusToolDefinitionSpec,
+} from './piSdkRuntimeDriver.js';
 
 /** Copilot 原生会话与当前 Zeus 轮次的绑定；SDK 事件只能进入所属轮次。 */
 interface CopilotSessionBinding {
@@ -72,7 +81,14 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
       this.generationId ??= randomUUID();
       this.lifecycle = 'healthy';
       const [status, auth] = await Promise.all([client.getStatus(), this.options.manager.refreshAccount()]);
-      return { available: auth.authenticated, checkedAt: this.now(), adapterVersion: 'copilot-sdk', binaryVersion: status.version, protocolVersion: String(status.protocolVersion), reason: auth.authenticated ? 'Copilot 已登录。' : 'Copilot 尚未登录。' };
+      return {
+        available: auth.authenticated,
+        checkedAt: this.now(),
+        adapterVersion: 'copilot-sdk',
+        binaryVersion: status.version,
+        protocolVersion: String(status.protocolVersion),
+        reason: auth.authenticated ? 'Copilot 已登录。' : 'Copilot 尚未登录。',
+      };
     } catch (error) {
       this.recordFailure(error, 'startup', false);
       return { available: false, checkedAt: this.now(), adapterVersion: 'copilot-sdk', binaryVersion: null, protocolVersion: null, reason: error instanceof Error ? error.message : String(error) };
@@ -82,9 +98,13 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
   /** 模型目录和会话能力以实际 SDK 探测为准，不把类型声明写成运行验收。 */
   async readCapabilities(): Promise<AgentDescriptor> {
     const probe = await this.probe();
-    const evidence = { state: probe.available ? 'supported' as const : 'unverified' as const, checkedAt: probe.checkedAt, adapterVersion: probe.adapterVersion, binaryVersion: probe.binaryVersion, reason: probe.reason };
+    const evidence = { state: probe.available ? ('supported' as const) : ('unverified' as const), checkedAt: probe.checkedAt, adapterVersion: probe.adapterVersion, binaryVersion: probe.binaryVersion, reason: probe.reason };
     return {
-      kind: 'copilot', displayName: 'GitHub Copilot', transport: 'sdk', supportStatus: probe.available ? 'experimental' : 'unavailable', visibleToUsers: false,
+      kind: 'copilot',
+      displayName: 'GitHub Copilot',
+      transport: 'sdk',
+      supportStatus: probe.available ? 'experimental' : 'unavailable',
+      visibleToUsers: false,
       preflightTokenCount: { state: 'unavailable', exact: false, source: null, checkedAt: probe.checkedAt, reason: 'Copilot SDK 未提供发送前的精确 token-count。' },
       capabilities: Object.fromEntries(['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'approval', 'user_input', 'model_catalog', 'usage', 'compaction'].map((id) => [id, evidence])),
     };
@@ -140,7 +160,12 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
     const result = await binding.session.rpc.history.compact({ customInstructions: input.customInstructions, trigger: 'manual' });
     if (!result.success) throw new Error('Copilot 会话压缩失败。');
     const after = result.contextWindow?.currentTokens ?? 0;
-    return { summary: result.summaryContent ?? '', tokensBefore: after + result.tokensRemoved, estimatedTokensAfter: result.contextWindow?.currentTokens ?? null, usage: { inputTokens: null, cachedInputTokens: null, cacheWriteInputTokens: null, outputTokens: null, reasoningOutputTokens: null, totalTokens: null } };
+    return {
+      summary: result.summaryContent ?? '',
+      tokensBefore: after + result.tokensRemoved,
+      estimatedTokensAfter: result.contextWindow?.currentTokens ?? null,
+      usage: { inputTokens: null, cachedInputTokens: null, cacheWriteInputTokens: null, outputTokens: null, reasoningOutputTokens: null, totalTokens: null },
+    };
   }
 
   /** 模型目录刷新由 SDK 账号决定，不能读取 Pi 的连接目录。 */
@@ -250,7 +275,18 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
 
   /** 向 Core 提供 Provider 进程状态；SDK 不公开子进程 PID 时保持 null。 */
   getRuntimeHealth(): AgentRuntimeHealthSnapshot {
-    return { agentKind: 'copilot', transport: 'sdk', generationId: this.generationId, lifecycle: this.lifecycle, protocolVersion: null, processId: null, checkedAt: this.now(), consecutiveFailures: this.consecutiveFailures, circuit: { state: this.lifecycle === 'degraded' ? 'open' : 'closed', openedAt: this.lastFailure?.occurredAt ?? null, reason: this.lastFailure?.kind ?? null, recovery: 'explicit' }, lastFailure: this.lastFailure };
+    return {
+      agentKind: 'copilot',
+      transport: 'sdk',
+      generationId: this.generationId,
+      lifecycle: this.lifecycle,
+      protocolVersion: null,
+      processId: null,
+      checkedAt: this.now(),
+      consecutiveFailures: this.consecutiveFailures,
+      circuit: { state: this.lifecycle === 'degraded' ? 'open' : 'closed', openedAt: this.lastFailure?.occurredAt ?? null, reason: this.lastFailure?.kind ?? null, recovery: 'explicit' },
+      lastFailure: this.lastFailure,
+    };
   }
 
   /** 事件订阅由 Core 持有，调用者取消后不再收到后续原生事件。 */
@@ -341,9 +377,22 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
         handler: async (args, invocation) => {
           const binding = this.requireBinding(invocation.sessionId);
           if (!binding.activeRunId) throw new Error('Copilot 工具缺少活动轮次。');
-          const result = await this.options.toolBroker.execute({ requestId: invocation.requestId ?? randomUUID(), session: binding.identity, nativeRunId: binding.activeRunId, toolCallId: invocation.toolCallId, toolName: definition.name, args: isRecord(args) ? args : {}, ...(invocation.signal ? { signal: invocation.signal } : {}) });
+          const result = await this.options.toolBroker.execute({
+            requestId: invocation.requestId ?? randomUUID(),
+            session: binding.identity,
+            nativeRunId: binding.activeRunId,
+            toolCallId: invocation.toolCallId,
+            toolName: definition.name,
+            args: isRecord(args) ? args : {},
+            ...(invocation.signal ? { signal: invocation.signal } : {}),
+          });
           const binaryResultsForLlm = result.contentItems?.filter((item) => item.type === 'image').map((item) => ({ type: 'image' as const, data: item.data, mimeType: item.mimeType }));
-          return { textResultForLlm: result.text, ...(binaryResultsForLlm?.length ? { binaryResultsForLlm } : {}), resultType: result.isError ? 'failure' : 'success', ...(result.isError ? { error: result.text } : {}) } satisfies ToolResultObject;
+          return {
+            textResultForLlm: result.text,
+            ...(binaryResultsForLlm?.length ? { binaryResultsForLlm } : {}),
+            resultType: result.isError ? 'failure' : 'success',
+            ...(result.isError ? { error: result.text } : {}),
+          } satisfies ToolResultObject;
         },
       };
     });

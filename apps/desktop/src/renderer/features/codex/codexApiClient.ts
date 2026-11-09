@@ -53,7 +53,18 @@ export interface CopilotLoginStep {
 export interface CopilotAccountCatalog {
   account: CopilotAccountStatus | null;
   models: Array<{ id: string; name: string; policy?: { state?: string } }>;
-  quotas: Array<{ quotaId: string; service: string | null; observationKind: string | null; acquisitionStatus: string | null; accessState: string; quantityKind: string | null; unit: string; availableQuantity: number | null; entitledQuantity: number | null; observedAt: string | null }>;
+  quotas: Array<{
+    quotaId: string;
+    service: string | null;
+    observationKind: string | null;
+    acquisitionStatus: string | null;
+    accessState: string;
+    quantityKind: string | null;
+    unit: string;
+    availableQuantity: number | null;
+    entitledQuantity: number | null;
+    observedAt: string | null;
+  }>;
 }
 
 /** 新运行实例就绪后通知当前窗口刷新模型选择器，保留正在编辑的草稿。 */
@@ -218,8 +229,11 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
     refreshCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/refresh', { method: 'POST', body: '{}' }),
     startCopilotLogin: () => transport.request<{ loginId: string; step: CopilotLoginStep }>('/api/copilot/account/login', { method: 'POST', body: '{}' }),
     loadCopilotLoginStep: (loginId) => transport.request<{ step: CopilotLoginStep }>(`/api/copilot/account/login/${encodeURIComponent(loginId)}`),
-    advanceCopilotLogin: (loginId, loginInput) => transport.request<{ step: CopilotLoginStep }>(`/api/copilot/account/login/${encodeURIComponent(loginId)}/advance`, { method: 'POST', body: JSON.stringify(loginInput === undefined ? {} : { input: loginInput }) }),
-    cancelCopilotLogin: async (loginId) => { await transport.request(`/api/copilot/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST', body: '{}' }); },
+    advanceCopilotLogin: (loginId, loginInput) =>
+      transport.request<{ step: CopilotLoginStep }>(`/api/copilot/account/login/${encodeURIComponent(loginId)}/advance`, { method: 'POST', body: JSON.stringify(loginInput === undefined ? {} : { input: loginInput }) }),
+    cancelCopilotLogin: async (loginId) => {
+      await transport.request(`/api/copilot/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST', body: '{}' });
+    },
     logoutCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/logout', { method: 'POST', body: '{}' }),
     loadAgents: () => transport.request<AgentCatalogSnapshot>('/api/agents'),
     loadCodexTaskPushCapabilities: (projectId, taskId) => transport.request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),

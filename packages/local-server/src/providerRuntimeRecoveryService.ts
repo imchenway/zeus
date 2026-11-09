@@ -197,7 +197,11 @@ function parsePiRuntimeRecoveryCommand(value: unknown, provider: 'pi' | 'copilot
     (payload.expectedGenerationId !== null && !validIdentity(payload.expectedGenerationId)) ||
     Object.keys(payload).some((key) => !['provider', 'expectedGenerationId', 'acknowledgeUnknownResultNoReplay'].includes(key))
   ) {
-    throw recoveryError('ZEUS_PROVIDER_RECOVERY_COMMAND_INVALID', `恢复命令必须使用 ${providerRuntimeRecoveryCommandType(provider)}、runtime_segment/${providerRuntimeRecoveryScopeId(provider)}、null revision，并明确 generation 与不重放确认。`, 400);
+    throw recoveryError(
+      'ZEUS_PROVIDER_RECOVERY_COMMAND_INVALID',
+      `恢复命令必须使用 ${providerRuntimeRecoveryCommandType(provider)}、runtime_segment/${providerRuntimeRecoveryScopeId(provider)}、null revision，并明确 generation 与不重放确认。`,
+      400,
+    );
   }
   return command;
 }

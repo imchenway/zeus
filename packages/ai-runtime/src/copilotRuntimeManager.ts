@@ -54,7 +54,10 @@ export class CopilotRuntimeManager {
   private readonly quotas = new Map<string, CopilotQuotaSnapshot>();
 
   /** 运行时只在显式登录、模型刷新或派发时启动，状态读取不产生进程。 */
-  constructor(private readonly baseDirectory: string, private readonly workingDirectory: string) {}
+  constructor(
+    private readonly baseDirectory: string,
+    private readonly workingDirectory: string,
+  ) {}
 
   /** 读取最近一次账户证据；null 表示尚未启动或尚未查询。 */
   readAccount(): CopilotAccountStatus | null {
@@ -94,15 +97,19 @@ export class CopilotRuntimeManager {
     if (this.client) return this.client;
     if (this.starting) return this.starting;
     const client = new CopilotClient({ baseDirectory: this.baseDirectory, workingDirectory: this.workingDirectory, mode: 'empty', logLevel: 'warning' });
-    const starting = client.start().then(() => {
-      this.client = client;
-      return client;
-    }).catch(async (error: unknown) => {
-      await client.forceStop().catch(() => undefined);
-      throw error;
-    }).finally(() => {
-      if (this.starting === starting) this.starting = null;
-    });
+    const starting = client
+      .start()
+      .then(() => {
+        this.client = client;
+        return client;
+      })
+      .catch(async (error: unknown) => {
+        await client.forceStop().catch(() => undefined);
+        throw error;
+      })
+      .finally(() => {
+        if (this.starting === starting) this.starting = null;
+      });
     this.starting = starting;
     return starting;
   }
@@ -158,12 +165,14 @@ export class CopilotRuntimeManager {
     if (this.advancingLogins.has(loginId)) return { kind: 'awaiting' };
     this.advancingLogins.add(loginId);
     this.loginSteps.set(loginId, { kind: 'awaiting' });
-    void this.advanceLogin(loginId, input).catch((error: unknown) => {
-      if (this.logins.has(loginId)) {
-        this.logins.delete(loginId);
-        this.loginSteps.set(loginId, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
-      }
-    }).finally(() => this.advancingLogins.delete(loginId));
+    void this.advanceLogin(loginId, input)
+      .catch((error: unknown) => {
+        if (this.logins.has(loginId)) {
+          this.logins.delete(loginId);
+          this.loginSteps.set(loginId, { kind: 'error', message: error instanceof Error ? error.message : String(error) });
+        }
+      })
+      .finally(() => this.advancingLogins.delete(loginId));
     return { kind: 'awaiting' };
   }
 
@@ -237,16 +246,21 @@ export class CopilotRuntimeManager {
   private async ensureLoginSession(): Promise<CopilotSession> {
     if (this.loginSession) return this.loginSession;
     if (this.startingLoginSession) return this.startingLoginSession;
-    const starting = this.ensureReady().then((client) => client.createSession({
-      sessionId: `zeus-copilot-login-${randomUUID()}`,
-      workingDirectory: this.workingDirectory,
-      availableTools: [],
-    })).then((session) => {
-      this.loginSession = session;
-      return session;
-    }).finally(() => {
-      if (this.startingLoginSession === starting) this.startingLoginSession = null;
-    });
+    const starting = this.ensureReady()
+      .then((client) =>
+        client.createSession({
+          sessionId: `zeus-copilot-login-${randomUUID()}`,
+          workingDirectory: this.workingDirectory,
+          availableTools: [],
+        }),
+      )
+      .then((session) => {
+        this.loginSession = session;
+        return session;
+      })
+      .finally(() => {
+        if (this.startingLoginSession === starting) this.startingLoginSession = null;
+      });
     this.startingLoginSession = starting;
     return starting;
   }
@@ -254,12 +268,18 @@ export class CopilotRuntimeManager {
   /** 将 SDK 登录变体裁剪为前端可显示字段，避免传出账号或凭据对象。 */
   private projectLoginStep(step: Awaited<ReturnType<CopilotSession['rpc']['accounts']['login']['advance']>>): CopilotLoginStep {
     switch (step.kind) {
-      case 'open-url': return { kind: step.kind, url: step.url };
-      case 'device-code': return { kind: step.kind, userCode: step.userCode, verificationUri: step.verificationUri, expiresIn: step.expiresIn };
-      case 'input-required': return { kind: step.kind, prompt: step.prompt };
-      case 'completed': return { kind: step.kind, status: step.result.status };
-      case 'error': return { kind: step.kind, message: step.message };
-      default: return { kind: step.kind };
+      case 'open-url':
+        return { kind: step.kind, url: step.url };
+      case 'device-code':
+        return { kind: step.kind, userCode: step.userCode, verificationUri: step.verificationUri, expiresIn: step.expiresIn };
+      case 'input-required':
+        return { kind: step.kind, prompt: step.prompt };
+      case 'completed':
+        return { kind: step.kind, status: step.result.status };
+      case 'error':
+        return { kind: step.kind, message: step.message };
+      default:
+        return { kind: step.kind };
     }
   }
 }

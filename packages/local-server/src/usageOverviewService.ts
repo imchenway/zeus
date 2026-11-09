@@ -72,17 +72,8 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const key =
       JSON.stringify(connections.map((connection) => options.modelConnections.pricing.read(connection))) +
       JSON.stringify(pricingStatus) +
-        JSON.stringify([
-            revision,
-            localDate(readAt),
-            readAt.getTimezoneOffset(),
-            connections,
-            official,
-            [...kiloAccounts],
-            options.copilotRuntimeManager.readAccount(),
-            outputMeasurements,
-        ]);
-      if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
+      JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, [...kiloAccounts], options.copilotRuntimeManager.readAccount(), outputMeasurements]);
+    if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const outputRateByTurn = indexOutputRateMeasurements(outputMeasurements);
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
@@ -93,7 +84,8 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const history = options.ledger.listOverviewProviders();
     const providerIds = new Set([
       ...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []),
-      ...(options.copilotRuntimeManager.readAccount()?.authenticated ? ['copilot'] : []), ...history.map((entry) => entry.providerId),
+      ...(options.copilotRuntimeManager.readAccount()?.authenticated ? ['copilot'] : []),
+      ...history.map((entry) => entry.providerId),
       ...connections.filter((connection) => kiloAccounts.get(connection.id)).map((connection) => `api:${connection.id}`),
     ]);
     const providers = [...providerIds]
@@ -259,10 +251,10 @@ function buildProviderSummary(input: {
   return {
     providerId,
     sourceId,
-      name: isCodex ? 'Codex' : isCopilot ? 'GitHub Copilot' : (connectionName ?? sourceId),
-      kind: isCodex || isCopilot || input.kiloAccount?.pass ? 'subscription' : 'api',
-      deleted: !isCodex && !isCopilot && !connectionName,
-      cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
+    name: isCodex ? 'Codex' : isCopilot ? 'GitHub Copilot' : (connectionName ?? sourceId),
+    kind: isCodex || isCopilot || input.kiloAccount?.pass ? 'subscription' : 'api',
+    deleted: !isCodex && !isCopilot && !connectionName,
+    cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
     planType: isCodex ? official.planType : input.kiloAccount?.pass ? 'Kilo Pass' : null,
     officialState: isCodex ? official.state : input.kiloAccount ? (input.kiloAccount.checkedAt && !input.kiloAccount.error ? 'available' : 'unavailable') : null,
     rateLimitWindows: isCodex ? official.rateLimitWindows : [],

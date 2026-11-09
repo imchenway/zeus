@@ -261,7 +261,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const runtimeKind = options.runtimeKind ?? 'pi';
   if (runtimeKind === 'copilot' && !options.copilotRuntimeManager) throw new Error('Copilot SDK 会话缺少托管运行时。');
   /** Provider ID 不借用 Pi 的模型连接身份。 */
-  const managedProviderId = (sourceId: string | null): string => runtimeKind === 'copilot' ? 'copilot' : `pi:${sourceId ?? 'custom'}`;
+  const managedProviderId = (sourceId: string | null): string => (runtimeKind === 'copilot' ? 'copilot' : `pi:${sourceId ?? 'custom'}`);
   /** Pi 的实时增量与完成消息共用同一来源说明，避免显示阶段切换时身份漂移。 */
   function piProviderPresentation(run: PiRunContext) {
     /** 来源名称只用于展示，稳定关联仍使用 sourceId 与 modelId。 */
@@ -350,17 +350,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       pending.resolve(input.response);
     },
   };
-  const driver = runtimeKind === 'copilot'
-    ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
-    : createPiRuntimeWorkerDriver({
-    adapterVersion: 'zeus-pi-worker',
-    agentDirectory: options.agentDirectory,
-    sessionDirectory: options.sessionDirectory,
-    loadConnections: () => options.modelConnections.loadRuntimeConnections(),
-    toolBroker: broker,
-    ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
-    now: options.now,
-    });
+  const driver =
+    runtimeKind === 'copilot'
+      ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
+      : createPiRuntimeWorkerDriver({
+          adapterVersion: 'zeus-pi-worker',
+          agentDirectory: options.agentDirectory,
+          sessionDirectory: options.sessionDirectory,
+          loadConnections: () => options.modelConnections.loadRuntimeConnections(),
+          toolBroker: broker,
+          ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
+          now: options.now,
+        });
   /** 同轮图片落盘、消息投影和终态按原事件顺序完成，不阻塞其他会话。 */
   const eventTails = new Map<string, Promise<void>>();
   const unsubscribe = driver.subscribe((event) => {
@@ -474,7 +475,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   async function startConversation(input: StartPiConversationInput) {
     await options.transcripts.waitUntilReady(input.conversationId);
     const existingConversation = options.conversations.getById(input.conversationId);
-    if (existingConversation && (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== runtimeKind && !input.segmentLifecycle?.requiresNewSegment))) {
+    if (
+      existingConversation &&
+      (existingConversation.projectId !== input.projectId || existingConversation.taskId !== (input.taskId ?? null) || (existingConversation.agentKind !== runtimeKind && !input.segmentLifecycle?.requiresNewSegment))
+    ) {
       throw piError('ZEUS_NATIVE_RESERVED_RESOURCE_CONFLICT', '预留的 Pi 会话身份已经属于其他业务操作。');
     }
     options.validateContextCapacity(existingConversation?.contextCapacityTokens ?? input.contextCapacityTokens ?? null, input.model.sourceId, input.model.modelId, runtimeKind);
@@ -2264,7 +2268,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       role: 'user',
       content,
       source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
-      metadata: { clientUserMessageId: clientMessageId, agentKind: runtimeKind, cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      metadata: {
+        clientUserMessageId: clientMessageId,
+        agentKind: runtimeKind,
+        cwd: contexts.get(threadId)?.cwd,
+        ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}),
+        ...(taskPushLayout ? { taskPushLayout } : {}),
+      },
       createdAt: messageCreatedAt,
       providerThreadId: threadId,
       providerTurnId,
@@ -2279,7 +2289,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId: itemId,
       itemType: 'userMessage',
       phase: 'prework',
-      payload: { messageCreatedAt: message.createdAt, clientUserMessageId: clientMessageId, agentKind: runtimeKind, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      payload: {
+        messageCreatedAt: message.createdAt,
+        clientUserMessageId: clientMessageId,
+        agentKind: runtimeKind,
+        ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}),
+        ...(taskPushLayout ? { taskPushLayout } : {}),
+      },
       textContent: content,
       completedAt: createdAt,
       updatedAt: createdAt,

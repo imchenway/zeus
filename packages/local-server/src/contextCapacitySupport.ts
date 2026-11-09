@@ -3,7 +3,14 @@ import { contextCapacityChoices, type ContextCapacityCapability } from '@zeus/sh
 import type { CodexCapabilitiesSnapshot, ModelConnectionRecord } from '@zeus/ai-runtime';
 
 /** 选项由引擎窗口配置能力及模型目录上限共同决定。 */
-export function readContextCapacitySupport(identity: { runtime: 'codex' | 'pi' | 'copilot'; runtimeVersion: string | null; sourceId: string; sourceRevision: string; modelId: string; contextWindow: number | null }): ContextCapacityCapability {
+export function readContextCapacitySupport(identity: {
+  runtime: 'codex' | 'pi' | 'copilot';
+  runtimeVersion: string | null;
+  sourceId: string;
+  sourceRevision: string;
+  modelId: string;
+  contextWindow: number | null;
+}): ContextCapacityCapability {
   if (identity.runtime === 'copilot') return { choices: [], reason: 'Copilot SDK 当前只报告模型窗口，不提供修改上下文容量的会话配置。' };
   const maximum = identity.contextWindow;
   const choices = maximum && identity.runtimeVersion ? [...new Set([...contextCapacityChoices.filter((capacity) => capacity <= maximum), maximum])].sort((a, b) => a - b) : [];
@@ -23,5 +30,9 @@ export function resolveContextCapacityPolicy(native: CodexCapabilitiesSnapshot |
     modelId,
     contextWindow,
   };
-  return { ...identity, ...readContextCapacitySupport(identity), capacitySource: model ? `model_connection:${connection!.id}:${connection!.updatedAt}` : runtime === 'copilot' && contextWindow ? 'copilot_sdk_model_catalog' : (budget?.contextWindowSource ?? null) };
+  return {
+    ...identity,
+    ...readContextCapacitySupport(identity),
+    capacitySource: model ? `model_connection:${connection!.id}:${connection!.updatedAt}` : runtime === 'copilot' && contextWindow ? 'copilot_sdk_model_catalog' : (budget?.contextWindowSource ?? null),
+  };
 }

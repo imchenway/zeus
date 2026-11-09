@@ -9,7 +9,11 @@ export class CopilotSdkEventAdapter {
   private readonly accountedCalls = new Set<string>();
 
   /** 每个适配器只属于一个原生会话和一个当前 Zeus 轮次。 */
-  constructor(private readonly sessionId: string, private readonly runId: string, private readonly generationId: string) {}
+  constructor(
+    private readonly sessionId: string,
+    private readonly runId: string,
+    private readonly generationId: string,
+  ) {}
 
   /** 顺序交付流式正文、完整消息、工具和终态；用量与消息按 API call 身份配对。 */
   accept(event: SessionEvent): AgentRuntimeEvent[] {
@@ -61,16 +65,18 @@ export class CopilotSdkEventAdapter {
       ...(message.data.content ? [{ type: 'text', text: message.data.content }] : []),
       ...(message.data.toolRequests ?? []).map((tool) => ({ type: 'toolCall', id: tool.toolCallId, name: tool.name, arguments: tool.arguments })),
     ];
-    return [this.wrap(message, 'message_end', {
-      message: {
-        id: message.data.messageId,
-        responseId: callId,
-        role: 'assistant',
-        content,
-        stopReason: message.data.toolRequests?.length ? 'toolUse' : 'stop',
-        ...(shouldAccount ? { usage: { input, output, cacheRead, cacheWrite, reasoning: usage?.data.reasoningTokens ?? 0, totalTokens: input + cacheRead + cacheWrite + output } } : {}),
-      },
-    })];
+    return [
+      this.wrap(message, 'message_end', {
+        message: {
+          id: message.data.messageId,
+          responseId: callId,
+          role: 'assistant',
+          content,
+          stopReason: message.data.toolRequests?.length ? 'toolUse' : 'stop',
+          ...(shouldAccount ? { usage: { input, output, cacheRead, cacheWrite, reasoning: usage?.data.reasoningTokens ?? 0, totalTokens: input + cacheRead + cacheWrite + output } } : {}),
+        },
+      }),
+    ];
   }
 
   /** Core 事件使用连续序号和 SDK 时间戳，避免重排同一轮次的消息。 */
