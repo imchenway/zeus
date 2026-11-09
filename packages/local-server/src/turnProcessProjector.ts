@@ -8,10 +8,10 @@ interface TurnIdentity {
   segment: ConversationRuntimeSegmentRecord;
 }
 
-/** Pi 事件进入 Zeus 会话语义时必须携带的冻结协议与展示阶段。 */
+/** SDK 事件进入 Zeus 会话语义时携带冻结协议与展示阶段。 */
 interface PiTurnIdentity extends TurnIdentity {
   /** 本次执行快照冻结的线协议族。 */
-  protocolFamily: ModelProtocolFamily;
+  protocolFamily: ModelProtocolFamily | 'copilot_sdk';
   /** 当前 Assistant 响应对应的稳定展示阶段；旧事件允许为空。 */
   stageId: string | null;
 }
@@ -96,7 +96,7 @@ export class TurnProcessProjector {
         const kind: ConversationProcessKind = failureText ? 'warning' : type === 'thinking' || type === 'reasoning' ? 'reasoning' : 'tool';
         const sourceId = typeof block.id === 'string' ? block.id : `${identity.stageId ?? event.nativeRunId}:${index}`;
         /** 工具声明和执行进度使用同一个身份，声明本身不代表执行完成。 */
-        const sourceEventId = kind === 'tool' ? `pi:tool_execution:${sourceId}` : `pi:block:${sourceId}`;
+        const sourceEventId = kind === 'tool' ? `${event.agentKind}:tool_execution:${sourceId}` : `${event.agentKind}:block:${sourceId}`;
         /** 重放旧的声明时不能回退已完成调用的结果。 */
         const existing = kind === 'tool' ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
         if (existing) {
@@ -112,7 +112,7 @@ export class TurnProcessProjector {
             status: failureText ? 'failed' : kind === 'tool' ? 'in_progress' : 'completed',
             title: failureText ? (message.stopReason === 'aborted' ? '运行已中止' : '运行错误') : processTitle(kind, type),
             detail: {
-              provider: 'pi',
+              provider: event.agentKind,
               protocolFamily: identity.protocolFamily,
               stageId: identity.stageId,
               // Pi 各协议返回的思考正文都属于可回看的过程正文，不能只保留 Anthropic。
@@ -131,7 +131,7 @@ export class TurnProcessProjector {
     if (!mapped) return [];
     const sourceId = typeof payload.toolCallId === 'string' ? payload.toolCallId : typeof payload.attempt === 'number' ? String(payload.attempt) : String(event.sequence);
     /** 调用、进度和结果共用调用身份；其他状态保留各自事件身份。 */
-    const sourceEventId = mapped === 'tool' ? `pi:tool_execution:${sourceId}` : `pi:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`;
+    const sourceEventId = mapped === 'tool' ? `${event.agentKind}:tool_execution:${sourceId}` : `${event.agentKind}:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`;
     /** 完成通知通常不带参数，从同一条持久化调用保留原始参数和阶段。 */
     const previous = mapped === 'tool' ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
     /** 终态不被迟到的 started 或 update 回退。 */
@@ -148,7 +148,7 @@ export class TurnProcessProjector {
         kind: mapped,
         status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
         title: processTitle(mapped, event.type),
-        detail: { ...previousDetail, provider: 'pi', protocolFamily: identity.protocolFamily, stageId: previousDetail.stageId ?? identity.stageId, eventType: event.type, payload: { ...asRecord(previousDetail.payload), ...payload } },
+        detail: { ...previousDetail, provider: event.agentKind, protocolFamily: identity.protocolFamily, stageId: previousDetail.stageId ?? identity.stageId, eventType: event.type, payload: { ...asRecord(previousDetail.payload), ...payload } },
         sourceEventId,
         startedAt: event.createdAt,
         completedAt: failed || ending ? event.createdAt : null,

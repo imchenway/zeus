@@ -263,6 +263,11 @@ export interface BindPiConversationProviderInput extends BindConversationProvide
   modelId: string;
 }
 
+/** SDK 会话绑定必须记录真实 Provider 身份和传输类型。 */
+export interface BindManagedConversationProviderInput extends BindPiConversationProviderInput {
+  agentKind: 'pi' | 'copilot';
+}
+
 export interface ProviderSequenceSnapshot {
   generationId: string;
   sequence: number;
@@ -733,7 +738,7 @@ export class AgentCapabilitySnapshotRepository {
   create(input: CreateAgentCapabilitySnapshotInput): ZeusAgentCapabilitySnapshotRecord {
     const record: ZeusAgentCapabilitySnapshotRecord = {
       id: input.id ?? `agent_capability_${randomId(12)}`,
-      agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind'),
+      agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'agent capability kind'),
       transportKind: assertEnum(input.transportKind, ['app_server', 'rpc', 'sdk'] as const, 'agent capability transport'),
       supportStatus: assertEnum(input.supportStatus, ['unavailable', 'framework_only', 'experimental', 'verified'] as const, 'agent capability support status'),
       adapterVersion: input.adapterVersion ?? null,
@@ -758,7 +763,7 @@ export class AgentCapabilitySnapshotRepository {
   }
 
   listByAgent(agentKind: ConversationAgentKind, limit = 20): ZeusAgentCapabilitySnapshotRecord[] {
-    const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'claude'] as const, 'agent capability kind');
+    const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'agent capability kind');
     const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
     return this.db.select<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE agent_kind = ? ORDER BY checked_at DESC, id DESC LIMIT ?`, [normalizedAgentKind, safeLimit]).map(mapAgentCapabilitySnapshotRow);
   }
@@ -809,7 +814,7 @@ export class ConversationRepository {
     const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation permission mode');
     const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
-    const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
+    const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
     const agentTransport = input.agentTransport ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport') : transportKind === 'codex_native' ? 'app_server' : null;
     const timestamp = nowIso();
     const record: ZeusConversationRecord = {
@@ -1148,14 +1153,14 @@ export class ConversationRepository {
     return updated;
   }
 
-  /** Pi Worker 准备完成后绑定原生会话，同时保留此前已经展示给用户的 Zeus 会话身份。 */
-  bindPiProvider(conversationId: string, input: BindPiConversationProviderInput): ZeusConversationWithMessagesRecord {
+  /** 原生 SDK 会话绑定到既有 Zeus 会话，保留用户已见的会话身份。 */
+  bindManagedProvider(conversationId: string, input: BindManagedConversationProviderInput): ZeusConversationWithMessagesRecord {
     assertEnum(input.providerState, ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const timestamp = nowIso();
     this.db.execute(
       `UPDATE conversations SET transport_kind = 'codex_native', provider_id = ?, provider_thread_id = ?, provider_thread_path = COALESCE(?, provider_thread_path),
        provider_model = ?, provider_state = ?, provider_protocol_version = COALESCE(?, provider_protocol_version), provider_binary_version = COALESCE(?, provider_binary_version),
-       agent_kind = 'pi', agent_transport = 'rpc', model_source_id = ?, model_id = ?, native_session_id = ?, native_session_path = COALESCE(?, native_session_path), updated_at = ? WHERE id = ?`,
+       agent_kind = ?, agent_transport = ?, model_source_id = ?, model_id = ?, native_session_id = ?, native_session_path = COALESCE(?, native_session_path), updated_at = ? WHERE id = ?`,
       [
         input.providerId,
         input.providerThreadId,
@@ -1164,6 +1169,8 @@ export class ConversationRepository {
         input.providerState,
         input.providerProtocolVersion ?? null,
         input.providerBinaryVersion ?? null,
+        input.agentKind,
+        input.agentKind === 'copilot' ? 'sdk' : 'rpc',
         input.modelSourceId,
         input.modelId,
         input.providerThreadId,
@@ -1176,6 +1183,11 @@ export class ConversationRepository {
     const updated = this.getById(conversationId);
     if (!updated) throw new Error(`Zeus conversation not found: ${conversationId}`);
     return updated;
+  }
+
+  /** Pi 旧调用沿用相同原子绑定，不改变既有会话身份。 */
+  bindPiProvider(conversationId: string, input: BindPiConversationProviderInput): ZeusConversationWithMessagesRecord {
+    return this.bindManagedProvider(conversationId, { ...input, agentKind: 'pi' });
   }
 
   updateProviderThreadPath(conversationId: string, input: { providerThreadId: string; providerThreadPath: string }): ZeusConversationWithMessagesRecord {

@@ -188,7 +188,7 @@ export function planPortableContextCompaction(context: PortableConversationConte
   return { prefixEntries, recentEntries, estimatedInputTokens, targetBudgetTokens, batchTokens };
 }
 
-export function applyPortableContextCompaction(context: PortableConversationContext, plan: PortableContextCompactionPlan, summary: string, targetRuntime: 'codex' | 'pi'): void {
+export function applyPortableContextCompaction(context: PortableConversationContext, plan: PortableContextCompactionPlan, summary: string, targetRuntime: 'codex' | 'pi' | 'copilot'): void {
   const lastPrefix = plan.prefixEntries.at(-1)!;
   context.entries = [
     {

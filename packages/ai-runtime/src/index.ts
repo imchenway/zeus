@@ -30,6 +30,9 @@ export * from './modelConnectionCatalog.js';
 export * from './modelVersionNames.js';
 export * from './modelConnectionProbe.js';
 export * from './piSdkRuntimeDriver.js';
+export * from './copilotRuntimeManager.js';
+export * from './copilotSdkEventAdapter.js';
+export * from './copilotRuntimeDriver.js';
 export { expandCliSearchPath } from './cliSearchPath.js';
 export { projectTerminalOutput } from './terminalOutput.js';
 

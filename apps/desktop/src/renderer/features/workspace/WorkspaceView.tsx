@@ -89,6 +89,8 @@ import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 const ModelSetupDialog = lazy(() => import('../../settings/ModelSetup.js').then((module) => ({ default: module.ModelSetupDialog })));
 /** 账户设置与接入对话框复用同一按需模块。 */
 const CodexAccountSettings = lazy(() => import('../../settings/ModelSetup.js').then((module) => ({ default: module.CodexAccountSettings })));
+/** Copilot 设置按需载入，避免常驻工作面启动账号查询。 */
+const CopilotAccountSettings = lazy(() => import('../../settings/CopilotAccountSettings.js').then((module) => ({ default: module.CopilotAccountSettings })));
 /** GlobalAgentSettingsPane 仅在对应页面打开时加载。 */
 const GlobalAgentSettingsPane = lazy(() => import('../../settings/GlobalAgentSettingsPane.js').then((module) => ({ default: module.GlobalAgentSettingsPane })));
 /** TerminalSettingsPane 仅在对应页面打开时加载。 */
@@ -2176,6 +2178,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <SettingsSaveStatus status={modelSaveState} language={appShellSettings.appLanguage} />
                         </header>
                         <CodexAccountSettings controller={modelSetup} />
+                        <CopilotAccountSettings client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} />
                         <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} onSaveStateChange={setModelSaveState} />
                       </>
                     ) : null}

@@ -301,7 +301,7 @@ export function updateTaskModelPushDeferredMessages(pending: TaskModelPushPendin
 
 function createPendingChoice(task: TaskRecord, navigationId: string, model: string, form: TaskModelPushForm, capability: CodexTaskPushModelCapability | null): NativeConversationChoice {
   const now = new Date().toISOString();
-  const agentKind = capability?.agentKind === 'pi' ? 'pi' : 'codex';
+  const agentKind = capability?.agentKind === 'copilot' ? 'copilot' : capability?.agentKind === 'pi' ? 'pi' : 'codex';
   const modelSourceId = capability?.sourceId ?? (agentKind === 'codex' ? 'codex' : null);
   return {
     id: navigationId,
@@ -315,7 +315,7 @@ function createPendingChoice(task: TaskRecord, navigationId: string, model: stri
     stage: 'connecting',
     stageUpdatedAt: now,
     transportKind: 'codex_native',
-    providerId: agentKind === 'pi' ? `pi:${modelSourceId ?? 'custom'}` : 'codex',
+    providerId: agentKind === 'pi' ? `pi:${modelSourceId ?? 'custom'}` : agentKind,
     providerThreadId: null,
     providerModel: model,
     providerState: 'creating',
@@ -336,8 +336,8 @@ function createPendingChoice(task: TaskRecord, navigationId: string, model: stri
     collaborationMode: form.workMode === 'plan' ? 'plan' : 'default',
     agent: {
       kind: agentKind,
-      transport: agentKind === 'pi' ? 'sdk' : 'app_server',
-      supportStatus: agentKind === 'pi' ? 'experimental' : 'verified',
+      transport: agentKind === 'copilot' ? 'sdk' : agentKind === 'pi' ? 'rpc' : 'app_server',
+      supportStatus: agentKind === 'copilot' || agentKind === 'pi' ? 'experimental' : 'verified',
       capabilitySnapshotId: null,
     },
     model: {

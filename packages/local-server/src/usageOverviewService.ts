@@ -22,10 +22,12 @@ import {
 import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, type ConversationOutputRateMeasurement, type ConversationExecutionRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ModelConnectionService } from './modelConnectionService.js';
+import type { CopilotRuntimeManager } from '@zeus/ai-runtime';
 
 interface CreateUsageOverviewServiceOptions {
   ledger: CodexUsageLedgerRepository;
   codexUsage: CodexUsageService;
+  copilotRuntimeManager: CopilotRuntimeManager;
   modelConnections: ModelConnectionService;
   projects: ProjectRepository;
   conversations: ConversationRepository;
@@ -70,8 +72,17 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const key =
       JSON.stringify(connections.map((connection) => options.modelConnections.pricing.read(connection))) +
       JSON.stringify(pricingStatus) +
-      JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, [...kiloAccounts], outputMeasurements]);
-    if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
+        JSON.stringify([
+            revision,
+            localDate(readAt),
+            readAt.getTimezoneOffset(),
+            connections,
+            official,
+            [...kiloAccounts],
+            options.copilotRuntimeManager.readAccount(),
+            outputMeasurements,
+        ]);
+      if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const outputRateByTurn = indexOutputRateMeasurements(outputMeasurements);
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
@@ -82,7 +93,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const history = options.ledger.listOverviewProviders();
     const providerIds = new Set([
       ...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []),
-      ...history.map((entry) => entry.providerId),
+      ...(options.copilotRuntimeManager.readAccount()?.authenticated ? ['copilot'] : []), ...history.map((entry) => entry.providerId),
       ...connections.filter((connection) => kiloAccounts.get(connection.id)).map((connection) => `api:${connection.id}`),
     ]);
     const providers = [...providerIds]
@@ -133,6 +144,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
       if (!groups.has(`api:${connection.id}`)) groups.set(`api:${connection.id}`, []);
     }
     if (!groups.has('codex')) groups.set('codex', []);
+    if (options.copilotRuntimeManager.readAccount()?.authenticated && !groups.has('copilot')) groups.set('copilot', []);
 
     const since = rangeStart(input.range, readAt);
     const providers = [...groups.entries()]
@@ -223,6 +235,8 @@ function buildProviderSummary(input: {
 }): UsageProviderSummary {
   const { providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById } = input;
   const isCodex = providerId === 'codex';
+  /** Copilot 订阅的 Token 来自本地 SDK 事件，当前尚无可核验的账户历史余额。 */
+  const isCopilot = providerId === 'copilot';
   const sourceId = isCodex ? 'codex' : providerId.startsWith('api:') ? providerId.slice(4) : providerId;
   const connectionName = connectionNames.get(sourceId);
   const connection = connectionsById.get(sourceId);
@@ -245,10 +259,10 @@ function buildProviderSummary(input: {
   return {
     providerId,
     sourceId,
-    name: isCodex ? 'Codex' : (connectionName ?? sourceId),
-    kind: isCodex || input.kiloAccount?.pass ? 'subscription' : 'api',
-    deleted: !isCodex && !connectionName,
-    cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
+      name: isCodex ? 'Codex' : isCopilot ? 'GitHub Copilot' : (connectionName ?? sourceId),
+      kind: isCodex || isCopilot || input.kiloAccount?.pass ? 'subscription' : 'api',
+      deleted: !isCodex && !isCopilot && !connectionName,
+      cacheUsageAvailable: isCodex || connection?.templateId === 'deepseek' || rows.some((row) => row.usage.cachedInputTokens > 0 || row.usage.cacheWriteInputTokens > 0),
     planType: isCodex ? official.planType : input.kiloAccount?.pass ? 'Kilo Pass' : null,
     officialState: isCodex ? official.state : input.kiloAccount ? (input.kiloAccount.checkedAt && !input.kiloAccount.error ? 'available' : 'unavailable') : null,
     rateLimitWindows: isCodex ? official.rateLimitWindows : [],

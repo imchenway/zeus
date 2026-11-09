@@ -14,6 +14,8 @@ import type {
 
 /** Pi 使用 Zeus 的目标与提交记录，模型回合结束只触发检查，不代表目标完成。 */
 export function createPiGoalApplication(options: {
+  /** 目标控制归属真实 SDK 运行时。 */
+  runtimeKind?: 'pi' | 'copilot';
   db: ZeusDatabase;
   goals: ConversationGoalRepository;
   controls: ConversationRuntimeRepository;
@@ -27,10 +29,12 @@ export function createPiGoalApplication(options: {
   publish(conversationId: string): void;
   now(): string;
 }) {
+  /** Pi 旧会话保持原控制来源，Copilot 会话独立归属。 */
+  const runtimeKind = options.runtimeKind ?? 'pi';
   /** 所有入口只接受当前 Pi 会话，交接状态不能隐式取得控制权。 */
   function requireConversation(conversationId: string) {
     const conversation = options.conversations.getById(conversationId);
-    if (!conversation || conversation.agentKind !== 'pi' || conversation.archived || !conversation.nativeSessionId) throw new Error('当前 Pi 会话未就绪或已归档。');
+    if (!conversation || conversation.agentKind !== runtimeKind || conversation.archived || !conversation.nativeSessionId) throw new Error('当前 SDK 会话未就绪或已归档。');
     return conversation;
   }
 
@@ -67,7 +71,7 @@ export function createPiGoalApplication(options: {
     );
     options.controls.setGoalControl({
       conversationId: conversation.id,
-      source: 'pi',
+      source: runtimeKind,
       nativeSessionId: conversation.nativeSessionId!,
       resumeAfterSwitch: false,
       usageComplete: continuing ? (options.controls.getGoalControl(conversation.id)?.usageComplete ?? false) : true,
@@ -107,7 +111,7 @@ export function createPiGoalApplication(options: {
     const conversation = options.conversations.getById(conversationId);
     const goal = options.goals.get(conversationId);
     const control = options.controls.getGoalControl(conversationId);
-    if (!conversation || conversation.archived || conversation.agentKind !== 'pi' || goal?.status !== 'active' || control?.source !== 'pi' || control.nativeSessionId !== conversation.nativeSessionId) return;
+    if (!conversation || conversation.archived || conversation.agentKind !== runtimeKind || goal?.status !== 'active' || control?.source !== runtimeKind || control.nativeSessionId !== conversation.nativeSessionId) return;
     if (options.turns.getLatestActiveByConversation(conversationId)) return;
     const submissions = options.submissions.listByConversation(conversationId);
     const answered = new Set(
@@ -144,7 +148,7 @@ export function createPiGoalApplication(options: {
   async function settle(input: { conversationId: string; turnId: string; providerTurnId: string; tokensUsed: number; usageComplete: boolean; failed: boolean; interrupted: boolean; seconds: number }) {
     const goal = options.goals.get(input.conversationId);
     const control = options.controls.getGoalControl(input.conversationId);
-    if (!goal || control?.source !== 'pi' || control.accountedTurnId === input.turnId) return;
+    if (!goal || control?.source !== runtimeKind || control.accountedTurnId === input.turnId) return;
     const timestamp = options.now();
     options.goals.upsert(
       { ...goal, tokensUsed: goal.tokensUsed + input.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds + Math.max(0, input.seconds), providerUpdatedAt: Math.max(Date.parse(timestamp) / 1000, goal.providerUpdatedAt) },
@@ -171,7 +175,7 @@ export function createPiGoalApplication(options: {
       { ...goal, providerThreadId: nativeSessionId, status: control.resumeAfterSwitch ? 'active' : goal.status, providerUpdatedAt: Math.max(Date.parse(timestamp) / 1000, goal.providerUpdatedAt) },
       { occurredAt: timestamp },
     );
-    options.controls.setGoalControl({ ...control, source: 'pi', nativeSessionId, resumeAfterSwitch: false });
+    options.controls.setGoalControl({ ...control, source: runtimeKind, nativeSessionId, resumeAfterSwitch: false });
     await options.db.save();
     options.publish(conversationId);
   }
@@ -190,7 +194,7 @@ export function createPiGoalApplication(options: {
   async function recover(): Promise<void> {
     for (const goal of options.goals.listActive()) {
       const conversation = options.conversations.getById(goal.conversationId);
-      if (conversation?.agentKind !== 'pi' || conversation.archived) continue;
+      if (conversation?.agentKind !== runtimeKind || conversation.archived) continue;
       if (options.turns.getLatestActiveByConversation(conversation.id) || options.submissions.listQueueByConversation(conversation.id).some((submission) => submission.status === 'paused')) await updateStatus(conversation.id, 'paused');
       else await advance(conversation.id, `recovery:${goal.providerUpdatedAt}`);
     }

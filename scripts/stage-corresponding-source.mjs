@@ -16,7 +16,7 @@ export default async function stageCorrespondingSource() {
     .toString()
     .split('\0');
   /** Build and source roots exclude private task documents and generated artifacts. */
-  const selected = [...new Set(candidates)].filter((name) => name && (/^(apps|packages|scripts|\.github)\//u.test(name) || !name.includes('/')) && !/(^|\/)(node_modules|dist|\.tmp|\.env(?:\.[^/]*)?)(\/|$)/u.test(name));
+  const selected = [...new Set(candidates)].filter((name) => name && (/^(apps|packages|scripts|third_party|\.github)\//u.test(name) || !name.includes('/')) && !/(^|\/)(node_modules|dist|\.tmp|\.env(?:\.[^/]*)?)(\/|$)/u.test(name));
   /** A staged deletion is not an input; regular source files and symlinks are retained by tar. */
   const files = [];
   for (const name of selected) {
@@ -35,4 +35,7 @@ export default async function stageCorrespondingSource() {
     maxBuffer: 4 * 1024 * 1024,
   });
   for (const name of ['NOTICE', 'COPYING', 'LICENSE']) await copyFile(join(root, name), join(destination, name));
+  /** GitHub Copilot SDK 与随附 CLI 使用不同许可证，发行包分别提供两份原文。 */
+  await copyFile(join(root, 'third_party/licenses/copilot-sdk/LICENSE'), join(destination, 'copilot-sdk-LICENSE'));
+  await copyFile(join(root, 'third_party/licenses/copilot-cli/LICENSE.md'), join(destination, 'copilot-cli-LICENSE.md'));
 }

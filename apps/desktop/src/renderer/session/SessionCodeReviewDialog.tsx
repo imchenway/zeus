@@ -15,7 +15,7 @@ import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPrefer
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface SessionCodeReviewSelection {
-  agentKind: 'codex' | 'pi';
+  agentKind: 'codex' | 'pi' | 'copilot';
   model: string;
   effort: string;
   serviceTierSelection: NativeServiceTierSelection;
@@ -165,7 +165,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     setError(null);
     try {
       const accepted = await props.onStart({
-        agentKind: selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+        agentKind: selectedModel.agentKind === 'copilot' ? 'copilot' : selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
         model: selectedModel.id,
         effort: form.effort,
         serviceTierSelection: form.serviceTierSelection,

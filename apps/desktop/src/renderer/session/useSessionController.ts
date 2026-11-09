@@ -504,7 +504,7 @@ interface PendingSendEnvelope {
   delivery: 'queue' | 'steer_now';
   expectedTurnId?: string;
   model?: string;
-  agentKind?: 'codex' | 'pi';
+  agentKind?: 'codex' | 'pi' | 'copilot';
   effort?: string;
   /** 本次发送冻结的窗口容量。 */
   contextCapacityTokens?: number | null;

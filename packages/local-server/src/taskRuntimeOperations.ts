@@ -132,14 +132,14 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     const identity = selectedModelRef?.trim() || capabilities.preferredModel;
     /** 使用完整来源身份匹配；裸模型名只能唯一命中。 */
     const selected = resolveModelCapability(capabilities.models, identity);
-    if (selected?.agentKind === 'pi') return capabilities;
+    if (selected?.agentKind === 'pi' || selected?.agentKind === 'copilot') return capabilities;
     /** 已删除的 API 模型不能改用 Codex 或其他供应商。 */
     const reference = identity ? parseModelRef(identity) : null;
     if (reference && reference.sourceId !== 'codex') throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '所选模型连接已不可用，请重新选择模型。');
     if (codexNativeEnabled) await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
     /** 冷启动后读取同代目录；无模型继续返回明确错误，不让调用方解引用空选择。 */
     const resolved: ConversationCapabilitiesSnapshot = codexNativeEnabled ? await conversationCapabilityQueries.readConversation(project.id, { selectedModelRef: modelScope }) : capabilities;
-    if (resolved.models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
+    if (resolved.models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用模型。');
     return resolved;
   }
 

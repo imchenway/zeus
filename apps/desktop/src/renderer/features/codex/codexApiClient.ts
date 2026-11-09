@@ -29,6 +29,33 @@ import { buildConversationStartCommandRequest, conversationStartClientCommandTyp
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
 import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTransport.js';
 
+/** Copilot 账号身份只取自托管 SDK 当前登录状态。 */
+export interface CopilotAccountStatus {
+  authenticated: boolean;
+  login: string | null;
+  host: string | null;
+  authType: string | null;
+  checkedAt: string;
+}
+
+/** 设备码流程的可展示信息，不包含 SDK 私有 flow 身份。 */
+export interface CopilotLoginStep {
+  kind: 'open-url' | 'device-code' | 'awaiting' | 'needs-interaction' | 'input-required' | 'completed' | 'error';
+  url?: string;
+  verificationUri?: string;
+  userCode?: string;
+  prompt?: string;
+  status?: string;
+  message?: string;
+}
+
+/** 当前账号返回的 Copilot 模型目录。 */
+export interface CopilotAccountCatalog {
+  account: CopilotAccountStatus | null;
+  models: Array<{ id: string; name: string; policy?: { state?: string } }>;
+  quotas: Array<{ quotaId: string; service: string | null; observationKind: string | null; acquisitionStatus: string | null; accessState: string; quantityKind: string | null; unit: string; availableQuantity: number | null; entitledQuantity: number | null; observedAt: string | null }>;
+}
+
 /** 新运行实例就绪后通知当前窗口刷新模型选择器，保留正在编辑的草稿。 */
 export const codexCapabilitiesChangedEvent = 'zeus:codex-capabilities-changed';
 
@@ -52,6 +79,20 @@ export interface CodexRuntimeUpdateProgress {
 }
 
 export interface CodexApiClient {
+  /** 只读已缓存的 Copilot 登录和模型状态。 */
+  loadCopilotAccount: () => Promise<CopilotAccountCatalog>;
+  /** 主动从 Copilot SDK 刷新账号和模型目录。 */
+  refreshCopilotAccount: () => Promise<CopilotAccountCatalog>;
+  /** 开始 GitHub 设备码登录。 */
+  startCopilotLogin: () => Promise<{ loginId: string; step: CopilotLoginStep }>;
+  /** 读取当前登录 flow 的最新一步。 */
+  loadCopilotLoginStep: (loginId: string) => Promise<{ step: CopilotLoginStep }>;
+  /** 推进同一设备码登录。 */
+  advanceCopilotLogin: (loginId: string, input?: string) => Promise<{ step: CopilotLoginStep }>;
+  /** 取消当前设备码登录。 */
+  cancelCopilotLogin: (loginId: string) => Promise<void>;
+  /** 退出当前 Copilot 账号。 */
+  logoutCopilotAccount: () => Promise<CopilotAccountCatalog>;
   loadAgents: () => Promise<AgentCatalogSnapshot>;
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
   refreshTaskPushRepositoryRemote: (projectId: string, taskId: string, repositoryId: string) => Promise<CodexTaskRepositoryCapability>;
@@ -173,6 +214,13 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
   };
 
   return {
+    loadCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account'),
+    refreshCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/refresh', { method: 'POST', body: '{}' }),
+    startCopilotLogin: () => transport.request<{ loginId: string; step: CopilotLoginStep }>('/api/copilot/account/login', { method: 'POST', body: '{}' }),
+    loadCopilotLoginStep: (loginId) => transport.request<{ step: CopilotLoginStep }>(`/api/copilot/account/login/${encodeURIComponent(loginId)}`),
+    advanceCopilotLogin: (loginId, loginInput) => transport.request<{ step: CopilotLoginStep }>(`/api/copilot/account/login/${encodeURIComponent(loginId)}/advance`, { method: 'POST', body: JSON.stringify(loginInput === undefined ? {} : { input: loginInput }) }),
+    cancelCopilotLogin: async (loginId) => { await transport.request(`/api/copilot/account/login/${encodeURIComponent(loginId)}/cancel`, { method: 'POST', body: '{}' }); },
+    logoutCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/logout', { method: 'POST', body: '{}' }),
     loadAgents: () => transport.request<AgentCatalogSnapshot>('/api/agents'),
     loadCodexTaskPushCapabilities: (projectId, taskId) => transport.request<CodexTaskPushCapabilities>(`/api/projects/${encodeURIComponent(projectId)}/codex-task-push-capabilities?taskId=${encodeURIComponent(taskId)}`),
     refreshTaskPushRepositoryRemote: async (projectId, taskId, repositoryId) => {

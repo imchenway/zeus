@@ -1,4 +1,4 @@
-export type AgentKind = 'codex' | 'pi' | 'claude';
+export type AgentKind = 'codex' | 'pi' | 'copilot' | 'claude';
 
 export type AgentTransportKind = 'app_server' | 'rpc' | 'sdk';
 

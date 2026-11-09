@@ -12,11 +12,11 @@ interface ConversationQueueDispatchState {
   waiters: Array<{ revision: number; resolve(): void }>;
 }
 
-export function mustWaitForInProcessRuntimeTurn(runtimeKind: 'codex' | 'pi', inProgressTurns: ReadonlyArray<{ agentKind: string | null }>): boolean {
+export function mustWaitForInProcessRuntimeTurn(runtimeKind: 'codex' | 'pi' | 'copilot', inProgressTurns: ReadonlyArray<{ agentKind: string | null }>): boolean {
   if (inProgressTurns.length === 0) return false;
   // Pi Worker 是唯一活动权威时，只能等待它发出终态。Codex Provider 则允许 coordinator
   // 继续观察 Provider thread，以收口 Core 重启后残留的本地 active 状态。
-  return runtimeKind === 'pi' || inProgressTurns.some((turn) => turn.agentKind === 'pi');
+  return runtimeKind === 'pi' || runtimeKind === 'copilot' || inProgressTurns.some((turn) => turn.agentKind === 'pi' || turn.agentKind === 'copilot');
 }
 
 export function shouldRequestConversationQueueDispatch(type: string, payload: Readonly<Record<string, unknown>>): boolean {

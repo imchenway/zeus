@@ -14,7 +14,7 @@ export interface ConversationGoalControlRecord {
   /** 稳定产品会话。 */
   conversationId: string;
   /** handoff 表示旧控制器已停止、新控制器尚未接管。 */
-  source: 'codex' | 'pi' | 'handoff';
+  source: 'codex' | 'pi' | 'copilot' | 'handoff';
   /** 已确认绑定的原生会话。 */
   nativeSessionId: string;
   /** 切换前目标是否需要继续运行。 */

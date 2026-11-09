@@ -3099,7 +3099,7 @@ function isCapabilityModel(value: unknown): value is ConversationCapabilityModel
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.model === 'string' &&
-    (value.agentKind === 'codex' || value.agentKind === 'pi') &&
+    (value.agentKind === 'codex' || value.agentKind === 'pi' || value.agentKind === 'copilot') &&
     typeof value.available === 'boolean' &&
     Array.isArray(value.supportedReasoningEfforts) &&
     Array.isArray(value.serviceTiers)

@@ -1,6 +1,8 @@
 import { GitDeliveryExecution } from './gitDeliveryExecution.js';
 import { GitEnvironmentSummaryService } from './gitEnvironmentSummary.js';
 import { registerBrowserTranslationRoutes } from './browserTranslationRoutes.js';
+import { registerCopilotAccountRoutes } from './copilotAccountRoutes.js';
+import type { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { registerTaskReminderService } from './taskReminderService.js';
 import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
@@ -28,6 +30,7 @@ import {
   type CodexRuntimeMaintenanceControl,
   type CodexModelCapability,
   type CodexRemoteControlStatus,
+  type CopilotRuntimeManager,
   createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
   isNonCodexAiCliAdapterId,
@@ -497,6 +500,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   /** 平台通用时钟返回 Date；写入存储前由各领域显式序列化。 */
   now(): Date;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
+  copilotRuntimeManager: CopilotRuntimeManager;
+  copilotNativeCoordinator: ReturnType<typeof createPiNativeConversationCoordinator>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
   conversationExperts: ConversationExpertRepository;
@@ -610,6 +615,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     buildReleaseUpdateStatus,
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
+    copilotRuntimeManager,
     codexConfigImportService,
     zeusSkillDefaultCwd,
     zeusSkillService,
@@ -704,6 +710,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     parseTelegramNotificationSettingsInput,
     parseTelegramSecuritySettingsInput,
     piNativeCoordinator,
+    copilotNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
     prepareWorkspaceGitCommand,
@@ -1448,6 +1455,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         modelConnections.listMetadata().find((connection: import('@zeus/ai-runtime').ModelConnectionRecord) => connection.id === model.sourceId),
         model.model,
         model.agentKind,
+        model.agentKind === 'copilot' ? model.contextWindow : null,
       );
     },
     settings,
@@ -1466,6 +1474,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     modelCatalog: {
       hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,
       listSelectableModels: (selectedModelRef) => modelConnections.listSelectableModels(selectedModelRef),
+    },
+    copilotCatalog: {
+      readAccount: () => copilotRuntimeManager.readAccount(),
+      readModels: () => copilotRuntimeManager.readModels(),
     },
     git: {
       readRepositoryContext: (localPath) => getGitRepositoryContext(localPath),
@@ -1733,6 +1745,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     codexManager: codexAppServerManager,
     codexCoordinator: codexNativeCoordinator,
     piCoordinator: piNativeCoordinator,
+    copilotCoordinator: copilotNativeCoordinator,
     goals: conversationGoals,
     conversations,
     turns: conversationTurns,
@@ -1896,6 +1909,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     now,
     sendNativeError: sendNativeConversationApiError,
   });
+  registerCopilotAccountRoutes({ server, manager: copilotRuntimeManager, readOnlyValidation });
   registerZeusPluginRoutes({
     server,
     plugins: zeusPluginService,
@@ -1965,11 +1979,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     goals: conversationGoals,
     codex: {
       ...codexNativeCoordinator,
-      readGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal(input),
-      setGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).setGoal(input),
-      pauseGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).pauseGoal(input),
-      resumeGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).resumeGoal(input),
-      clearGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).clearGoal(input),
+      readGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal(input),
+      setGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).setGoal(input),
+      pauseGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).pauseGoal(input),
+      resumeGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).resumeGoal(input),
+      clearGoal: (input) => (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).clearGoal(input),
     },
     archiveNativeConversation,
     prepareConversationArchive,
@@ -2036,7 +2050,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       queueSendNow: async ({ params, operationIdentity, providerWriteLifecycle }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId, providerWriteLifecycle });
+        const operation = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({ conversationId: conversation.id, submissionId: params.submissionId, providerWriteLifecycle });
         const updatedConversation = conversations.getById(conversation.id);
         const submission = conversationSubmissions.getById(operation.submissionId);
         if (!updatedConversation || !submission) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native send-now acceptance was not persisted.');
@@ -2056,7 +2070,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             const childTurn = conversationTurns.getLatestActiveByConversation(execution.childConversationId);
             if (child && childTurn?.providerTurnId) {
               try {
-                if (child.agentKind === 'pi') await piNativeCoordinator.interruptTurn({ conversation: child, providerTurnId: childTurn.providerTurnId });
+                if (child.agentKind === 'pi' || child.agentKind === 'copilot') await (child.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation: child, providerTurnId: childTurn.providerTurnId });
                 else await codexNativeCoordinator.interruptTurn({ conversationId: child.id, providerTurnId: childTurn.providerTurnId });
               } catch {
                 // 父轮次的停止意图仍需耐久收口；子 Provider 的迟到结果会被终态门禁丢弃。
@@ -2087,8 +2101,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         }
         await stopConversationSubagents(conversation.id);
         const operation =
-          conversation.agentKind === 'pi'
-            ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+          conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
+            ? await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
             : await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: turn.providerTurnId! });
         const updatedConversation = conversations.getById(conversation.id);
         const submission = operation.submissionId ? conversationSubmissions.getById(operation.submissionId) : undefined;
@@ -2108,7 +2122,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       planImplementationRespond: async ({ params, action, feedback, attachments, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
+        const operation = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
           conversationId: conversation.id,
           requestId: params.requestId,
           action,
@@ -2130,8 +2144,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       queueResume: async ({ params }) => {
         const conversation = requireNativeQueueConversation(params);
-        if (conversation.agentKind === 'pi') {
-          await piNativeCoordinator.resumeQueue({ conversationId: conversation.id, reason: 'interrupted' });
+        if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
+          await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).resumeQueue({ conversationId: conversation.id, reason: 'interrupted' });
           return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
         }
         return codexNativeCoordinator.resumeInterruptedQueue({ conversationId: conversation.id });
@@ -2139,14 +2153,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       queueRecover: async ({ params, intent }) => {
         const conversation = requireNativeQueueConversation(params);
         // 检查只返回已有 Pi 事实；不重启执行器或重新准备合入目录。
-        if (intent === 'check' && conversation.agentKind === 'pi') return toNativeQueueApiSnapshot(conversation);
+        if (intent === 'check' && (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot')) return toNativeQueueApiSnapshot(conversation);
         const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
         if (intent === 'continue' && conflictAttempt?.state === 'failed') {
           await retryTaskIntegrationAiPreparation(conversation, conflictAttempt);
           return toNativeQueueApiSnapshot(conversation);
         }
-        if (conversation.agentKind === 'pi') {
-          await piNativeCoordinator.resumeQueue({ conversationId: conversation.id, reason: 'recovery_required' });
+        if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
+          await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).resumeQueue({ conversationId: conversation.id, reason: 'recovery_required' });
           return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
         }
         return codexNativeCoordinator.recoverQueue({ conversationId: conversation.id, intent });
@@ -2252,7 +2266,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
     }
     try {
-      const goal = await (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal({ conversationId: conversation.id });
+      const goal = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal({ conversationId: conversation.id });
       return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
@@ -3302,8 +3316,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           externalOperationId: `provider-turn-interrupt:${turn.providerTurnId}`,
           invoke: async () => {
             const operation =
-              conversation.agentKind === 'pi'
-                ? await piNativeCoordinator.interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+              conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
+                ? await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
                 : await codexNativeCoordinator.interruptTurn({ conversationId, providerTurnId: turn.providerTurnId! });
             return { operation, acknowledged: true };
           },
@@ -3313,7 +3327,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       resumeConversation: async ({ projectId, conversationId, operationIdentity }) => {
         const conversation = conversations.getRecordById(conversationId);
-        if (!conversation || conversation.projectId !== projectId || conversation.agentKind === 'pi') return false;
+        if (!conversation || conversation.projectId !== projectId || conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') return false;
         const value: Record<string, never> = {};
         const request = imInternalCommandRequest({
           commandType: conversationDispatchCommandTypes.queueResume,
@@ -3464,7 +3478,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: requestId,
           externalOperationId: `plan-implementation-response:${requestId}`,
           invoke: () =>
-            (conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
+            (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({ conversationId, requestId, action, operationIdentity, ...(feedback !== undefined ? { feedback } : {}) }),
           isExplicitRejection: isExplicitConversationStartRejection,
         });
         const accepted = conversationPlanActions.getById(requestId);
@@ -5092,6 +5106,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
     try {
       await piNativeCoordinator.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await copilotNativeCoordinator.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await copilotRuntimeManager.close();
     } catch (error) {
       cleanupErrors.push(error);
     }

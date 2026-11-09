@@ -45,7 +45,7 @@ export class CodexSubagentQueryApplication {
     const conversation = this.ports.conversations.getById(conversationId);
     if (!conversation || conversation.projectId !== projectId) throw queryError('ZEUS_CONVERSATION_NOT_FOUND', '会话不存在。', 404);
     const owned = this.ports.owned?.list(conversation.id) ?? [];
-    if (conversation.agentKind === 'pi') return { conversationId, parentThreadId: conversation.id, items: owned };
+    if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') return { conversationId, parentThreadId: conversation.id, items: owned };
     const native = await this.load(this.requireCodexConversation(projectId, conversationId));
     return { ...native, items: [...native.items, ...owned] };
   }

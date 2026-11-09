@@ -6,16 +6,18 @@ export interface ProviderRuntimeControlPorts {
   server: FastifyInstance;
   readCodexHealth(): AgentRuntimeHealthSnapshot;
   readPiHealth(): AgentRuntimeHealthSnapshot;
+  readCopilotHealth(): AgentRuntimeHealthSnapshot;
   recovery: ProviderRuntimeRecoveryApplicationPort;
+  copilotRecovery: ProviderRuntimeRecoveryApplicationPort;
 }
 
 /**
- * Provider 运行态与显式恢复产品入口。恢复只切换 Pi Worker generation 并续接已知原生身份，
+ * Provider 运行态与显式恢复产品入口。恢复只切换 SDK generation 并续接已知原生身份，
  * 不消费会话队列、不重发上一条命令，也不把 Codex 的自动监督器伪装成手动恢复。
  */
 export function registerProviderRuntimeControlApi(ports: ProviderRuntimeControlPorts): void {
   ports.server.get('/api/diagnostics/provider-runtimes', async () => ({
-    items: [ports.readCodexHealth(), ports.readPiHealth()],
+    items: [ports.readCodexHealth(), ports.readPiHealth(), ports.readCopilotHealth()],
   }));
 
   ports.server.post(
@@ -39,6 +41,20 @@ export function registerProviderRuntimeControlApi(ports: ProviderRuntimeControlP
       }
     },
   );
+  /** Copilot 仅切换托管 SDK 世代，未知发送结果不自动重放。 */
+  ports.server.post('/api/provider-runtimes/copilot/recover', async (request: FastifyRequest<{ Body: unknown }>, reply) => {
+    try {
+      return await ports.copilotRecovery.execute(request.body);
+    } catch (error) {
+      return reply.code(readErrorStatus(error)).send({
+        error: readErrorCode(error) ?? 'ZEUS_PROVIDER_RECOVERY_FAILED',
+        message: error instanceof Error ? error.message : 'Copilot Runtime 恢复失败。',
+        replayedCommandCount: 0,
+        details: readErrorDetails(error),
+        health: ports.readCopilotHealth(),
+      });
+    }
+  });
 }
 
 function readErrorCode(error: unknown): string | null {

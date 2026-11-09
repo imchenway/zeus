@@ -1,6 +1,6 @@
 import { backfillConnectionPrices } from './modelPricingBackfill.js';
 import { generateCodexText } from './gitCommitCodexGeneration.js';
-import { piSdkBinaryVersion, codexInstallationCommand, codexStandaloneCandidates, findExecutable } from '@zeus/ai-runtime';
+import { CopilotRuntimeManager, piSdkBinaryVersion, codexInstallationCommand, codexStandaloneCandidates, findExecutable } from '@zeus/ai-runtime';
 /** 桌面动态价格读取复用受限公网访问边界。 */
 export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -526,7 +526,7 @@ export interface CreateConversationMessageBody {
   serviceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
-  agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
   pluginReferences?: unknown;
   expertMentions?: Array<{ employeeId: string }>;
   skillReferences?: Array<{ id: string }>;
@@ -612,7 +612,7 @@ export type StartTaskConversationBody = (
   clientUserMessageId?: string;
   displayText?: string;
   collaborationMode?: ConversationCollaborationMode;
-  agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
   expertMentions?: Array<{ employeeId: string }>;
   skillReferences?: Array<{ id: string }>;
   computerUseRequested?: boolean;
@@ -644,7 +644,7 @@ export interface StartProjectConversationBody {
   model?: string;
   effort?: string;
   clientUserMessageId?: string;
-  agentKind?: 'codex' | 'pi' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
   goalObjective?: string;
   pluginReferences?: unknown;
   displayText?: string;
@@ -718,6 +718,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const now = () => new Date();
   const readOnlyValidation = options.readOnlyValidation;
   const dataLayout = options.dataLayout ?? createZeusDataLayoutForDatabase(options.dbPath);
+  /** Copilot SDK 使用专属历史目录；账户及进程只在用户操作时启动。 */
+  const copilotRuntimeManager = new CopilotRuntimeManager(join(dataLayout.root, 'copilot'), dataLayout.root);
   if (resolve(dataLayout.database) !== resolve(options.dbPath)) throw new Error('Zeus 数据路径登记表与数据库路径不一致。');
   if (readOnlyValidation && (resolve(readOnlyValidation.validationRoot) !== resolve(dataLayout.root) || resolve(readOnlyValidation.database.path) !== resolve(options.dbPath))) {
     throw Object.assign(new Error('只读验证描述符与 Local Server 数据路径不一致。'), { code: 'ZEUS_READ_ONLY_VALIDATION_PATH_MISMATCH', statusCode: 503 });
@@ -1279,7 +1281,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (input.taskId && !task) throw nativeApiError('ZEUS_CONTEXT_TASK_NOT_FOUND', '上下文编译找不到目标任务，已拒绝 Provider 派发。');
     if (task && task.projectId !== project.id) throw nativeApiError('ZEUS_CONTEXT_TASK_PROJECT_MISMATCH', '上下文任务与项目不一致，已拒绝 Provider 派发。');
 
-    const configuredConnection = input.modelSourceId && input.modelSourceId !== 'codex' ? modelConnections.listMetadata().find((connection) => connection.id === input.modelSourceId) : undefined;
+    const configuredConnection = input.modelSourceId && input.modelSourceId !== 'codex' && input.modelSourceId !== 'copilot' ? modelConnections.listMetadata().find((connection) => connection.id === input.modelSourceId) : undefined;
     const configuredModel = configuredConnection?.models.find((model) => model.id === input.modelId);
     if (configuredConnection && !configuredModel) throw nativeApiError('ZEUS_CONTEXT_MODEL_NOT_FOUND', '上下文编译找不到已冻结的模型配置，已拒绝 Provider 派发。');
     if (configuredModel) {
@@ -1295,6 +1297,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           reservedOutputSource: `model_connection:${configuredConnection!.id}:${configuredConnection!.updatedAt}`,
           checkedAt: configuredConnection!.updatedAt,
         }
+      : input.provider === 'copilot'
+        ? (() => {
+            const model = copilotRuntimeManager.readModels().find((candidate) => candidate.id === input.modelId);
+            if (!copilotRuntimeManager.readAccount()?.authenticated || !model || model.policy?.state === 'disabled' || model.policy?.state === 'unconfigured') return null;
+            const contextWindowTokens = model.capabilities.limits.max_context_window_tokens;
+            const officialOutputLimit = model.capabilities.limits.max_output_tokens;
+            const reservedOutputTokens = officialOutputLimit ?? Math.min(8_192, Math.ceil(contextWindowTokens * 0.05));
+            return {
+              contextWindowTokens,
+              reservedOutputTokens,
+              contextWindowSource: 'copilot_sdk_model_catalog',
+              reservedOutputSource: officialOutputLimit ? 'copilot_sdk_model_catalog' : 'zeus_fallback_5_percent_max_8192',
+              checkedAt: copilotRuntimeManager.readAccount()?.checkedAt ?? null,
+            };
+          })()
       : input.provider === 'codex'
         ? requireCodexDispatchModelBudget(input.modelId, input.providerGenerationId)
         : input.modelSourceId === null
@@ -1335,13 +1352,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       exact: false,
       source: null,
       checkedAt: budget.checkedAt,
-      reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : `${piSdkBinaryVersion} 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。`,
+      reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : input.provider === 'copilot' ? 'Copilot SDK 未提供发送前完整请求的精确 token-count；只使用运行后的真实 usage。' : `${piSdkBinaryVersion} 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。`,
     };
     const envelope = await contextDispatch.compileForDispatch({
       project: { id: project.id, localPath: project.localPath },
       task: task ? { id: task.id, code: task.taskCode } : null,
       provider: {
-        id: input.provider === 'codex' ? 'codex' : `pi:${input.modelSourceId ?? 'custom'}`,
+        id: input.provider === 'codex' ? 'codex' : input.provider === 'copilot' ? 'copilot' : `pi:${input.modelSourceId ?? 'custom'}`,
         modelId: input.modelId,
         contextWindowTokens: budget.contextWindowTokens,
         reservedOutputTokens: budget.reservedOutputTokens,
@@ -1435,11 +1452,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */
   /** 接纳与恢复使用真实目标身份，能力失效时不静默降档。 */
-  function validateNativeContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void {
+  function validateNativeContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi' | 'copilot'): void {
     if (budget === null) return;
     const state = codexAppServerManager.getState();
     const connection = modelConnections.listMetadata().find((entry) => entry.id === sourceId);
-    const policy = resolveContextCapacityPolicy(state.type === 'ready' ? state.capabilities : null, connection, modelId, runtime);
+    const policy = resolveContextCapacityPolicy(state.type === 'ready' ? state.capabilities : null, connection, modelId, runtime, runtime === 'copilot' ? copilotRuntimeManager.readModels().find((model) => model.id === modelId)?.capabilities.limits.max_context_window_tokens ?? null : null);
     assertContextCapacitySupported(budget, policy.contextWindow);
     if (!policy.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', policy.reason);
   }
@@ -1451,9 +1468,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return taskWorkTools.invoke(input);
     },
   };
-  const piNativeCoordinator = readOnlyValidation
-    ? createReadOnlyValidationPiCoordinator(() => now().toISOString())
-    : createPiNativeConversationCoordinator({
+  /** Pi 与 Copilot 共用持久会话编排，运行时、账户和目标控制按真实身份创建。 */
+  const createSdkCoordinator = (runtimeKind: 'pi' | 'copilot') =>
+    createPiNativeConversationCoordinator({
+        runtimeKind,
+        copilotRuntimeManager,
         /** 消息到达时读取已经准备好的资源目录，按真实执行根复用公共登记。 */
         syncItemResources: (item, projectRoot) =>
           syncConversationResources(
@@ -1487,6 +1506,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         executeSubagentTool: (input) => conversationOperations.executeSubagentTool(input),
         stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
         goals: createPiGoalApplication({
+          runtimeKind,
           db,
           goals: conversationGoals,
           controls: conversationRuntime,
@@ -1511,7 +1531,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }),
         modelConnections,
         usageLedger: codexUsageLedger,
-        agentDirectory: piAgentDirectory,
+        agentDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
         loadSkills: loadConversationSkills,
         processes: createConversationToolProcesses({
           runtime: () => aiRuntimeManager,
@@ -1540,11 +1560,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             dataLayout.pluginRuntime,
             dataLayout.piConfig,
             dataLayout.piSessions,
+            join(dataLayout.root, 'copilot'),
             ...['auth.json', 'config.toml', 'sessions', 'archived_sessions', 'sqlite', 'logs', 'app-server-daemon'].map((name) => join(options.codexHome ?? dataLayout.codexHome, name)),
           ],
           environment: () => buildRuntimeProcessEnv(),
         }),
-        sessionDirectory: piSessionDirectory,
+        sessionDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot', 'sessions') : piSessionDirectory,
         now: () => now().toISOString(),
         publish: publishNativeConversationEvent,
         redactSensitiveText,
@@ -1568,20 +1589,33 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         },
         compileDispatchContext: compileProviderDispatchContext,
       });
+  const piNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('pi');
+  const copilotNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('copilot');
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
   if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
   const providerRuntimeRecovery = new ProviderRuntimeRecoveryApplicationService({
     commandDeliveries,
-    readPiHealth: () => piNativeCoordinator.runtimeHealth(),
-    recoverPi: () => piNativeCoordinator.recoverRuntime(),
+    provider: 'pi',
+    readHealth: () => piNativeCoordinator.runtimeHealth(),
+    recover: () => piNativeCoordinator.recoverRuntime(),
+    now: () => now().toISOString(),
+  });
+  /** Copilot 恢复复用同一条 Outbox 接纳和结果未知保护。 */
+  const copilotRuntimeRecovery = new ProviderRuntimeRecoveryApplicationService({
+    commandDeliveries,
+    provider: 'copilot',
+    readHealth: () => copilotNativeCoordinator.runtimeHealth(),
+    recover: () => copilotNativeCoordinator.recoverRuntime(),
     now: () => now().toISOString(),
   });
   registerProviderRuntimeControlApi({
     server,
     readCodexHealth: () => readCodexProviderRuntimeHealth(codexAppServerManager, () => now().toISOString()),
     readPiHealth: () => piNativeCoordinator.runtimeHealth(),
+    readCopilotHealth: () => copilotNativeCoordinator.runtimeHealth(),
     recovery: providerRuntimeRecovery,
+    copilotRecovery: copilotRuntimeRecovery,
   });
   traceStartup('pi_recovery_ready');
   const runtimePersistenceWrites = new Set<Promise<void>>();
@@ -1753,7 +1787,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
     /** 所有恢复入口共用预算门禁，禁止先恢复 Provider 再发现能力已失效。 */
     validateContextCapacity: (conversation: import('@zeus/storage').ZeusConversationRecord) =>
-      validateNativeContextCapacity(conversation.contextCapacityTokens, conversation.modelSourceId, conversation.modelId ?? conversation.providerModel ?? '', conversation.agentKind === 'pi' ? 'pi' : 'codex'),
+      validateNativeContextCapacity(conversation.contextCapacityTokens, conversation.modelSourceId, conversation.modelId ?? conversation.providerModel ?? '', conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex'),
     conversationExperts,
     conversationSubmissions,
     conversations,
@@ -2022,6 +2056,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const usageOverviewService = createUsageOverviewService({
     ledger: codexUsageLedger,
     codexUsage: codexUsageService,
+    copilotRuntimeManager,
     modelConnections,
     projects,
     conversations,
@@ -2151,7 +2186,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     if (!head.executionSnapshotId) {
       // Pi 内部问题答复与计划输入仍沿用原队列身份，由原执行入口恢复。
-      if (conversation.agentKind === 'pi') await piNativeCoordinator.dispatchNextQueued(conversationId);
+      if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).dispatchNextQueued(conversationId);
       return;
     }
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
@@ -2179,6 +2214,24 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const project = projects.getById(conversation.projectId);
       if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.');
       const executionRoot = typeof workspaceIdentity.executionRoot === 'string' ? workspaceIdentity.executionRoot : project.localPath;
+      /** 重启后重新核对原账号模型目录，旧队列不能静默改为另一来源或失效模型。 */
+      if (frozen.runtimeKind === 'copilot') {
+        const account = await copilotRuntimeManager.refreshAccount();
+        const models = account.authenticated ? await copilotRuntimeManager.refreshModels() : [];
+        const model = models.find((candidate) => candidate.id === frozen.modelId);
+        if (frozen.connectionId || frozen.credentialSlotId !== 'copilot-managed-account' || frozen.endpointIdentity !== 'copilot://managed-account' || frozen.protocolFamily !== 'copilot_sdk' || !model || model.policy?.state === 'disabled' || model.policy?.state === 'unconfigured') {
+          const pausedAt = now().toISOString();
+          conversationSubmissions.updateStatus(head.id, 'paused', {
+            pausedReason: 'semantic_route_changed',
+            error: { code: 'ZEUS_CONVERSATION_ROUTE_CHANGED', message: 'Copilot 账号或模型目录已变化，请重新选择模型。' },
+            updatedAt: pausedAt,
+          });
+          conversationExecution.pauseQueueBehindHead(conversationId, head.id, pausedAt);
+          await db.save();
+          publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
+          return;
+        }
+      }
       const connection = frozen.connectionId ? await modelConnections.get(frozen.connectionId) : undefined;
       const configuredModel = connection?.models.find((model) => model.id === frozen.modelId);
       if (frozen.connectionId) {
@@ -2219,9 +2272,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         permissionMode: frozen.permissionMode,
         collaborationMode: frozen.collaborationMode,
         workspaceIdentity,
-        providerId: frozen.runtimeKind === 'codex' ? 'codex' : `pi:${frozen.connectionId ?? 'custom'}`,
+        providerId: frozen.runtimeKind === 'pi' ? `pi:${frozen.connectionId ?? 'custom'}` : frozen.runtimeKind,
         providerModel: frozen.connectionId ? modelRef(frozen.connectionId, frozen.modelId) : frozen.modelId,
-        providerProtocolVersion: frozen.runtimeKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
+        providerProtocolVersion: frozen.runtimeKind === 'copilot' ? 'copilot-sdk' : frozen.runtimeKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
         providerBinaryVersion: frozen.runtimeKind === 'pi' ? piSdkBinaryVersion : null,
       };
       const lifecycle = conversationExecutionCoordinator.createLifecycle({
@@ -2231,7 +2284,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           readableReasoningSummary: true,
           // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
           media: true,
-          contextWindow: configuredModel?.contextWindow ?? null,
+          contextWindow: configuredModel?.contextWindow ?? (frozen.runtimeKind === 'copilot' ? copilotRuntimeManager.readModels().find((model) => model.id === frozen.modelId)?.capabilities.limits.max_context_window_tokens ?? null : null),
           currentInputUtf8Bytes: Buffer.byteLength(content, 'utf8'),
         },
         userHistoryContent: {
@@ -2242,9 +2295,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ...(conversationContext ? { conversationContext } : {}),
         },
       });
-      if (frozen.runtimeKind === 'pi') {
+      if (frozen.runtimeKind === 'pi' || frozen.runtimeKind === 'copilot') {
+        const managedCoordinator = frozen.runtimeKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
         if (lifecycle.requiresNewSegment) {
-          await piNativeCoordinator.startConversation({
+          await managedCoordinator.startConversation({
             conversationId,
             submissionId: head.id,
             projectId: conversation.projectId,
@@ -2269,7 +2323,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             segmentLifecycle: lifecycle,
           });
         } else {
-          await piNativeCoordinator.submitMessage({
+          await managedCoordinator.submitMessage({
             conversation,
             submissionId: head.id,
             content,
@@ -2454,25 +2508,27 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     if (operations.length > 0) await db.save();
   };
-  const recoverAcceptedPiTurnsAfterRestart = async () => {
+  /** SDK 轮次在宿主重启后无活动事件订阅；Copilot 的结果保持待核对，避免误报已完成。 */
+  const recoverAcceptedSdkTurnsAfterRestart = async () => {
     const interruptedAt = now().toISOString();
-    const candidates = conversationTurns.listInProgress().filter((turn) => turn.agentKind === 'pi' && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
+    const candidates = conversationTurns.listInProgress().filter((turn) => (turn.agentKind === 'pi' || turn.agentKind === 'copilot') && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
     let recovered = false;
     for (const turn of candidates) {
       const segment = conversationExecution.currentSegment(turn.conversationId);
-      if (!segment || segment.runtimeKind !== 'pi' || segment.nativeSessionId !== turn.providerThreadId) continue;
-      const failure = {
-        code: 'ZEUS_PI_RUN_INTERRUPTED_BY_RESTART',
-        message: 'Zeus 重启后确认此前 Pi 运行内核已结束；已接纳轮次保留为中断。',
-      };
+      if (!segment || segment.runtimeKind !== turn.agentKind || segment.nativeSessionId !== turn.providerThreadId) continue;
+      const copilot = turn.agentKind === 'copilot';
+      const failure = copilot
+        ? { code: 'ZEUS_COPILOT_RESULT_REQUIRES_RECONCILIATION', message: 'Zeus 重启时 Copilot 轮次尚未确认终态；请核对原生历史后再继续。' }
+        : { code: 'ZEUS_PI_RUN_INTERRUPTED_BY_RESTART', message: 'Zeus 重启后确认此前 Pi 运行内核已结束；已接纳轮次保留为中断。' };
       conversationTurns.upsert({ ...turn, status: 'interrupted', error: failure, completedAt: interruptedAt, updatedAt: interruptedAt });
       if (turn.clientSubmissionId) {
         const submission = conversationSubmissions.getById(turn.clientSubmissionId);
         if (submission && (submission.status === 'dispatching' || submission.status === 'active')) {
-          conversationSubmissions.updateStatus(submission.id, 'completed', {
+          conversationSubmissions.updateStatus(submission.id, copilot ? 'paused' : 'completed', {
             providerTurnId: turn.providerTurnId,
+            ...(copilot ? { pausedReason: 'recovery_required' as const } : {}),
             error: failure,
-            resolvedAt: interruptedAt,
+            ...(!copilot ? { resolvedAt: interruptedAt } : {}),
             updatedAt: interruptedAt,
           });
         }
@@ -2480,17 +2536,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       for (const queued of conversationSubmissions.listByConversation(turn.conversationId).filter((submission) => submission.status === 'queued' && !submission.providerTurnId)) {
         conversationSubmissions.updateStatus(queued.id, 'paused', { pausedReason: 'interrupted', updatedAt: interruptedAt });
       }
-      conversations.updateAgentRuntime(turn.conversationId, { providerState: 'ready', status: 'open' });
+      conversations.updateAgentRuntime(turn.conversationId, { providerState: copilot ? 'paused' : 'ready', status: 'open' });
       conversationExecution.recordRecoveryEvent({
         conversationId: turn.conversationId,
         segmentId: segment.id,
-        eventKind: 'pi_accepted_turn_interrupted_after_restart',
+        eventKind: copilot ? 'copilot_accepted_turn_requires_reconciliation_after_restart' : 'pi_accepted_turn_interrupted_after_restart',
         payload: { turnId: turn.id, providerTurnId: turn.providerTurnId, submissionId: turn.clientSubmissionId },
         occurredAt: interruptedAt,
       });
       conversationExecution.persistWarning({
         conversationId: turn.conversationId,
-        warningKind: 'pi_turn_interrupted_after_restart',
+        warningKind: copilot ? 'copilot_turn_requires_reconciliation_after_restart' : 'pi_turn_interrupted_after_restart',
         payload: { turnId: turn.id, providerTurnId: turn.providerTurnId },
         occurredAt: interruptedAt,
       });
@@ -2956,10 +3012,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       if (mappedType === 'plugin.mcp.tool_completed') {
         agentCapabilitySnapshots.create({
-          agentKind: conversation.agentKind === 'pi' ? 'pi' : 'codex',
-          transportKind: conversation.agentKind === 'pi' ? 'sdk' : 'app_server',
+          agentKind: conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex',
+          transportKind: conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? 'sdk' : 'app_server',
           supportStatus: 'verified',
-          protocolVersion: conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
+          protocolVersion: conversation.agentKind === 'copilot' ? 'copilot-sdk' : conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
           capabilities: { tools: { state: 'supported', reason: 'Plugin MCP 工具完成了真实调用。' } },
           evidence: { source: 'plugin_mcp_tool_completed', conversationId, model: conversation.modelId ?? conversation.providerModel ?? null, eventType: mappedType },
           checkedAt: now().toISOString(),
@@ -3286,6 +3342,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings,
     conversationGoals,
     aiRuntimeManager,
+    copilotRuntimeManager,
+    copilotNativeCoordinator,
     artifactStore,
     appendAuditLog,
     assertCodexAccountReady,
@@ -3403,7 +3461,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     interruptConversationTurn: (conversation, providerTurnId) =>
-      conversation.agentKind === 'pi' ? piNativeCoordinator.interruptTurn({ conversation, providerTurnId }) : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
+      conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
+        ? (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId })
+        : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
     settings,
     aiRuntimeManager,
     stopPersistedOrphanRuntimeSession,
@@ -3758,6 +3818,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     buildReleaseUpdateStatus,
     closeTaskResourcesForTerminalStatus,
     codexAppServerManager,
+    copilotRuntimeManager,
     codexConfigImportService,
     codexHome,
     zeusSkillDefaultCwd: codexHome ?? dataLayout.codexHome,
@@ -3858,6 +3919,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseTelegramNotificationSettingsInput,
     parseTelegramSecuritySettingsInput,
     piNativeCoordinator,
+    copilotNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
     prepareWorkspaceGitCommand,
@@ -3978,7 +4040,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         failTaskIntegrationAiPreparation({ attemptId: attempt.id, integrationId: attempt.integrationId }, error instanceof Error ? error.message : '重启后无法恢复冲突准备。'),
       );
     }
-    await recoverAcceptedPiTurnsAfterRestart();
+    await recoverAcceptedSdkTurnsAfterRestart();
     await reconcilePausedTurnsAfterRestart();
   }
   if (!readOnlyValidation) await db.save();
@@ -4085,6 +4147,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!readOnlyValidation) await db.save();
     if (!readOnlyValidation && executionHostDispatchMayResume) {
       await piNativeCoordinator.recoverGoals();
+      await copilotNativeCoordinator.recoverGoals();
       if (startupRecoveryStopping) return;
       await recoverExpertRounds();
       const queuedConversationIds = new Set(

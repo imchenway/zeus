@@ -1179,6 +1179,7 @@ function providerRoleLabel(item: NativeSessionItemBuffer, role: ThreadItemRole, 
   if (sourceName) return sourceName;
   const agentKind = primitiveText(item.payload.agentKind);
   if (agentKind === 'pi') return 'Pi';
+  if (agentKind === 'copilot') return 'GitHub Copilot';
   if (agentKind === 'claude') return 'Claude';
   if (agentKind === 'codex') return 'Codex';
   return fallback?.trim() || null;

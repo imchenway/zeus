@@ -6,7 +6,8 @@ import type { ZeusDatabasePort } from './databasePort.js';
 
 export const digitalEmployeeSchemaMigrationId = '20260825_0001_digital_employees_v1';
 
-export const digitalEmployeeAgentKinds = ['codex', 'pi'] as const;
+/** 数字员工允许绑定已实现原生会话驱动的 Agent。 */
+export const digitalEmployeeAgentKinds = ['codex', 'pi', 'copilot'] as const;
 export const digitalEmployeePermissionModes = ['read-only', 'auto', 'auto-review', 'full-access'] as const;
 export const digitalEmployeeWorkModes = ['default', 'plan'] as const;
 export const digitalEmployeeAutomationTriggerKinds = ['immediate', 'once', 'daily', 'weekly', 'interval', 'task_created', 'task_updated', 'task_status_changed', 'code_changed'] as const;

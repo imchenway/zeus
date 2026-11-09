@@ -1032,7 +1032,7 @@ export function TaskModelPushModal(props: {
                   options={[
                     { value: 'read-only', label: zh ? '只读' : 'Read only' },
                     { value: 'auto', label: zh ? '请求批准' : 'Request approval' },
-                    { value: 'auto-review', label: zh ? '替我批准' : 'Approve for me', disabled: !selectedModel || selectedModel.agentKind === 'pi' || Boolean(props.form.stageId) },
+                    { value: 'auto-review', label: zh ? '替我批准' : 'Approve for me', disabled: !selectedModel || selectedModel.agentKind === 'pi' || selectedModel.agentKind === 'copilot' || Boolean(props.form.stageId) },
                     { value: 'full-access', label: zh ? '完全访问' : 'Full access' },
                   ]}
                   onChange={(permissionMode) => props.onChange({ ...props.form, permissionMode })}

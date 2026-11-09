@@ -83,7 +83,7 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
     executionWorkspaceMode?: 'direct' | 'worktree';
   } | null>;
   /** 实际目标发送或恢复前校验冻结预算；不按旧模型替代新路由。 */
-  validateContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void;
+  validateContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi' | 'copilot'): void;
   compileDispatchContext: ProviderDispatchContextCompiler;
   preflightCodexModelBudget: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
 }

@@ -17,7 +17,7 @@ export interface PreparePiProviderCommandInput {
 }
 
 interface PiProviderCommandPayload extends Record<string, unknown> {
-  provider: 'pi';
+  provider: 'pi' | 'copilot';
   operation: PiProviderCommandOperation;
   resourceId: string;
   requestSha256: string;
@@ -40,6 +40,7 @@ export class PiProviderCommandAttempt {
     readonly outboxId: string,
     readonly traceIdentity: string | null,
     private readonly providerGenerationId: string | null,
+    private readonly providerKind: 'pi' | 'copilot',
     private readonly now: () => string,
     private readonly redactSensitiveText: (value: string) => { text: string },
   ) {}
@@ -60,12 +61,12 @@ export class PiProviderCommandAttempt {
       this.commandDeliveries.recordOutcomeInCurrentTransaction({
         outboxId: this.outboxId,
         outcome: 'accepted',
-        providerId: 'pi',
+        providerId: this.providerKind,
         providerGenerationId: input.runtimeInstanceId,
         nativeSessionId: input.nativeSessionId,
         nativeTurnId: null,
         evidence: input.evidence ?? {
-          source: 'pi_provider_command_application',
+          source: `${this.providerKind}_provider_command_application`,
           operation: this.operation,
           traceIdentity: this.traceIdentity,
           nativeSessionPathPresent: input.nativeSessionPath !== null,
@@ -82,7 +83,7 @@ export class PiProviderCommandAttempt {
     this.commandDeliveries.recordOutcome({
       outboxId: this.outboxId,
       outcome: 'accepted',
-      providerId: 'pi',
+      providerId: this.providerKind,
       providerGenerationId: this.providerGenerationId,
       nativeSessionId: input.nativeSessionId,
       nativeTurnId: null,
@@ -99,7 +100,7 @@ export class PiProviderCommandAttempt {
       this.commandDeliveries.recordOutcomeInCurrentTransaction({
         outboxId: this.outboxId,
         outcome: 'accepted',
-        providerId: 'pi',
+        providerId: this.providerKind,
         providerGenerationId: this.providerGenerationId,
         nativeSessionId: input.nativeSessionId,
         nativeTurnId: null,
@@ -115,11 +116,11 @@ export class PiProviderCommandAttempt {
     this.commandDeliveries.recordOutcome({
       outboxId: this.outboxId,
       outcome: 'accepted',
-      providerId: 'pi',
+      providerId: this.providerKind,
       providerGenerationId: this.providerGenerationId,
       nativeSessionId: input.nativeSessionId,
       nativeTurnId: input.nativeTurnId,
-      evidence: input.evidence ?? { source: 'pi_provider_command_application', operation: this.operation, traceIdentity: this.traceIdentity },
+      evidence: input.evidence ?? { source: `${this.providerKind}_provider_command_application`, operation: this.operation, traceIdentity: this.traceIdentity },
       occurredAt: input.acceptedAt,
     });
     this.settled = true;
@@ -131,11 +132,11 @@ export class PiProviderCommandAttempt {
       this.commandDeliveries.recordOutcomeInCurrentTransaction({
         outboxId: this.outboxId,
         outcome: 'accepted',
-        providerId: 'pi',
+        providerId: this.providerKind,
         providerGenerationId: this.providerGenerationId,
         nativeSessionId: input.nativeSessionId,
         nativeTurnId: input.nativeTurnId,
-        evidence: input.evidence ?? { source: 'pi_provider_command_application', operation: this.operation, traceIdentity: this.traceIdentity },
+        evidence: input.evidence ?? { source: `${this.providerKind}_provider_command_application`, operation: this.operation, traceIdentity: this.traceIdentity },
         occurredAt: input.acceptedAt,
       });
       boundary.projectTurn();
@@ -150,12 +151,12 @@ export class PiProviderCommandAttempt {
     this.commandDeliveries.recordOutcome({
       outboxId: this.outboxId,
       outcome,
-      providerId: 'pi',
+      providerId: this.providerKind,
       providerGenerationId: this.providerGenerationId,
       nativeSessionId: input.nativeSessionId ?? null,
       nativeTurnId: input.nativeTurnId ?? null,
       evidence: {
-        source: 'pi_provider_command_application',
+        source: `${this.providerKind}_provider_command_application`,
         operation: this.operation,
         traceIdentity: this.traceIdentity,
         result: outcome,
@@ -176,24 +177,25 @@ export class PiProviderCommandApplicationService {
     private readonly commandDeliveries: CommandDeliveryRepository,
     private readonly now: () => string,
     private readonly redactSensitiveText: (value: string) => { text: string },
+    private readonly providerKind: 'pi' | 'copilot' = 'pi',
   ) {}
 
   prepare(input: PreparePiProviderCommandInput): PiProviderCommandAttempt {
     const requestSha256 = sha256(canonicalJson(input.requestIdentity));
     const traceIdentity = input.traceIdentity === undefined ? currentDatabasePerformanceTraceId() : input.traceIdentity;
-    const commandId = stableCommandId(input.operation, input.scope.kind, input.scope.id, input.commandKey);
+    const commandId = stableCommandId(this.providerKind, input.operation, input.scope.kind, input.scope.id, input.commandKey);
     const freshEnvelope: CommandEnvelope<PiProviderCommandPayload> = {
       schemaGeneration: commandEnvelopeSchemaGeneration,
       commandId,
-      commandType: commandType(input.operation),
+      commandType: commandType(this.providerKind, input.operation),
       actor: { kind: 'local_api', id: 'zeus-local-server' },
       scope: input.scope,
       expectedRevision: null,
-      idempotencyKey: stableIdempotencyKey(input.operation, input.idempotencyKey),
+      idempotencyKey: stableIdempotencyKey(this.providerKind, input.operation, input.idempotencyKey),
       issuedAt: input.issuedAt,
       traceIdentity,
       payload: {
-        provider: 'pi',
+        provider: this.providerKind,
         operation: input.operation,
         resourceId: input.resourceId,
         requestSha256,
@@ -205,11 +207,11 @@ export class PiProviderCommandApplicationService {
       envelope,
       requestSha256,
       destinationKind: input.operation === 'session_open' || input.operation === 'session_compact' ? 'provider_session' : 'provider_turn',
-      destinationId: input.operation === 'session_open' || input.operation === 'session_compact' ? 'pi:session' : 'pi:turn',
+      destinationId: input.operation === 'session_open' || input.operation === 'session_compact' ? `${this.providerKind}:session` : `${this.providerKind}:turn`,
       resourceId: input.resourceId,
       occurredAt: this.now(),
     });
-    return new PiProviderCommandAttempt(this.commandDeliveries, input.operation, commandId, prepared.outbox.id, envelope.traceIdentity ?? null, input.providerGenerationId, this.now, this.redactSensitiveText);
+    return new PiProviderCommandAttempt(this.commandDeliveries, input.operation, commandId, prepared.outbox.id, envelope.traceIdentity ?? null, input.providerGenerationId, this.providerKind, this.now, this.redactSensitiveText);
   }
 }
 
@@ -221,7 +223,7 @@ function parseStoredEnvelope(serialized: string, expected: CommandEnvelope<PiPro
     parsed.scope.kind !== expected.scope.kind ||
     parsed.scope.id !== expected.scope.id ||
     parsed.idempotencyKey !== expected.idempotencyKey ||
-    parsed.payload.provider !== 'pi' ||
+    parsed.payload.provider !== expected.payload.provider ||
     parsed.payload.operation !== expected.payload.operation ||
     parsed.payload.resourceId !== expected.payload.resourceId ||
     parsed.payload.requestSha256 !== expected.payload.requestSha256
@@ -231,27 +233,27 @@ function parseStoredEnvelope(serialized: string, expected: CommandEnvelope<PiPro
   return parsed;
 }
 
-function commandType(operation: PiProviderCommandOperation): string {
+function commandType(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation): string {
   switch (operation) {
     case 'session_open':
-      return 'provider.pi.session.open';
+      return `provider.${providerKind}.session.open`;
     case 'session_compact':
-      return 'provider.pi.session.compact';
+      return `provider.${providerKind}.session.compact`;
     case 'run_start':
-      return 'provider.pi.run.start';
+      return `provider.${providerKind}.run.start`;
     case 'run_steer':
-      return 'provider.pi.run.steer';
+      return `provider.${providerKind}.run.steer`;
     case 'run_interrupt':
-      return 'provider.pi.run.interrupt';
+      return `provider.${providerKind}.run.interrupt`;
   }
 }
 
-function stableCommandId(operation: PiProviderCommandOperation, scopeKind: string, scopeId: string, commandKey: string): string {
-  return `command_pi_${operation}_${sha256(canonicalJson([scopeKind, scopeId, commandKey])).slice(0, 32)}`;
+function stableCommandId(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation, scopeKind: string, scopeId: string, commandKey: string): string {
+  return `command_${providerKind}_${operation}_${sha256(canonicalJson([scopeKind, scopeId, commandKey])).slice(0, 32)}`;
 }
 
-function stableIdempotencyKey(operation: PiProviderCommandOperation, value: string): string {
-  return `pi:${operation}:${sha256(value)}`;
+function stableIdempotencyKey(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation, value: string): string {
+  return `${providerKind}:${operation}:${sha256(value)}`;
 }
 
 function canonicalJson(value: unknown): string {

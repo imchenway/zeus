@@ -319,7 +319,7 @@ function TaskStageItem(props: {
                 options={[{ value: '', label: zh ? '请选择模型' : 'Select a model', disabled: true }, ...modelOptions]}
                 onChange={(modelRef) => {
                   const model = props.models.find((candidate) => candidate.id === modelRef);
-                  props.onUpdate({ modelRef, agentKind: model?.agentKind === 'pi' ? 'pi' : 'codex', effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null, serviceTier: null });
+                  props.onUpdate({ modelRef, agentKind: model?.agentKind === 'copilot' ? 'copilot' : model?.agentKind === 'pi' ? 'pi' : 'codex', effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null, serviceTier: null });
                 }}
               />
             </label>
@@ -508,7 +508,7 @@ function createDefaultStage(
     kind,
     title,
     description,
-    agentKind: model?.agentKind === 'pi' ? 'pi' : 'codex',
+    agentKind: model?.agentKind === 'copilot' ? 'copilot' : model?.agentKind === 'pi' ? 'pi' : 'codex',
     modelRef: model?.id ?? '',
     effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null,
     serviceTier: null,
