@@ -5,18 +5,7 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { GitPullRequestIcon as GitPullRequest } from '@phosphor-icons/react/dist/csr/GitPullRequest';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { AgGridReact, type CustomCellRendererProps } from 'ag-grid-react';
-import {
-  ClientSideRowModelModule,
-  ColumnApiModule,
-  ColumnAutoSizeModule,
-  RowStyleModule,
-  type ColDef,
-  type ColumnMovedEvent,
-  type ColumnResizedEvent,
-  type GridApi,
-  type IHeaderParams,
-  type RowClassRules,
-} from 'ag-grid-community';
+import { ClientSideRowModelModule, ColumnApiModule, ColumnAutoSizeModule, RowStyleModule, type ColDef, type ColumnMovedEvent, type ColumnResizedEvent, type GridApi, type IHeaderParams, type RowClassRules } from 'ag-grid-community';
 import { isTaskPriority, type TaskPriority } from '@zeus/shared';
 import type { TaskRecord, TaskTableColumnKey } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
