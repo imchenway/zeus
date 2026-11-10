@@ -1228,8 +1228,8 @@
   padding: 2px 8px;
 }
 
-/* 表格与 Mermaid 图表共用全宽正文，预览和源码切换时保持宽度一致。 */
-.session-codex-parity-v1 .session-markdown:has(.table-node-wrapper, .session-mermaid-block) {
+/* 表格与所有 Markdown 代码块共用全宽正文，图表预览和源码切换时保持宽度一致。 */
+.session-codex-parity-v1 .session-markdown:has(.table-node-wrapper, .session-code-block) {
   inline-size: 100%;
 }
 
@@ -5316,13 +5316,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   white-space: nowrap;
 }
 
-/* 助手正文与底栏共享内容宽度，普通正文沿用阅读宽度，表格、图表与展开状态同步拓宽。 */
+/* 助手正文与底栏共享内容宽度，普通正文沿用阅读宽度，表格、代码块与展开状态同步拓宽。 */
 .session-codex-parity-v1 .session-thread-item-assistant > :is(.session-markdown, .session-assistant-message-footer) {
   inline-size: var(--session-assistant-content-width, min(var(--session-markdown-max), 100%));
 }
 
-/* 表格与 Mermaid 图表沿用整列布局，消息展开时也将同一宽度传给正文与底栏。 */
-.session-codex-parity-v1 .session-thread-item-assistant:is(.is-message-expanded, :has(> .session-markdown :is(.table-node-wrapper, .session-mermaid-block))) {
+/* 表格与所有 Markdown 代码块沿用整列布局，消息展开时也将同一宽度传给正文与底栏。 */
+.session-codex-parity-v1 .session-thread-item-assistant:is(.is-message-expanded, :has(> .session-markdown :is(.table-node-wrapper, .session-code-block))) {
   --session-assistant-content-width: 100%;
 }
 
