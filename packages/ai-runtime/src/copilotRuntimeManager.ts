@@ -1,5 +1,19 @@
-import { CopilotClient, type CopilotSession, type ModelInfo, type ResumeSessionConfig, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
+import { CopilotClient, RuntimeConnection, type CopilotSession, type ModelInfo, type ResumeSessionConfig, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+
+/** Electron 的 spawn 不能执行 ASAR 虚拟路径；开发和显式指定程序时沿用 SDK 解析。 */
+function packagedCopilotConnection(): RuntimeConnection | undefined {
+  /** 从 SDK 所属依赖树解析平台包，避免依赖应用工作目录或 pnpm 的提升布局。 */
+  const sdkEntry = createRequire(import.meta.url).resolve('@github/copilot-sdk');
+  if (!/\.asar[\\/]/u.test(sdkEntry) || process.env.COPILOT_CLI_PATH) return undefined;
+  /** macOS 和 Windows 安装包使用与当前进程架构一致的原生程序。 */
+  const platform = `${process.platform}-${process.arch}`;
+  /** 整个平台包已经解包，程序及相邻原生库必须使用同一个物理目录。 */
+  const runtimeDirectory = dirname(createRequire(sdkEntry).resolve(`@github/copilot-sdk-${platform}/package.json`)).replace(/\.asar(?=[\\/])/u, '.asar.unpacked');
+  return RuntimeConnection.forStdio({ path: join(runtimeDirectory, 'prebuilds', platform, process.platform === 'win32' ? 'copilot-runtime.exe' : 'copilot-runtime') });
+}
 
 /** 模型目录字段由 GitHub 官方 SDK 定义，Core 不维护静态模型副本。 */
 export type CopilotModelInfo = ModelInfo;
@@ -96,7 +110,7 @@ export class CopilotRuntimeManager {
   async ensureReady(): Promise<CopilotClient> {
     if (this.client) return this.client;
     if (this.starting) return this.starting;
-    const client = new CopilotClient({ baseDirectory: this.baseDirectory, workingDirectory: this.workingDirectory, mode: 'empty', logLevel: 'warning' });
+    const client = new CopilotClient({ connection: packagedCopilotConnection(), baseDirectory: this.baseDirectory, workingDirectory: this.workingDirectory, mode: 'empty', logLevel: 'warning' });
     const starting = client
       .start()
       .then(() => {

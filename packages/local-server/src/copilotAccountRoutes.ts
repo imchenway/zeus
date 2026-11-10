@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CopilotRuntimeManager } from '@zeus/ai-runtime';
+import { userFacingErrorCause } from '@zeus/shared';
 
 /** Copilot 账户和模型目录由 Core 持有；Renderer 只接收授权状态和设备码。 */
 export function registerCopilotAccountRoutes(input: { server: FastifyInstance; manager: CopilotRuntimeManager; readOnlyValidation: boolean }): void {
@@ -15,7 +16,8 @@ export function registerCopilotAccountRoutes(input: { server: FastifyInstance; m
       const account = await manager.refreshAccount();
       const models = account.authenticated ? await manager.refreshModels() : [];
       return { account, models, quotas: manager.readQuotas() };
-    } catch {
+    } catch (cause) {
+      console.warn('Copilot account refresh failed', userFacingErrorCause(cause));
       return reply.code(503).send({ error: 'ZEUS_COPILOT_ACCOUNT_UNAVAILABLE', message: 'Copilot 账户状态暂不可用。' });
     }
   });
@@ -25,7 +27,8 @@ export function registerCopilotAccountRoutes(input: { server: FastifyInstance; m
     if (input.readOnlyValidation) return unavailable(reply);
     try {
       return await manager.beginLogin();
-    } catch {
+    } catch (cause) {
+      console.warn('Copilot sign-in failed', userFacingErrorCause(cause));
       return reply.code(503).send({ error: 'ZEUS_COPILOT_LOGIN_UNAVAILABLE', message: 'Copilot 登录暂不可用。' });
     }
   });
@@ -53,7 +56,8 @@ export function registerCopilotAccountRoutes(input: { server: FastifyInstance; m
     try {
       await manager.cancelLogin(request.params.loginId);
       return { cancelled: true };
-    } catch {
+    } catch (cause) {
+      console.warn('Copilot sign-in cancellation failed', userFacingErrorCause(cause));
       return reply.code(503).send({ error: 'ZEUS_COPILOT_LOGIN_CANCEL_FAILED' });
     }
   });
@@ -63,7 +67,8 @@ export function registerCopilotAccountRoutes(input: { server: FastifyInstance; m
     if (input.readOnlyValidation) return unavailable(reply);
     try {
       return { account: await manager.logout(), models: [], quotas: [] };
-    } catch {
+    } catch (cause) {
+      console.warn('Copilot sign-out failed', userFacingErrorCause(cause));
       return reply.code(503).send({ error: 'ZEUS_COPILOT_LOGOUT_FAILED' });
     }
   });
