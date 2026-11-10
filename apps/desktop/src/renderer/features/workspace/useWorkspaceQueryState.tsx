@@ -1238,6 +1238,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     groups: nativeConversationGroups,
     cache: nativeConversationHotCacheRef.current,
     selectedConversationId: selectedNativeConversation?.id,
+    foregroundReady: !selectedNativeConversation || Boolean(nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state.snapshot),
     onCached: persistPreloadedConversation,
   });
   useEffect(() => {

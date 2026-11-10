@@ -342,6 +342,16 @@
   cursor: default;
 }
 
+/* 目录与分支固定容纳两行，异步补齐信息不推动下方操作入口。 */
+.session-codex-parity-v1 .session-quick-actions-row.session-quick-actions-metadata {
+  min-block-size: 46px;
+}
+
+/* 来源尚未补齐时也保留第二行，分支标题不在行内上下跳动。 */
+.session-codex-parity-v1 .session-quick-actions-metadata > .session-quick-actions-copy {
+  min-block-size: 32px;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row > svg {
   block-size: 17px;
   color: var(--session-text-muted);

@@ -52,7 +52,7 @@ interface SessionQuickActionsCardProps {
   capabilities?: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
-  onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
+  onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void | Promise<void>;
   /** 内置浏览器的显示状态由当前会话工作面维护。 */
   browserOpen: boolean;
   /** 入口只切换显示，浏览器标签与关闭流程仍由会话管理。 */
@@ -82,6 +82,8 @@ interface SourceRow {
 /** 正文列扣掉常驻卡 332px 后，仍能容纳 768px 正文和两侧留白。 */
 const PERSISTENT_CARD_MIN_COLUMN_WIDTH = 1200;
 const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
+/** 只保留最近 32 个范围的显示结果，打开时仍重新读取真实 Git 状态。 */
+const environmentStatusCache = new WeakMap<DashboardClient, Map<string, GitEnvironmentStatus>>();
 
 export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const zh = props.language === 'zh-CN';
@@ -94,6 +96,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [summary, setSummary] = useState<GitEnvironmentStatus | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workspaceError, setWorkspaceError] = useState<unknown>(null);
+  /** 打开中的窗口按发起会话归属，迟到回执不能清除另一次打开状态。 */
+  const [openingDelivery, setOpeningDelivery] = useState<{ conversationId: string } | null>(null);
+  /** 异步窗口回执只关闭发起会话自己的面板。 */
+  const currentConversationId = useRef(props.conversation.id);
+  currentConversationId.current = props.conversation.id;
   const taskId = props.task?.id ?? props.conversation.taskId;
   const gitClient = props.gitContext?.client;
   /** 普通目录读取项目仓库，独立工作树继续使用服务端绑定的会话范围。 */
@@ -113,30 +120,34 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   /** 交付入口沿用原目录模式，摘要订阅不扩大写入范围。 */
   const conversationGitClient = !useTaskWorkspaces ? gitClient : null;
   /** 审查入口核对原工作区身份，不借用其他仓库。 */
-  const workspace = summary?.workspace ?? null;
+  const workspace = summary?.workspace ?? props.conversation.workspace ?? null;
   const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
   /** 首次摘要到达前显示会话根目录；单次命令进入子仓库不改变工作区身份。 */
   const executionContext = props.state.snapshot?.executionContext;
   /** 执行上下文保留只读审查、冲突处理等精确范围；Git 聚合摘要只补充尚未加载的目录。 */
-  const cwd = executionContext?.cwd ?? summary?.cwd ?? null;
+  const cwd = executionContext?.cwd ?? summary?.cwd ?? props.conversation.executionPath ?? (directWorkspace ? props.gitContext?.project.localPath : null) ?? null;
   /** 任一目录模式有多个仓库时，不把首仓分支冒充整个工作区分支。 */
-  const branch = (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
-  const conversationReady = !useTaskWorkspaces && workspaceState === 'ready' && Boolean(summary?.repositoryCount);
+  const branch = (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? props.conversation.workspace?.branchName ?? null);
+  /** 来源分支保持一行，完整仓库与分支仍可悬停读取，补载不移动操作按钮。 */
+  const sourceBranches = summary?.sourceBranches?.map((source) => `${source.repositoryRelativePath}: ${source.branch ?? (zh ? '未记录' : 'Not recorded')}`).join(' · ') || summary?.sourceBranch;
+  const conversationReady = !useTaskWorkspaces && (Boolean(summary?.repositoryCount) || executionContext?.isGitRepository === true);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   /** 只区分是否有未提交更改，不读取或显示文件数及差异行数。 */
   const dirty = summary?.dirty ?? false;
   /** 交付行用图形和语义色区分 Git 状态，完整含义供悬停和读屏读取。 */
   const deliveryStatus =
-    workspaceState === 'idle' || workspaceState === 'loading'
-      ? { icon: CircleNotch, state: 'loading', label: zh ? '正在读取 Git 状态…' : 'Loading Git status…' }
-      : workspaceState === 'error'
-        ? { icon: WarningCircle, state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
-        : dirty
-          ? { icon: PencilSimpleLine, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
-          : summary?.repositoryCount
-            ? { icon: CheckCircle, state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
-            : { icon: MinusCircle, state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
+    openingDelivery?.conversationId === props.conversation.id
+      ? { icon: CircleNotch, state: 'loading', label: zh ? '正在打开代码交付…' : 'Opening code delivery…' }
+      : !summary && (workspaceState === 'idle' || workspaceState === 'loading')
+        ? { icon: CircleNotch, state: 'loading', label: zh ? '正在读取 Git 状态…' : 'Loading Git status…' }
+        : workspaceState === 'error'
+          ? { icon: WarningCircle, state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
+          : dirty
+            ? { icon: PencilSimpleLine, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
+            : summary?.repositoryCount
+              ? { icon: CheckCircle, state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
+              : { icon: MinusCircle, state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
   /** 保持状态图标的组件身份，加载时复用会话已有的旋转及减弱动画规则。 */
   const DeliveryStatusIcon = deliveryStatus.icon;
   /** 进入页面不依赖预读成功；加载和目录错误由交付页呈现并提供重试。 */
@@ -188,8 +199,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   /** 切换范围先清除旧状态，不把上个工作区的更改状态带入当前会话。 */
   useLayoutEffect(() => {
-    setSummary(null);
-    setWorkspaceState('idle');
+    /** 缓存按客户端与持久范围隔离，绝不借用上个会话的目录或状态。 */
+    const cached = gitClient ? environmentStatusCache.get(gitClient)?.get(summaryKey) : undefined;
+    setSummary(cached ?? null);
+    setWorkspaceState(cached ? 'ready' : 'idle');
     setWorkspaceError(null);
   }, [gitClient, summaryKey]);
 
@@ -213,6 +226,12 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         .loadGitEnvironmentStatus(props.conversation.projectId, scope, signal)
         .then((next) => {
           if (signal.aborted) return;
+          /** 有界显示缓存不参与交付和权限判断，服务端继续核验真实范围。 */
+          const cache = environmentStatusCache.get(gitClient) ?? new Map<string, GitEnvironmentStatus>();
+          cache.delete(summaryKey);
+          cache.set(summaryKey, next);
+          if (cache.size > 32) cache.delete(cache.keys().next().value!);
+          environmentStatusCache.set(gitClient, cache);
           setSummary(next);
           setWorkspaceState('ready');
         })
@@ -312,21 +331,25 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   /** 同一个按钮统一打开原生交付窗口，任务范围保留现有工作区定位。 */
   async function openDelivery(): Promise<void> {
+    if (openingDelivery?.conversationId === props.conversation.id) return;
     /** 与快捷键共用目录模式，摘要只补充尚未带回的任务工作区身份。 */
     const target = conversationGitDeliveryTarget({ ...props.conversation, taskId }, props.conversation.workspaceId ?? workspace?.id ?? null);
-    if (conversationGitClient) {
-      setOpen(false);
-      try {
+    /** 按钮立即反馈并防止重复提交，窗口可用后再关闭浮动面板。 */
+    const opening = { conversationId: props.conversation.id };
+    setOpeningDelivery(opening);
+    try {
+      if (conversationGitClient) {
         if (!window.zeus?.openTaskGitDeliveryWindow) throw new Error(zh ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.');
         await window.zeus.openTaskGitDeliveryWindow(target);
-      } catch (error) {
-        reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
+      } else if (target.taskId && props.onOpenGitDelivery) {
+        await props.onOpenGitDelivery(target.taskId, target.workspaceId ?? null);
       }
-      return;
+      if (currentConversationId.current === opening.conversationId) setOpen(false);
+    } catch (error) {
+      reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
+    } finally {
+      setOpeningDelivery((current) => (current === opening ? null : current));
     }
-    if (!target.taskId || !props.onOpenGitDelivery) return;
-    setOpen(false);
-    props.onOpenGitDelivery(target.taskId, target.workspaceId ?? null);
   }
 
   /** 浮层关闭后使用环境入口恢复焦点，避免引用已经卸载的工具行。 */
@@ -397,16 +420,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 </header>
 
                 <div className="session-quick-actions-list">
-                  <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
+                  <div className="session-quick-actions-row is-static session-quick-actions-metadata" data-icon-tooltip={cwd ?? undefined}>
                     <Folder aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '工作目录' : 'Working directory'}</strong>
-                      <small>{cwd ?? (zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
+                      <small>{cwd ?? (workspaceState === 'idle' || workspaceState === 'loading' ? (zh ? '正在读取…' : 'Loading…') : zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
                     </span>
                     {cwd ? <RuntimeCopyButton text={cwd} label={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} /> : null}
                   </div>
 
-                  <div className="session-quick-actions-row is-static" data-icon-tooltip={branch ?? undefined}>
+                  <div className="session-quick-actions-row is-static session-quick-actions-metadata" data-icon-tooltip={branch ?? undefined}>
                     <GitBranch aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>
@@ -414,18 +437,24 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                           ? zh
                             ? 'Git 状态读取失败'
                             : 'Failed to read Git status'
-                          : (branch ?? (workspaceState === 'ready' && summary?.repositoryCount === 0 ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable'))}
+                          : (branch ??
+                            (workspaceState === 'idle' || workspaceState === 'loading'
+                              ? zh
+                                ? '正在读取分支…'
+                                : 'Loading branch…'
+                              : summary?.repositoryCount === 0
+                                ? zh
+                                  ? '非 Git 目录'
+                                  : 'Not a Git repository'
+                                : zh
+                                  ? '分支不可用'
+                                  : 'Branch unavailable'))}
                       </strong>
-                      {summary?.sourceBranches?.length ? (
-                        summary.sourceBranches.map((source) => (
-                          <small key={source.repositoryRelativePath} title={`${source.repositoryRelativePath}: ${source.branch ?? (zh ? '未记录' : 'Not recorded')}`}>
-                            {zh ? '来源分支 ' : 'Source branch '}
-                            {summary.sourceBranches!.length > 1 ? `${source.repositoryRelativePath}: ` : ''}
-                            {source.branch ?? (zh ? '未记录' : 'Not recorded')}
-                          </small>
-                        ))
-                      ) : summary?.sourceBranch ? (
-                        <small>{zh ? `来源分支 ${summary.sourceBranch}` : `Source branch ${summary.sourceBranch}`}</small>
+                      {sourceBranches ? (
+                        <small title={sourceBranches}>
+                          {zh ? '来源分支 ' : 'Source branch '}
+                          {sourceBranches}
+                        </small>
                       ) : null}
                     </span>
                     {branch && !(directWorkspace && (summary?.repositoryCount ?? 0) > 1) ? (
@@ -487,7 +516,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   <button
                     type="button"
                     className="session-quick-actions-row"
-                    disabled={!canOpenDelivery}
+                    disabled={!canOpenDelivery || openingDelivery?.conversationId === props.conversation.id}
+                    aria-busy={openingDelivery?.conversationId === props.conversation.id || undefined}
                     data-icon-tooltip={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
                     onClick={openDelivery}
                   >
@@ -685,7 +715,7 @@ function resolveCodeReviewUnavailableReason(input: {
   if (!input.conversation.workspaceId || !input.conversation.environmentId) {
     return input.zh ? '此对话没有任务开始时的代码记录。请从拥有独立工作目录的任务对话启动审查' : 'This conversation has no record of the code when the task started. Start the review from a task conversation with its own working folder';
   }
-  if (input.workspaceState === 'idle' || input.workspaceState === 'loading') return input.zh ? '正在检查代码审查的工作目录…' : 'Checking the working folder for the code review…';
+  if (!input.workspace && (input.workspaceState === 'idle' || input.workspaceState === 'loading')) return input.zh ? '正在检查代码审查的工作目录…' : 'Checking the working folder for the code review…';
   if (input.workspaceState === 'error') return input.zh ? '读取工作目录失败，请重新打开面板重试' : 'Failed to load the working folder. Reopen this panel to retry';
   if (!input.workspace || !['ready', 'merged'].includes(input.workspace.state) || !input.workspace.worktreePath) return input.zh ? '此任务的工作目录已回收或不可用' : 'This task’s working folder has been reclaimed or is unavailable';
   return null;

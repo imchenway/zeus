@@ -390,6 +390,8 @@ export interface CreateSessionControllerOptions {
   realtimePolicy?: 'auto' | 'lazy';
   initialCachedState?: NativeSessionState;
   initialOptimisticState?: NativeSessionState;
+  /** 已选中的持久会话只供首屏展示，交互仍等待最新服务端事实。 */
+  initialConversation?: NativeConversationChoice;
   storage?: SessionDraftStorage;
   createId?: () => string;
   reconnectDelay?: (delayMs: number) => Promise<void>;
@@ -766,6 +768,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let realtimeSubscribed = false;
   let realtimeConnectionPromise: Promise<void> | null = null;
   let connectionToken = 0;
+  /** 同一连接、同一正文水位的渐进快照只触发一次附属信息读取。 */
+  let metadataHydrationConnection = -1;
   /** 连接换代或销毁时取消所有正在读取的恢复上下文。 */
   const transcriptHydrations = new Set<TranscriptHydrationContext>();
   let sessionMetricsHydrationToken = 0;
@@ -1248,6 +1252,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || snapshot.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
     }
+    /** 首屏与完整快照共用正文水位，补齐队列不重复读取 Git 环境和统计。 */
+    const refreshMetadata = metadataHydrationConnection !== connectionToken || state.snapshot?.throughEventSeq !== snapshot.throughEventSeq;
     lastAppliedSyncEventSequence = Math.max(lastAppliedSyncEventSequence, snapshot.throughEventSeq);
     for (const sequence of pendingSyncGapEvents.keys()) {
       if (sequence <= snapshot.throughEventSeq) deletePendingSyncGapEvent(sequence);
@@ -1260,8 +1266,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const projectedSnapshot = withoutResolvedRequests(snapshotWithExecutionContext);
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
     if (placementRecovery) await placementRecovery;
-    if (!snapshot.executionContext) void hydrateExecutionContext();
-    void hydrateSessionMetrics(projectedSnapshot.id);
+    if (refreshMetadata) {
+      metadataHydrationConnection = connectionToken;
+      if (!snapshot.executionContext) void hydrateExecutionContext();
+      void hydrateSessionMetrics(projectedSnapshot.id);
+    }
   }
 
   async function hydrateSessionMetrics(conversationId: string): Promise<void> {
@@ -2183,6 +2192,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     try {
       return await withHydrationAbort(
         (async () => {
+          /** 侧栏已确认的身份可先显示正文，最新目录事实与交互状态并行补齐。 */
+          const choicePromise = options.client.loadNativeConversationChoice(options.projectId, options.conversationId);
+          void choicePromise.catch(() => undefined);
           const interactionPromise = loadConversationInteractionForHydration();
           // 队列或确认项即使比正文更早失败，也由稍后的权威阶段统一处理，不能制造未处理 Promise。
           void interactionPromise.catch(() => undefined);
@@ -2193,7 +2205,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           });
           if (hooks?.onGoal) void goalPromise.then(hooks.onGoal).catch(() => undefined);
           const goalAtReadableDeadline = withSessionTimeout(goalPromise, conversationGoalHydrationTimeoutMs, () => new ConversationGoalHydrationTimeoutError()).catch(() => fallbackGoalForHydration());
-          const readable = await loadConversationReadableForHydration(context);
+          const readable = await loadConversationReadableForHydration(context, choicePromise);
           context.controller.signal.throwIfAborted();
           if (hooks?.onReadable) {
             await hooks.onReadable(
@@ -2206,10 +2218,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
               }),
             );
           }
-          const [interaction, goalAtDeadline] = await Promise.all([interactionPromise, goalAtReadableDeadline]);
+          const [interaction, goalAtDeadline, choice] = await Promise.all([interactionPromise, goalAtReadableDeadline, choicePromise]);
           context.controller.signal.throwIfAborted();
           return adaptConversationSnapshotV2({
             ...readable,
+            choice,
             queue: interaction.queue,
             requests: interaction.pending.requests,
             planImplementationRequests: interaction.pending.planImplementationRequests ?? [],
@@ -2228,10 +2241,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 后台负责结构与消息的一致性；适配器继续校验身份和事件进度，后续更新沿用现有缓冲与补拉。 */
-  async function loadConversationReadableForHydration(context: TranscriptHydrationContext): Promise<NativeConversationReadableSnapshot & { choice: NativeConversationChoice }> {
+  async function loadConversationReadableForHydration(context: TranscriptHydrationContext, choicePromise: Promise<NativeConversationChoice>): Promise<NativeConversationReadableSnapshot & { choice: NativeConversationChoice }> {
     try {
-      // 选择信息只读一次，与可读快照并行；正常初始化仅重读可读快照。
-      const [readable, choice] = await Promise.all([loadReadableUntilInitialized(context), options.client.loadNativeConversationChoice(options.projectId, options.conversationId)]);
+      /** 列表身份必须同时匹配项目和会话；它不替代完整水合的权限与队列核验。 */
+      const initialChoice = options.initialConversation?.projectId === options.projectId && options.initialConversation.id === options.conversationId ? options.initialConversation : null;
+      const [readable, choice] = await Promise.all([loadReadableUntilInitialized(context), initialChoice ?? choicePromise]);
       return { ...readable, choice };
     } catch (error) {
       if (context.controller.signal.aborted) throw context.controller.signal.reason;
@@ -3975,7 +3989,7 @@ export interface UseSessionControllerResult {
 export function useSessionControllerInstance(options: CreateSessionControllerOptions): SessionController {
   const controller = useMemo(
     () => createSessionController(options),
-    [options.client, options.projectId, options.conversationId, options.enabled, options.realtimePolicy, options.initialCachedState, options.initialOptimisticState, options.storage, options.createId],
+    [options.client, options.projectId, options.conversationId, options.enabled, options.realtimePolicy, options.initialCachedState, options.initialOptimisticState, options.initialConversation, options.storage, options.createId],
   );
   useEffect(() => {
     // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。

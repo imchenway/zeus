@@ -264,7 +264,7 @@ export interface SessionWorkspaceActions {
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onTaskManagementStatusChange?: (taskId: string, status: string) => void | Promise<unknown>;
-  onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
+  onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void | Promise<void>;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
@@ -557,12 +557,15 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
   const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
   const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
+  /** 只冻结首次选中的目录事实，后续目录刷新不重建会话控制器。 */
+  const initialConversation = useMemo(() => props.conversation, [props.conversation.id, props.conversation.projectId]);
   const controller = useSessionControllerInstance({
     client: props.client,
     projectId: props.conversation.projectId,
     conversationId: props.conversation.id,
     initialCachedState,
     initialOptimisticState,
+    initialConversation,
     enabled: controllerEnabled,
     realtimePolicy: initialRealtimePolicy,
   });
@@ -2073,8 +2076,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner, props.language), [owner, props.conversation, props.task, props.language]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
-  const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(() =>
-    readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''),
+  const [composerRuntimeSettings, setComposerRuntimeSettings] = useState<ComposerRuntimeSettings | null>(
+    () => readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? '') ?? composerRuntimeSettingsFromState(props.state, props.capabilities, props.conversation),
   );
   const composerRuntimeSettingsDirtyRef = useRef(false);
   const lastNextTurnSettingsSyncRef = useRef<string | null>(null);
@@ -2177,7 +2180,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useLayoutEffect(() => {
     contextReturnFocusRef.current = null;
-    setComposerRuntimeSettings(readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? ''));
+    setComposerRuntimeSettings(
+      readConversationNextTurnSettings(browserConversationStorage(), props.conversation?.projectId ?? '', props.conversation?.id ?? '') ?? composerRuntimeSettingsFromState(props.state, props.capabilities, props.conversation),
+    );
     composerRuntimeSettingsDirtyRef.current = false;
     lastNextTurnSettingsSyncRef.current = null;
     setRequestErrors({});
@@ -4592,23 +4597,30 @@ function writeConversationNextTurnSettings(storage: Pick<Storage, 'setItem'> | u
   storage.setItem(conversationNextTurnSettingsStorageKey(projectId, conversationId), JSON.stringify(settings));
 }
 
+/** 首帧复用会话已知模型，推理强度和权限由当前会话快照补齐。 */
 function composerRuntimeSettingsFromState(
-  state: NativeSessionState,
+  state: NativeSessionState | null,
   capabilities: CodexConversationCapabilities | null | undefined,
-  conversation: Pick<NativeConversationChoice, 'permissionMode' | 'collaborationMode'> | null | undefined,
+  conversation: Pick<NativeConversationChoice, 'permissionMode' | 'collaborationMode' | 'providerModel' | 'model' | 'contextCapacityTokens'> | null | undefined,
 ): ComposerRuntimeSettings | null {
+  if (!state) return null;
   const source = state.snapshot?.nextTurnSettings;
-  const requestedModel = source?.model ?? state.providerSettings?.model;
+  const requestedModel = source?.model ?? state.providerSettings?.model ?? conversation?.model?.id ?? conversation?.providerModel;
   if (!requestedModel) return null;
-  const capability = resolveModelCapability(capabilities?.models, requestedModel) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
+  const capability = resolveModelCapability(capabilities?.models, requestedModel);
   const model = capability?.id ?? requestedModel;
   const requestedEffort = source?.effort ?? state.providerSettings?.effort;
-  const effort = requestedEffort && (!capability || capability.supportedReasoningEfforts.includes(requestedEffort)) ? requestedEffort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0]);
+  const effort =
+    requestedEffort && (!capability || capability.supportedReasoningEfforts.includes(requestedEffort))
+      ? requestedEffort
+      : source || state.providerSettings
+        ? (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0])
+        : undefined;
   const hasSourceServiceTier = source ? Object.prototype.hasOwnProperty.call(source, 'serviceTier') : false;
   const requestedServiceTier = hasSourceServiceTier ? source?.serviceTier : undefined;
   const serviceTier = typeof requestedServiceTier === 'string' && capability && !capability.serviceTiers.some((tier) => tier.id === requestedServiceTier) ? null : requestedServiceTier;
   return {
-    contextCapacityTokens: state.snapshot?.contextCapacityTokens ?? null,
+    contextCapacityTokens: state.snapshot?.contextCapacityTokens ?? conversation?.contextCapacityTokens ?? null,
     model,
     ...(effort ? { effort } : {}),
     ...(hasSourceServiceTier ? { serviceTier } : {}),

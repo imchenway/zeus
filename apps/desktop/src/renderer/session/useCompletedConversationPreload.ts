@@ -5,7 +5,7 @@ import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import { ordinarySessionHotCacheLimit, rememberSessionHotState, type SessionHotCache } from './sessionHotCache.js';
 import type { SessionControllerClient } from './useSessionController.js';
 
-/** 完成通知到达后预取未读首屏；只更新显示缓存，不启动控制器或消费未读状态。 */
+/** 预取最近空闲会话的有界首屏；只更新显示缓存，不启动控制器或消费未读状态。 */
 export function useCompletedConversationPreload(options: {
   /** 复用当前工作区已授权的只读会话接口。 */
   client?: SessionControllerClient;
@@ -15,6 +15,8 @@ export function useCompletedConversationPreload(options: {
   cache: SessionHotCache;
   /** 当前会话由前台负责加载，后台不得覆盖其状态。 */
   selectedConversationId?: string;
+  /** 前台首屏已取得后才使用后台读取预算，避免冷切换时争用服务。 */
+  foregroundReady: boolean;
   /** 成功取得的新显示状态沿用工作区的延迟持久化。 */
   onCached: (conversationId: string) => void;
 }): void {
@@ -25,19 +27,11 @@ export function useCompletedConversationPreload(options: {
     let timer: ReturnType<typeof setTimeout> | undefined;
     /** 保存当前依赖，异步结果只写回同一个工作区缓存。 */
     const { client, cache, selectedConversationId, onCached } = options;
-    if (!client) return;
-    /** 同一会话可能同时出现在任务和项目列表，按身份去重后优先准备最近完成的会话。 */
+    if (!client || !options.foregroundReady) return;
+    /** 去重后准备最近使用的空闲会话，已读会话也复用同一有界首屏缓存。 */
     const candidates = [...new Map(options.groups.flatMap((group) => [...(group.conversations ?? []), ...group.tasks.flatMap((task) => task.conversations)]).map((choice) => [choice.id, choice])).values()]
-      .filter(
-        (choice) =>
-          choice.id !== selectedConversationId &&
-          !choice.archived &&
-          choice.transportKind === 'codex_native' &&
-          choice.hasUnreadAttention &&
-          choice.attentionKind === 'completed' &&
-          conversationTreeRuntimeStateFromConversation(choice) === 'ready',
-      )
-      .sort((left, right) => (right.attentionUpdatedAt ?? right.updatedAt).localeCompare(left.attentionUpdatedAt ?? left.updatedAt))
+      .filter((choice) => choice.id !== selectedConversationId && !choice.archived && choice.transportKind === 'codex_native' && conversationTreeRuntimeStateFromConversation(choice) === 'ready')
+      .sort((left, right) => Number(right.hasUnreadAttention) - Number(left.hasUnreadAttention) || (right.activityAt ?? right.updatedAt).localeCompare(left.activityAt ?? left.updatedAt))
       .slice(0, ordinarySessionHotCacheLimit);
 
     /** 分批准备有界首屏；读取失败由正常打开流程重试，不改变完成图标或发送状态。 */
@@ -88,5 +82,5 @@ export function useCompletedConversationPreload(options: {
       cancellation.abort();
       clearTimeout(timer);
     };
-  }, [options.client, options.groups, options.cache, options.selectedConversationId, options.onCached]);
+  }, [options.client, options.groups, options.cache, options.selectedConversationId, options.foregroundReady, options.onCached]);
 }
