@@ -34,6 +34,7 @@ import {
 } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
+import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
@@ -72,6 +73,8 @@ const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ 
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
 /** 只有会话文件允许评论时才加载评论编辑器和门户。 */
 const CommentableSourceCodePreview = lazy(() => import('../session/CommentableSourceCodePreview.js').then((module) => ({ default: module.CommentableSourceCodePreview })));
+/** 工作簿视图仅在打开 Excel 时挂载，解析器驻留独立 Worker。 */
+const SpreadsheetPreview = lazy(() => import('./SpreadsheetPreview.js').then((module) => ({ default: module.SpreadsheetPreview })));
 
 /** 图标按钮只接受一个功能名称，同时用于悬浮提示和无障碍名称。 */
 export function PreviewIconButton({
@@ -769,6 +772,10 @@ function FilePreviewContent(props: {
                 )}
               </div>
             )}
+          </Suspense>
+        ) : item.kind === 'spreadsheet' && item.url && item.byteLength > 0 ? (
+          <Suspense fallback={<ResourceLoading label={props.zh ? '正在读取 Excel…' : 'Reading workbook…'} />}>
+            <SpreadsheetPreview key={item.url} url={item.url} name={item.name} readingKey={item.label} zh={props.zh} />
           </Suspense>
         ) : item.kind === 'image' && item.url ? (
           <PreviewImage url={item.url} name={item.name} zh={props.zh} />

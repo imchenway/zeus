@@ -169,7 +169,7 @@ export function migrateGitDeliveryNotificationRevision(db: ZeusDatabasePort): vo
   const migrationId = '20261110_git_delivery_notification_revision';
   if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
   db.transaction(() => {
-    db.execute('ALTER TABLE git_delivery_runs ADD COLUMN notification_revision INTEGER NOT NULL DEFAULT 1 CHECK(notification_revision >= 1) -- 当前通知修订，历史运行从 1 开始');
+    db.execute('ALTER TABLE git_delivery_runs ADD COLUMN notification_revision INTEGER NOT NULL DEFAULT 1 CHECK(notification_revision >= 1) /* 当前通知修订，历史运行从 1 开始 */');
     db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [migrationId, '代码交付通知修订校验', createHash('sha256').update(migrationId).digest('hex'), new Date().toISOString()]);
   });
 }

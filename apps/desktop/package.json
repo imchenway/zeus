@@ -27,13 +27,14 @@
     "@zeus/git-core": "workspace:*",
     "@zeus/local-server": "workspace:*",
     "@zeus/shared": "workspace:*",
+    "@zeus/storage": "workspace:*",
     "ag-grid-community": "36.1.0",
     "ag-grid-react": "36.1.0",
     "diff": "8.0.4",
     "markstream-react": "2.0.6",
     "mermaid": "11.17.2",
     "qrcode": "1.5.4",
-    "@zeus/storage": "workspace:*"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",

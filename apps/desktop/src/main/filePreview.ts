@@ -365,6 +365,10 @@ export function registerFilePreview(services: {
             item.kind = 'system';
             item.reason = '图片超过 16 MiB 页内预览上限。';
           }
+          if (item.kind === 'spreadsheet' && item.byteLength > filePreviewLimits.spreadsheet) {
+            item.kind = 'system';
+            item.reason = 'Excel 文件超过 10 MiB 页内预览上限，请用系统应用打开。';
+          }
           if (item.kind === 'system' && !item.reason)
             item.reason =
               item.mime === 'application/octet-stream' && item.byteLength > filePreviewLimits.text
@@ -393,7 +397,7 @@ export function registerFilePreview(services: {
             }
           }
           item.id = randomUUID();
-          if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
+          if (['image', 'pdf', 'audio', 'video', 'spreadsheet'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
           grants.set(item.id, { owner: window.id, batch, request: input, source, path: previewPath, temporary, identity, item, image });
           return item;
         } catch (error) {
