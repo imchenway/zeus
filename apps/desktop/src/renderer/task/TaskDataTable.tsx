@@ -10,7 +10,6 @@ import {
   ColumnApiModule,
   ColumnAutoSizeModule,
   RowStyleModule,
-  themeQuartz,
   type ColDef,
   type ColumnMovedEvent,
   type ColumnResizedEvent,
@@ -22,6 +21,7 @@ import { isTaskPriority, type TaskPriority } from '@zeus/shared';
 import type { TaskRecord, TaskTableColumnKey } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { dataGridTheme } from '../ui/dataGridTheme.js';
 import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import {
   cycleTaskTableSort,
@@ -45,34 +45,6 @@ import './task-data-table.css';
 const taskTableModules = [ClientSideRowModelModule, ColumnApiModule, ColumnAutoSizeModule, RowStyleModule];
 /** 动态规则同时添加和移除选中态，避免已点击行残留高亮。 */
 const taskTableRowClassRules: RowClassRules<TaskRowViewModel> = { 'task-data-table-selected': ({ data }) => Boolean(data?.selected) };
-/** 表格颜色跟随 Zeus 主题，固定行高确保虚拟滚动无需逐行测量。 */
-const taskTableTheme = themeQuartz.withParams({
-  backgroundColor: 'var(--zeus-product-canvas)',
-  dataBackgroundColor: 'var(--zeus-product-canvas)',
-  oddRowBackgroundColor: 'var(--zeus-product-canvas)',
-  foregroundColor: 'var(--zeus-product-text)',
-  headerBackgroundColor: 'var(--zeus-card-background)',
-  headerTextColor: 'var(--zeus-product-muted)',
-  borderColor: 'var(--zeus-card-border)',
-  accentColor: 'var(--zeus-accent)',
-  rowHoverColor: 'color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-canvas))',
-  fontFamily: 'inherit',
-  fontSize: 12,
-  headerFontSize: 11,
-  rowHeight: 40,
-  // 点击单元格不绘制选区蓝框，键盘焦点由表格局部样式单独提示。
-  rangeSelectionBorderColor: 'transparent',
-  headerHeight: 32,
-  cellHorizontalPadding: 10,
-  wrapperBorder: false,
-  wrapperBorderRadius: 0,
-  // 连续表面以留白和悬停区分行，表头也不额外画线。
-  rowBorder: false,
-  headerRowBorder: false,
-  columnBorder: false,
-  // 调宽提示只在悬停、聚焦或拖动期间显示。
-  headerColumnResizeHandleColor: 'var(--zeus-control-accent)',
-});
 
 /** 编辑状态位于表格上层，虚拟行卸载不丢失待保存值和冲突事实。 */
 type PriorityEdit = { value: string; kind: 'saving' | 'error' | 'conflict'; message?: string; latest?: TaskRecord };
@@ -458,7 +430,7 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
       <div className="task-data-table" aria-label={workspace.copy.today} aria-busy={workspace.listState === 'loading' || undefined}>
         <AgGridReact<TaskRowViewModel>
           modules={taskTableModules}
-          theme={taskTableTheme}
+          theme={dataGridTheme}
           /* 列定义随操作回调刷新时保留已恢复的用户列顺序，避免回退到默认定义顺序。 */
           maintainColumnOrder
           columnDefs={columns}

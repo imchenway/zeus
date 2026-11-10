@@ -346,3 +346,73 @@
   border-radius: 4px;
   padding: 3px 4px;
 }
+
+/* 工作表和选中单元格固定在上方，大表滚动交给 AG Grid 虚拟视口。 */
+.spreadsheet-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 280px;
+  overflow: hidden;
+}
+.spreadsheet-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+}
+.spreadsheet-preview-toolbar > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--zeus-control-muted-text);
+}
+.spreadsheet-preview-toolbar .zeus-select {
+  min-width: 0;
+  max-width: min(280px, 55vw);
+}
+/* 完整正文使用原生只读文本框，长答案可滚动、选择和复制。 */
+.spreadsheet-preview-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px 8px;
+  font-size: 12px;
+}
+.spreadsheet-preview-cell > span {
+  min-width: 36px;
+  padding-block: 5px;
+  color: var(--zeus-control-muted-text);
+}
+.spreadsheet-preview-cell textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  max-height: 160px;
+  resize: vertical;
+  padding: 4px 6px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 4px;
+  color: inherit;
+  background: var(--zeus-product-canvas);
+  font: inherit;
+}
+.spreadsheet-preview-table {
+  flex: 1 1 0;
+  min-height: 200px;
+  min-width: 0;
+}
+.spreadsheet-preview-table .ag-cell {
+  white-space: pre;
+}
+/* 合并区域盖住底层空白单元格，行列号仍保留原始位置。 */
+.spreadsheet-preview-table .spreadsheet-preview-merged {
+  z-index: 1;
+  background: var(--zeus-product-canvas);
+}
+.spreadsheet-preview-table .spreadsheet-preview-row-number {
+  text-align: right;
+  color: var(--zeus-control-muted-text);
+  background: var(--zeus-card-background);
+}

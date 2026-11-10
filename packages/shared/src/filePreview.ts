@@ -49,7 +49,7 @@ export interface FileReview {
 }
 
 /** 文件内容的展示方式，与模型附件上传能力独立。 */
-export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'audio' | 'video' | 'system' | 'unavailable';
+export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'audio' | 'video' | 'spreadsheet' | 'system' | 'unavailable';
 
 /** 只读预览允许的编码；显式选择不改变原文件或编辑器保存编码。 */
 export const filePreviewTextEncodings = ['utf-8', 'utf-16le', 'utf-16be', 'gb18030', 'windows-1252'] as const;
@@ -170,8 +170,8 @@ export interface FilePreviewSourceWorkspace {
   relativePath: string;
 }
 
-/** 页内文本与图片沿用小内容限制，媒体使用流式读取。 */
-export const filePreviewLimits = { text: 2 * 1024 * 1024, image: 16 * 1024 * 1024, historical: 512 * 1024 * 1024 } as const;
+/** 页内正文按字节限制；工作簿需要整体解析，历史副本另设磁盘读取上限。 */
+export const filePreviewLimits = { text: 2 * 1024 * 1024, image: 16 * 1024 * 1024, spreadsheet: 10 * 1024 * 1024, historical: 512 * 1024 * 1024 } as const;
 
 /** 浏览器原生支持的安全媒体类型；未知格式交由系统查看。 */
 const previewMimeTypes: Record<string, string> = {
@@ -217,8 +217,9 @@ export function filePreviewMime(name: string): string {
   return previewMimeTypes[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
 }
 
-/** 可视媒体优先于文本，SVG 不作为活动 HTML 文档执行。 */
+/** 工作簿使用只读表格，SVG 不作为活动 HTML 文档执行。 */
 export function filePreviewKind(mime: string): FilePreviewKind {
+  if (mime === previewMimeTypes.xls || mime === previewMimeTypes.xlsx) return 'spreadsheet';
   return mime === 'image/icns' ? 'system' : mime.startsWith('image/') ? 'image' : mime === 'application/pdf' ? 'pdf' : mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'system';
 }
 
