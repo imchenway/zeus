@@ -15,10 +15,10 @@ import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCod
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { MinusCircleIcon as MinusCircle } from '@phosphor-icons/react/dist/csr/MinusCircle';
+import { PencilSimpleLineIcon as PencilSimpleLine } from '@phosphor-icons/react/dist/csr/PencilSimpleLine';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
@@ -133,7 +133,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       : workspaceState === 'error'
         ? { icon: WarningCircle, state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
         : dirty
-          ? { icon: GitDiff, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
+          ? { icon: PencilSimpleLine, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
           : summary?.repositoryCount
             ? { icon: CheckCircle, state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
             : { icon: MinusCircle, state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
@@ -193,29 +193,47 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setWorkspaceError(null);
   }, [gitClient, summaryKey]);
 
-  /** 打开卡片或切换会话时按需读取一次，关闭后取消请求。 */
+  /** 打开卡片、轮次切换、交付完成和窗口恢复焦点时按需读取，关闭后取消请求。 */
   useEffect(() => {
     if (!cardVisible || !gitClient) return;
-    /** 会话切换后丢弃旧请求结果。 */
-    const controller = new AbortController();
+    /** 后续读取取消旧请求，旧范围和旧结果不能覆盖当前状态。 */
+    let controller: AbortController | undefined;
     /** 目录由服务端按持久身份解析，不传本地路径。 */
     const scope = useTaskWorkspaces && taskId ? { taskId, workspaceId: props.conversation.workspaceId ?? undefined } : directWorkspace ? {} : { conversationId: props.conversation.id };
-    setWorkspaceState('loading');
-    setWorkspaceError(null);
-    void gitClient
-      .loadGitEnvironmentStatus(props.conversation.projectId, scope, controller.signal)
-      .then((next) => {
-        if (controller.signal.aborted) return;
-        setSummary(next);
-        setWorkspaceState('ready');
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setWorkspaceState('error');
-        setWorkspaceError(error);
-      });
-    return () => controller.abort();
-  }, [cardVisible, gitClient, summaryKey, props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, useTaskWorkspaces, directWorkspace, taskId]);
+    /** 复用轻量状态接口，不订阅文件变化或读取差异统计。 */
+    const refreshStatus = (): void => {
+      if (document.visibilityState === 'hidden') return;
+      controller?.abort();
+      controller = new AbortController();
+      /** 每次读取保留自身取消信号，迟到结果不得覆盖后续读取。 */
+      const { signal } = controller;
+      setWorkspaceState('loading');
+      setWorkspaceError(null);
+      void gitClient
+        .loadGitEnvironmentStatus(props.conversation.projectId, scope, signal)
+        .then((next) => {
+          if (signal.aborted) return;
+          setSummary(next);
+          setWorkspaceState('ready');
+        })
+        .catch((error: unknown) => {
+          if (signal.aborted) return;
+          setWorkspaceState('error');
+          setWorkspaceError(error);
+        });
+    };
+    /** 只接收当前任务的交付结果，不借用其他任务的状态。 */
+    const unsubscribeDelivery = window.zeus?.onTaskGitDeliveryChanged?.((changedTaskId) => {
+      if (changedTaskId === taskId) refreshStatus();
+    });
+    refreshStatus();
+    window.addEventListener('focus', refreshStatus);
+    return () => {
+      controller?.abort();
+      unsubscribeDelivery?.();
+      window.removeEventListener('focus', refreshStatus);
+    };
+  }, [cardVisible, gitClient, summaryKey, props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, props.state.activeTurnId, useTaskWorkspaces, directWorkspace, taskId]);
 
   useEffect(() => {
     if (!open) return;
