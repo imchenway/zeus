@@ -1442,12 +1442,14 @@ export class ConversationSnapshotV2Repository {
     byteLimit?: number;
     /** 仅取已保存的用户与助手对话，避免工具结果或思考摘要占满建议材料。 */
     dialogueOnly?: boolean;
+    /** 标题可复用已输出的思考摘要，仍排除工具记录。 */
+    includeReasoningSummaries?: boolean;
   }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const turnId = this.requireTurn(conversationId, input.turnId);
     /** 查询和游标高水位使用相同过滤条件，不扫描工具正文后再丢弃。 */
-    const dialogueWhere = input.dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : '';
-    const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}${input.dialogueOnly ? ':dialogue' : ''}`, {
+    const dialogueWhere = input.dialogueOnly ? ` AND ${input.includeReasoningSummaries ? "role IN ('user', 'assistant') AND tool_pair_id IS NULL" : modelHistoryDialogueSql}` : '';
+    const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}${input.dialogueOnly ? (input.includeReasoningSummaries ? ':dialogue-with-summary' : ':dialogue') : ''}`, {
       table: 'conversation_model_history',
       column: 'sequence',
       extraWhere: ` AND turn_id = ?${dialogueWhere}`,

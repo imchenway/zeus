@@ -95,7 +95,7 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ConversationApplicationOperationDependencies = Record<string, any> & {
-  /** 首发已持久接纳后，独立安排命名，不等待模型。 */
+  /** 首发持久接纳后启用自动命名，实际生成等待有效回合完成。 */
   scheduleConversationTitle?: (conversationId: string) => void;
   /** 来源引用与模型读取共用服务端归属校验。 */
   conversationSources: ConversationSourceContextReader;

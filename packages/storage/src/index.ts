@@ -1035,6 +1035,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateAgentRuntimeSchema(zeusDb);
     migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
+    migrateConversationTitleSourceSchema(zeusDb);
     migrateRemoteConversationTurnSchema(zeusDb);
     migrateTaskGitWorkspaceSchema(zeusDb);
     migrateMultiRepositoryTaskSchema(zeusDb);
@@ -2481,6 +2482,24 @@ function migrateCodexUsageLedgerSchema(db: ZeusDatabase): void {
     migrationId: '20260810_0001_codex_usage_ledger',
     description: '增加与项目、会话生命周期独立的 Codex 逐轮用量账本',
     checksumSource: 'codex_usage_ledger:provider,account_scope,project,conversation,thread,turn,model,tier,token_breakdown,estimate,occurred_at',
+  });
+}
+
+/** 存量原始标题可在下轮补命名；新会话由首发入口明确启用。 */
+function migrateConversationTitleSourceSchema(db: ZeusDatabase): void {
+  /** 迁移身份与标题状态字段一一对应。 */
+  const migrationId = '20261110_0001_conversation_title_source';
+  if (db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  db.transaction(() => {
+    // SQLite 的字段业务注释放在 DDL 内，CHECK 同时限制合法状态。
+    db.execute(
+      `ALTER TABLE conversations ADD COLUMN title_source /* 标题命名状态：initial 初始未启用，pending 待命名，automatic 自动完成，manual 手动命名；存量默认待命名。 */ TEXT NOT NULL DEFAULT 'pending' CHECK (title_source IN ('initial', 'pending', 'automatic', 'manual'))`,
+    );
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '保存会话标题命名状态，保护手动名称并停止重复自动命名',
+      checksumSource: 'conversations:title_source:initial,pending,automatic,manual',
+    });
   });
 }
 
