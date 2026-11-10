@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { parseAutomationOnceAt, temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
+import { localParts, parseAutomationOnceAt, temporaryWorkspaceId, zonedLocalToUtc, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
 import { randomId } from './randomId.js';
 import { migrateAutomationDispatchNotifications, migrateAutomationNotifications } from './automationNotificationStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -1034,6 +1034,7 @@ export class AutomationRunRepository {
     return rows.reduce((total, row) => total + (formatter.format(new Date(row.occurred_at)) === today ? row.total_tokens : 0), 0);
   }
 
+  /** 在同一事务内核对每日次数与串行容量，持久化触发的接纳结果。 */
   enqueue(input: EnqueueAutomationRunInput): AutomationRunRecord {
     const task = new AutomationTaskRepository(this.db).getById(input.automationId);
     if (!task || task.status !== 'active') throw new Error('ZEUS_AUTOMATION_TRIGGER_INACTIVE: 自动化任务未启用。');
@@ -1050,9 +1051,14 @@ export class AutomationRunRepository {
     }
     return this.db.transaction(() => {
       if (task.maxRunsPerDay !== null) {
-        const dayStart = `${input.scheduledAt.slice(0, 10)}T00:00:00.000Z`;
-        const dayEnd = `${input.scheduledAt.slice(0, 10)}T23:59:59.999Z`;
-        const count = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM automation_runs WHERE automation_id = ? AND accepted_at BETWEEN ? AND ?`, [task.id, dayStart, dayEnd])?.count ?? 0;
+        /** 次数按本次接纳所属的规则自然日统计，积压事件不能借用发生日的额度。 */
+        const day = localParts(new Date(timestamp), task.timezone);
+        /** 当地零点转换为实际 UTC 时刻，不依赖宿主系统时区。 */
+        const dayStart = zonedLocalToUtc(new Date(Date.UTC(day.year, day.month - 1, day.day)), task.timezone).toISOString();
+        /** 次日零点独立转换，夏令时切换日不按固定 24 小时计算。 */
+        const dayEnd = zonedLocalToUtc(new Date(Date.UTC(day.year, day.month - 1, day.day + 1)), task.timezone).toISOString();
+        /** 半开时间范围避免将次日零点的接纳计入本日。 */
+        const count = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM automation_runs WHERE automation_id = ? AND accepted_at >= ? AND accepted_at < ?`, [task.id, dayStart, dayEnd])?.count ?? 0;
         if (count >= task.maxRunsPerDay) return this.insertTerminal(input, task, 'blocked', 'ZEUS_AUTOMATION_BUDGET_RUNS_EXHAUSTED', '已达到当日运行次数上限。', timestamp);
       }
       if (task.permissionMode === 'full-access' && !new AutomationTaskRepository(this.db).hasFullAccessGrant(task.id, task.revision)) {
@@ -1069,14 +1075,20 @@ export class AutomationRunRepository {
         mayOverlap = previous.status === 'dispatching' || previous.status === 'running';
         this.setTerminal(previous.id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN', '覆盖时无法证明旧 Provider 或外部命令已停止。');
       }
-      /** 队列容量同样按自动化整体计算。 */
-      const queued = this.db.select<{ id: string }>(`SELECT id FROM automation_runs WHERE automation_id = ? AND status = 'queued' ORDER BY queue_position, accepted_at, id`, [task.id]);
-      if (task.blockStrategy === 'serial' && active.length > 0 && queued.length >= task.queueCapacity) {
-        this.setTerminal(queued[0]!.id, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_EVICTED', '队列已满，已淘汰最早等待运行。');
+      /** 同规则尚未领取的队首也占用串行执行名额，后续触发必须排队。 */
+      const queued = this.db.select<{ id: string; queue_position: number }>(`SELECT id, queue_position FROM automation_runs WHERE automation_id = ? AND status = 'queued' ORDER BY queue_position, accepted_at, id`, [task.id]);
+      /** 空闲时保留待领取队首，其余记录与执行期间的全部排队记录共同遵守等待容量。 */
+      const waiting = active.length > 0 ? queued : queued.slice(1);
+      if (task.blockStrategy === 'serial') {
+        /** 从最早等待项开始淘汰，为本次触发保留一个等待名额。 */
+        for (const run of waiting.slice(0, Math.max(0, waiting.length - task.queueCapacity + 1))) {
+          this.setTerminal(run.id, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_EVICTED', '队列已满，已淘汰最早等待运行。');
+        }
       }
       const id = input.id ?? `automation_run_${randomId(12)}`;
       const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
-      const queuePosition = task.blockStrategy === 'serial' && active.length > 0 ? queued.length + 1 : 0;
+      /** 从原队尾位置递增，淘汰造成的位置空缺不会使新触发排到旧等待项之前。 */
+      const queuePosition = task.blockStrategy === 'serial' && (active.length > 0 || queued.length > 0) ? (queued.at(-1)?.queue_position ?? 0) + 1 : 0;
       this.db.execute(
         `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, project_ids_json, trigger_kind, trigger_identity, causal_chain_id,
           status, queue_position, attempt, unread, may_overlap_previous, previous_run_id, scheduled_at, accepted_at, created_at, updated_at)
