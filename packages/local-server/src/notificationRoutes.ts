@@ -50,10 +50,10 @@ export function registerNotificationRoutes(options: {
       const commandNotifications = commands.notifications(before);
       /** 来源参与身份排序，相同时间与相同业务身份不会互相覆盖。 */
       /** 全部交付通知按同一全局边界分页。 */
-      const deliveries = (options.deliveries?.notifications() ?? []).map((item) => ({ ...item, source: 'git_delivery' as const }));
+      const deliveries = options.deliveries?.notifications(before);
       const candidates: NotificationItem[] = [
         ...commandNotifications.items.map((item) => ({ ...item, source: 'command' as const })),
-        ...deliveries.filter((item) => !before || compareNotificationPositions(item, before) > 0),
+        ...(deliveries?.items ?? []).map((item) => ({ ...item, source: 'git_delivery' as const })),
         ...automations.items.map((item) => ({ ...item, source: 'automation' as const })),
         ...tasks.items.map((item) => ({ ...item, source: 'task' as const })),
       ].sort(compareNotificationPositions);
@@ -70,7 +70,7 @@ export function registerNotificationRoutes(options: {
       const hasMore = candidates.length > items.length || Boolean(automations.nextCursor || tasks.nextCursor);
       return {
         items,
-        unreadCount: automations.unreadCount + tasks.unreadCount + deliveries.length + commandNotifications.unreadCount,
+        unreadCount: automations.unreadCount + tasks.unreadCount + (deliveries?.unreadCount ?? 0) + commandNotifications.unreadCount,
         nextCursor: last && hasMore ? Buffer.from(JSON.stringify({ occurredAt: last.occurredAt, source: last.source, id: last.id })).toString('base64url') : null,
       } satisfies NotificationPage;
     } catch (error) {
@@ -97,12 +97,16 @@ export function registerNotificationRoutes(options: {
       return fail(reply, error);
     }
   });
-  options.server.post<{ Params: { runId: string } }>('/api/notifications/git-delivery/:runId/read', async (request, reply) => {
+  options.server.post<{ Params: { runId: string }; Body: { expectedRevision?: number } }>('/api/notifications/git-delivery/:runId/read', async (request, reply) => {
     try {
       if (options.readOnly) return reply.code(403).send({ error: 'ZEUS_NOTIFICATION_READ_ONLY', message: '只读模式不能确认通知。' });
-      const result = mutations.execute({ method: request.method, url: request.url, body: {}, key: request.headers['idempotency-key'] }, () => {
-        options.deliveries?.acknowledge(request.params.runId);
-        return { statusCode: 200, body: { acknowledged: true } };
+      if (!request.params.runId || request.params.runId.length > 1024) return reply.code(400).send({ error: 'ZEUS_GIT_DELIVERY_RUN_ID_REQUIRED', message: '交付运行身份无效。' });
+      /** 修订来自用户点击时的摘要，缺失或无效时不能退化为全量确认。 */
+      const expectedRevision = request.body?.expectedRevision;
+      if (typeof expectedRevision !== 'number' || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
+        return reply.code(400).send({ error: 'ZEUS_GIT_DELIVERY_NOTIFICATION_REVISION_INVALID', message: '交付通知修订无效，请刷新列表。' });
+      const result = mutations.execute({ method: request.method, url: request.url, body: { expectedRevision }, key: request.headers['idempotency-key'] }, () => {
+        return { statusCode: 200, body: options.deliveries?.acknowledge({ id: request.params.runId, expectedRevision }) ?? { acknowledged: false } };
       });
       return reply.code(result.statusCode).send(result.body);
     } catch (error) {

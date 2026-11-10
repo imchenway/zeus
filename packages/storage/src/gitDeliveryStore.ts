@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { userFacingErrorCause, type GitDeliveryAction, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep, type GitDeliveryNotification } from '@zeus/shared';
-import type { ZeusDatabasePort } from './databasePort.js';
+import { userFacingErrorCause, type GitDeliveryAction, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep, type GitDeliveryNotification, type GitDeliveryScope, type NotificationPosition } from '@zeus/shared';
+import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { CommandDeliveryRepository } from './commandDeliveryStore.js';
 
 /** 普通会话的隔离合入事实仅存于 Core，不暴露绝对目录。 */
@@ -163,6 +163,17 @@ export function migrateGitDeliveryArchiving(db: ZeusDatabasePort): void {
   });
 }
 
+/** 通知修订随状态原子递增，旧通知确认不能清除后续结果。 */
+export function migrateGitDeliveryNotificationRevision(db: ZeusDatabasePort): void {
+  /** 独立登记字段迁移，保留已有运行状态和已读事实。 */
+  const migrationId = '20261110_git_delivery_notification_revision';
+  if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute('ALTER TABLE git_delivery_runs ADD COLUMN notification_revision INTEGER NOT NULL DEFAULT 1 CHECK(notification_revision >= 1) -- 当前通知修订，历史运行从 1 开始');
+    db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [migrationId, '代码交付通知修订校验', createHash('sha256').update(migrationId).digest('hex'), new Date().toISOString()]);
+  });
+}
+
 /** 运行仓库不执行 Git，只通过已有耐久事务提交进度。 */
 export class GitDeliveryRepository {
   /** 共用应用数据库。 */
@@ -269,7 +280,9 @@ export class GitDeliveryRepository {
 
   /** 状态发生变化才更新通知时间，轮询不重复生成未读。 */
   updateState(id: string, state: GitDeliveryRun['state']): void {
-    this.db.commitCriticalFactSync(() => this.db.execute('UPDATE git_delivery_runs SET state=?, updated_at=?, read_at=NULL WHERE id=? AND state<>?', [state, new Date().toISOString(), id, state]));
+    this.db.commitCriticalFactSync(() =>
+      this.db.execute('UPDATE git_delivery_runs SET state=?, updated_at=?, read_at=NULL, notification_revision=notification_revision+1 WHERE id=? AND state<>?', [state, new Date().toISOString(), id, state]),
+    );
   }
 
   /** 对外投影排除命令恢复快照和工作目录。 */
@@ -308,17 +321,42 @@ export class GitDeliveryRepository {
     return evidence?.error ? userFacingErrorCause(evidence.error) : undefined;
   }
 
-  /** 交付通知与进度读取同一权威记录。 */
-  notifications(): GitDeliveryNotification[] {
-    return this.db.select<{ id: string }>("SELECT id FROM git_delivery_runs WHERE state IN ('succeeded','attention') AND read_at IS NULL ORDER BY updated_at DESC, id DESC").map(({ id }) => {
-      /** 通知不复制执行状态。 */
-      const run = this.get(id)!;
-      return { id, projectId: run.projectId, scope: run.scope, title: '代码交付', status: run.state as 'succeeded' | 'attention', occurredAt: run.updatedAt };
-    });
+  /** 摘要按全局边界限量读取，不加载运行输入或步骤；总数独立统计。 */
+  notifications(before?: NotificationPosition): { items: GitDeliveryNotification[]; unreadCount: number } {
+    /** 多读一条供统一列表判断下一页。 */
+    const unreadWhere = "state IN ('succeeded','attention') AND read_at IS NULL";
+    /** 时间相同时继续比较来源和身份，与统一列表排序一致。 */
+    const boundary = before ? " AND (updated_at < ? OR (updated_at = ? AND ('git_delivery' < ? OR ('git_delivery' = ? AND id < ?))))" : '';
+    /** 客户端游标仅通过绑定参数进入查询。 */
+    const params: SqlValue[] = before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [];
+    /** 入口身份直接来自运行列，不解析完整授权输入。 */
+    const rows = this.db.select<
+      Omit<GitDeliveryNotification, 'scope' | 'title'> & {
+        /** 原任务或会话入口种类。 */
+        scopeKind: GitDeliveryScope['kind'];
+        /** 原任务或会话身份。 */
+        scopeId: string;
+      }
+    >(
+      `SELECT id, project_id AS projectId, scope_kind AS scopeKind, scope_id AS scopeId, state AS status, updated_at AS occurredAt, notification_revision AS revision FROM git_delivery_runs WHERE ${unreadWhere}${boundary} ORDER BY updated_at DESC, id DESC LIMIT 21`,
+      params,
+    );
+    return {
+      items: rows.map(({ scopeKind, scopeId, ...item }) => ({ ...item, title: '代码交付', scope: scopeKind === 'task' ? { kind: 'task', taskId: scopeId } : { kind: 'conversation', conversationId: scopeId } })),
+      unreadCount: this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM git_delivery_runs WHERE ${unreadWhere}`)!.count,
+    };
   }
 
-  /** 单条或全部已读都由通知命令事务调用。 */
-  acknowledge(id?: string): void {
-    this.db.execute("UPDATE git_delivery_runs SET read_at=? WHERE state IN ('succeeded','attention') AND read_at IS NULL AND (? IS NULL OR id=?)", [new Date().toISOString(), id ?? null, id ?? null]);
+  /** 单条仅确认用户看到的修订；全部确认由通知命令事务覆盖当前未读。 */
+  acknowledge(target?: { id: string; expectedRevision: number }): { acknowledged: boolean } {
+    if (target) {
+      /** 查询和更新均位于调用方的耐久事务中，过期修订保持未读。 */
+      const current = this.db.get<{ revision: number }>("SELECT notification_revision AS revision FROM git_delivery_runs WHERE id=? AND state IN ('succeeded','attention')", [target.id]);
+      if (current?.revision !== target.expectedRevision) return { acknowledged: false };
+      this.db.execute('UPDATE git_delivery_runs SET read_at=COALESCE(read_at, ?) WHERE id=? AND notification_revision=?', [new Date().toISOString(), target.id, target.expectedRevision]);
+    } else {
+      this.db.execute("UPDATE git_delivery_runs SET read_at=? WHERE state IN ('succeeded','attention') AND read_at IS NULL", [new Date().toISOString()]);
+    }
+    return { acknowledged: true };
   }
 }

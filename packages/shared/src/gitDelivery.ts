@@ -145,6 +145,8 @@ export interface GitDeliveryNotification {
   title: string;
   /** 成功或需要处理。 */
   status: 'succeeded' | 'attention';
+  /** 状态变化时递增，单条已读仅确认用户看到的修订。 */
+  revision: number;
   /** 状态变更时间。 */
   occurredAt: string;
 }
