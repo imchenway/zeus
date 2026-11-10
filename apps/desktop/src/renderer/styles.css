@@ -16280,9 +16280,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
   min-block-size: 0;
   overflow: auto;
+  overflow-wrap: anywhere;
   overscroll-behavior: contain;
   align-content: start;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 5px;
   padding: 8px 12px;
   background: var(--zeus-product-panel);
@@ -16291,6 +16293,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-delivery-actions small {
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* 长错误及组合动作在交付栏内完整换行，网格宽度由侧栏决定。 */
+.macos-ai-app .task-git-delivery-actions .application-error-inline-summary,
+.macos-ai-app .task-git-delivery-actions .git-delivery-combination-buttons > .zeus-button {
+  white-space: normal;
 }
 
 .macos-ai-app .task-git-delivery-actions > .task-git-delivery-action-step {
