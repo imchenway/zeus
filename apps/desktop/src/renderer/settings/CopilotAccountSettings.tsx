@@ -11,6 +11,8 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
   const zh = props.language === 'zh-CN';
   /** 目录状态只取当前 SDK 账号的服务端快照。 */
   const [catalog, setCatalog] = useState<CopilotAccountCatalog | null>(null);
+  /** 账号读取单独记录加载状态，失败后不能继续显示加载中。 */
+  const [accountLoading, setAccountLoading] = useState(Boolean(props.client));
   /** 登录状态绑定服务端不透明 flow 身份。 */
   const [loginId, setLoginId] = useState<string | null>(null);
   /** 登录步骤显示设备码、验证地址和完成结果。 */
@@ -29,6 +31,7 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
   useEffect(() => {
     if (!props.client) return;
     let active = true;
+    setAccountLoading(true);
     setBusy(true);
     void props.client
       .refreshCopilotAccount()
@@ -39,7 +42,10 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
-        if (active) setBusy(false);
+        if (active) {
+          setAccountLoading(false);
+          setBusy(false);
+        }
       });
     return () => {
       active = false;
@@ -181,9 +187,17 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
               ? zh
                 ? '未登录'
                 : 'Not signed in'
-              : zh
-                ? '正在读取账号状态…'
-                : 'Loading account status…'}
+              : !props.client
+                ? zh
+                  ? '账号状态尚未检查'
+                  : 'Account status not checked'
+                : accountLoading
+                  ? zh
+                    ? '正在读取账号状态…'
+                    : 'Loading account status…'
+                  : zh
+                    ? '暂时无法读取账号状态'
+                    : 'Account status is temporarily unavailable'}
         </span>
       </header>
       <div className="model-setup-actions">
@@ -192,7 +206,7 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
             {zh ? '退出登录' : 'Sign out'}
           </Button>
         ) : (
-          <Button variant="primary" disabled={busy || !props.client || Boolean(loginId)} onClick={() => void beginLogin()}>
+          <Button variant="primary" busy={busy && !accountLoading} disabled={busy || !props.client || Boolean(loginId)} onClick={() => void beginLogin()}>
             {zh ? '登录 GitHub Copilot' : 'Sign in to GitHub Copilot'}
           </Button>
         )}
