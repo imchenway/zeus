@@ -2899,10 +2899,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
   }
 
+  /** 线程建立前省略线程身份，避免将 undefined 写入耐久会话事件。 */
   function publish(type: string, conversationId: string, extra: Record<string, unknown>): void {
     const conversation = options.conversations.getById(conversationId);
     if (!conversation) return;
-    options.publish(type, { projectId: conversation.projectId, conversationId, threadId: conversation.providerThreadId ?? undefined, generationId: conversation.nativeSessionId ?? 'pi-sdk', sequence: (eventSequence += 1), ...extra });
+    options.publish(type, {
+      projectId: conversation.projectId,
+      conversationId,
+      ...(conversation.providerThreadId ? { threadId: conversation.providerThreadId } : {}),
+      generationId: conversation.nativeSessionId ?? 'pi-sdk',
+      sequence: (eventSequence += 1),
+      ...extra,
+    });
   }
 
   function requirePiConversation(conversationId: string): ZeusConversationWithMessagesRecord {
