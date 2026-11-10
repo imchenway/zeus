@@ -57,6 +57,8 @@ interface SummarySource {
 
 /** Git 状态服务提供卡片按需读取与交付窗口订阅，共用工作区身份校验。 */
 export class GitEnvironmentSummaryService {
+  /** 同一持久范围的并发只读请求共用检查，完成即释放，不缓存过期 Git 状态。 */
+  private readonly statusReads = new Map<string, Promise<GitEnvironmentStatus>>();
   /** 同一工作树和排除范围跨窗口共享初始化与读取。 */
   private readonly entries = new Map<string, { promise: Promise<SummaryEntry>; listeners: Set<() => void> }>();
   /** 按退出订阅的顺序回收空闲工作树；重新订阅会移出此集合。 */
@@ -97,7 +99,19 @@ export class GitEnvironmentSummaryService {
       if (Object.values(scope).some((value) => typeof value !== 'string' || !value || value.length > 200) || (scope.taskId && scope.conversationId) || (scope.workspaceId && !scope.taskId)) {
         return reply.code(400).send({ message: 'Invalid Git environment scope' });
       }
-      return this.readStatus((request.params as { projectId: string }).projectId, scope);
+      /** 多窗口同时恢复焦点时不重复启动同一批仓库检查。 */
+      const projectId = (request.params as { projectId: string }).projectId;
+      /** 请求身份只包含持久范围，同一项目中的不同工作区不能合并。 */
+      const key = JSON.stringify([projectId, scope.taskId, scope.workspaceId, scope.conversationId]);
+      /** 已启动的检查继续服务相同范围的新读取。 */
+      const pending = this.statusReads.get(key);
+      if (pending) return pending;
+      /** 真实写入可使旧检查失效，其回执只能清理自身。 */
+      const reading = this.readStatus(projectId, scope).finally(() => {
+        if (this.statusReads.get(key) === reading) this.statusReads.delete(key);
+      });
+      this.statusReads.set(key, reading);
+      return reading;
     });
     this.options.server.get('/api/projects/:projectId/git/summary-events', { websocket: true }, (socket, request) => {
       /** 连接尚未读取目录时也必须先验证宿主令牌。 */
@@ -115,6 +129,8 @@ export class GitEnvironmentSummaryService {
 
   /** 真实 Git 操作或任务生命周期变化才使关联摘要失效。 */
   invalidateProject(projectId: string, repositoryId?: string): void {
+    /** 写入完成后的新请求重新核验，旧读取的回执不能移除这次新读取。 */
+    for (const key of this.statusReads.keys()) if (JSON.parse(key)[0] === projectId) this.statusReads.delete(key);
     for (const subscription of this.subscriptions) if (subscription.projectId === projectId) subscription.invalidate(repositoryId);
   }
 
@@ -222,14 +238,14 @@ export class GitEnvironmentSummaryService {
   /** 环境卡片只读取分支与是否有更改，不建立目录监听或生成差异统计。 */
   private async readStatus(projectId: string, scope: GitEnvironmentScope): Promise<GitEnvironmentStatus> {
     const { sources, summary: status } = await this.resolveScope(projectId, scope);
-    let dirty = false;
-    for (const source of sources) {
-      if (source.path === status.cwd || (!scope.taskId && !status.branch)) {
-        status.branch = (await readGit('git', ['branch', '--show-current'], { cwd: source.path, timeout: 15_000 })).stdout.trim() || null;
-      }
-      if (!dirty) dirty = !(await getGitWorktreeClean(source.path, source.ignoredPaths, source.nestedPaths));
-    }
-    return { ...status, dirty };
+    /** 多仓库不展示首仓分支；单仓分支与各仓干净状态互不等待。 */
+    const branchSource = sources.find((source) => source.path === status.cwd) ?? (!scope.taskId && status.repositoryCount === 1 ? sources[0] : undefined);
+    /** 同一批读取仍保留各仓路径排除规则与失败语义。 */
+    const [branch, cleanStates] = await Promise.all([
+      branchSource && !status.branch ? readGit('git', ['branch', '--show-current'], { cwd: branchSource.path, timeout: 15_000 }).then((result) => result.stdout.trim() || null) : status.branch,
+      Promise.all(sources.map((source) => getGitWorktreeClean(source.path, source.ignoredPaths, source.nestedPaths))),
+    ]);
+    return { ...status, branch, dirty: cleanStates.some((clean) => !clean) };
   }
 
   /** 只向连接发送变化后的摘要；短时写入合并，持续写入最多等待一秒。 */

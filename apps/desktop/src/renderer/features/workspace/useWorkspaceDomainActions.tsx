@@ -1892,12 +1892,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 代码交付统一打开已有原生窗口，失败显示真实错误并保留同一入口。 */
-  function openTaskGitDelivery(taskId: string, workspaceId?: string | null): void {
+  async function openTaskGitDelivery(taskId: string, workspaceId?: string | null): Promise<void> {
     if (!window.zeus?.openTaskGitDeliveryWindow) {
       recordLocalError('task-git-delivery-window-open', new Error(appShellSettings.appLanguage === 'zh-CN' ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.'));
       return;
     }
-    void window.zeus.openTaskGitDeliveryWindow({ taskId, workspaceId }).catch((error: unknown) => {
+    await window.zeus.openTaskGitDeliveryWindow({ taskId, workspaceId }).catch((error: unknown) => {
       recordLocalError('task-git-delivery-window-open', error);
     });
   }

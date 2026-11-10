@@ -1,5 +1,5 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import { type HTMLAttributes, type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type HTMLAttributes, type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHoverIntent } from '../ui/useHoverIntent.js';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -144,8 +144,10 @@ const labels = {
 
 export function ConversationComposer(props: ConversationComposerProps) {
   const copy = labels[props.language];
-  const initialModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.providerSettings?.model);
-  const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
+  /** 已有会话未读回设置时不套用新建会话的默认模型和推理强度。 */
+  const settingsLoading = Boolean(props.state.conversationId && !props.state.snapshot && !props.state.providerSettings?.model);
+  const initialModel = settingsLoading && !props.runtimeSettings?.model ? '' : resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.providerSettings?.model);
+  const initialEffort = settingsLoading && !props.runtimeSettings?.effort ? '' : resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
   /** 服务档位只使用当前会话的显式选择。 */
   const initialServiceTier = selectionFromEffectiveServiceTier(props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : null);
   const fallbackRef = useRef<ComposerInputHandle | null>(null);
@@ -195,14 +197,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
   const goalOperationBusy = goalSubmitting || props.goalBusy === true;
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
-  const effectiveModel = modelPresentation.selectedId || selectedModel;
+  const effectiveModel = settingsLoading && !selectedModel ? '' : modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
   const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'copilot' ? 'GitHub Copilot' : selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
   const inputLabel = copy.input(providerLabel);
-  const settingsWritable = props.readOnly !== true && props.inputBlocked !== true && Boolean(selectedCapability);
-  const modelSelectionWritable = props.readOnly !== true && props.inputBlocked !== true && modelPresentation.options.length > 0;
+  const settingsWritable = !settingsLoading && props.readOnly !== true && props.inputBlocked !== true && Boolean(selectedCapability);
+  const modelSelectionWritable = !settingsLoading && props.readOnly !== true && props.inputBlocked !== true && modelPresentation.options.length > 0;
   const modelOptions = modelPresentation.options;
-  const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
+  const selectedModelLabel = settingsLoading && !selectedModel ? (props.language === 'zh-CN' ? '读取中…' : 'Loading…') : modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
   const inputResources = useConversationInputResources({
     attachments: props.state.attachments,
@@ -217,9 +219,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
     },
     onError: setInputResourceError,
   });
-  useEffect(() => {
-    const nextModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model);
-    const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.runtimeSettings?.effort ?? props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort);
+  useLayoutEffect(() => {
+    /** 会话切换的首帧同步已知设置，避免先画出上一会话或默认值。 */
+    const nextModel = settingsLoading && !props.runtimeSettings?.model ? '' : resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model);
+    const nextEffort =
+      settingsLoading && !props.runtimeSettings?.effort ? '' : resolveComposerEffort(props.capabilities, nextModel, props.runtimeSettings?.effort ?? props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort);
     const nextServiceTier = selectionFromEffectiveServiceTier(
       props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier')
         ? props.runtimeSettings.serviceTier
@@ -230,7 +234,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (nextModel !== selectedModel) setSelectedModel(nextModel);
     if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
     if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
-  }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier]);
+  }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier, settingsLoading]);
 
   /** 自动预测可以在输入期间生成，空输入且无待处理交互时才展示。 */
   const suggestion = useInputSuggestion({
@@ -680,7 +684,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               {effortOptions.length > 0 ? (
                 <ComposerDropdown
                   label={copy.effort}
-                  triggerLabel={`${copy.effort}：${selectedEffort}`}
+                  triggerLabel={`${copy.effort}：${selectedEffort || '…'}`}
                   value={selectedEffort}
                   options={effortOptions}
                   disabled={!settingsWritable}
