@@ -524,8 +524,10 @@ function canRebindPreWriteState(state) {
 function rebindUnpublishedReleaseRepair(state, headSha) {
   /** 本地门禁尚未完成时，候选仍可能已由其他入口推送。 */
   const recoveringBeforeGate = state.phase === 'release_committed' && !state.gateSummaryPath;
+  /** 门禁通过后 main 继续前进时，旧门禁结果不能用于新的候选。 */
+  const recoveringBeforePush = state.phase === 'gate_passed' && Boolean(state.gateSummaryPath);
   const recoveringFailedPushedCommit = state.phase === 'main_pushed' && Boolean(state.gateSummaryPath);
-  if ((!recoveringBeforeGate && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
+  if ((!recoveringBeforeGate && !recoveringBeforePush && !recoveringFailedPushedCommit) || state.publishResultPath) return false;
   if (git(['status', '--short'])) return false;
   if (readMatchingPackageVersion() !== state.version) return false;
   if (resolveLocalTagSha(state.tag) || resolveRemoteReference(`refs/tags/${state.tag}`)) return false;
