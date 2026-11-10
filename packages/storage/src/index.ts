@@ -1,4 +1,4 @@
-import { migrateGitDelivery, migrateGitDeliveryCommands, migrateGitDeliveryArchiving } from './gitDeliveryStore.js';
+import { migrateGitDelivery, migrateGitDeliveryCommands, migrateGitDeliveryArchiving, migrateGitDeliveryNotificationRevision } from './gitDeliveryStore.js';
 import { migrateConversationWorktreeRecovery } from './conversationWorktreeRecoveryStore.js';
 export * from './conversationWorktreeRecoveryStore.js';
 export * from './gitDeliveryStore.js';
@@ -1019,6 +1019,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateGitDelivery(zeusDb);
     migrateGitDeliveryCommands(zeusDb);
     migrateGitDeliveryArchiving(zeusDb);
+    migrateGitDeliveryNotificationRevision(zeusDb);
     migrateConversationWorktreeRecovery(zeusDb);
     migrateRetiredCodeGraph(zeusDb);
     migrateTaskBoardSchema(zeusDb);

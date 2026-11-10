@@ -130,7 +130,7 @@ export function useNotifications(input: {
       try {
         /** 只使用点击时的修订，不替换为刷新后尚未看见的修订。 */
         if (item.source === 'automation') await client.acknowledgeAutomationNotification(item.id, item.revision);
-        else if (item.source === 'git_delivery') await client.acknowledgeGitDelivery(item.id);
+        else if (item.source === 'git_delivery') await client.acknowledgeGitDelivery(item.id, item.revision);
         else if (item.source === 'command') await client.acknowledgeCommandNotification(item.id);
         else await client.acknowledgeTaskReminders([item.id]);
         await refresh();
