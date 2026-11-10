@@ -787,6 +787,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationSubmissions = new ConversationSubmissionRepository(db);
   const conversationExecution = new ConversationExecutionRepository(db);
   const conversationSnapshotV2 = new ConversationSnapshotV2Repository(db, artifactStore);
+  /** 完成事件可早于宿主命名服务装配，首发启用时会补查完成回合。 */
+  // eslint-disable-next-line prefer-const
+  let conversationTitles: ReturnType<typeof createConversationTitleGeneration> | undefined;
   /** 实时事件只读取单条来源别名，不重新装载会话历史。 */
   const conversationTranscripts = new ConversationTranscriptRepository(db);
   const conversationSyncEvents = new ConversationSyncEventRepository(db);
@@ -2992,6 +2995,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!expertRoute) return;
     const mappedType = expertRoute.type;
     payload = expertRoute.payload;
+    if (mappedType === 'conversation.turn.completed' && payload.status === 'completed' && !payload.internalOperation && typeof payload.conversationId === 'string') conversationTitles?.schedule(payload.conversationId);
     /** 异步问题完成后刷新项目待回复提示，普通条目和文本增量不增加聚合查询。 */
     const asyncQuestionCompleted = mappedType === 'conversation.item.completed' && payload.itemPayload !== null && typeof payload.itemPayload === 'object' && asyncMessageQuestions(payload.itemPayload as Record<string, unknown>).length > 0;
     const conversationIds =
@@ -3348,20 +3352,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   traceStartup('runtime_sessions_ready');
 
   /** 标题生成复用当前宿主模型连接，生命周期独立于主会话。 */
-  const conversationTitles = createConversationTitleGeneration({
+  conversationTitles = createConversationTitleGeneration({
     db,
     conversations,
     submissions: conversationSubmissions,
+    snapshots: conversationSnapshotV2,
     tasks,
     modelConnections,
     codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
     publish: (type, payload) => (type.startsWith('conversation.') ? publishNativeConversationEvent(type, payload) : publishRealtimeEvent(type, payload)),
     onFailure: (conversationId) => server.log.warn({ conversationId }, '会话自动命名未完成，保留原名称'),
   });
-  server.addHook('onClose', () => conversationTitles.close());
+  server.addHook('onClose', () => conversationTitles?.close());
 
   conversationOperations = createConversationApplicationOperations({
-    scheduleConversationTitle: conversationTitles.schedule,
+    scheduleConversationTitle: conversationTitles.start,
     conversationSources,
     settings,
     conversationGoals,

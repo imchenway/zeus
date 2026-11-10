@@ -38,6 +38,8 @@ export interface ZeusConversationRecord {
   environmentId: string | null;
   sessionId: string | null;
   title: string;
+  /** 标题初始、待自动命名、自动完成或用户命名的持久状态。 */
+  titleSource: ConversationTitleSource;
   summary: string | null;
   status: string;
   stage: ConversationStage;
@@ -79,6 +81,8 @@ export interface ZeusConversationRecord {
 }
 
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
+/** 初始标题只有普通新会话接纳后才进入待命名状态。 */
+export type ConversationTitleSource = 'initial' | 'pending' | 'automatic' | 'manual';
 export type ConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
@@ -596,7 +600,7 @@ export class ProviderEventReceiptRepository {
 
 /** 设置仓储保存本机偏好与通知策略，不存储 token、密码等敏感明文。 */
 
-const selectConversationFields = `id, project_id, task_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
+const selectConversationFields = `id, project_id, task_id, session_id, title, title_source, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
   provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, attention_kind, attention_revision, attention_turn_id, attention_updated_at, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
@@ -825,6 +829,7 @@ export class ConversationRepository {
       environmentId: input.environmentId ?? null,
       sessionId: input.sessionId ?? null,
       title: input.title,
+      titleSource: 'initial',
       summary: input.summary ?? null,
       status: input.status ?? 'open',
       stage: 'created',
@@ -864,12 +869,12 @@ export class ConversationRepository {
       automationRunId: input.automationRunId ?? null,
     };
     this.db.execute(
-      `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
+      `INSERT INTO conversations (id, project_id, task_id, workspace_id, environment_id, session_id, title, title_source, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
         transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
         provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread,
         agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
         origin_kind, listing_scope, automation_run_id, context_capacity_tokens)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.projectId,
@@ -878,6 +883,7 @@ export class ConversationRepository {
         record.environmentId,
         record.sessionId,
         record.title,
+        record.titleSource,
         record.summary,
         record.status,
         record.stage,
@@ -1632,13 +1638,19 @@ export class ConversationRepository {
     return restored;
   }
 
-  updateTitle(conversationId: string, title: string): ZeusConversationWithMessagesRecord {
+  /** 仅首发自动命名入口可以启用初始标题，手动或已完成命名不会被重新启用。 */
+  enableAutomaticTitle(conversationId: string): void {
+    this.db.execute(`UPDATE conversations SET title_source = 'pending' WHERE id = ? AND title_source = 'initial'`, [conversationId]);
+  }
+
+  /** 名称与来源一起保存，手动命名立即阻止后台覆盖。 */
+  updateTitle(conversationId: string, title: string, titleSource: ConversationTitleSource = 'manual'): ZeusConversationWithMessagesRecord {
     const existing = this.getById(conversationId);
     if (!existing) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
     }
     const timestamp = nowIso();
-    this.db.execute(`UPDATE conversations SET title = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [title, timestamp]);
+    this.db.execute(`UPDATE conversations SET title = ?, title_source = ?, updated_at = ? WHERE id = ?`, [title, titleSource, timestamp, conversationId]);
     const updated = this.getById(conversationId);
     if (!updated) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
@@ -3382,6 +3394,8 @@ interface DbConversationRow {
   environment_id: string | null;
   session_id: string | null;
   title: string;
+  /** 与标题同时保存的命名状态。 */
+  title_source: ConversationTitleSource;
   summary: string | null;
   status: string;
   stage: ConversationStage;
@@ -3615,6 +3629,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     environmentId: row.environment_id,
     sessionId: row.session_id,
     title: row.title,
+    titleSource: row.title_source,
     summary: row.summary,
     status: row.status,
     stage: assertEnum(row.stage, ['created', 'connecting', 'queued', 'running', 'waiting_user', 'waiting_approval', 'completed', 'failed', 'paused', 'ready', 'archived'] as const, 'conversation stage'),
