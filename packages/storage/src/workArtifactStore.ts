@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolve, sep } from 'node:path';
 import type { ArtifactRef } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { TaskWorkStoreError } from './taskWorkStore.js';
@@ -189,12 +190,20 @@ export class WorkArtifactRepository {
     return Boolean(run?.source_ref && this.repairHandoff(run.task_id, run.source_ref, deliverableId));
   }
 
-  /** 按两端路径分隔符识别已导出目录，只领取待导出或重编号任务并保留重试间隔。 */
-  pendingTaskIds(limit: number, eligibleBefore: string): string[] {
+  /** 按当前项目目录和任务编码核对完整导出位置，目录变化后沿用原重试间隔。 */
+  pendingTaskIds(limit: number, eligibleBefore: string, managedRoot: string): string[] {
     return this.db
       .select<{ task_id: string }>(
-        `SELECT publication.task_id FROM work_artifact_publications publication JOIN tasks task ON task.id=publication.task_id LEFT JOIN work_task_doc_locations location ON location.task_id=task.id WHERE publication.updated_at<=? AND (publication.exported_root IS NULL OR publication.export_error IS NOT NULL OR location.root IS NULL OR substr(location.root,-length(task.task_code)-1) NOT IN ('/' || task.task_code,char(92) || task.task_code)) GROUP BY publication.task_id ORDER BY MIN(publication.updated_at),publication.task_id LIMIT ?`,
-        [eligibleBefore, limit],
+        `SELECT publication.task_id FROM work_artifact_publications publication
+         JOIN tasks task ON task.id=publication.task_id
+         LEFT JOIN projects project ON project.id=task.project_id AND project.deleted_at IS NULL
+         LEFT JOIN work_task_doc_locations location ON location.task_id=task.id
+         WHERE publication.updated_at<=? AND (
+           publication.exported_root IS NULL OR publication.export_error IS NOT NULL OR location.root IS NULL OR
+           location.root <> (rtrim(COALESCE(NULLIF(project.local_path,''),?),?) || ? || COALESCE(NULLIF(task.task_code,''),task.id))
+         )
+         GROUP BY publication.task_id ORDER BY MIN(publication.updated_at),publication.task_id LIMIT ?`,
+        [eligibleBefore, resolve(managedRoot), sep, sep + 'docs' + sep, limit],
       )
       .map((row) => row.task_id);
   }

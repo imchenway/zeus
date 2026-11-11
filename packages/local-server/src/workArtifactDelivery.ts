@@ -75,7 +75,7 @@ export class WorkArtifactDelivery {
 
   /** 复用 Task Work 的调度循环重建，失败轮转且不占用模型执行资源。 */
   retryPending(now: Date, limit = 3): Array<{ taskId: string; error: string | null }> {
-    const pending = this.options.publications.pendingTaskIds(limit, new Date(now.getTime() - 30_000).toISOString());
+    const pending = this.options.publications.pendingTaskIds(limit, new Date(now.getTime() - 30_000).toISOString(), this.options.managedRoot);
     return pending.map((taskId) => {
       try {
         this.rebuildTask(taskId);
@@ -157,15 +157,16 @@ export class WorkArtifactDelivery {
     mkdirSync(docsRoot, { recursive: true });
     const root = safePath(docsRoot, safeRelativePath(task.taskCode || task.id));
     const previous = this.options.publications.location(taskId);
-    /** 已登记旧位置才允许整体搬移；目标存在即停止，不合并或覆盖。 */
-    if (previous && previous.root !== root && existsSync(previous.root)) {
+    /** 同一资料根内的任务重编号保留整体搬移；项目目录变化时从冻结成果重建并保留旧目录。 */
+    if (previous && previous.root !== root && dirname(previous.root) === docsRoot && existsSync(previous.root)) {
       safePath(dirname(previous.root), basename(previous.root));
       if (existsSync(root)) throw scopeError('任务重编号后的资料目录已存在，保留两处现场等待处理。');
       renameSync(previous.root, root);
       this.options.publications.saveLocation(taskId, root, previous.ownedFiles, previous.legacySources);
     }
     mkdirSync(root, { recursive: true });
-    const ownedFiles = { ...(previous?.ownedFiles ?? {}) };
+    /** 覆盖权限只属于原资料根，不能沿用到另一个项目目录。 */
+    const ownedFiles = { ...(previous && dirname(previous.root) === docsRoot ? previous.ownedFiles : {}) };
     const legacySources = { ...(previous?.legacySources ?? {}) };
     /** 旧文档保留原位置，附件相对路径不变；稳定任务关系继续记录原编码来源。 */
     const legacy = this.indexLegacyDocs(docsRoot, root, task.taskCode, legacySources);
