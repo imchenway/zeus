@@ -27,9 +27,12 @@ const transientSuggestionErrors = new Set([
   'ZEUS_MODEL_TEXT_INCOMPLETE',
 ]);
 
-/** 首次临时失败等待两秒，再次等待五秒；无需改写、无效输出和明确配置错误不重复请求。 */
+/** 可恢复失败首次等待两秒，再次等待五秒；明确配置错误和无需改写不重复请求。 */
 export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause' | 'retryable'>, retries: number): number | null {
-  if (result.retryable === false || retries >= 2 || (result.reason !== 'timed_out' && result.reason !== 'failed')) return null;
+  if (result.retryable === false || retries >= 2) return null;
+  // 服务端仅对材料尚未就绪、规则变化和已完成但无效的输出明确允许重试。
+  if (result.retryable === true) return retries === 0 ? 2_000 : 5_000;
+  if (result.reason !== 'timed_out' && result.reason !== 'failed') return null;
   // 无结构化原因的生成失败也受同一上限约束；不通过报错正文猜测权限或网络状态。
   for (let cause = result.cause; cause; cause = cause.cause) {
     if (cause.code && !transientSuggestionErrors.has(cause.code)) return null;
