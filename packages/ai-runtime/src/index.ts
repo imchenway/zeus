@@ -67,13 +67,11 @@ export interface AiCliAdapterStatus extends AiCliStatus {
   installationGuideUrl: string | null;
   /** 程序准备失败的结构化原因，界面不解析诊断文案。 */
   installationIssue?: 'not_found' | 'invalid_path' | 'cannot_run' | 'unrecognized_program' | 'app_server_unavailable' | null;
-  /** 实际使用方补充安装目标，普通 CLI 与远程专属安装不能混用。 */
+  /** 实际使用方补充当前 Zeus 受管程序的安装目标。 */
   installation?: {
-    /** 远程模式固定使用 Zeus 专属安装，不允许在登录页改为全局程序。 */
+    /** 两种连接模式使用同一份 Zeus 受管程序。 */
     mode: 'local' | 'remote';
-    /** 当前保存的用户路径，空值表示自动发现。 */
-    configuredCommandPath: string | null;
-    /** 由当前安装目标生成、仅供用户复制执行的官方安装命令。 */
+    /** 固定安装到当前 Zeus 专属目录的官方命令。 */
     command: string;
   };
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';

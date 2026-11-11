@@ -22,7 +22,6 @@ import { createAutomationNotificationService } from './automationNotificationSer
 import { probeCodexConversation } from './codexConnectionDiagnostic.js';
 import {
   checkAiCliAdapter,
-  codexInstallationCommand,
   powerShellCommandArguments,
   resolveInteractiveShell,
   spawnManagedProcess,
@@ -629,7 +628,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     codexPublicCommands,
     codexUsageService,
     commandRuns,
-    configuredCodexRuntimeCommandPath,
     conversationChoiceQueries,
     conversationExecution,
     conversationExperts,
@@ -721,7 +719,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     projects,
     publishNativeConversationEvent,
     publishRealtimeEvent,
-    readCodexRemoteControlStandalone,
+    readManagedCodexStandalone,
     readGitDiff,
     readGitStatus,
     readOnlyValidation,
@@ -735,7 +733,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     redactSensitiveText,
     releaseNotesAuthorizedRequests,
     releaseNotesCapabilities,
-    requireCodexRemoteControlCommandPath,
     requireNativeQueueConversation,
     requireTelegramPollingService,
     resolveNativeConversationExecutionRoot,
@@ -1236,24 +1233,19 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       /** Codex 检测与登录共用程序来源，且只运行版本和能力探针。 */
       checkAdapter: async (adapterId, configuredCommandPath) => {
         if (adapterId !== 'codex') return checkAiCliAdapter(adapterId, { commandPath: configuredCommandPath });
-        /** 远程接管要求专属安装；不能以全局 CLI 的存在代替。 */
+        /** 普通登录与远程接管共用 Zeus 受管程序，不读取系统 PATH 或旧的外部路径。 */
         const remote = platformMutableState.codexRemoteControlEnabled;
         /** 只读取安装位置，不启动或接管后台服务。 */
-        const standalone = remote ? readCodexRemoteControlStandalone() : null;
-        /** 普通模式同时尊重用户设置和应用注入的程序路径。 */
-        const selectedPath = remote ? standalone?.commandPath : configuredCodexRuntimeCommandPath();
-        if (remote && !selectedPath) throw nativeApiError('ZEUS_CODEX_HOME_UNAVAILABLE', '尚未配置远程接管所需的 Codex 专属目录。');
-        /** 默认命令名走实时 PATH 搜索；用户填写的非绝对路径仍应明确失败。 */
-        const commandPath = selectedPath === 'codex' && !configuredCommandPath ? undefined : (selectedPath ?? undefined);
-        /** 缺少远程专属入口属于待安装，而非用户填写的路径错误。 */
-        const status = await checkAiCliAdapter('codex', { commandPath });
+        const standalone = readManagedCodexStandalone();
+        if (!standalone.commandPath) throw nativeApiError('ZEUS_CODEX_HOME_UNAVAILABLE', 'Zeus 的 Codex 数据目录不可用。');
+        /** 缺少受管入口属于待安装，不是用户填写了无效路径。 */
+        const status = await checkAiCliAdapter('codex', { commandPath: standalone.commandPath });
         return {
           ...status,
-          ...(remote && !standalone?.available ? { installationIssue: 'not_found' as const } : {}),
+          ...(!standalone.available ? { installationIssue: 'not_found' as const } : {}),
           installation: {
             mode: remote ? ('remote' as const) : ('local' as const),
-            configuredCommandPath: remote ? null : configuredCommandPath?.trim() || null,
-            command: standalone?.installCommand ?? codexInstallationCommand(),
+            command: standalone.installCommand,
           },
         };
       },
@@ -4453,7 +4445,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   function readAgentCapabilityCatalog() {
     const checkedAt = now().toISOString();
-    const configuredCommandPath = configuredCodexRuntimeCommandPath();
+    const managedCodex = readManagedCodexStandalone();
     let codexStatus = {
       available: false,
       version: null as string | null,
@@ -4474,7 +4466,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             available: false,
             version: null,
             checkedAt,
-            reason: configuredCommandPath ? `Codex 已配置，但当前 transport=${transport.type}；只读能力目录不会隐式启动 Provider。` : 'Codex 尚未配置可执行路径；只读能力目录不会探测或启动 Provider。',
+            reason: managedCodex.available ? `Zeus 管理的 Codex 已就绪，但当前 transport=${transport.type}；只读能力目录不会隐式启动 Provider。` : 'Zeus 管理的 Codex 尚未就绪；只读能力目录不会探测或启动 Provider。',
           };
     }
     return createAgentCapabilityCatalog({
@@ -4960,7 +4952,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   async function ensureCodexRemoteControlReady(remoteControl = platformMutableState.codexRemoteControlEnabled): Promise<void> {
     await codexAppServerManager.ensureReady({
-      commandPath: remoteControl ? requireCodexRemoteControlCommandPath() : currentCodexRuntimeCommandPath(),
+      commandPath: currentCodexRuntimeCommandPath(),
       ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}),
       ...(remoteControl ? { remoteControl: true } : {}),
     });
@@ -4970,7 +4962,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     await ensureCodexRemoteControlReady();
     const currentStatus = status ?? (await codexAppServerManager.readRemoteControlStatus());
     const clients = currentStatus.environmentId ? (await codexAppServerManager.listRemoteControlClients({ environmentId: currentStatus.environmentId, limit: 100, order: 'desc' })).data : [];
-    return { enabled: platformMutableState.codexRemoteControlEnabled, status: currentStatus, clients, managedStandalone: readCodexRemoteControlStandalone() };
+    return { enabled: platformMutableState.codexRemoteControlEnabled, status: currentStatus, clients, managedStandalone: readManagedCodexStandalone() };
   }
 
   server.get('/api/security/secrets', async (): Promise<SecuritySecretsSnapshot> => ({

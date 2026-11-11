@@ -911,8 +911,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       }
       /** 启动未知必须保持原诊断，不能改写为依赖缺失或建议重新安装。 */
       if ('code' in failure && failure.code === 'ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED') throw failure;
-      const unavailableReason = remoteControlTransport ? `Zeus 无法启动会话远程接管所需的 Codex Remote Control（${command}）：${failure.message}` : `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}`;
-      const recoveryGuidance = remoteControlTransport ? codexRemoteControlRecoveryGuidance(env) : `请运行官方安装命令 ${codexInstallationCommand()}，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
+      const unavailableReason = remoteControlTransport ? `Zeus 无法启动会话远程接管所需的 Codex Remote Control（${command}）：${failure.message}` : `Zeus 管理的 Codex 无法启动兼容的 app-server（${command}）：${failure.message}`;
+      const recoveryGuidance = codexRuntimeRecoveryGuidance(env);
       if (failure.message.startsWith('ZEUS_CODEX_MODEL_') || ('code' in failure && typeof failure.code === 'string' && failure.code.startsWith('ZEUS_CODEX_MODEL_'))) throw failure;
       throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。${recoveryGuidance}`);
     });
@@ -2358,13 +2358,16 @@ function parseLastJsonObject(value: string): Record<string, unknown> {
   throw new Error('Codex CLI 没有返回 JSON 启动结果。');
 }
 
-function codexRemoteControlRecoveryGuidance(env: NodeJS.ProcessEnv): string {
+/** 启动失败时只提供当前 Zeus 受管目录的修复方式。 */
+function codexRuntimeRecoveryGuidance(env: NodeJS.ProcessEnv): string {
+  /** 安装目标与进程运行目录一致，不能引导用户安装另一份全局程序。 */
   const codexHome = env.CODEX_HOME?.trim();
   if (!codexHome || !isAbsolute(codexHome)) {
-    return `请运行官方安装命令 ${codexInstallationCommand()}，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
+    return 'Zeus 的 Codex 数据目录不可用，请检查当前数据目录配置。';
   }
+  /** 官方安装器同时用于首次准备与修复受管程序。 */
   const installCommand = codexInstallationCommand(codexHome);
-  return `默认安装到其他 CODEX_HOME 不能修复 Zeus 的独立运行目录。请运行 ${installCommand}，完成 Zeus 专属 Codex 登录后在设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
+  return `请使用 ${installCommand} 准备或修复 Zeus 专属目录中的 Codex，然后回到 Zeus 重新检测。`;
 }
 
 function parseModels(value: unknown): CodexModelCapability[] {

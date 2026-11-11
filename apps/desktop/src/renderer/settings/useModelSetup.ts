@@ -432,33 +432,6 @@ export function useModelSetup(input: {
     }
   }
 
-  /** 只更新 Codex 程序路径，保留其他适配器和运行设置。 */
-  async function saveCodexPath(path: string): Promise<void> {
-    if (!input.client || operation !== 'idle' || installationCheck?.installation?.mode === 'remote') return;
-    /** 保存期间禁止关闭，避免用户误以为路径没有提交。 */
-    const request = ++requestRef.current;
-    setOperation('configuring');
-    setError(null);
-    try {
-      /** 保存前读取最新设置，不能覆盖其他入口刚刚修改的配置。 */
-      const current = await input.client.settings.loadRuntimeSettings();
-      if (requestRef.current !== request) return;
-      /** 空值删除显式路径，恢复现有自动发现方式。 */
-      const adapterCliPaths = { ...current.adapterCliPaths };
-      if (path.trim()) adapterCliPaths.codex = path.trim();
-      else delete adapterCliPaths.codex;
-      await input.client.settings.saveRuntimeSettings({ ...current, adapterCliPaths });
-      if (requestRef.current !== request) return;
-      await readInstallation(request);
-    } catch (failure) {
-      if (requestRef.current !== request) return;
-      setInstallationCheck(null);
-      setError(userFacingErrorCause(failure));
-    } finally {
-      if (requestRef.current === request) setOperation('idle');
-    }
-  }
-
   /** 首次认证和目录重试共享同一成功回交，始终保留发起任务。 */
   function subscriptionSetup(request: number): CodexSubscriptionSetupInput {
     if (!input.client) throw new Error('Model setup client unavailable');
@@ -695,7 +668,6 @@ export function useModelSetup(input: {
     operation,
     installationCheck,
     checkInstallation,
-    saveCodexPath,
     modelsPending,
     retrySubscriptionModels,
     error,

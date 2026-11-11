@@ -726,6 +726,8 @@ export function normalizeRuntimeAdapterCliPaths(value: unknown): RuntimeSettings
   for (const [adapterId, rawPath] of Object.entries(value)) {
     if (!isRuntimeAdapterId(adapterId) || adapterId === 'generic') return null;
     if (typeof rawPath !== 'string') return null;
+    /** Codex 始终使用 Zeus 受管程序，旧的全局路径不再参与运行设置。 */
+    if (adapterId === 'codex') continue;
     const cliPath = rawPath.trim();
     if (!cliPath) continue;
     // CLI 路径只接受本机绝对路径；不检查存在性，避免把“已配置路径”伪造成“已安装/已登录”。

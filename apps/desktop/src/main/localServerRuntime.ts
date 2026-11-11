@@ -820,7 +820,6 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       telegramToken: options.telegramToken,
       telegramAllowedUserIds: options.telegramAllowedUserIds,
       codexNativeEnabled: options.codexNativeEnabled ?? true,
-      codexRuntimeCommandPath: 'codex',
       codexLegacyImportRoot: options.codexLegacyImportRoot,
       codexHome: options.codexHome,
       codexConfigImportSourceRoot: options.codexConfigImportSourceRoot,
