@@ -22452,17 +22452,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border: 0;
   border-radius: 8px;
 }
-/* 路径编辑只在用户展开后显示，并保持标签与输入框相邻。 */
-.macos-ai-app .model-setup-installation-path-editor form {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-/* 输入框宽度受面板限制，长路径保留原生水平编辑行为。 */
-.macos-ai-app .model-setup-installation-path-editor input {
-  width: 100%;
-  min-width: 0;
-}
 .macos-ai-app .model-setup-import ul {
   max-height: 200px;
   overflow-y: auto;

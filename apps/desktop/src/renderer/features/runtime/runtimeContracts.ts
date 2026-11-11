@@ -39,11 +39,9 @@ export interface AiRuntimeAdapterStatus extends AiRuntimeAdapterDescriptor {
   installationIssue?: 'not_found' | 'invalid_path' | 'cannot_run' | 'unrecognized_program' | 'app_server_unavailable' | null;
   /** 服务端按实际登录程序生成的安装引导。 */
   installation?: {
-    /** 远程模式使用专属安装，不能改为全局程序。 */
+    /** 两种连接模式使用同一份 Zeus 受管程序。 */
     mode: 'local' | 'remote';
-    /** 用户保存的程序路径，空值表示自动检测。 */
-    configuredCommandPath: string | null;
-    /** 只复制或展示，不自动执行的安装命令。 */
+    /** 固定安装到当前 Zeus 专属目录，只展示或复制执行。 */
     command: string;
   };
   authStatus: 'unknown' | 'authenticated' | 'unauthenticated';

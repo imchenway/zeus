@@ -309,7 +309,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                                   : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
               </p>
               {c.installationCheck ? (
-                <CodexInstallationGuide key={c.installationCheck.checkedAt} zh={zh} status={c.installationCheck} busy={c.operation !== 'idle'} onCheck={c.checkInstallation} onSavePath={c.saveCodexPath} onOpenGuide={c.openInstallGuide} />
+                <CodexInstallationGuide key={c.installationCheck.checkedAt} zh={zh} status={c.installationCheck} busy={c.operation !== 'idle'} onCheck={c.checkInstallation} onOpenGuide={c.openInstallGuide} />
               ) : null}
               {c.installationCheck?.available ? (
                 <>

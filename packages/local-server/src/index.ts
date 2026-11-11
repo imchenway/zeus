@@ -1,6 +1,7 @@
 import { backfillConnectionPrices } from './modelPricingBackfill.js';
 import { generateCodexText } from './gitCommitCodexGeneration.js';
 import { CopilotRuntimeManager, piSdkBinaryVersion, codexInstallationCommand, codexStandaloneCandidates, findExecutable } from '@zeus/ai-runtime';
+import { isManagedCodexStandalone } from './runtimeQueryApplication.js';
 /** 桌面动态价格读取复用受限公网访问边界。 */
 export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -295,6 +296,7 @@ export interface CreateLocalServerOptions {
   telegramNotificationChatIds?: number[];
   codexAppServerManager?: CodexAppServerManager;
   codexNativeEnabled?: boolean;
+  /** 宿主可在当前 Zeus 受管目录内指定 Codex 程序。 */
   codexRuntimeCommandPath?: string | (() => string);
   codexLegacyImportRoot?: string;
   codexHome?: string;
@@ -1697,8 +1699,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexNativeEnabled,
     readOnlyValidation: Boolean(readOnlyValidation),
   });
-  const codexRuntimeCommandPath = options.codexRuntimeCommandPath;
-  const configuredCodexRuntimeCommandPath = () => runtimeSettings.adapterCliPaths.codex?.trim() || (typeof codexRuntimeCommandPath === 'function' ? codexRuntimeCommandPath() : codexRuntimeCommandPath) || undefined;
   const codexExternalAgentHome = options.codexLegacyImportRoot
     ? (() => {
         mkdirSync(options.codexLegacyImportRoot!, { recursive: true, mode: 0o700 });
@@ -1750,21 +1750,27 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   }
   traceStartup('codex_thread_storage_ready');
-  const readCodexRemoteControlStandalone = (): CodexRemoteControlSnapshot['managedStandalone'] => {
+  /** 检测、登录、执行和更新共用当前 Zeus 数据根中的 Codex 程序。 */
+  const readManagedCodexStandalone = (): CodexRemoteControlSnapshot['managedStandalone'] => {
     if (!codexHome) {
       return {
         available: false,
         commandPath: null,
-        installCommand: codexInstallationCommand(),
+        installCommand: '',
       };
     }
-    const commandPath = codexStandaloneCandidates(codexHome).find((candidate) => findExecutable(candidate)) ?? codexStandaloneCandidates(codexHome)[0]!;
+    /** 宿主注入的程序也必须位于受管目录，不能回退到系统全局 CLI。 */
+    const configuredPath = typeof options.codexRuntimeCommandPath === 'function' ? options.codexRuntimeCommandPath() : options.codexRuntimeCommandPath;
+    /** 官方 current 入口允许安装器原子切换版本，调用方不缓存具体发布目录。 */
+    const candidates = [...(isManagedCodexStandalone(configuredPath, codexHome) ? [configuredPath!] : []), ...codexStandaloneCandidates(codexHome)];
+    /** 缺失时仍返回同一受管目标，供安装检测报告尚未准备完成。 */
+    const commandPath = candidates.find((candidate) => findExecutable(candidate)) ?? candidates[0]!;
     let available = false;
     try {
       accessSync(commandPath, fsConstants.X_OK);
       available = true;
     } catch {
-      // Remote Control 只能使用官方安装器在当前 CODEX_HOME 登记的固定入口。
+      // 所有 Codex 入口只使用当前 CODEX_HOME 下的受管程序。
     }
     return {
       available,
@@ -1772,18 +1778,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       installCommand: codexInstallationCommand(codexHome),
     };
   };
-  const requireCodexRemoteControlCommandPath = (): string => {
-    const standalone = readCodexRemoteControlStandalone();
-    if (standalone.available && standalone.commandPath) return standalone.commandPath;
+  /** 未安装时仍返回受管目标，让检测和预热各自处理缺失状态。 */
+  const currentCodexRuntimeCommandPath = (): string => {
+    const standalone = readManagedCodexStandalone();
+    if (standalone.commandPath) return standalone.commandPath;
     throw Object.assign(
       nativeApiError(
-        'ZEUS_CODEX_REMOTE_CONTROL_STANDALONE_REQUIRED',
-        `Zeus 已检测到普通 Codex CLI，但远程接管必须在 Zeus 独立 Codex 目录中使用官方独立安装版。当前缺少 ${standalone.commandPath ?? '受管理的 Codex 固定入口'}。请运行：${standalone.installCommand}。安装后在 Zeus 完成 Codex 登录并点击刷新；Zeus 不会自动安装，也不会借用其他 CODEX_HOME 的守护进程。`,
+        'ZEUS_CODEX_HOME_UNAVAILABLE',
+        'Zeus 的 Codex 数据目录不可用，请检查当前数据目录配置。',
       ),
       { statusCode: 409 },
     );
   };
-  const currentCodexRuntimeCommandPath = () => (codexRemoteControlEnabled ? requireCodexRemoteControlCommandPath() : configuredCodexRuntimeCommandPath() || 'codex');
   const codexConfigImportService =
     codexHome && options.codexConfigImportSourceRoot
       ? createCodexConfigImportService({
@@ -3261,6 +3267,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     requireTelegramPollingService,
   } = taskRuntimeOperations;
   supportOperations = createLocalServerSupportOperations({
+    readManagedCodexStandalone,
     NON_CODEX_LEGACY_HISTORY_LIMIT,
     aiRuntimeManager,
     appendAuditLog,
@@ -3862,7 +3869,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexPublicCommands,
     codexUsageService,
     commandRuns,
-    configuredCodexRuntimeCommandPath,
     conversationChoiceQueries,
     conversationExecution,
     conversationExperts,
@@ -3959,7 +3965,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     projects,
     publishNativeConversationEvent,
     publishRealtimeEvent,
-    readCodexRemoteControlStandalone,
+    readManagedCodexStandalone,
     readGitDiff,
     readGitStatus,
     readOnlyValidation,
@@ -3973,7 +3979,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     redactSensitiveText,
     releaseNotesAuthorizedRequests,
     releaseNotesCapabilities,
-    requireCodexRemoteControlCommandPath,
     requireNativeQueueConversation,
     requireTelegramPollingService,
     resolveNativeConversationExecutionRoot,
