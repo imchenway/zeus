@@ -182,9 +182,9 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       throw new Error(`OSS 已存制品与固定候选不一致：${file.key}`);
   }
 
-  /** 公开 HEAD 不下载大文件；服务端完整性已由上面的 OSS 元数据及 CRC64 校验确认。 */
+  /** 公开 HEAD 请求原始字节长度，避免 CDN 压缩导致大小误判；服务端完整性由 OSS 元数据及 CRC64 校验确认。 */
   async function assertPublicFile(file) {
-    const response = await request(`${configuration.baseUrl}/releases/${version}/${encodeURIComponent(file.fileName)}`, { method: 'HEAD', redirect: 'error', signal: AbortSignal.timeout(15_000) });
+    const response = await request(`${configuration.baseUrl}/releases/${version}/${encodeURIComponent(file.fileName)}`, { method: 'HEAD', headers: { 'Accept-Encoding': 'identity' }, redirect: 'error', signal: AbortSignal.timeout(15_000) });
     if (!response.ok || response.headers.get('x-oss-meta-sha256') !== file.sha256 || response.headers.get('content-length') !== String(file.size)) throw new Error(`CDN 公开制品不可用或身份不符：${file.fileName}，HTTP ${response.status}`);
   }
 }
