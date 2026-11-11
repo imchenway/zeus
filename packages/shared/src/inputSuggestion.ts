@@ -60,8 +60,8 @@ export interface InputSuggestionResult {
   completedTurnId: string | null;
   /** 实际解析的建议模型；未生成时允许为空。 */
   modelRef: string | null;
-  /** 原生采样已发出后禁止自动补调；缺项保留独立生成原有的临时故障恢复。 */
-  retryable?: false;
+  /** 明确可恢复的材料或输出失败允许有界重试；false 禁止重试，缺项按临时故障判断。 */
+  retryable?: boolean;
   /** 空值表示无需改写、未生成或生成失败，不属于输入正文。 */
   text: string | null;
   /** 无正文时明确区分未生成、无需改写和故障。 */

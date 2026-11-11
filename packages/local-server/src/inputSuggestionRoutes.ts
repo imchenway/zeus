@@ -43,7 +43,7 @@ function lowestSuggestionEffort(options: readonly string[]): string | undefined 
   return ['none', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].find((value) => options.includes(value)) ?? options[0];
 }
 
-/** 所有模式共用正文校验，空白及放弃标记按无效输出处理，不触发自动补调。 */
+/** 所有模式共用正文校验，空白及放弃标记按无效输出处理，由请求层决定恢复。 */
 export function normalizeInputSuggestion(text: string, mode: InputSuggestionRequest['mode'] = 'suggest'): string {
   /** 模型围栏属于展示包装，不属于用户将采纳的正文。 */
   const cleaned = text
@@ -296,7 +296,7 @@ export function registerInputSuggestionRoutes(options: {
     /** 用户取消与总超时分别反馈，不能把模型失败当成没有合理建议。 */
     const signal = AbortSignal.any([controller.signal, deadline]);
     /** 取消竞态的两个收口路径必须返回同一种原因。 */
-    const cancelledResult = (): InputSuggestionResult => ({ ...result, reason: deadline.aborted ? 'timed_out' : 'cancelled' });
+    const cancelledResult = (): InputSuggestionResult => ({ ...result, reason: deadline.aborted ? 'timed_out' : 'cancelled', ...(cancellation === 'sources_changed' ? { retryable: true } : {}) });
     /** 已发送回执的正常关闭不能取消其他请求。 */
     const disconnect = () => {
       if (!reply.raw.writableEnded) {
@@ -315,11 +315,13 @@ export function registerInputSuggestionRoutes(options: {
         const latestTurnId = snapshot?.recentClosedTurns[0]?.id ?? null;
         /** 自动触发仍绑定真实成功轮次，不把旧回复或阶段进展当成最终回复。 */
         const latest = snapshot?.recentClosedTurns[0];
+        /** 完成事件先于最终正文可读时允许重读，已经被新轮次替代的请求不恢复。 */
+        const requestedTurnId = input.trigger === 'automatic' && conversationId ? options.repository.resolveTurnId(conversationId, input.completedTurnId!) : null;
         if (
           input.trigger === 'automatic' &&
           (!conversationId ||
             !latest ||
-            options.repository.resolveTurnId(conversationId, input.completedTurnId!) !== latest.id ||
+            requestedTurnId !== latest.id ||
             latest.status !== 'completed' ||
             latest.hasError ||
             !latest.completionOutput ||
@@ -328,7 +330,7 @@ export function registerInputSuggestionRoutes(options: {
             Boolean(latest.completionOutput.toolPairId) ||
             classifyAssistantMessage({ ...latest.completionOutput.assistantMessage }, latest.completionOutput.phase) !== 'final')
         )
-          return { ...result, reason: 'context_unavailable' };
+          return { ...result, reason: 'context_unavailable', retryable: !latest || !requestedTurnId || (requestedTurnId === latest.id && latest.status === 'completed' && !latest.hasError) };
         /** 读取文件前冻结用户要求的水位，读取期间的新要求也会使候选失效。 */
         const userRevision = conversationId ? contextReader.userRevision(conversationId) : '';
         /** 规则读取纳入原有总时限，失败不能静默退回不带规则的生成。 */
@@ -336,7 +338,7 @@ export function registerInputSuggestionRoutes(options: {
         signal.throwIfAborted();
         /** 对话、任务和记忆仍用原预算，规则在共同生成入口单独注入。 */
         const context = contextReader.read({ snapshot, projectId, sources, draft: input.draft });
-        if (input.mode === 'suggest' && !context.hasDialogue) return { ...result, reason: 'context_unavailable' };
+        if (input.mode === 'suggest' && !context.hasDialogue) return { ...result, reason: 'context_unavailable', retryable: input.trigger === 'automatic' };
         /** 目录加载和生成都是异步边界，每次跨过边界都重新核对本轮归属。 */
         const isCurrent = async (): Promise<boolean> => {
           /** 先完成异步规则读取，再核对设置和会话，避免读取期间的变化被遗漏。 */
@@ -377,7 +379,7 @@ export function registerInputSuggestionRoutes(options: {
         /** 生成只解析选中模型，API 请求不等待 Codex 目录或账户读取。 */
         const selected = await options.loadModel(settings.modelRef!);
         signal.throwIfAborted();
-        if (!(await isCurrent())) return { ...result, reason: 'cancelled' };
+        if (!(await isCurrent())) return cancelledResult();
         /** 显式档位失效必须说明原因，不能悄悄换成更深或更浅的档位。 */
         if (!selected) return { ...result, reason: 'model_unavailable' };
         if (settings.effort && !selected.supportedReasoningEfforts?.includes(settings.effort)) return { ...result, reason: 'effort_unavailable' };
@@ -444,7 +446,6 @@ export function registerInputSuggestionRoutes(options: {
             }
             if (thread.status?.type !== 'idle') return null;
             advanceStage('generation');
-            result.retryable = false;
             record({ event: 'generation_configured', effort: effort ?? 'default', inputCharacters: instructions.length, promptHash: createHash('sha256').update(instructions).digest('hex').slice(0, 16) });
             // 原生协议限制附加提示为 4,000 字节；任务、规则及历史沿用父会话，不重复注入。
             const sampled = await manager.sampleThread({ threadId, expectedTurnId: latest.providerTurnId, prompt: instructions, effort, signal });
@@ -456,7 +457,7 @@ export function registerInputSuggestionRoutes(options: {
         record({ event: 'model_result', outputKind: !text.trim() ? 'empty' : text.trim() === 'NO_SUGGESTION' ? 'explicit_no_suggestion' : 'text', outputCharacters: text.length });
         signal.throwIfAborted();
         /** 主会话或设置已经变化时不返回旧建议。 */
-        if (!(await isCurrent())) return { ...result, reason: 'cancelled' };
+        if (!(await isCurrent())) return cancelledResult();
         // 末尾没有自然续写是正常结果，不作为生成故障或重试原因。
         if (input.mode === 'complete' && text.trim() === 'NO_SUGGESTION') return { ...result, reason: 'no_change' };
         /** 非空输出沿用共同校验，润色原文已合适时保留明确反馈。 */
@@ -468,7 +469,7 @@ export function registerInputSuggestionRoutes(options: {
         const cause = userFacingErrorCause(error);
         record({ event: 'generation_failed', stage, errorCode: cause.code ?? cause.cause?.code ?? 'unclassified' });
         // 可选功能失败不影响正文；沿用统一脱敏边界保留真实原因，供用户按需查看。
-        return signal.aborted ? cancelledResult() : { ...result, reason: 'failed', cause };
+        return signal.aborted ? cancelledResult() : { ...result, reason: 'failed', cause, ...(cause.code === 'ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID' ? { retryable: true } : {}) };
       }
     };
     /** 将真实调用与宿主清理绑定，不另建任务安排。 */
