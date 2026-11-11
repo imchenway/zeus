@@ -21,6 +21,7 @@
     "release:publish": "node scripts/publish-release.mjs",
     "verify:publish": "node scripts/verify-publish.mjs",
     "verify:release-remote-read": "node scripts/verify-release-remote-read-resilience.mjs",
+    "verify:release-cdn": "node --import tsx scripts/verify-release-cdn.mjs",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:architecture": "node --import tsx scripts/verify-architecture-governance.ts",
     "verify:model-reasoning-profile": "tsx scripts/verify-model-reasoning-profile.ts",

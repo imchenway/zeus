@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import { ReleasePublicationUnconfirmedError, releasePublicationUnconfirmedExitCode, releaseWorkflowQueueWaitLimitMs } from './release-workflow-wait-policy.mjs';
-import { parseBoolean } from './release-script-utils.mjs';
+import { parseBoolean, renderCdnReleaseNotes } from './release-script-utils.mjs';
 
 /** 一键发布唯一允许操作的官方仓库。 */
 const repositoryRoot = resolve(import.meta.dirname, '..');
@@ -763,7 +763,7 @@ function reconstructReleaseCommit(state, currentHead, notesTarget) {
   const changedPaths = git(['diff-tree', '--no-commit-id', '--name-only', '-r', currentHead]).split(/\r?\n/u).filter(Boolean).sort();
   const expectedPaths = [...releaseFiles, notesTarget].sort();
   if (JSON.stringify(changedPaths) !== JSON.stringify(expectedPaths)) return false;
-  if (readFileSync(join(repositoryRoot, notesTarget), 'utf8') !== readFileSync(state.notesPath, 'utf8')) return false;
+  if (readFileSync(join(repositoryRoot, notesTarget), 'utf8') !== renderCdnReleaseNotes(readFileSync(state.notesPath, 'utf8'), state.version)) return false;
   state.releaseCommit = currentHead;
   state.phase = 'release_committed';
   writeState(state);
@@ -772,7 +772,7 @@ function reconstructReleaseCommit(state, currentHead, notesTarget) {
 
 function isPreparedWorktree(state, notesTarget) {
   if (readMatchingPackageVersion() !== state.version || !existsSync(join(repositoryRoot, notesTarget))) return false;
-  if (readFileSync(join(repositoryRoot, notesTarget), 'utf8') !== readFileSync(state.notesPath, 'utf8')) return false;
+  if (readFileSync(join(repositoryRoot, notesTarget), 'utf8') !== renderCdnReleaseNotes(readFileSync(state.notesPath, 'utf8'), state.version)) return false;
   const status = git(['status', '--short']);
   if (!status) return false;
   const allowed = new Set([...releaseFiles, notesTarget]);

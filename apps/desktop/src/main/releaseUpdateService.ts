@@ -3,13 +3,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs';
 import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { addAbortSignal, type Readable } from 'node:stream';
+import { addAbortSignal, Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-security';
-import type { UserFacingErrorCause } from '@zeus/shared';
+import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { readReleaseUpdateStatus } from '@zeus/local-server/release-core';
+import { isTrustedReleaseResponseUrl, readReleaseUpdateStatus, releaseArtifactDownloadUrls } from '@zeus/local-server/release-core';
 import { installWindowsRelease, openWindowsRecoveryInstaller, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
@@ -174,6 +174,8 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         else await chmod(downloadDirectory, 0o700);
         const artifactPath = join(downloadDirectory, artifact.fileName);
         await downloadVerifiedArtifact({
+          version: update.latestVersion,
+          fileName: artifact.fileName,
           url: artifact.downloadUrl,
           targetPath: artifactPath,
           expectedSha256: artifact.sha256,
@@ -347,9 +349,46 @@ export async function readDesktopReleaseUpdateStatus(
     platform: process.platform === 'win32' ? 'win32' : 'darwin',
     executionHostProtocolVersion: executionHost.protocolVersion,
     allowUntrustedTest: options.testMode && options.allowUntrustedTestUpdate,
-    request: (url, init) => net.fetch(url, init),
+    request: (url, init) => fetchDesktopReleaseManifest(url, init, net.request),
   });
   return { ...update, executionHost };
+}
+
+/** Electron net.fetch 会取消 manual 跳转；将原生跳转事件显式返回给共享清单校验器。 */
+export async function fetchDesktopReleaseManifest(url: string, init: RequestInit, request: typeof import('electron').net.request): Promise<Response> {
+  init.signal?.throwIfAborted();
+  return new Promise((resolveResponse, rejectResponse) => {
+    /** 每次仅读取一个地址；共享规则决定是否允许下一跳。 */
+    const pending = request({ url, redirect: 'manual' });
+    const abort = () => {
+      rejectResponse(init.signal?.reason);
+      pending.abort();
+    };
+    for (const [name, value] of new Headers(init.headers)) pending.setHeader(name, value);
+    init.signal?.addEventListener('abort', abort, { once: true });
+    pending.once('close', () => init.signal?.removeEventListener('abort', abort));
+    pending.once('error', rejectResponse);
+    pending.on('redirect', (status, _method, target) => {
+      resolveResponse(new Response(null, { status, headers: { location: target } }));
+      pending.abort();
+    });
+    pending.once('response', (response) => {
+      try {
+        /** 保留真实 HTTP 状态及正文，网络错误、HTTP 错误和无效 JSON 由共享规则区分。 */
+        const body = response as unknown as Readable;
+        body.once('close', () => pending.abort());
+        if (init.signal) addAbortSignal(init.signal, body);
+        const noBody = [204, 205, 304].includes(response.statusCode);
+        resolveResponse(new Response(noBody ? null : (Readable.toWeb(body) as ReadableStream), { status: response.statusCode }));
+        if (noBody) pending.abort();
+      } catch (error) {
+        rejectResponse(error);
+        pending.abort();
+      }
+    });
+    if (init.signal?.aborted) abort();
+    else pending.end();
+  });
 }
 
 /** 下载只要求可信产物和匹配架构，签名、公证及协议约束留在自动安装入口。 */
@@ -361,7 +400,7 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
   if (update.artifact.arch !== process.arch) throw new Error('更新安装包与当前应用架构不一致。');
   if ((update.artifact.platform ?? 'darwin') !== process.platform || update.artifact.kind !== (process.platform === 'win32' ? 'exe' : 'dmg')) throw new Error('更新安装包平台与当前应用不一致。');
   if (basename(update.artifact.fileName) !== update.artifact.fileName || !update.artifact.fileName.endsWith(process.platform === 'win32' ? '.exe' : '.dmg')) throw new Error('更新包文件名必须是无目录且匹配平台的安装包文件名。');
-  trustedReleaseDownloadUrl(update.artifact.downloadUrl, options.testMode && options.allowUntrustedTestUpdate);
+  trustedReleaseDownloadUrl(update.artifact.downloadUrl, options.testMode && options.allowUntrustedTestUpdate, update.latestVersion, update.artifact.fileName);
 }
 
 /** 自动替换应用始终保留正式签名、公证和执行宿主协议门禁。 */
@@ -374,28 +413,40 @@ function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: Creat
 }
 
 /** Chromium 的重定向事件提供真实地址，避免依赖 net.fetch 不可靠的 Response.url。 */
-async function openReleaseDownload(source: URL, testMode: boolean): Promise<Readable> {
+async function openReleaseDownload(source: URL, testMode: boolean, externalSignal?: AbortSignal): Promise<Readable> {
+  externalSignal?.throwIfAborted();
   /** 保留系统及应用代理；安装辅助进程仅导入校验能力时不加载 Electron。 */
   const { net } = await import('electron');
   return new Promise((resolve, reject) => {
     /** 逐次确认目标后才允许 Chromium 继续跳转。 */
     const request = net.request({ url: source.href, redirect: 'manual' });
     /** 请求和响应正文共用十分钟下载期限。 */
-    const signal = AbortSignal.timeout(10 * 60_000);
+    const signal = AbortSignal.any([AbortSignal.timeout(10 * 60_000), ...(externalSignal ? [externalSignal] : [])]);
+    /** 首次连接不能消耗完整下载期限；十五秒无响应即可尝试备用源。 */
+    const connectionTimeout = setTimeout(() => {
+      reject(new Error('更新下载连接超时。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' } }));
+      request.abort();
+    }, 15_000);
+    /** 每个请求最多跟随五次官方重定向。 */
+    let redirects = 0;
     /** 尚未收到响应时，超时必须同时结束等待和网络请求。 */
     const abortRequest = () => {
       reject(signal.reason);
       request.abort();
     };
     signal.addEventListener('abort', abortRequest, { once: true });
-    request.once('close', () => signal.removeEventListener('abort', abortRequest));
-    request.on('error', reject);
+    if (signal.aborted) abortRequest();
+    request.once('close', () => {
+      clearTimeout(connectionTimeout);
+      signal.removeEventListener('abort', abortRequest);
+    });
+    request.on('error', (cause) => reject(new Error('更新下载连接中断。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', cause } })));
     request.on('redirect', (_status, _method, target) => {
       try {
         /** 仅显式隔离模式允许跳转到本机 HTTP 服务。 */
         const url = new URL(target);
-        const loopbackTestResponse = testMode && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port);
-        if (!loopbackTestResponse && !isTrustedGithubResponseUrl(url)) throw new Error('更新下载重定向离开了受信任的 GitHub 产物域名。');
+        const loopbackTestResponse = testMode && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port) && !url.username && !url.password;
+        if (++redirects > 5 || (!loopbackTestResponse && !isTrustedReleaseResponseUrl(url))) throw new Error('更新下载重定向离开了官方来源或超过允许次数。');
         request.followRedirect();
       } catch (error) {
         reject(error);
@@ -403,12 +454,9 @@ async function openReleaseDownload(source: URL, testMode: boolean): Promise<Read
       }
     });
     request.once('response', (response) => {
+      clearTimeout(connectionTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300 || response.statusCode === 204 || response.statusCode === 205) {
-        reject(
-          new Error(`更新下载失败：HTTP ${response.statusCode}`, {
-            cause: { code: response.statusCode === 408 || response.statusCode === 429 || response.statusCode >= 500 ? 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' : 'ZEUS_UPDATE_DOWNLOAD_REJECTED' },
-          }),
-        );
+        reject(new Error(`更新下载失败：HTTP ${response.statusCode}`, { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED' } }));
         request.abort();
         return;
       }
@@ -423,12 +471,43 @@ async function openReleaseDownload(source: URL, testMode: boolean): Promise<Read
   });
 }
 
-/** 流式下载并校验大小和摘要，完整校验通过后才公开缓存文件。 */
-async function downloadVerifiedArtifact(input: { url: string; targetPath: string; expectedSha256: string; expectedSizeBytes: number | null; testMode: boolean; onProgress?: (progress: ReleaseDownloadProgress) => void }): Promise<void> {
+/** 同一次下载的两个来源使用同一版本、目标路径和完整性要求。 */
+interface ReleaseArtifactDownloadInput {
+  version: string;
+  /** 下载身份使用发布文件名，Homebrew 的目标缓存名可带 URL 哈希前缀。 */
+  fileName: string;
+  url: string;
+  targetPath: string;
+  expectedSha256: string;
+  expectedSizeBytes: number | null;
+  testMode: boolean;
+  /** Homebrew 手动重连或持续低速时可结束当前来源。 */
+  signal?: AbortSignal;
+  onProgress?: (progress: ReleaseDownloadProgress) => void;
+}
+
+/** 只在网络不可用时切换到同版本 GitHub 制品，摘要和大小错误始终拒绝。 */
+export async function downloadVerifiedArtifact(input: ReleaseArtifactDownloadInput, openDownload = openReleaseDownload): Promise<void> {
   /** 即使命中缓存，也必须先确认本次发布的下载来源可信。 */
-  const source = trustedReleaseDownloadUrl(input.url, input.testMode);
+  const source = trustedReleaseDownloadUrl(input.url, input.testMode, input.version, input.fileName);
   input.onProgress?.({ phase: 'verifying' });
   if (await verifyExistingArtifact(input.targetPath, input.expectedSha256, input.expectedSizeBytes)) return;
+  /** 隔离文件和回环服务不访问公网备用源。 */
+  const sources = source.protocol === 'https:' ? releaseArtifactDownloadUrls(input.version, input.fileName) : [source.href];
+  for (let index = 0; index < sources.length; index += 1) {
+    try {
+      await downloadArtifactFromSource({ ...input, url: sources[index]! }, openDownload);
+      return;
+    } catch (error) {
+      if (index + 1 === sources.length || userFacingErrorCause(error).cause?.code !== 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED') throw error;
+    }
+  }
+}
+
+/** 单个来源的未完成文件不会成为缓存，切换来源前先关闭并删除暂存文件。 */
+export async function downloadArtifactFromSource(input: ReleaseArtifactDownloadInput, openDownload = openReleaseDownload): Promise<void> {
+  /** 两个来源都经过相同的身份校验，备用源不能绕过正式边界。 */
+  const source = trustedReleaseDownloadUrl(input.url, input.testMode, input.version, input.fileName);
   const temporaryPath = `${input.targetPath}.${randomUUID()}.partial`;
   const output = await open(temporaryPath, 'wx', 0o600);
   const hash = createHash('sha256');
@@ -446,7 +525,7 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
     } else {
       input.onProgress?.({ phase: 'downloading', ...(input.expectedSizeBytes === null ? {} : { totalBytes: input.expectedSizeBytes }) });
       /** 两个平台共用受信任的重定向和下载流。 */
-      const response = await openReleaseDownload(source, input.testMode);
+      const response = await openDownload(source, input.testMode, input.signal);
       for await (const chunk of response) {
         const bytes = Buffer.from(chunk);
         receivedBytes += bytes.length;
@@ -462,8 +541,12 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
     await output.sync();
     downloadComplete = true;
   } catch (error) {
-    if (error instanceof TypeError || (error instanceof Error && (['TimeoutError', 'AbortError'].includes(error.name) || error.message.startsWith('net::ERR_')))) {
-      throw new Error('更新下载中断，请重试。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', message: error.message } });
+    if (
+      error instanceof TypeError ||
+      (error instanceof Error &&
+        (['TimeoutError', 'AbortError'].includes(error.name) || error.message.startsWith('net::ERR_') || ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ERR_STREAM_PREMATURE_CLOSE'].includes(String((error as NodeJS.ErrnoException).code ?? ''))))
+    ) {
+      throw new Error('更新下载中断，请重试。', { cause: { code: 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED', cause: error } });
     }
     throw error;
   } finally {
@@ -636,24 +719,15 @@ function isUnderTemporaryDirectory(path: string): boolean {
   });
 }
 
-/** 仅接受官方 HTTPS 下载目录，拒绝凭据和自定义端口。 */
-function isTrustedGithubDownloadUrl(url: URL): boolean {
-  return url.protocol === 'https:' && url.hostname === 'github.com' && !url.port && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/download/');
-}
-
 /** 下载与打开缓存共用来源校验，回环和本地文件仅供明确启用的隔离验证。 */
-function trustedReleaseDownloadUrl(value: string, testMode: boolean): URL {
+function trustedReleaseDownloadUrl(value: string, testMode: boolean, version: string, fileName: string): URL {
   /** 保留解析后的来源供实际下载使用。 */
   const source = new URL(value);
   /** 测试源不得带账号信息，也不能指向临时目录以外的文件。 */
   const isolatedTestSource =
     testMode && !source.username && !source.password && ((source.protocol === 'file:' && isUnderTemporaryDirectory(fileURLToPath(source))) || (source.protocol === 'http:' && source.hostname === '127.0.0.1' && Boolean(source.port)));
-  if (!isolatedTestSource && !isTrustedGithubDownloadUrl(source)) throw new Error('更新下载地址不是受信任的 GitHub Release。');
+  if (!isolatedTestSource && !releaseArtifactDownloadUrls(version, fileName).includes(source.href)) throw new Error('更新下载地址不是当前版本的官方安装包。');
   return source;
-}
-
-function isTrustedGithubResponseUrl(url: URL): boolean {
-  return url.protocol === 'https:' && ['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'].includes(url.hostname);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
