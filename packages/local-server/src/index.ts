@@ -1782,13 +1782,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const currentCodexRuntimeCommandPath = (): string => {
     const standalone = readManagedCodexStandalone();
     if (standalone.commandPath) return standalone.commandPath;
-    throw Object.assign(
-      nativeApiError(
-        'ZEUS_CODEX_HOME_UNAVAILABLE',
-        'Zeus 的 Codex 数据目录不可用，请检查当前数据目录配置。',
-      ),
-      { statusCode: 409 },
-    );
+    throw Object.assign(nativeApiError('ZEUS_CODEX_HOME_UNAVAILABLE', 'Zeus 的 Codex 数据目录不可用，请检查当前数据目录配置。'), { statusCode: 409 });
   };
   const codexConfigImportService =
     codexHome && options.codexConfigImportSourceRoot

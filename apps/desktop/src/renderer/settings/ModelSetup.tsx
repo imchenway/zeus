@@ -308,9 +308,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                                   ? '登录将打开系统浏览器中的官方授权页。Zeus 不会复制其他应用的账号、密钥或历史会话。'
                                   : 'Sign-in opens the official authorization page in your system browser. Zeus will not copy accounts, keys, or history from other apps.'}
               </p>
-              {c.installationCheck ? (
-                <CodexInstallationGuide key={c.installationCheck.checkedAt} zh={zh} status={c.installationCheck} busy={c.operation !== 'idle'} onCheck={c.checkInstallation} onOpenGuide={c.openInstallGuide} />
-              ) : null}
+              {c.installationCheck ? <CodexInstallationGuide key={c.installationCheck.checkedAt} zh={zh} status={c.installationCheck} busy={c.operation !== 'idle'} onCheck={c.checkInstallation} onOpenGuide={c.openInstallGuide} /> : null}
               {c.installationCheck?.available ? (
                 <>
                   <Button
