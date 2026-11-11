@@ -1,11 +1,13 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants, createReadStream, type Stats } from 'node:fs';
-import { access, stat } from 'node:fs/promises';
+import { access, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import type { DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
+import { releaseArtifactDownloadUrls } from '@zeus/local-server/release-core';
+import { userFacingErrorCause } from '@zeus/shared';
+import { downloadArtifactFromSource, type DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 
 const execFile = promisify(execFileCallback);
 /** 官方 Homebrew 安装项，禁止切换为其他发行来源。 */
@@ -130,19 +132,26 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       if (cachedArtifact) return { update, brewPath, cachePath, verifiedArtifact: cachedArtifact };
 
       onProgress({ phase: 'downloading', ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }) });
+      /** 预填 Homebrew 自己计算的缓存位置，安装及收据继续由 Homebrew 管理。 */
+      const cdnReady =
+        !options.testMode &&
+        (await prefetchHomebrewCdnArtifact(update, cachePath, onProgress, recoveryPolicy, (reconnect) => {
+          reconnectActiveDownload = reconnect;
+        }));
       let fetchAttempt = 0;
-      await retryOperation(
-        () => {
-          const reconnectCount = fetchAttempt;
-          fetchAttempt += 1;
-          if (reconnectCount > 0) onProgress({ phase: 'reconnecting', reconnectCount });
-          return fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode, reconnectCount, recoveryPolicy, (reconnect) => {
-            reconnectActiveDownload = reconnect;
-          });
-        },
-        2,
-        isTransientHomebrewDownloadError,
-      );
+      if (!cdnReady)
+        await retryOperation(
+          () => {
+            const reconnectCount = fetchAttempt;
+            fetchAttempt += 1;
+            if (reconnectCount > 0) onProgress({ phase: 'reconnecting', reconnectCount });
+            return fetchCask(brewPath, cachePath, artifact.sizeBytes, onProgress, options.testMode, reconnectCount, recoveryPolicy, (reconnect) => {
+              reconnectActiveDownload = reconnect;
+            });
+          },
+          2,
+          isTransientHomebrewDownloadError,
+        );
       onProgress({ phase: 'verifying' });
       const downloadedArtifact = await verifyArtifact(cachePath, artifact.sha256, artifact.sizeBytes);
       if (!downloadedArtifact) throw new Error('Homebrew 下载完成，但缓存安装包未通过发布清单校验。');
@@ -301,9 +310,81 @@ function validateCask(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus
   }
 }
 
-function caskMatchesRelease(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus): boolean {
+/** 同一版本与摘要的官方 CDN、GitHub 地址代表同一份 Cask 制品。 */
+export function caskMatchesRelease(cask: HomebrewCaskInfo, update: DesktopReleaseUpdateStatus): boolean {
   const artifact = update.artifact!;
-  return cask.version === update.latestVersion && cask.sha256 === artifact.sha256 && cask.url === artifact.downloadUrl;
+  return cask.version === update.latestVersion && cask.sha256 === artifact.sha256 && (cask.url === artifact.downloadUrl || releaseArtifactDownloadUrls(update.latestVersion, artifact.fileName).includes(cask.url));
+}
+
+/** CDN 预取只在传输中断时交回原生 brew fetch，完整性错误必须直接停止。 */
+export async function prefetchHomebrewCdnArtifact(
+  update: DesktopReleaseUpdateStatus,
+  cachePath: string,
+  onProgress: (progress: HomebrewUpdateProgress) => void,
+  recoveryPolicy: DownloadRecoveryPolicy,
+  setReconnect: (reconnect: (() => boolean) | null) => void,
+  download = downloadArtifactFromSource,
+): Promise<boolean> {
+  /** 独立取消当前 CDN 请求，保留后续 Homebrew 的重连处理。 */
+  const controller = new AbortController();
+  const artifact = update.artifact!;
+  /** 每 500 毫秒采样，沿用 Homebrew 的持续低速判定窗口。 */
+  const samples = [{ observedAtMs: Date.now(), downloadedBytes: 0 }];
+  let downloadedBytes = 0;
+  /** 手动重连立即结束当前 CDN 连接，原生下载仍可继续。 */
+  const reconnect = () => {
+    if (controller.signal.aborted) return false;
+    controller.abort();
+    return true;
+  };
+  const timer = setInterval(() => {
+    const now = Date.now();
+    samples.push({ observedAtMs: now, downloadedBytes });
+    const cutoff = now - Math.max(recoveryPolicy.stallWindowMs, downloadSpeedDisplayWindowMs);
+    while (samples.length > 2 && samples[1]!.observedAtMs <= cutoff) samples.shift();
+    const displaySample = sampleAtOrBefore(samples, now - downloadSpeedDisplayWindowMs);
+    const stallSample = sampleAtOrBefore(samples, now - recoveryPolicy.stallWindowMs);
+    if (displaySample)
+      onProgress({
+        phase: 'downloading',
+        downloadedBytes,
+        ...(artifact.sizeBytes === null ? {} : { totalBytes: artifact.sizeBytes }),
+        bytesPerSecond: Math.round(((downloadedBytes - displaySample.downloadedBytes) * 1_000) / (now - displaySample.observedAtMs)),
+      });
+    if (
+      stallSample &&
+      artifact.sizeBytes !== null &&
+      artifact.sizeBytes - downloadedBytes >= recoveryPolicy.minimumRemainingBytes &&
+      ((downloadedBytes - stallSample.downloadedBytes) * 1_000) / (now - stallSample.observedAtMs) < recoveryPolicy.minimumBytesPerSecond
+    )
+      reconnect();
+  }, downloadProgressPollIntervalMs);
+  setReconnect(reconnect);
+  try {
+    await mkdir(dirname(cachePath), { recursive: true, mode: 0o700 });
+    await download({
+      version: update.latestVersion,
+      fileName: artifact.fileName,
+      url: releaseArtifactDownloadUrls(update.latestVersion, artifact.fileName)[0]!,
+      targetPath: cachePath,
+      expectedSha256: artifact.sha256,
+      expectedSizeBytes: artifact.sizeBytes,
+      testMode: false,
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (progress.downloadedBytes !== undefined) downloadedBytes = progress.downloadedBytes;
+        onProgress(progress);
+      },
+    });
+    return true;
+  } catch (error) {
+    if (userFacingErrorCause(error).cause?.code !== 'ZEUS_UPDATE_DOWNLOAD_INTERRUPTED') throw error;
+    onProgress({ phase: 'reconnecting', reconnectCount: 1 });
+    return false;
+  } finally {
+    clearInterval(timer);
+    setReconnect(null);
+  }
 }
 
 async function readCachePath(brewPath: string, testMode: boolean): Promise<string> {

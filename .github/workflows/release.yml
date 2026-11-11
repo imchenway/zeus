@@ -60,7 +60,18 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # 非密钥分发配置在创建公开标签之前校验。
+          ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ALIYUN_ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+          ZEUS_OSS_BUCKET: ${{ vars.ZEUS_OSS_BUCKET }}
+          ZEUS_OSS_REGION: ${{ vars.ZEUS_OSS_REGION }}
+          ZEUS_DOWNLOAD_BASE_URL: ${{ vars.ZEUS_DOWNLOAD_BASE_URL }}
         run: |
+          if [ "$GITHUB_REF" != 'refs/heads/main' ]; then
+            echo '正式发布的 OIDC 身份只允许 main 分支。' >&2
+            exit 1
+          fi
+          node scripts/publish-release-cdn.mjs validate
           if ! printf '%s' "$RELEASE_COMMIT" | grep -Eq '^[a-f0-9]{40}$'; then
             echo "公开发布要求固定的 40 位候选提交：${RELEASE_COMMIT:-empty}" >&2
             exit 1
@@ -266,11 +277,25 @@ jobs:
     # 任一平台或架构构建失败均不创建公开标签和 Release。
     needs: [preflight, verify, package-mac, package-windows]
     runs-on: ubuntu-latest
+    # 两个发布入口串行更新稳定清单，避免旧版本检查与写入交错。
+    concurrency:
+      group: zeus-stable-release-distribution
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      # 只有公开发布作业能申请阿里云临时身份。
+      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       RELEASE_COMMIT: ${{ needs.preflight.outputs.commit_sha }}
       RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      # 发布目标均为公开配置，长期 AccessKey 不进入仓库或客户端。
+      ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+      ALIYUN_ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+      ZEUS_OSS_BUCKET: ${{ vars.ZEUS_OSS_BUCKET }}
+      ZEUS_OSS_REGION: ${{ vars.ZEUS_OSS_REGION }}
+      ZEUS_DOWNLOAD_BASE_URL: ${{ vars.ZEUS_DOWNLOAD_BASE_URL }}
     steps:
       - name: 检出固定发布候选
         uses: actions/checkout@v4
@@ -330,6 +355,30 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git tag -a "$RELEASE_TAG" "$RELEASE_COMMIT" -m "Zeus $RELEASE_TAG"
           git push origin "refs/tags/$RELEASE_TAG"
+      - name: 安装固定版本 OSS 上传工具
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 'https://gosspublic.alicdn.com/ossutil/v2/2.4.1/ossutil-2.4.1-linux-amd64.zip' -o "$RUNNER_TEMP/zeus-ossutil.zip"
+          printf '57ee4c56796a40144acd6b0b96b53b4ba75e5cec09c01d8d0313c09a5524022f  %s\n' "$RUNNER_TEMP/zeus-ossutil.zip" | sha256sum --check -
+          unzip -q "$RUNNER_TEMP/zeus-ossutil.zip" -d "$RUNNER_TEMP/zeus-ossutil"
+          chmod 755 "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64/ossutil"
+          printf '%s\n' "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64" >> "$GITHUB_PATH"
+      - name: 申请阿里云短期上传身份
+        id: oss_identity
+        # 官方 MIT Action 固定到不可变提交。
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          audience: sts.aliyuncs.com
+          role-session-expiration: 1800
+      - name: 准备并核验 CDN 固定版本制品
+        env:
+          # 临时凭据只传入当前步骤的 ossutil 环境。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_identity.outputs.aliyun-security-token }}
+        run: |
+          node scripts/publish-release-cdn.mjs stage dist
       - name: 发布或核对 GitHub Release
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -368,6 +417,24 @@ jobs:
               jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
           done
           echo "Zeus $version macOS、Windows 两个架构及平台清单均已就绪。"
+      - name: 刷新稳定清单写入身份
+        id: oss_activate_identity
+        # 官方 MIT Action 固定到不可变提交。
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          audience: sts.aliyuncs.com
+          role-session-expiration: 1800
+      - name: 核对发布正文并激活 CDN 稳定清单
+        env:
+          # 临时凭据只传入当前步骤的 ossutil 环境。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_activate_identity.outputs.aliyun-security-token }}
+        run: |
+          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md"
+          node scripts/publish-release-cdn.mjs activate dist
       - name: 同步 Homebrew Cask
         run: |
           mkdir -p .tmp/homebrew-tap/Casks

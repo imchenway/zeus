@@ -43,6 +43,22 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.commit_sha }}
+      - name: 校验正式分发身份和 OSS 配置
+        if: ${{ inputs.publish_release }}
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          # 补发与主发布使用相同的官方分发目标。
+          ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          ALIYUN_ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+          ZEUS_OSS_BUCKET: ${{ vars.ZEUS_OSS_BUCKET }}
+          ZEUS_OSS_REGION: ${{ vars.ZEUS_OSS_REGION }}
+          ZEUS_DOWNLOAD_BASE_URL: ${{ vars.ZEUS_DOWNLOAD_BASE_URL }}
+        run: |
+          if [ "$GITHUB_REF" != 'refs/heads/main' ]; then
+            echo '正式补发的 OIDC 身份只允许 main 分支。' >&2
+            exit 1
+          fi
+          node scripts/publish-release-cdn.mjs validate
       - name: 核对固定候选与版本
         env:
           RELEASE_COMMIT: ${{ inputs.commit_sha }}
@@ -112,12 +128,24 @@ jobs:
     if: ${{ inputs.publish_release }}
     needs: [preflight, verify, package-windows]
     runs-on: ubuntu-latest
+    # 两个发布入口共用串行组，稳定清单不会被并发补发覆盖。
+    concurrency:
+      group: zeus-stable-release-distribution
+      cancel-in-progress: false
     permissions:
       contents: write
+      # 只有正式分发作业能申请短期阿里云身份。
+      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_COMMIT: ${{ inputs.commit_sha }}
       RELEASE_TAG: ${{ inputs.tag }}
+      # 非密钥配置复用仓库 Variables。
+      ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+      ALIYUN_ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+      ZEUS_OSS_BUCKET: ${{ vars.ZEUS_OSS_BUCKET }}
+      ZEUS_OSS_REGION: ${{ vars.ZEUS_OSS_REGION }}
+      ZEUS_DOWNLOAD_BASE_URL: ${{ vars.ZEUS_DOWNLOAD_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,6 +174,34 @@ jobs:
           fi
           gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease |
             jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
+      - name: 复用同版 macOS 制品以提供完整 CDN 下载链接
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          gh release download "$RELEASE_TAG" --repo imchenway/zeus --pattern "Zeus-$version-arm64.dmg" --pattern zeus-release-manifest.json --dir dist
+      - name: 安装固定版本 OSS 上传工具
+        run: |
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 'https://gosspublic.alicdn.com/ossutil/v2/2.4.1/ossutil-2.4.1-linux-amd64.zip' -o "$RUNNER_TEMP/zeus-ossutil.zip"
+          printf '57ee4c56796a40144acd6b0b96b53b4ba75e5cec09c01d8d0313c09a5524022f  %s\n' "$RUNNER_TEMP/zeus-ossutil.zip" | sha256sum --check -
+          unzip -q "$RUNNER_TEMP/zeus-ossutil.zip" -d "$RUNNER_TEMP/zeus-ossutil"
+          chmod 755 "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64/ossutil"
+          printf '%s\n' "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64" >> "$GITHUB_PATH"
+      - name: 申请阿里云短期上传身份
+        id: oss_identity
+        # 官方 MIT Action 固定到不可变提交。
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          audience: sts.aliyuncs.com
+          role-session-expiration: 1800
+      - name: 准备并核验 CDN 固定版本制品
+        env:
+          # 上传只使用本次 OIDC 换取的短期凭据。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_identity.outputs.aliyun-security-token }}
+        run: |
+          node scripts/publish-release-cdn.mjs stage dist
       - name: 上传并核对 Windows 资产，最后公开更新清单
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -163,3 +219,21 @@ jobs:
               jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
           done
           echo "Windows 两个架构和更新清单已核对：$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: 刷新稳定清单写入身份
+        id: oss_activate_identity
+        # 官方 MIT Action 固定到不可变提交。
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          audience: sts.aliyuncs.com
+          role-session-expiration: 1800
+      - name: 核对发布正文并激活 CDN 稳定清单
+        env:
+          # 上传只使用本次 OIDC 换取的短期凭据。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_activate_identity.outputs.aliyun-security-token }}
+        run: |
+          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md"
+          node scripts/publish-release-cdn.mjs activate dist

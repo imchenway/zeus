@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* global console, process */
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { assertVersionAfterTag, parseBoolean, requiredVersion, validateReleaseNotes } from './release-script-utils.mjs';
+import { assertVersionAfterTag, parseBoolean, renderCdnReleaseNotes, requiredVersion, validateReleaseNotes } from './release-script-utils.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
@@ -22,7 +22,8 @@ function main() {
   const latestTag = resolveLatestStableTag();
   const baseVersion = latestTag.slice(1);
   const targetNotesPath = join(repositoryRoot, 'releases', `v${releaseVersion}.md`);
-  const sourceNotes = readFileSync(sourceNotesPath, 'utf8');
+  /** 加速链接属于固定候选正文，发布、恢复和验收使用同一份完整内容。 */
+  const sourceNotes = renderCdnReleaseNotes(readFileSync(sourceNotesPath, 'utf8'), releaseVersion);
 
   assertVersionAfterTag(releaseVersion, latestTag, '。');
   assertTagDoesNotExist(releaseVersion);
@@ -68,7 +69,7 @@ function main() {
 
   const planPath = join(outputDirectory, `Zeus-${releaseVersion}-release-prepare-${applyChanges ? 'result' : 'plan'}.md`);
   const notesSnapshotPath = join(outputDirectory, `Zeus-${releaseVersion}-release-notes-reviewed.md`);
-  if (resolve(sourceNotesPath) !== resolve(notesSnapshotPath)) copyFileSync(sourceNotesPath, notesSnapshotPath);
+  writeFileSync(notesSnapshotPath, sourceNotes, { mode: 0o600 });
   writeFileSync(
     planPath,
     buildPlan({

@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { parseBoolean, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile } from './release-script-utils.mjs';
+import { parseBoolean, renderCdnReleaseNotes, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile, verifyPublicCdnManifest } from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
   observeReleaseWorkflowExecution,
@@ -327,7 +327,9 @@ export async function verifyPublishedRelease(input) {
   const releaseNotes = input.releaseNotes ?? readFileSync(releaseNotesPath, 'utf8');
   const expectedNotes = normalizeText(releaseNotes);
   const actualNotes = normalizeText(input.release.data.body ?? '');
-  if (actualNotes !== expectedNotes) throw new Error('GitHub Release notes 与标签候选的仓库 Release notes 不一致。');
+  /** 历史候选无此区块；新候选的链接必须已经进入固定提交，不能仅修改远端正文。 */
+  const includesCdnDownloads = expectedNotes.includes('<!-- zeus-cdn-downloads -->');
+  if (actualNotes !== expectedNotes || (includesCdnDownloads && actualNotes !== normalizeText(renderCdnReleaseNotes(releaseNotes, input.releaseVersion)))) throw new Error('GitHub Release notes 与标签候选的仓库 Release notes 不一致。');
 
   const expectedDmgName = `Zeus-${input.releaseVersion}-arm64.dmg`;
   /** 完整发行必须同时具有 macOS、Windows 双架构安装器及两份平台清单。 */
@@ -398,6 +400,16 @@ export async function verifyPublishedRelease(input) {
       return { arch, fileName, sizeBytes: asset.size, sha256: artifact.sha256 };
     });
 
+    if (includesCdnDownloads) {
+      /** 带加速链接的正文只有在两端公开 CDN 清单与 GitHub 候选一致时才通过验收。 */
+      await Promise.all([
+        verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json'),
+        verifyPublicCdnManifest(windowsRelease.manifest, 'zeus-release-manifest-win32.json'),
+        verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json', fetch, true),
+        verifyPublicCdnManifest(windowsRelease.manifest, 'zeus-release-manifest-win32.json', fetch, true),
+      ]);
+    }
+
     if (input.deepVerifyPublicDmg) {
       downloadReleaseAsset(input.tag, expectedDmgName, downloadDirectory, { timeout: 15 * 60_000 });
       const dmgPath = join(downloadDirectory, expectedDmgName);
@@ -419,7 +431,7 @@ export async function verifyPublishedRelease(input) {
     /** Windows 的公开清单与 macOS 分开保留，现有客户端继续读取各自入口。 */
     const windowsManifestSnapshotPath = join(input.outputDirectory, `${input.tag}-release-manifest-win32.json`);
     const caskSnapshotPath = join(input.outputDirectory, `${input.tag}-homebrew-cask.rb`);
-    writeFileSync(releaseNotesSnapshotPath, releaseNotes, { mode: 0o600 });
+    writeFileSync(releaseNotesSnapshotPath, input.release.data.body ?? '', { mode: 0o600 });
     copyFileSync(manifestPath, manifestSnapshotPath);
     copyFileSync(windowsRelease.manifestPath, windowsManifestSnapshotPath);
     writeFileSync(caskSnapshotPath, cask, { mode: 0o600 });
