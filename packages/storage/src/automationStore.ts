@@ -1066,17 +1066,13 @@ export class AutomationRunRepository {
       }
       /** 阻塞策略作用于整次自动化，不再按项目拆分。 */
       const active = this.listActive(task.id);
-      if (task.blockStrategy === 'discard' && active.length > 0) return this.insertTerminal(input, task, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_DISCARDED', '已按阻塞策略丢弃本次触发。', timestamp);
-      let previousRunId: string | null = null;
-      let mayOverlap = false;
-      if (task.blockStrategy === 'cover' && active.length > 0) {
-        const previous = active[0]!;
-        previousRunId = previous.id;
-        mayOverlap = previous.status === 'dispatching' || previous.status === 'running';
-        this.setTerminal(previous.id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN', '覆盖时无法证明旧 Provider 或外部命令已停止。');
-      }
-      /** 同规则尚未领取的队首也占用串行执行名额，后续触发必须排队。 */
+      /** 尚未领取的队首同样占位，跳过和替换策略都必须核对。 */
       const queued = this.db.select<{ id: string; queue_position: number }>(`SELECT id, queue_position FROM automation_runs WHERE automation_id = ? AND status = 'queued' ORDER BY queue_position, accepted_at, id`, [task.id]);
+      if (task.blockStrategy === 'discard' && (active.length > 0 || queued.length > 0)) return this.insertTerminal(input, task, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_DISCARDED', '已按阻塞策略丢弃本次触发。', timestamp);
+      /** 替换仅取消尚未派发的运行，保留在途工作的执行占位与结果跟踪。 */
+      if (task.blockStrategy === 'cover') {
+        for (const run of queued) this.setTerminal(run.id, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_REPLACED', '已被新的待执行项替换。');
+      }
       /** 空闲时保留待领取队首，其余记录与执行期间的全部排队记录共同遵守等待容量。 */
       const waiting = active.length > 0 ? queued : queued.slice(1);
       if (task.blockStrategy === 'serial') {
@@ -1087,29 +1083,13 @@ export class AutomationRunRepository {
       }
       const id = input.id ?? `automation_run_${randomId(12)}`;
       const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
-      /** 从原队尾位置递增，淘汰造成的位置空缺不会使新触发排到旧等待项之前。 */
-      const queuePosition = task.blockStrategy === 'serial' && (active.length > 0 || queued.length > 0) ? (queued.at(-1)?.queue_position ?? 0) + 1 : 0;
+      /** 依次执行沿原队尾递增；替换策略在在途工作后仅保留一个等待项。 */
+      const queuePosition = task.blockStrategy === 'serial' && (active.length > 0 || queued.length > 0) ? (queued.at(-1)?.queue_position ?? 0) + 1 : active.length > 0 ? 1 : 0;
       this.db.execute(
         `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, project_ids_json, trigger_kind, trigger_identity, causal_chain_id,
           status, queue_position, attempt, unread, may_overlap_previous, previous_run_id, scheduled_at, accepted_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          task.id,
-          task.currentRevisionId,
-          projectId,
-          JSON.stringify(projectIds),
-          input.triggerKind,
-          input.triggerIdentity,
-          causalChainId,
-          queuePosition,
-          mayOverlap ? 1 : 0,
-          previousRunId,
-          input.scheduledAt,
-          timestamp,
-          timestamp,
-          timestamp,
-        ],
+        [id, task.id, task.currentRevisionId, projectId, JSON.stringify(projectIds), input.triggerKind, input.triggerIdentity, causalChainId, queuePosition, 0, null, input.scheduledAt, timestamp, timestamp, timestamp],
       );
       this.db.execute(`INSERT OR IGNORE INTO automation_trigger_receipts (automation_id, project_id, trigger_identity, run_id, occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [
         task.id,
