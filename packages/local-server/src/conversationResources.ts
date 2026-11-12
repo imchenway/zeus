@@ -96,9 +96,12 @@ const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
 export function syncConversationResources(input: NormalizeConversationResourcesInput, resources: ConversationResourceRepository): ConversationResource[] {
   /** 状态增量和局部归档失败不能删除同一消息已经登记的其他资源。 */
   const previous = resources.listByItem(input.item.id);
-  /** 附件归档路径和事件内序号会变化；已有附件身份与首次位置继续沿用。 */
-  const identity = (resource: Pick<ZeusConversationResourceRecord, 'kind' | 'presentation' | 'displayJson' | 'canonicalTargetDigest'>) =>
-    `${resource.presentation}:${resource.kind}:${resource.kind === 'attachment' ? (stringValue(parseJsonRecord(resource.displayJson).attachmentRef) ?? resource.canonicalTargetDigest) : resource.canonicalTargetDigest}`;
+  /** 归档图片沿用原图身份；普通附件按实际目标匹配，避免同名文件共用资源身份。 */
+  const identity = (resource: Pick<ZeusConversationResourceRecord, 'kind' | 'presentation' | 'displayJson' | 'canonicalTargetDigest'>) => {
+    /** 只有原图路径摘要能跨归档位置复用，普通附件的显示名称不参与身份匹配。 */
+    const attachmentRef = resource.kind === 'attachment' ? stringValue(parseJsonRecord(resource.displayJson).attachmentRef) : null;
+    return `${resource.presentation}:${resource.kind}:${attachmentRef && /^assistant_image_[a-f0-9]{64}$/u.test(attachmentRef) ? attachmentRef : resource.canonicalTargetDigest}`;
+  };
   const previousByIdentity = new Map(previous.map((resource) => [identity(resource), resource]));
   const normalized = normalizeConversationResources(input).map((resource) => {
     const before = previousByIdentity.get(identity(resource));
@@ -994,15 +997,16 @@ function parseFileReference(rawReference: string, projectRoot: string, registere
   } else {
     location = conversationFileLocationFromReference(reference);
     if (location) reference = reference.replace(/(?:#L|:L)\d+(?:-L?\d+)?$|:\d+(?::\d+)?$/iu, '');
-  }
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) && !/^[A-Za-z]:[\\/]/u.test(reference)) {
-    // 未授权的 URL 协议不能重新解释为项目相对路径。
-    return null;
-  }
-  try {
-    reference = decodeURIComponent(reference);
-  } catch {
-    return null;
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) && !/^[A-Za-z]:[\\/]/u.test(reference)) {
+      // 未授权的 URL 协议不能重新解释为项目相对路径。
+      return null;
+    }
+    try {
+      /** file: 引用已由 fileURLToPath 解码，只有普通路径引用需要在此解码。 */
+      reference = decodeURIComponent(reference);
+    } catch {
+      return null;
+    }
   }
   const root = resolve(projectRoot);
   /** 外部共享引用先转换为任务已有入口，再使用原有授权规则。 */
