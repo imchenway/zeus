@@ -116,7 +116,8 @@ try {
     });
     /** 项目中的唯一启用实例由运行边界自动解析，不再由用户二次选择。 */
     const employee = employees.createFromTemplate({ projectId: project.id, template: employeeTemplate, id: 'employee_digital_team_probe' });
-    await verifyUnifiedAutomation(database, project.id, employee.id);
+    /** 工作流专项不依赖已移除的自动化收件箱接口。 */
+    if (!process.argv.includes('--workflow-only')) await verifyUnifiedAutomation(database, project.id, employee.id);
     /** 单员工定义证明团队不需要开始、结束或其他系统节点。 */
     const singleDefinition = definition([employeeNode('single', employee.id, '独立完成任务')], []);
     assert(validateDigitalTeamWorkflowDefinition(singleDefinition).length === 0, '单员工团队必须可执行。');
@@ -321,7 +322,7 @@ try {
     await verifyFinalTaskCompletionGate();
     verifyMigratedProjectEmployeeReferences(database, project.id, employee.id, employeeTemplate.id);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, checks: ['automation-review-queue', 'automation-inflight-inbox', 'single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-preserved', 'vertical-mixed-handles-persisted', 'handle-dependency-validation', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
+      `${JSON.stringify({ ok: true, kernel: process.argv.includes('--langgraph') ? 'langgraph' : 'employee', checks: [...(process.argv.includes('--workflow-only') ? [] : ['automation-review-queue', 'automation-inflight-inbox']), 'single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-preserved', 'vertical-mixed-handles-persisted', 'handle-dependency-validation', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
     );
   } finally {
     await database.close();
@@ -829,7 +830,7 @@ function employeeNode(id: string, employeeId: string, title: string): DigitalTea
 
 /** 构造当前纯员工编排定义。 */
 function definition(nodes: DigitalTeamEmployeeNode[], edges: DigitalTeamWorkflowDefinition['edges']): DigitalTeamWorkflowDefinition {
-  return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } };
+  return { ...(process.argv.includes('--langgraph') ? { engine: 'langgraph' as const } : {}), schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } };
 }
 
 /** 旧全局身份分离后，项目流程继续指向原员工，其他项目及历史运行不变。 */

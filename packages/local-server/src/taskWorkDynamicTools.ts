@@ -158,6 +158,7 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
           inputSchema: {
             type: 'object',
             properties: {
+              output: { description: '供流程数据绑定和路由使用的结构化输出，必须符合当前节点输出契约。' },
               outcome: { type: 'string', enum: ['succeeded', 'failed', 'blocked'] },
               summary: { type: 'string', maxLength: 4_000 },
               verification: { type: 'string', enum: ['passed', 'failed', 'not_run'] },

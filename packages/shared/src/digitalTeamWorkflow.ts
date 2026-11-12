@@ -1,5 +1,6 @@
 import type { EmployeeWorkSettings } from './employeeWorkPlanning.js';
 import type { CommandActorKind } from './commandEnvelope.js';
+import { validateWorkflowPrimitives, usesWorkflowPrimitives, type WorkflowDataContract, type WorkflowPrimitiveNode, type WorkflowExecution, type WorkflowValue, type WorkflowGraphRuntimeState } from './workflowPrimitives.js';
 
 /** 旧数字团队流程定义的结构身份，仅用于继续读取历史运行。 */
 export const legacyDigitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-2026-09-15' as const;
@@ -8,7 +9,7 @@ export const legacyDigitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-
 export const digitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-2026-09-27' as const;
 
 /** 历史记录中可能出现的全部节点类型。 */
-export const digitalTeamNodeTypes = ['start', 'employee', 'human_confirmation', 'code_integration', 'end'] as const;
+export const digitalTeamNodeTypes = ['start', 'employee', 'human_confirmation', 'code_integration', 'end', 'invoke', 'await', 'route', 'join'] as const;
 
 /** 画布节点类型。 */
 export type DigitalTeamNodeType = (typeof digitalTeamNodeTypes)[number];
@@ -44,7 +45,7 @@ export const digitalTeamRunControlStates = ['running', 'paused', 'cancelled'] as
 export type DigitalTeamRunControlState = (typeof digitalTeamRunControlStates)[number];
 
 /** 节点单次尝试状态。 */
-export const digitalTeamNodeAttemptStatuses = ['prepared', 'dispatching', 'active', 'awaiting_approval', 'succeeded', 'changes_requested', 'invalidated', 'failed', 'outcome_unknown', 'cancelled'] as const;
+export const digitalTeamNodeAttemptStatuses = ['prepared', 'dispatching', 'active', 'awaiting_approval', 'waiting', 'skipped', 'succeeded', 'changes_requested', 'invalidated', 'failed', 'outcome_unknown', 'cancelled'] as const;
 
 /** 节点单次尝试状态类型。 */
 export type DigitalTeamNodeAttemptStatus = (typeof digitalTeamNodeAttemptStatuses)[number];
@@ -92,7 +93,7 @@ export interface DigitalTeamEndNodeData extends Record<string, unknown> {
 }
 
 /** 员工节点配置。 */
-export interface DigitalTeamEmployeeNodeData extends Record<string, unknown> {
+export interface DigitalTeamEmployeeNodeData extends Record<string, unknown>, WorkflowDataContract {
   /** 用户可读名称。 */
   title: string;
   /** 项目数字员工身份。 */
@@ -157,7 +158,7 @@ export type DigitalTeamCodeIntegrationNode = DigitalTeamNodeBase<'code_integrati
 export type DigitalTeamEndNode = DigitalTeamNodeBase<'end', DigitalTeamEndNodeData>;
 
 /** 数字团队画布节点。 */
-export type DigitalTeamNode = DigitalTeamStartNode | DigitalTeamEmployeeNode | DigitalTeamHumanConfirmationNode | DigitalTeamCodeIntegrationNode | DigitalTeamEndNode;
+export type DigitalTeamNode = DigitalTeamStartNode | DigitalTeamEmployeeNode | DigitalTeamHumanConfirmationNode | DigitalTeamCodeIntegrationNode | DigitalTeamEndNode | WorkflowPrimitiveNode;
 
 /** 节点之间的有向依赖边。 */
 export interface DigitalTeamEdge {
@@ -175,6 +176,8 @@ export interface DigitalTeamEdge {
 
 /** 可保存和冻结的数字团队画布定义。 */
 export interface DigitalTeamWorkflowDefinition {
+  /** 新运行使用的编排内核；缺省保留已冻结员工流程的原语义。 */
+  engine?: 'langgraph';
   /** 结构身份。 */
   schemaGeneration: typeof digitalTeamWorkflowSchemaGeneration | typeof legacyDigitalTeamWorkflowSchemaGeneration;
   /** 画布节点。 */
@@ -212,6 +215,8 @@ export interface DigitalTeamDefectSubmission {
 
 /** 耐久流程控制事实，重启与子任务不能重置自动修复额度。 */
 export interface DigitalTeamRunRuntimeState {
+  /** LangGraph 检查点与子流程关系，复用本运行的耐久控制快照。 */
+  graph?: WorkflowGraphRuntimeState;
   /** 正式接纳时解析的节点执行配置，后续模型默认变化不改写此快照。 */
   executionSettings?: Record<string, EmployeeWorkSettings>;
   /** 本次接纳的最大执行权限，所有后继与自动修复共同继承。 */
@@ -305,6 +310,8 @@ export interface DigitalTeamRepositoryResult {
 
 /** 员工节点提交的结构化结果。 */
 export interface DigitalTeamStructuredResult {
+  /** 供后续结构化绑定与路由使用的实际输出。 */
+  output?: WorkflowValue;
   /** 节点依据证据声明的业务结果。 */
   outcome: 'succeeded' | 'failed' | 'blocked';
   /** 本节点实际验证结论。 */
@@ -459,6 +466,8 @@ export interface DigitalTeamApprovalDecision {
 
 /** 节点一次不可覆盖的执行尝试投影。 */
 export interface DigitalTeamNodeAttemptRecord {
+  /** 本次准确输入、输出、等待及父子运行关系。 */
+  execution: WorkflowExecution | null;
   /** 尝试身份。 */
   id: string;
   /** 所属运行。 */
@@ -551,6 +560,8 @@ export interface UpdateDigitalTeamWorkflowTemplateInput {
 
 /** 新建运行输入。 */
 export interface CreateDigitalTeamWorkflowRunInput {
+  /** 内部子流程接纳必须引用父运行当前准确尝试的已冻结能力。 */
+  frozenParentAttemptId?: string;
   /** 可选稳定运行身份。 */
   id?: string;
   /** 所属项目。 */
@@ -609,6 +620,8 @@ export interface CreateDigitalTeamNodeAttemptInput {
 
 /** 节点尝试通用修改输入。 */
 export interface UpdateDigitalTeamNodeAttemptInput {
+  /** 本次准确输入、输出、等待及父子运行关系。 */
+  execution?: WorkflowExecution | null;
   /** 使本次结果失效的准确尝试身份。 */
   invalidatedByAttemptId?: string | null;
   /** 人工改派或返工的明确原因。 */
@@ -718,7 +731,7 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
   }
   const nodes = value.nodes.filter(isCurrentNode);
   const edges = value.edges.filter(isEdge);
-  if (nodes.length !== value.nodes.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', message: '团队只能配置字段完整的员工分工。' });
+  if (nodes.length !== value.nodes.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', message: '流程包含配置不完整的调用或控制节点。' });
   if (edges.length !== value.edges.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', message: '团队包含字段不完整的依赖关系。' });
   validateGraphReferences(nodes, edges, issues);
   if (issues.some((issue) => ['ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_ENDPOINT_INVALID'].includes(issue.code))) return issues;
@@ -726,7 +739,9 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
   if (value.repairEmployeeId !== undefined && !isIdentity(value.repairEmployeeId)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_REPAIR_EMPLOYEE_INVALID', message: '修复员工身份无效。' });
   if (value.maxRepairRounds !== undefined && (!Number.isSafeInteger(value.maxRepairRounds) || (value.maxRepairRounds as number) < 0 || (value.maxRepairRounds as number) > 20))
     issues.push({ code: 'ZEUS_DIGITAL_TEAM_REPAIR_LIMIT_INVALID', message: '自动修复额度需要在零到二十轮之间。' });
+  issues.push(...validateWorkflowPrimitives(value as unknown as DigitalTeamWorkflowDefinition));
   for (const node of nodes) {
+    if (node.type !== 'employee') continue;
     if (!node.data.instructions.trim()) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_INSTRUCTIONS_MISSING', message: '请填写这份分工需要完成的工作。', nodeId: node.id });
     if (!node.data.acceptanceCriteria?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_ACCEPTANCE_MISSING', message: '请填写至少一项完成标准。', nodeId: node.id });
     if (!node.data.expectedDeliverables?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELIVERABLE_MISSING', message: '请填写至少一项预期交付物。', nodeId: node.id });
@@ -739,6 +754,7 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
   /** 并行分支不争抢任务阶段；只有明确汇合后的单一阶段可以推进。 */
   for (const node of nodes)
     if (
+      node.type === 'employee' &&
       (node.data.startStatusId || node.data.completionStatusId) &&
       nodes.some((other) => other.id !== node.id && !reachable(node.id, adjacency(nodes, edges, 'outgoing')).has(other.id) && !reachable(other.id, adjacency(nodes, edges, 'outgoing')).has(node.id))
     )
@@ -837,6 +853,7 @@ export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWo
     }
   }
   if (definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
+  if (usesWorkflowPrimitives(definition)) return { ...definition, engine: 'langgraph', nodes: definition.nodes.map((node) => (node.type === 'employee' ? normalizeEmployeeNode(node) : node)) };
   const employeeNodes = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
   if (definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration && employeeNodes.length === definition.nodes.length) {
     return { ...structuredClone(definition), nodes: employeeNodes.map((node) => normalizeEmployeeNode(node)) };
@@ -1041,9 +1058,11 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
   };
 }
 
-/** 判断当前画布允许保存的员工分工。 */
-function isCurrentNode(value: unknown): value is DigitalTeamEmployeeNode {
-  if (!isNode(value) || value.type !== 'employee') return false;
+/** 判断当前画布允许保存的调用与控制节点。 */
+function isCurrentNode(value: unknown): value is DigitalTeamNode {
+  if (!isNode(value)) return false;
+  if (['invoke', 'await', 'route', 'join'].includes(value.type)) return true;
+  if (value.type !== 'employee') return false;
   return (value.data.acceptanceCriteria === undefined || isNonEmptyTextArray(value.data.acceptanceCriteria)) && (value.data.expectedDeliverables === undefined || isNonEmptyTextArray(value.data.expectedDeliverables));
 }
 

@@ -28,6 +28,8 @@ export interface DigitalTeamRunProjection {
 
 /** 创建运行时原子冻结模板、任务事实和当前项目基线。 */
 export interface DigitalTeamRunCreateInput {
+  /** 本次整份流程与子流程共同继承的权限上限。 */
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 指定已有任务时复用其身份，省略则新建任务。 */
   taskId?: string;
   /** 已有任务的读取时间戳，拒绝使用过期任务内容。 */
@@ -48,6 +50,8 @@ export interface DigitalTeamRunCreateInput {
 
 /** 数字团队页面使用的真实本地 API。 */
 export interface DigitalTeamApiClient {
+  /** 当前项目会话已激活的工具目录。 */
+  loadDigitalTeamTools?(projectId: string, conversationId: string): Promise<import('@zeus/shared').WorkflowToolReference['tool'][]>;
   /** 读取全局团队模板。 */
   loadDigitalTeamTemplates(): Promise<DigitalTeamWorkflowTemplateRecord[]>;
   /** 新建或按修订保存模板。 */
@@ -61,7 +65,12 @@ export interface DigitalTeamApiClient {
   /** 原子创建任务并冻结运行。 */
   createDigitalTeamRun(projectId: string, input: DigitalTeamRunCreateInput): Promise<DigitalTeamRunProjection>;
   /** 处理规划批准或最终验收。 */
-  decideDigitalTeamApproval(runId: string, nodeId: string, attempt: number, input: { approved: boolean; reason: string; expectedRevision: number }): Promise<DigitalTeamRunProjection>;
+  decideDigitalTeamApproval(
+    runId: string,
+    nodeId: string,
+    attempt: number,
+    input: { approved: boolean; reason: string; expectedRevision: number; waitId?: string; inputSha256?: string; eventKey?: string; response?: import('@zeus/shared').WorkflowValue },
+  ): Promise<DigitalTeamRunProjection>;
   /** 暂停或继续后续派发。 */
   controlDigitalTeamRun(runId: string, input: { state: Extract<DigitalTeamRunControlState, 'running' | 'paused'>; expectedRevision: number }): Promise<DigitalTeamRunProjection>;
   /** 从指定节点发起返工。 */
@@ -98,6 +107,7 @@ export function createDigitalTeamApiClient(transport: LocalApiTransport): Digita
   };
 
   return {
+    loadDigitalTeamTools: (projectId, conversationId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/digital-team-tools?conversationId=${encodeURIComponent(conversationId)}`),
     loadDigitalTeamTemplates: () => transport.request('/api/digital-team-templates'),
     saveDigitalTeamTemplate: async (input) => {
       const body = await buildWorkManagementCommandRequest({

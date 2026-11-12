@@ -208,7 +208,39 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
   /** 既有冻结运行只补空控制快照，保留原员工与工作事实。 */
   if (!db.select<{ name: string }>('PRAGMA table_info(digital_team_workflow_runs)').some((column) => column.name === 'runtime_state_json'))
     db.execute("ALTER TABLE digital_team_workflow_runs ADD COLUMN runtime_state_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(runtime_state_json))");
+  migrateWorkflowPrimitiveAttempts(db);
   db.execute('CREATE TABLE IF NOT EXISTS digital_team_project_workflows (project_id TEXT PRIMARY KEY REFERENCES projects(id), template_id TEXT NOT NULL REFERENCES digital_team_workflow_templates(id), updated_at TEXT NOT NULL)');
+}
+
+/** 扩展原尝试账本的节点和状态约束，保留全部身份、关联与历史数据。 */
+function migrateWorkflowPrimitiveAttempts(db: ZeusDatabasePort): void {
+  /** 同一事务内重建约束；延期核对外键直到原表名和全部身份恢复。 */
+  const migrationId = '20261112_workflow_primitives';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute('PRAGMA defer_foreign_keys = ON');
+    const original = db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'digital_team_node_attempts'")!.sql;
+    const indexes = db.select<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'digital_team_node_attempts' AND sql IS NOT NULL");
+    const create = original
+      .replace(/CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?digital_team_node_attempts["`]?/i, 'CREATE TABLE digital_team_node_attempts_next')
+      // 自关联先指向临时表，避免删除旧表时留下无法在提交时消除的延期外键计数。
+      .replace(/REFERENCES\s+["`]?digital_team_node_attempts["`]?\s*\(/gi, 'REFERENCES digital_team_node_attempts_next(')
+      .replace("'code_integration','end'", "'code_integration','end','invoke','await','route','join'")
+      .replace("'awaiting_approval','succeeded'", "'awaiting_approval','waiting','skipped','succeeded'");
+    db.execute(create);
+    db.execute('INSERT INTO digital_team_node_attempts_next SELECT * FROM digital_team_node_attempts');
+    db.execute('DROP TABLE digital_team_node_attempts');
+    db.execute('ALTER TABLE digital_team_node_attempts_next RENAME TO digital_team_node_attempts');
+    for (const index of indexes) db.execute(index.sql);
+    /** 每行表示一个准确尝试的输入输出快照；NULL 表示历史尝试未使用数据绑定。 */
+    db.execute('ALTER TABLE digital_team_node_attempts ADD COLUMN execution_json TEXT CHECK (execution_json IS NULL OR json_valid(execution_json))');
+    db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '扩展调用、路由、等待、汇合节点及准确尝试快照',
+      createHash('sha256').update(migrationId).digest('hex'),
+      new Date().toISOString(),
+    ]);
+  });
 }
 
 /** 员工全局身份完成后再导入旧配方与未执行草稿，准确绑定无需再次推断。 */
@@ -598,7 +630,26 @@ export class DigitalTeamWorkflowRunRepository {
     if (!task || task.project_id !== input.projectId) throw storeError('ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务不存在或不属于当前项目。', 404);
     const templateId = input.templateId ? identity(input.templateId, 'templateId') : null;
     let templateRevision: number | null = null;
-    if (templateId) {
+    /** 只有真实父尝试中已接纳的快照可以继续使用历史模板修订。 */
+    const parentAttempt = input.frozenParentAttemptId ? this.db.get<{ id: string; run_id: string; node_id: string }>('SELECT id, run_id, node_id FROM digital_team_node_attempts WHERE id = ?', [input.frozenParentAttemptId]) : undefined;
+    const frozenParent = parentAttempt ? this.getById(parentAttempt.run_id) : undefined;
+    const frozenSource = parentAttempt ? frozenParent?.runtimeState.graph?.subflows?.[parentAttempt.node_id] : undefined;
+    if (
+      input.frozenParentAttemptId &&
+      (!parentAttempt ||
+        !frozenParent ||
+        frozenParent.projectId !== input.projectId ||
+        !frozenSource ||
+        frozenSource.templateId !== templateId ||
+        frozenSource.templateRevision !== input.templateRevision ||
+        canonicalCommandInputJson(frozenSource.definition) !== canonicalCommandInputJson(definition) ||
+        this.db.get<{ id: string }>('SELECT id FROM digital_team_node_attempts WHERE run_id = ? AND node_id = ? ORDER BY attempt DESC LIMIT 1', [parentAttempt.run_id, parentAttempt.node_id])?.id !== parentAttempt.id)
+    )
+      throw storeError('ZEUS_WORKFLOW_FROZEN_CAPABILITY_INVALID', '子流程没有绑定父运行当前准确尝试的冻结能力。', 409);
+    if (templateId && frozenSource) {
+      definition = resolveGlobalTeamEmployees(this.db, input.projectId, frozenSource.definition, true);
+      templateRevision = frozenSource.templateRevision;
+    } else if (templateId) {
       const template = this.db.get<{ project_id: string | null; revision: number; definition_json: string; deleted_at: string | null }>(
         'SELECT project_id, revision, definition_json, deleted_at FROM digital_team_workflow_templates WHERE id = ?',
         [templateId],
@@ -855,10 +906,11 @@ export class DigitalTeamNodeAttemptRepository {
     if (verifiedCandidate && verifiedCandidate !== run.candidateSetSha256) throw storeError('ZEUS_DIGITAL_TEAM_CANDIDATE_STALE', '验证结果没有绑定当前集成候选。', 409);
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.execute(
-      `UPDATE digital_team_node_attempts SET status = ?, work_item_id = ?, work_run_id = ?, conversation_id = ?, submission_id = ?, turn_id = ?, segment_id = ?,
+      `UPDATE digital_team_node_attempts SET execution_json = ?, status = ?, work_item_id = ?, work_run_id = ?, conversation_id = ?, submission_id = ?, turn_id = ?, segment_id = ?,
        environment_id = ?, workspace_id = ?, command_id = ?, external_operation_id = ?, result_json = ?, deliverable_id = ?, deliverable_version = ?, artifact_ref_json = ?,
        verified_candidate_set_sha256 = ?, approval_json = ?, error_json = ?, started_at = ?, completed_at = ?, invalidated_by_attempt_id = ?, invalidation_reason = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
       [
+        input.execution === undefined ? (current.execution ? boundedJson(current.execution, 'execution') : null) : input.execution ? boundedJson(input.execution, 'execution') : null,
         status,
         patchIdentity(input.workItemId, current.workItemId, 'workItemId'),
         patchIdentity(input.workRunId, current.workRunId, 'workRunId'),
@@ -1020,6 +1072,7 @@ interface DigitalTeamWorkflowRunRow {
 }
 
 interface DigitalTeamNodeAttemptRow {
+  execution_json: string | null;
   id: string;
   run_id: string;
   node_id: string;
@@ -1118,6 +1171,7 @@ function mapAttempt(row: DigitalTeamNodeAttemptRow): DigitalTeamNodeAttemptRecor
     attempt: row.attempt,
     status: member(row.status, digitalTeamNodeAttemptStatuses, 'attempt.status'),
     inputSha256: row.input_sha256,
+    execution: row.execution_json ? parseJson<NonNullable<DigitalTeamNodeAttemptRecord['execution']>>(row.execution_json, 'attempt.execution') : null,
     planVersion: row.plan_version,
     workItemId: row.work_item_id,
     workRunId: row.work_run_id,
@@ -1408,10 +1462,12 @@ function assertRunTransition(from: DigitalTeamRunStatus, to: DigitalTeamRunStatu
 function assertAttemptTransition(from: DigitalTeamNodeAttemptStatus, to: DigitalTeamNodeAttemptStatus): void {
   if (from === to) return;
   const allowed: Record<DigitalTeamNodeAttemptStatus, readonly DigitalTeamNodeAttemptStatus[]> = {
-    prepared: ['dispatching', 'active', 'awaiting_approval', 'failed', 'cancelled'],
+    prepared: ['dispatching', 'active', 'awaiting_approval', 'waiting', 'skipped', 'failed', 'cancelled'],
     dispatching: ['active', 'failed', 'outcome_unknown', 'cancelled'],
-    active: ['succeeded', 'failed', 'outcome_unknown', 'cancelled'],
+    active: ['succeeded', 'waiting', 'failed', 'outcome_unknown', 'cancelled'],
     awaiting_approval: ['succeeded', 'changes_requested', 'cancelled'],
+    waiting: ['invalidated', 'active', 'dispatching', 'succeeded', 'failed', 'outcome_unknown', 'cancelled'],
+    skipped: ['invalidated'],
     succeeded: ['invalidated'],
     changes_requested: ['invalidated'],
     invalidated: [],

@@ -1,3 +1,5 @@
+import { WorkflowPrimitiveFields } from './WorkflowPrimitiveFields.js';
+import { WorkflowWaitResponse } from './WorkflowWaitResponse.js';
 import {
   digitalTeamExecutionDefinition,
   digitalTeamWorkflowSchemaGeneration,
@@ -39,7 +41,7 @@ import type { ProjectRecord } from '../projects/projectContracts.js';
 import { type DigitalTeamApiClient, type DigitalTeamRunProjection } from './digitalTeamApiClient.js';
 import { forgetDigitalTeamDraft, readDigitalTeamDraft, readDigitalTeamDraftSelection, rememberDigitalTeamDraft, rememberDigitalTeamDraftSelection, type DigitalTeamTemplateDraft } from './digitalTeamDraftStorage.js';
 import { buildDigitalTeamDevelopmentDraft, digitalTeamMemberDefaults, withDigitalTeamDefaultRepairEmployee } from './digitalTeamMemberDefaults.js';
-import { digitalTeamRunReadOnlyDescription, digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from './digitalTeamRunPresentation.js';
+import { digitalTeamAttemptStatusLabel, digitalTeamRunReadOnlyDescription, digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from './digitalTeamRunPresentation.js';
 import { digitalTeamDragMime, digitalTeamWorkModeLabels, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
 import { EmployeeExecutionSettings } from '../digital-employees/EmployeeExecutionSettings.js';
 import { TeamNodeExecutionPreview } from './TeamNodeExecutionPreview.js';
@@ -250,8 +252,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const selectedAttempt = selectedRunNode ? latestAttempt(selectedRun?.currentAttempts ?? [], selectedRunNode.id) : null;
 
   useEffect(() => {
-    if (view === 'runs' && runBlocker) setSelectedNodeId((current) => current ?? runBlocker.nodeId);
-  }, [runBlocker?.nodeId, view]);
+    const waiting = selectedRun?.currentAttempts.find((attempt) => attempt.status === 'waiting');
+    if (view === 'runs' && (runBlocker || waiting)) setSelectedNodeId((current) => current ?? runBlocker?.nodeId ?? waiting!.nodeId);
+  }, [runBlocker?.nodeId, selectedRun?.currentAttempts, view]);
 
   /** 并行读取全局模板和可选运行项目数据，编辑团队不依赖项目存在。 */
   const refreshProject = useCallback(
@@ -797,6 +800,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         key={selectedNodeId}
         node={selectedNode}
         definition={draft.definition}
+        templates={templates}
+        loadTools={api?.loadDigitalTeamTools && projectId ? (conversationId) => api.loadDigitalTeamTools!(projectId, conversationId) : undefined}
         employees={memberCatalog}
         employeeNames={employeeNames}
         statuses={projectStatuses}
@@ -815,6 +820,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         attempts={selectedRun?.currentAttempts ?? []}
         history={selectedRun?.nodeAttempts ?? []}
         onOpenConversation={props.onOpenConversation ? (conversationId) => props.onOpenConversation!(selectedRunRecord!.projectId, conversationId) : undefined}
+        onRespond={
+          api && selectedRunRecord && selectedRunNode && selectedAttempt
+            ? async (response, approved) => {
+                const projection = await api.decideDigitalTeamApproval(selectedRunRecord.id, selectedRunNode.id, selectedAttempt.attempt, {
+                  approved,
+                  reason: '',
+                  expectedRevision: selectedRunRecord.revision,
+                  waitId: selectedAttempt.execution?.wait?.id,
+                  inputSha256: selectedAttempt.inputSha256,
+                  eventKey: selectedAttempt.execution?.wait?.eventKey,
+                  response,
+                });
+                setSelectedRun(projection);
+                setRuns((current) => current.map((item) => (item.id === projection.run.id ? projection.run : item)));
+              }
+            : undefined
+        }
         onApprove={(kind) => openRunDecision(kind, selectedRunNode, selectedAttempt, setRunDecision, setDecisionReason)}
         onRework={() => openRunDecision('rework', selectedRunNode, selectedAttempt, setRunDecision, setDecisionReason)}
       />
@@ -1055,10 +1077,10 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <div className="digital-team-member-picker-anchor">
                   <Button size="compact" onClick={() => setMemberPickerOpen((open) => !open)} aria-expanded={memberPickerOpen} disabled={Boolean(draft.sourceIssues?.length)}>
                     <Plus aria-hidden="true" />
-                    {zh ? '添加成员' : 'Add member'}
+                    {zh ? '添加节点' : 'Add node'}
                   </Button>
                   {memberPickerOpen ? (
-                    <div className="digital-team-member-picker" role="dialog" aria-label={zh ? '添加数字员工' : 'Add digital employee'}>
+                    <div className="digital-team-member-picker" role="dialog" aria-label={zh ? '添加节点' : 'Add node'}>
                       <RolePalette
                         employees={memberCatalog}
                         onAdd={(payload) => {
@@ -1236,10 +1258,18 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
   return (
     <section>
       <div className="digital-team-section-heading">
-        <h2>数字员工</h2>
-        <span>{props.employees.length}</span>
+        <h2>节点与能力</h2>
+        <span>{props.employees.length + 4}</span>
       </div>
       <div className="digital-team-palette-list">
+        {(['invoke', 'await', 'route', 'join'] as const).map((kind) => (
+          <article key={kind} className="digital-team-palette-card" draggable onDragStart={(event) => writeDragPayload(event, { kind })}>
+            <strong>{nodeTypeLabel(kind)}</strong>
+            <Button size="compact" aria-label={`添加${nodeTypeLabel(kind)}节点`} onClick={() => props.onAdd({ kind })}>
+              添加
+            </Button>
+          </article>
+        ))}
         {props.employees.length === 0 ? (
           <p role="status">还没有可用的数字员工，请先在“数字员工”页面创建。</p>
         ) : (
@@ -1263,6 +1293,10 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
 
 /** 节点检查器按判别联合展示且只更新当前节点允许的字段。 */
 function NodeInspector(props: {
+  /** 可调用的固定修订子流程。 */
+  templates: DigitalTeamWorkflowTemplateRecord[];
+  /** 当前会话的真实工具目录。 */
+  loadTools?(conversationId: string): Promise<import('@zeus/shared').WorkflowToolReference['tool'][]>;
   /** 预览和配置共用当前任务客户端。 */
   client: DashboardClient | null;
   projectId: string;
@@ -1319,6 +1353,7 @@ function NodeInspector(props: {
           <input value={node.data.title} maxLength={120} onChange={(event) => props.onChange({ ...node, data: { ...node.data, title: event.currentTarget.value } } as DigitalTeamNode)} />
         </label>
       )}
+      <WorkflowPrimitiveFields key={node.id} node={node} definition={props.definition} templates={props.templates} loadTools={props.loadTools} onChange={props.onChange} />
       <KeyboardConnectionEditor definition={props.definition} employeeNames={props.employeeNames} node={node} onConnect={props.onConnect} onDisconnect={props.onDisconnect} />
       {props.issues.length ? (
         <ul className="digital-team-node-issues">
@@ -1604,6 +1639,8 @@ function RunInspector(props: {
   attempts: DigitalTeamNodeAttemptRecord[];
   history: DigitalTeamNodeAttemptRecord[];
   onOpenConversation?(conversationId: string): Promise<void>;
+  /** 精确等待回应仍通过 Core 命令入口提交。 */
+  onRespond?(response: import('@zeus/shared').WorkflowValue, approved: boolean): Promise<void>;
   onApprove(kind: 'approve' | 'reject'): void;
   onRework(): void;
 }) {
@@ -1628,7 +1665,7 @@ function RunInspector(props: {
   /** 失败运行允许显式返工；完成、取消或影响范围内在途工作阻止返工，其他活动运行由 Core 再核对。 */
   const reworkAvailable =
     !['completed', 'cancelled'].includes(props.run.status) &&
-    (props.node.type === 'employee' || props.node.type === 'code_integration') &&
+    !['start', 'end'].includes(props.node.type) &&
     Boolean(props.attempt) &&
     !props.attempts.some((attempt) => reworkNodeIds.has(attempt.nodeId) && ['dispatching', 'active'].includes(attempt.status));
   return (
@@ -1644,7 +1681,7 @@ function RunInspector(props: {
         </div>
         <div>
           <dt>节点尝试</dt>
-          <dd>{props.attempt ? `第 ${props.attempt.attempt} 次 · ${props.attempt.status}` : '尚未准备'}</dd>
+          <dd>{props.attempt ? `第 ${props.attempt.attempt} 次 · ${digitalTeamAttemptStatusLabel(props.attempt.status)}` : '尚未准备'}</dd>
         </div>
         <div>
           <dt>会话</dt>
@@ -1670,6 +1707,18 @@ function RunInspector(props: {
       ) : null}
       {props.node.type === 'human_confirmation' && props.node.data.purpose === 'plan_approval' ? <PlanApprovalEvidence run={props.run} /> : null}
       {props.node.type === 'human_confirmation' && props.node.data.purpose === 'final_acceptance' ? <FinalApprovalEvidence run={props.run} nodeId={props.node.id} attempts={props.attempts} /> : null}
+      {props.attempt?.execution ? (
+        <section className="digital-team-workflow-fields">
+          <h3>输入与输出</h3>
+          <pre>{JSON.stringify(props.attempt.execution.input, null, 2)}</pre>
+          {props.attempt.execution.output !== undefined ? <pre>{JSON.stringify(props.attempt.execution.output, null, 2)}</pre> : null}
+          {props.attempt.execution.wait ? <p>等待至 {props.attempt.execution.wait.deadline}</p> : null}
+          {props.attempt.execution.childRunId ? <p>子流程：{props.attempt.execution.childRunId}</p> : null}
+        </section>
+      ) : null}
+      {(props.attempt?.status === 'waiting' && props.attempt.execution?.wait && props.node.type !== 'await') || (props.attempt?.status === 'waiting' && props.node.type === 'await' && props.node.data.mode !== 'timer') ? (
+        <WorkflowWaitResponse key={props.attempt!.id} toolApproval={props.attempt!.execution?.wait?.kind === 'tool_approval'} disabled={props.run.controlState !== 'running' || !props.onRespond} onRespond={props.onRespond!} />
+      ) : null}
       <AttemptHistory attempts={props.history.filter((attempt) => attempt.nodeId === props.node!.id)} />
       {approvalAvailable ? (
         <div className="digital-team-inspector-actions">
@@ -1814,7 +1863,7 @@ function validInitialProjectId(projects: ProjectRecord[], initialProjectId?: str
 
 /** 新模板以空画布和稳定视口开始，允许保存不完整草稿。 */
 function emptyTemplateDraft(): TemplateDraft {
-  return { id: null, revision: null, name: '', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
+  return { id: null, revision: null, name: '', description: '', definition: { engine: 'langgraph', schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
 }
 
 /** 已保存模板复制为可编辑草稿，不混入运行状态。 */
@@ -1843,13 +1892,17 @@ function nextNodePosition(index: number): { x: number; y: number } {
 function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalTeamMemberRecord | undefined, completedStatusId?: string): DigitalTeamNode {
   /** 节点身份只用于当前草稿，岗位默认值不授予任务执行权限。 */
   const id = `node_${crypto.randomUUID()}`;
+  if (payload.kind === 'invoke') return { id, type: 'invoke', position, data: { title: '调用', capability: { kind: 'transform' } } };
+  if (payload.kind === 'await') return { id, type: 'await', position, data: { title: '等待', mode: 'human', actorIds: ['initiator'], timeoutMs: 3_600_000, onTimeout: 'fail' } };
+  if (payload.kind === 'route') return { id, type: 'route', position, data: { title: '路由', cases: [] } };
+  if (payload.kind === 'join') return { id, type: 'join', position, data: { title: '汇合' } };
   return {
     id,
     type: 'employee',
     position,
     data: {
       title: employee?.name ?? '员工分工',
-      employeeId: payload.employeeId,
+      employeeId: payload.employeeId ?? unassignedEmployeeId,
       ...digitalTeamMemberDefaults(employee?.role, completedStatusId),
     },
   };
@@ -1881,7 +1934,11 @@ function nodeDisplayName(node: DigitalTeamNode | undefined, employeeNames: Reado
 /** 五类节点的人话标签。 */
 function nodeTypeLabel(type: DigitalTeamNodeType): string {
   if (type === 'start') return '开始';
-  if (type === 'employee') return '员工';
+  if (type === 'employee') return '调用 · 员工';
+  if (type === 'invoke') return '调用';
+  if (type === 'await') return '等待';
+  if (type === 'route') return '路由';
+  if (type === 'join') return '汇合';
   if (type === 'human_confirmation') return '人工确认';
   if (type === 'code_integration') return '代码集成';
   return '结束';

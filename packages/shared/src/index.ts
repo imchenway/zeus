@@ -883,3 +883,5 @@ export * from './digitalTeamWorkflow.js';
 export * from './conversationWorkspace.js';
 export { gitConflictPreservationInstructions } from './gitConflictGuidance.js';
 export type { GitEnvironmentScope, GitEnvironmentWorkspace, GitEnvironmentSummary, GitEnvironmentStatus } from './gitEnvironmentSummary.js';
+
+export * from './workflowPrimitives.js';
