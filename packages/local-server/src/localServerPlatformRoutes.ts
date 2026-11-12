@@ -1,3 +1,4 @@
+import { invokeWorkflowPluginTool } from './workflowToolAdapter.js';
 import { GitDeliveryExecution } from './gitDeliveryExecution.js';
 import { GitEnvironmentSummaryService } from './gitEnvironmentSummary.js';
 import { registerBrowserTranslationRoutes } from './browserTranslationRoutes.js';
@@ -3990,6 +3991,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 数字团队复用现有任务、会话、证据与 Git 能力，只新增冻结图和节点尝试账本。 */
   digitalTeamWorkflowCoordinator = new DigitalTeamWorkflowCoordinator({
     employees: digitalEmployees,
+    transaction: (operation) => db.transaction(operation),
+    resolveWorkflowArtifact: async (run, id, sha256) => {
+      const deliverable = taskWorkDeliverables.getById(id);
+      const verified = new DigitalTeamNodeAttemptRepository(db).listByRun(run.id).some((attempt) => attempt.deliverableId === id && attempt.status === 'succeeded');
+      if (!deliverable || deliverable.projectId !== run.projectId || deliverable.taskId !== run.taskId || deliverable.artifactSha256 !== sha256 || (deliverable.status !== 'accepted' && !verified))
+        throw nativeApiError('ZEUS_WORKFLOW_ARTIFACT_SCOPE', '固定成果不属于本任务已验收或当前流程已核验的准确交付。');
+      const stored = await artifactStore.resolveAuthorized({ sha256, owner: { kind: 'task_work_deliverable', id }, verifyHash: true });
+      return JSON.parse(JSON.stringify({ id, ...stored.ref })) as import('@zeus/shared').WorkflowValue;
+    },
+    listWorkflowTools: async (conversationId) => (await zeusConversationPluginRuntime.getCatalog(conversationId)).tools,
+    invokeWorkflowTool: (run, reference, input, approved, signal) =>
+      invokeWorkflowPluginTool({ conversationProjectId: conversations.getRecordById(reference.conversationId)?.projectId, runtime: zeusConversationPluginRuntime }, run, reference, input, approved, signal),
     defects: new DefectWorkflowRepository(db),
     isCompletedTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).roles.completedStatusId === statusId,
     validateTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).statuses.some((status: import('@zeus/shared').TaskManagementStatusDefinition) => status.id === statusId),

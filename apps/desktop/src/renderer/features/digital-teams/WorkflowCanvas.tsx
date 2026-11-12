@@ -1,3 +1,4 @@
+import { digitalTeamAttemptStatusLabel } from './digitalTeamRunPresentation.js';
 import {
   Background,
   Controls,
@@ -26,7 +27,7 @@ import { useEffect, type DragEvent as ReactDragEvent } from 'react';
 export const digitalTeamDragMime = 'application/x-zeus-digital-team-node';
 
 /** 角色栏拖入画布时唯一允许传递的员工身份。 */
-export type DigitalTeamDragPayload = { kind: 'employee'; employeeId: string };
+export type DigitalTeamDragPayload = { kind: 'employee'; employeeId: string } | { kind: 'invoke' | 'await' | 'route' | 'join'; employeeId?: never };
 
 /** 运行节点投影只影响外观，不写回模板定义。 */
 export interface DigitalTeamCanvasRuntimeState {
@@ -66,10 +67,10 @@ type CanvasNodeData = Record<string, unknown> & {
   runtimeState: DigitalTeamCanvasRuntimeState | null;
 };
 
-/** React Flow 渲染节点保留业务节点的五种类型。 */
+/** React Flow 同时投影通用原语与历史冻结节点。 */
 type CanvasNode = Node<CanvasNodeData, DigitalTeamNodeType>;
 
-/** 五类节点共用稳定组件引用，避免实时状态更新时重建节点类型表。 */
+/** 所有节点共用稳定组件引用，避免实时状态更新时重建节点类型表。 */
 const canvasNodeTypes: NodeTypes = Object.fromEntries(digitalTeamNodeTypes.map((type) => [type, WorkflowNodeCard])) as NodeTypes;
 
 /** 人工确认职责的人类可读名称。 */
@@ -249,7 +250,7 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   /** 工作方式来自当前模板或冻结运行中的真实配置，始终在卡片可见。 */
   const workModeLabel = node.type === 'employee' ? digitalTeamWorkModeLabels[node.data.executionMode] : null;
   /** 员工节点直接展示实际工作要求，用户能从连线读出协作分工。 */
-  const detail =
+  const detailCandidate =
     node.type === 'employee'
       ? node.data.instructions.trim() || '按任务目标与员工职责执行'
       : node.type === 'human_confirmation'
@@ -258,9 +259,19 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
           ? '合并候选'
           : node.type === 'start'
             ? '任务输入'
-            : '流程完成';
+            : node.type === 'invoke'
+              ? { tool: '调用工具', workflow: '调用子流程', transform: '映射结构化数据' }[node.data.capability.kind]
+              : node.type === 'await'
+                ? { human: '等待人工回应', event: '等待关联事件', timer: '等待指定时刻' }[node.data.mode]
+                : node.type === 'route'
+                  ? '按结构化条件选择出口'
+                  : node.type === 'join'
+                    ? '等待已选分支完成'
+                    : '流程完成';
+  /** 能力名称与用户标题相同时只保留主要标题，避免重复说明和空行。 */
+  const detail = detailCandidate === displayTitle ? '' : detailCandidate;
   /** 当前状态同时提供文字与视觉标记，不依赖颜色表达。 */
-  const runtimeLabel = props.data.runtimeState ? `${props.data.runtimeState.status}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
+  const runtimeLabel = props.data.runtimeState ? `${digitalTeamAttemptStatusLabel(props.data.runtimeState.status)}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
   return (
     <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${workModeLabel ? `${workModeLabel}，` : ''}${detail}`}>
       {node.type !== 'start' ? (
@@ -275,7 +286,7 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
       <strong>{displayTitle}</strong>
       {workModeLabel ? <span className="digital-team-node-status">{workModeLabel}</span> : null}
-      <small data-icon-tooltip={detail}>{detail}</small>
+      {detail ? <small data-icon-tooltip={detail}>{detail}</small> : null}
       {assignmentLabel ? <span className="digital-team-node-status">{assignmentLabel}</span> : null}
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}
       {props.data.issues[0] ? <span className="digital-team-node-error">{props.data.issues[0]}</span> : null}
@@ -289,7 +300,11 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
 /** 将持久节点类型转换为短标签。 */
 function nodeTypeLabel(type: DigitalTeamNodeType): string {
   if (type === 'start') return '开始';
-  if (type === 'employee') return '员工';
+  if (type === 'employee') return '调用 · 员工';
+  if (type === 'invoke') return '调用';
+  if (type === 'await') return '等待';
+  if (type === 'route') return '路由';
+  if (type === 'join') return '汇合';
   if (type === 'human_confirmation') return '人工确认';
   if (type === 'code_integration') return '代码集成';
   return '结束';
@@ -302,6 +317,7 @@ function parseDragPayload(value: string): DigitalTeamDragPayload | null {
     const parsed: unknown = JSON.parse(value);
     if (!parsed || typeof parsed !== 'object') return null;
     if ('kind' in parsed && parsed.kind === 'employee' && 'employeeId' in parsed && typeof parsed.employeeId === 'string' && parsed.employeeId.trim()) return { kind: 'employee', employeeId: parsed.employeeId };
+    if ('kind' in parsed && ['invoke', 'await', 'route', 'join'].includes(String(parsed.kind))) return { kind: parsed.kind as 'invoke' | 'await' | 'route' | 'join' };
     return null;
   } catch {
     return null;
@@ -314,7 +330,7 @@ export function isConnectionAllowed(definition: DigitalTeamWorkflowDefinition, s
   const sourceNode = definition.nodes.find((node) => node.id === source);
   /** 目标也必须是现有员工分工。 */
   const targetNode = definition.nodes.find((node) => node.id === target);
-  if (!sourceNode || !targetNode || sourceNode.type !== 'employee' || targetNode.type !== 'employee') return false;
+  if (!sourceNode || !targetNode || sourceNode.type === 'end' || targetNode.type === 'start') return false;
   if (source === target || definition.edges.some((edge) => edge.source === source && edge.target === target)) return false;
   const outgoing = new Map(definition.nodes.map((node) => [node.id, [] as string[]]));
   for (const edge of definition.edges) outgoing.get(edge.source)?.push(edge.target);

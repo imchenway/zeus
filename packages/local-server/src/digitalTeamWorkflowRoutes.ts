@@ -34,6 +34,14 @@ export interface DigitalTeamRunCreateInput {
 
 /** 数字团队人工批准输入。 */
 export interface DigitalTeamApprovalInput {
+  /** 等待响应精确绑定的等待身份。 */
+  waitId?: string;
+  /** 等待响应精确绑定的输入摘要。 */
+  inputSha256?: string;
+  /** 外部事件的关联身份。 */
+  eventKey?: string;
+  /** 结构化人工或外部回应。 */
+  response?: import('@zeus/shared').WorkflowValue;
   /** 当前人工节点身份。 */
   nodeId: string;
   /** 当前节点尝试序号。 */
@@ -76,6 +84,8 @@ export interface DigitalTeamCommandContext {
 
 /** 路由只依赖协调器的业务入口，避免 HTTP 层读取或拼接流程状态。 */
 export interface DigitalTeamWorkflowRouteCoordinator {
+  /** 按当前项目会话查询可用工具。 */
+  listWorkflowTools?(projectId: string, conversationId: string): Promise<unknown>;
   /** 明确人工接受正式缺陷风险，保留理由但不生成测试通过记录。 */
   acceptDefectRisk(runId: string, input: { defectId: string; reason: string; expectedRevision: number }, context: DigitalTeamCommandContext): unknown;
   /** 列出全局模板或兼容读取旧项目模板。 */
@@ -121,6 +131,9 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   /** 将已提交 SQLite 状态刷入持久文件。 */
   save(): Promise<void>;
 }): void {
+  options.server.get('/api/projects/:projectId/digital-team-tools', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { conversationId: string } }>) =>
+    options.coordinator.listWorkflowTools?.(request.params.projectId, request.query.conversationId),
+  );
   options.server.get('/api/digital-team-templates', async () => options.coordinator.listTemplates());
   options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string; conversationId?: string } }>) =>
     options.coordinator.listRuns(request.params.projectId, request.query.taskId, request.query.conversationId),

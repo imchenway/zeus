@@ -1,4 +1,26 @@
 /* 数字团队页面只在专用入口接管工作区滚动与内边距。 */
+.digital-team-workflow-fields,
+.digital-team-workflow-binding {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+/* 输入和条件直接接入检查器，不增加卡片或折叠层。 */
+.digital-team-workflow-binding {
+  padding-block: 8px;
+  border-block-end: 1px solid var(--zeus-product-line);
+}
+
+/* 实际输入输出保留完整 JSON，长结果在当前检查器内滚动。 */
+.digital-team-workflow-fields pre {
+  max-block-size: 240px;
+  min-inline-size: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .macos-ai-app.digital-teams-dedicated-shell .workspace.ai-workspace {
   min-inline-size: 0;
   overflow: hidden;

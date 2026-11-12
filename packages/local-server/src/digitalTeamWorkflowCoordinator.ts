@@ -1,4 +1,7 @@
+import { workflowRunnableNodes } from './workflowGraphEngine.js';
 import { createHash } from 'node:crypto';
+import { WorkflowPrimitiveRuntime } from './workflowPrimitiveRuntime.js';
+import { usesWorkflowPrimitives, workflowSubflowNodes, workflowValueIssue, type WorkflowToolReference, type WorkflowValue } from '@zeus/shared';
 import { getGitRepositoryContext, getGitWorktreeClean, getTaskWorkspaceReview, prepareWorkflowCandidate } from '@zeus/git-core';
 import {
   digitalTeamExecutionDefinition,
@@ -110,6 +113,14 @@ interface DigitalTeamTaskCreationPort {
 
 /** 协调器依赖均为已有权威仓储或受控执行端口。 */
 export interface DigitalTeamWorkflowCoordinatorOptions {
+  /** 子流程任务、运行和父子关系在同一数据库事务内接纳。 */
+  transaction?<T>(operation: () => T): T;
+  /** 固定成果由正式成果仓储和 ArtifactStore 共同核对。 */
+  resolveWorkflowArtifact?(run: DigitalTeamWorkflowRunRecord, id: string, sha256: string): Promise<WorkflowValue>;
+  /** 工具调用仍经过现有 Plugin broker 的身份、策略和参数校验。 */
+  /** 工具目录按当前激活与权限读取。 */
+  listWorkflowTools?(conversationId: string): Promise<unknown>;
+  invokeWorkflowTool?(run: DigitalTeamWorkflowRunRecord, reference: WorkflowToolReference, input: Record<string, WorkflowValue>, approved: boolean, signal?: AbortSignal): Promise<WorkflowValue>;
   /** 正式缺陷、被测现场和修复成果账本。 */
   defects: DefectWorkflowRepository;
   /** 校验项目真实任务状态，禁止把显示名当成身份。 */
@@ -180,11 +191,48 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   private closed = false;
 
   /** 保存依赖，由工作管理共用的调度循环驱动恢复。 */
-  constructor(private readonly options: DigitalTeamWorkflowCoordinatorOptions) {}
+  /** 新原语运行只由 LangGraph 推进，旧快照保留原调度语义。 */
+  private readonly primitiveRuntime: WorkflowPrimitiveRuntime;
+
+  constructor(private readonly options: DigitalTeamWorkflowCoordinatorOptions) {
+    this.primitiveRuntime = new WorkflowPrimitiveRuntime({
+      runs: options.runs,
+      attempts: options.attempts,
+      now: options.now,
+      save: options.save,
+      prepareAgent: (run, node) => this.prepareGraphAgent(run, node),
+      dispatchAgent: (run, node, attempt) => this.dispatchEmployee(this.options.runs.getById(run.id)!, node, attempt),
+      startWorkflow: (run, node, attempt) => this.startChildWorkflow(run, node, attempt),
+      invokeTool: (run, reference, input, approved, signal) => {
+        if (!options.invokeWorkflowTool) throw new Error('当前运行环境未提供受控工具调用端口。');
+        return options.invokeWorkflowTool(run, reference, input, approved, signal);
+      },
+      onSettled: (runId, error) => {
+        if (error) options.publish('digital_team.run.error', { runId, error: serializeError(error) });
+        this.kick();
+      },
+      resolveArtifact: (run, id, sha256) => {
+        if (!options.resolveWorkflowArtifact) throw new Error('当前环境未提供正式成果绑定入口。');
+        return options.resolveWorkflowArtifact(run, id, sha256);
+      },
+      complete: (run) =>
+        this.completeWorkflowRun(
+          run,
+          digitalTeamExecutionDefinition(run).nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && this.options.attempts.getCurrentByNode(run.id, node.id)?.status === 'succeeded'),
+        ),
+    });
+  }
 
   /** 团队定义统一管理，不按运行项目保存副本。 */
   listTemplates(): unknown {
     return this.options.templates.listGlobal();
+  }
+
+  /** 工具目录不能跨项目借用会话授权。 */
+  async listWorkflowTools(projectId: string, conversationId: string): Promise<unknown> {
+    this.requireProject(projectId);
+    if (this.options.conversations.getRecordById(conversationId)?.projectId !== projectId) throw routeError('ZEUS_WORKFLOW_TOOL_SCOPE', '工具授权会话不属于当前项目。', 403);
+    return (await this.options.listWorkflowTools?.(conversationId)) ?? [];
   }
 
   /** 人工接受风险只放行任务关单门禁，不改写真实测试结论。 */
@@ -423,6 +471,12 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
 
   /** 创建运行前只读核对模板修订和每个登记仓库 HEAD。 */
   async prepareRun(projectId: string, input: DigitalTeamRunCreateInput): Promise<PreparedDigitalTeamRun> {
+    return this.prepareRunSnapshot(projectId, input, [], { nodes: 0 });
+  }
+
+  /** 递归预检固定子流程，拒绝循环引用并冻结同一次接纳的能力修订。 */
+  private async prepareRunSnapshot(projectId: string, input: DigitalTeamRunCreateInput, ancestors: string[], budget: { nodes: number }): Promise<PreparedDigitalTeamRun> {
+    if (ancestors.length > 4 || ancestors.includes(input.templateId)) throw routeError('ZEUS_WORKFLOW_SUBFLOW_CYCLE', '子流程不能循环引用，嵌套不能超过四层。', 400);
     const project = this.requireProject(projectId);
     if (!Number.isSafeInteger(input.templateRevision) || input.templateRevision < 1) throw routeError('ZEUS_DIGITAL_TEAM_REVISION_INVALID', '模板修订无效。', 400);
     const template = this.options.templates.getById(requiredText(input.templateId, '请选择流程模板。', 512));
@@ -437,7 +491,40 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (!requiredText(input.title, '任务名称不能为空。', 240) || typeof input.description !== 'string' || !isRecord(input.taskFacts)) {
       throw routeError('ZEUS_DIGITAL_TEAM_RUN_INVALID', '任务名称、说明和任务事实无效。', 400);
     }
+    budget.nodes += execution.nodes.length;
+    if (budget.nodes > 512) throw routeError('ZEUS_WORKFLOW_GRAPH_LIMIT', '本流程及子流程不能超过五百一十二个配置节点。', 400);
     const existingTask = this.requireExistingTask(projectId, input);
+    /** 子流程输入在执行时绑定，权限只继承父任务已有授权或本次明确授予的范围。 */
+    const inheritedFacts = existingTask ?? input.taskFacts;
+    const childFacts = {
+      allowCodeChanges: input.grantTaskCodeAuthority === true || inheritedFacts.allowCodeChanges === true,
+      allowTests: input.grantTaskCodeAuthority === true || inheritedFacts.allowTests === true,
+      allowGitCommit: input.grantTaskCodeAuthority === true || inheritedFacts.allowGitCommit === true,
+    };
+    const subflows = Object.fromEntries(
+      await Promise.all(
+        execution.nodes
+          .filter((node) => node.type === 'invoke' && node.data.capability.kind === 'workflow')
+          .map(async (node) => {
+            if (node.type !== 'invoke' || node.data.capability.kind !== 'workflow') throw new Error('子流程配置无效。');
+            const prepared = await this.prepareRunSnapshot(
+              projectId,
+              {
+                templateId: node.data.capability.templateId,
+                templateRevision: node.data.capability.templateRevision,
+                title: node.data.title,
+                description: '',
+                taskFacts: childFacts,
+                permissionMode: input.permissionMode ?? (childFacts.allowCodeChanges ? 'auto-review' : 'read-only'),
+              },
+              [...ancestors, template.id],
+              budget,
+            );
+            return [node.id, { templateId: prepared.templateId, templateRevision: prepared.templateRevision, definition: prepared.definition, runtimeState: prepared.runtimeState, employeeConfigurations: prepared.employeeConfigurations }];
+          }),
+      ),
+    );
+    const nestedNodes = workflowSubflowNodes(subflows);
     /** 异步预检后再核对员工，避免预检期间修改默认值产生混合快照。 */
     const employeeConfigurations = Object.fromEntries(
       execution.nodes.filter((node) => node.type === 'employee').map((node) => [node.data.employeeId, stableJson(this.options.employees.previewProjectEmployee(projectId, node.data.employeeId))]),
@@ -452,12 +539,21 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
           ]),
       ),
     );
-    const runtimeState = { executionSettings };
+    const runtimeState: DigitalTeamRunRuntimeState = {
+      executionSettings,
+      ...(usesWorkflowPrimitives(definition) ? { permissionMode: input.permissionMode ?? (childFacts.allowCodeChanges ? ('auto-review' as const) : ('read-only' as const)) } : {}),
+      ...(Object.keys(subflows).length ? { graph: { subflows } } : {}),
+    };
 
     /** 预检只核对本次明确授权；任务权限仅在随后 Core 事务内更新。 */
-    this.requireRunCodeAuthority(input, definition, existingTask);
+    this.requireRunCodeAuthority(
+      input,
+      definition,
+      existingTask,
+      nestedNodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write'),
+    );
     /** 只有实际使用代码现场的步骤才冻结 Git 基线，普通协作不依赖仓库。 */
-    const needsRepository = execution.nodes.some((node) => node.type === 'employee' && node.data.executionMode !== 'read_only');
+    const needsRepository = [...execution.nodes, ...nestedNodes].some((node) => node.type === 'employee' && node.data.executionMode !== 'read_only');
     const repositories = needsRepository ? this.options.projectRepositories.listByProject(project.id) : [];
     if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions: [], repositories, runtimeState, employeeConfigurations };
     if (repositories.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_REPOSITORY_REQUIRED', '项目尚未登记可冻结的 Git 仓库。');
@@ -506,7 +602,12 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     /** 事务内重新核对任务修订及运行占用，关闭异步预检后的竞态窗口。 */
     let existingTask = this.requireExistingTask(projectId, input);
     /** 重新核对实际入口和权限，预检不能绕过本次只读约束或授予旧任务新能力。 */
-    const grantTaskCodeAuthority = this.requireRunCodeAuthority({ ...input, permissionMode: prepared.runtimeState?.permissionMode ?? input.permissionMode }, prepared.definition, existingTask);
+    const grantTaskCodeAuthority = this.requireRunCodeAuthority(
+      { ...input, permissionMode: prepared.runtimeState?.permissionMode ?? input.permissionMode },
+      prepared.definition,
+      existingTask,
+      workflowSubflowNodes(prepared.runtimeState?.graph?.subflows).some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write'),
+    );
     if (grantTaskCodeAuthority) {
       /** 只有本次明确用户动作可授予新权限，系统和员工不能借流程名称扩大任务能力。 */
       if (!['user', 'local_api', 'remote_control'].includes(context.actor.kind)) throw routeError('ZEUS_DIGITAL_TEAM_CODE_AUTHORITY_ACTOR_INVALID', '任务代码授权必须由真实用户入口发起。', 400);
@@ -556,10 +657,11 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       baseRevisions: prepared.baseRevisions,
       runtimeState: {
         ...prepared.runtimeState,
+        ...(usesWorkflowPrimitives(prepared.definition) ? { graph: { ...prepared.runtimeState?.graph, ownerActorId: context.actor.id ?? undefined, depth: 0 } } : {}),
         entryNodeId: input.entryNodeId ?? null,
         inputDeliverableIds: input.inputDeliverableIds ?? [],
         repairRound: this.options.defects?.getRepairRounds(taskId) ?? 0,
-        permissionMode: input.permissionMode,
+        permissionMode: prepared.runtimeState?.permissionMode ?? input.permissionMode,
       },
     });
     if (run.definitionSnapshot.schemaGeneration !== digitalTeamWorkflowSchemaGeneration) {
@@ -572,12 +674,12 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   }
 
   /** 新授权只来自类型明确的用户选择；本次只读权限和真实执行范围仍是上限。 */
-  private requireRunCodeAuthority(input: DigitalTeamRunCreateInput, definition: DigitalTeamWorkflowDefinition, existingTask: ZeusTaskRecord | null): boolean {
+  private requireRunCodeAuthority(input: DigitalTeamRunCreateInput, definition: DigitalTeamWorkflowDefinition, existingTask: ZeusTaskRecord | null, nestedWritesCode = false): boolean {
     if (input.grantTaskCodeAuthority !== undefined && typeof input.grantTaskCodeAuthority !== 'boolean') throw routeError('ZEUS_DIGITAL_TEAM_CODE_AUTHORITY_INVALID', '任务代码授权必须是明确的布尔选择。', 400);
     /** 入口前未执行的代码步骤不进入本次授权范围。 */
     const execution = digitalTeamExecutionDefinition({ definitionSnapshot: definition, plan: null, runtimeState: { entryNodeId: input.entryNodeId } });
     /** 实际写入能力只取冻结节点模式，不从名称或职责推断。 */
-    const writesCode = execution.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
+    const writesCode = nestedWritesCode || execution.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
     /** 顶层字段是为旧任务新增能力的唯一入口，普通事实字段不能代替用户选择。 */
     const grantTaskCodeAuthority = input.grantTaskCodeAuthority === true;
     if (input.permissionMode === 'read-only' && (writesCode || grantTaskCodeAuthority)) throw routeError('ZEUS_DIGITAL_TEAM_CODE_AUTHORITY_REQUIRED', '本次只读权限不允许执行代码分工或授予代码写入权限。');
@@ -605,8 +707,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       throw routeError('ZEUS_DIGITAL_TEAM_APPROVAL_INVALID', '批准 attempt、决定或说明无效。', 400);
     }
     const run = this.requireRun(runId, input.expectedRevision);
+    const target = requireNode(run, input.nodeId);
+    if (target.type === 'await' || target.type === 'invoke') {
+      this.primitiveRuntime.respond(runId, input, context);
+      return this.getRunProjection(runId);
+    }
     requireHumanActor(context);
-    const node = requireNode(run, input.nodeId);
+    const node = target;
     if (node.type !== 'human_confirmation') throw routeError('ZEUS_DIGITAL_TEAM_APPROVAL_INVALID', '目标不是人工确认节点。', 400);
     const attempt = this.options.attempts.getCurrentByNode(run.id, node.id);
     if (!attempt || attempt.attempt !== input.attempt) throw routeError('ZEUS_DIGITAL_TEAM_APPROVAL_STALE', '人工确认节点已经变化。');
@@ -684,7 +791,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (cancelledVerification && this.currentAttempts(run).some((attempt) => inFlightAttemptStatuses.has(attempt.status))) throw routeError('ZEUS_DIGITAL_TEAM_STOPPING', '本轮测试仍在停止核对，请等待全部在途工作终结后继续。');
     if (cancelledVerification)
       for (const test of run.runtimeState.verificationRound!.tests) this.options.attempts.invalidateCurrentAndDescendants({ runId: run.id, nodeId: test.nodeId, reason: '用户继续已确定取消的验收，原轮结果保留，沿原候选重新测试。' });
-    for (const childId of this.associatedRepairRunIds(run)) {
+    for (const childId of this.associatedExecutionRunIds(run)) {
       const child = this.options.runs.getById(childId);
       if (input.state === 'running' && child && (child.status === 'outcome_unknown' || this.currentAttempts(child).some((attempt) => attempt.status === 'outcome_unknown')))
         throw routeError('ZEUS_DIGITAL_TEAM_UNKNOWN_OUTCOME', '修复子流程仍有停止结果未知的外部操作，核对前不能继续。');
@@ -692,7 +799,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     }
     /** 暂停或继续只更新控制提示，保留仍需返工或人工核对的真实失败原因。 */
     const controlError = input.state === 'paused' ? (run.error ?? { code: 'ZEUS_DIGITAL_TEAM_STOPPING', message: '已停止新派发，正在核对在途工作。' }) : run.error?.code === 'ZEUS_DIGITAL_TEAM_STOPPING' ? null : run.error;
-    this.options.runs.update(run.id, { expectedRevision: run.revision, controlState: input.state, error: controlError, ...(cancelledVerification ? { runtimeState: { ...run.runtimeState, verificationRound: null } } : {}) });
+    this.options.runs.update(run.id, {
+      expectedRevision: run.revision,
+      controlState: input.state,
+      error: controlError,
+      ...(usesWorkflowPrimitives(run.definitionSnapshot) && input.state === 'running' && run.status === 'outcome_unknown' ? { status: 'executing' as const, error: null } : {}),
+      ...(cancelledVerification ? { runtimeState: { ...run.runtimeState, verificationRound: null } } : {}),
+    });
     return this.getRunProjection(run.id);
   }
 
@@ -713,6 +826,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (node.type === 'start' || node.type === 'end' || node.type === 'human_confirmation') throw routeError('ZEUS_DIGITAL_TEAM_REWORK_INVALID', '请选择需要重新执行的员工或集成节点。', 400);
     const affected = descendantIds(run, node.id);
     const current = this.options.attempts.listByRun(run.id).filter((attempt) => affected.has(attempt.nodeId) && this.options.attempts.getCurrentByNode(run.id, attempt.nodeId)?.id === attempt.id);
+    if (
+      current.some((attempt) => {
+        const child = attempt.execution?.childRunId ? this.options.runs.getById(attempt.execution.childRunId) : undefined;
+        return child && !['completed', 'failed', 'cancelled'].includes(child.status);
+      })
+    )
+      throw routeError('ZEUS_WORKFLOW_CHILD_IN_FLIGHT', '受影响子流程尚未结束，请先暂停并核对。');
     if (current.some((attempt) => inFlightAttemptStatuses.has(attempt.status))) throw routeError('ZEUS_DIGITAL_TEAM_REWORK_IN_FLIGHT', '受影响节点仍在执行，请先暂停并完成在途核对。');
     /** 父验收返工不能绕过本轮修复的停止核对，避免旧修复继续写入新候选。 */
     if (
@@ -746,6 +866,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       expectedRevision: run.revision,
       status: targetStage,
       completedAt: null,
+      ...(usesWorkflowPrimitives(run.definitionSnapshot) ? { runtimeState: { ...run.runtimeState, graph: { ...run.runtimeState.graph, checkpoint: undefined } } } : {}),
       ...(clearsCandidate ? { candidateRevisions: [] } : {}),
       ...(round?.tests.some((test) => affected.has(test.nodeId))
         ? {
@@ -773,6 +894,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   async close(): Promise<void> {
     this.closed = true;
     if (this.active) await this.active;
+    await this.primitiveRuntime.close();
   }
 
   /** 暴露给 Provider 的结构化工具只登记当前准确轮次的待验真 payload。 */
@@ -815,7 +937,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       return;
     }
     /** 暂停后仍先接纳已经终结的准确轮次，再停止真正仍在途的工作。 */
-    for (const attempt of this.currentAttempts(run)) await this.reconcileAttempt(run, attempt);
+    for (const attempt of this.currentAttempts(run)) if (!usesWorkflowPrimitives(run.definitionSnapshot) || attempt.nodeType === 'employee') await this.reconcileAttempt(run, attempt);
     run = this.options.runs.getById(run.id)!;
     if (run.controlState === 'paused') {
       await this.stopPausedRun(run);
@@ -830,6 +952,10 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     run = this.options.runs.getById(run.id)!;
     /** 自动修复闭环先处理本轮缺陷，普通分工明确失败且没有在途工作才释放运行。 */
     if (this.settleDefiniteRunFailure(run)) return;
+    if (usesWorkflowPrimitives(run.definitionSnapshot)) {
+      await this.primitiveRuntime.advance(run.id);
+      return;
+    }
     const current = new Map(this.currentAttempts(run).map((attempt) => [attempt.nodeId, attempt]));
     for (const node of digitalTeamExecutionDefinition(run).nodes) {
       /** 派发会等待外部接纳，期间的暂停或未知结果必须阻止下一份工作。 */
@@ -895,49 +1021,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       const nodes = digitalTeamExecutionDefinition(latestRun).nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
       const attempts = new Map(this.currentAttempts(latestRun).map((attempt) => [attempt.nodeId, attempt]));
       if (nodes.length > 0 && nodes.every((node) => attempts.get(node.id)?.status === 'succeeded')) {
-        if (!(await this.integrateCurrentCandidate(latestRun))) return;
-        latestRun = this.options.runs.getById(latestRun.id)!;
-        /** 有代码成果必须由真实测试节点核对最终候选，阻塞缺陷仍未接受不能完成。 */
-        const verification = nodes.filter((node) => node.data.purpose === 'verify' && node.data.executionMode === 'candidate_read_only');
-        const unresolvedDefects = (this.options.defects?.listByRun(latestRun.id) ?? []).filter((defect) => !['accepted', 'risk_accepted'].includes(defect.status));
-        if (!latestRun.runtimeState.parentRepair && verification.length && verification.some((node) => this.options.attempts.getCurrentByNode(latestRun.id, node.id)?.status === 'invalidated')) return;
-        if (
-          unresolvedDefects.length ||
-          (!latestRun.runtimeState.parentRepair &&
-            nodes.some((node) => node.data.executionMode === 'isolated_write') &&
-            (!verification.length || verification.some((node) => this.options.attempts.getCurrentByNode(latestRun.id, node.id)?.verifiedCandidateSetSha256 !== latestRun.candidateSetSha256)))
-        ) {
-          this.options.runs.update(latestRun.id, {
-            expectedRevision: latestRun.revision,
-            controlState: 'paused',
-            error: { code: 'ZEUS_DIGITAL_TEAM_FINAL_VERIFICATION_REQUIRED', message: unresolvedDefects.length ? '正式阻塞缺陷尚未通过父流程复验。' : '最终代码候选缺少准确测试验收，流程已暂停。' },
-          });
-          return;
-        }
-        /** 完成前再次核对真实候选，人工改动工作区不会被缓存摘要掩盖。 */
-        const verificationRevision = latestRun.revision;
-        for (const candidate of latestRun.candidateRevisions) {
-          const workspace = this.options.workspaces.getById(candidate.workspaceRef);
-          const review = workspace?.worktreePath ? await getTaskWorkspaceReview(workspace.worktreePath) : null;
-          if (!review?.clean || review.headSha !== candidate.headSha) {
-            this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, controlState: 'paused', error: { code: 'ZEUS_DIGITAL_TEAM_CANDIDATE_STALE', message: '最终候选现场已变化，必须核对后重新验收。' } });
-            return;
-          }
-        }
-        latestRun = this.options.runs.getById(run.id)!;
-        /** 实际 Git 核对期间的返工会改变运行修订，旧成功快照不能推进任务或流程。 */
-        if (latestRun.revision !== verificationRevision || latestRun.controlState !== 'running' || latestRun.runtimeState.handoff?.status === 'stopping') return;
-        if (!this.projectStatusesRemainValid(latestRun)) {
-          await this.stopPausedRun(this.options.runs.getById(run.id)!);
-          return;
-        }
-        /** 任务完成与团队完成共用最终门禁，不能在节点成果接纳时提前关单。 */
-        for (const node of nodes) {
-          const statusId = node.data.completionStatusId ? this.resolveRunTaskStatus(latestRun, node.data.completionStatusId) : undefined;
-          if (statusId && (this.options.isCompletedTaskStatus?.(latestRun.projectId, statusId) ?? statusId === 'completed'))
-            this.options.advanceTaskStatus?.(latestRun.taskId, statusId, { runId: latestRun.id, nodeId: node.id, phase: 'completed' });
-        }
-        this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'completed', completedAt: this.options.now().toISOString(), error: null });
+        await this.completeWorkflowRun(latestRun, nodes);
       } else if (latestRun.status !== 'executing') {
         this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'executing' });
       }
@@ -954,6 +1038,170 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         currentNode?.type === 'human_confirmation' ? (currentNode.data.purpose === 'plan_approval' ? 'awaiting_plan_approval' : 'awaiting_final_approval') : currentNode?.type === 'employee' ? reworkRunStatus(currentNode) : 'executing';
       if (stage !== latestRun.status) this.options.runs.update(run.id, { expectedRevision: latestRun.revision, status: stage });
     }
+  }
+
+  /** 并行验收共享一次候选准备与准确轮次，避免图的并行分支重复集成。 */
+  private readonly graphPreparations = new Map<string, Promise<boolean>>();
+
+  /** 候选先准备，全部并行测试再预留准确尝试，继续复用正式缺陷与自动修复闭环。 */
+  private async prepareGraphAgent(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamEmployeeNode): Promise<boolean> {
+    if (node.data.executionMode !== 'candidate_read_only') return true;
+    const latest = this.options.runs.getById(run.id)!;
+    if (latest.runtimeState.verificationRound) return latest.runtimeState.verificationRound.tests.some((test) => test.nodeId === node.id);
+    const pending = this.graphPreparations.get(run.id);
+    if (pending) return pending;
+    const preparation = (async () => {
+      if (!(await this.integrateCurrentCandidate(latest, true))) return false;
+      const currentRun = this.options.runs.getById(run.id)!;
+      const ready = new Set(
+        workflowRunnableNodes({ definition: digitalTeamExecutionDefinition(currentRun), attempts: () => this.currentAttempts(currentRun) })
+          .filter((item) => !item.skipped)
+          .map((item) => item.id),
+      );
+      const candidates = digitalTeamExecutionDefinition(currentRun).nodes.filter(
+        (candidate): candidate is DigitalTeamEmployeeNode => candidate.type === 'employee' && candidate.data.executionMode === 'candidate_read_only' && ready.has(candidate.id),
+      );
+      const tests: Array<{ nodeId: string; attemptId: string }> = [];
+      for (const candidate of candidates) {
+        const attempt = await this.primitiveRuntime.prepareAttempt(run.id, candidate.id);
+        if (!attempt || attempt.status !== 'prepared') return false;
+        tests.push({ nodeId: candidate.id, attemptId: attempt.id });
+      }
+      const preparedRun = this.options.runs.getById(run.id)!;
+      if (!tests.length || preparedRun.controlState !== 'running') return false;
+      this.options.runs.update(run.id, {
+        expectedRevision: preparedRun.revision,
+        runtimeState: {
+          ...preparedRun.runtimeState,
+          verificationRound: {
+            id: stableIdentity('digital_team_verification', `${run.id}\0${preparedRun.candidateSetSha256}\0${stableJson(tests)}`),
+            candidateSetSha256: preparedRun.candidateSetSha256!,
+            candidates: structuredClone(preparedRun.candidateRevisions),
+            tests,
+            phase: 'collecting',
+            defectIds: [],
+            repairRunIds: [],
+          },
+        },
+      });
+      await this.options.save();
+      return true;
+    })().finally(() => {
+      this.graphPreparations.delete(run.id);
+    });
+    this.graphPreparations.set(run.id, preparation);
+    return preparation;
+  }
+
+  /** 所有执行内核共用真实代码候选、正式缺陷及任务完成门禁。 */
+  private async completeWorkflowRun(run: DigitalTeamWorkflowRunRecord, nodes: DigitalTeamEmployeeNode[]): Promise<void> {
+    let latestRun = this.options.runs.getById(run.id)!;
+    if (!(await this.integrateCurrentCandidate(latestRun))) return;
+    latestRun = this.options.runs.getById(latestRun.id)!;
+    /** 有代码成果必须由真实测试节点核对最终候选，阻塞缺陷仍未接受不能完成。 */
+    const verification = nodes.filter((node) => node.data.purpose === 'verify' && node.data.executionMode === 'candidate_read_only');
+    const unresolvedDefects = (this.options.defects?.listByRun(latestRun.id) ?? []).filter((defect) => !['accepted', 'risk_accepted'].includes(defect.status));
+    if (!latestRun.runtimeState.parentRepair && verification.length && verification.some((node) => this.options.attempts.getCurrentByNode(latestRun.id, node.id)?.status === 'invalidated')) return;
+    if (
+      unresolvedDefects.length ||
+      (!latestRun.runtimeState.parentRepair &&
+        nodes.some((node) => node.data.executionMode === 'isolated_write') &&
+        (!verification.length || verification.some((node) => this.options.attempts.getCurrentByNode(latestRun.id, node.id)?.verifiedCandidateSetSha256 !== latestRun.candidateSetSha256)))
+    ) {
+      this.options.runs.update(latestRun.id, {
+        expectedRevision: latestRun.revision,
+        controlState: 'paused',
+        error: { code: 'ZEUS_DIGITAL_TEAM_FINAL_VERIFICATION_REQUIRED', message: unresolvedDefects.length ? '正式阻塞缺陷尚未通过父流程复验。' : '最终代码候选缺少准确测试验收，流程已暂停。' },
+      });
+      return;
+    }
+    /** 完成前再次核对真实候选，人工改动工作区不会被缓存摘要掩盖。 */
+    const verificationRevision = latestRun.revision;
+    for (const candidate of latestRun.candidateRevisions) {
+      const workspace = this.options.workspaces.getById(candidate.workspaceRef);
+      const review = workspace?.worktreePath ? await getTaskWorkspaceReview(workspace.worktreePath) : null;
+      if (!review?.clean || review.headSha !== candidate.headSha) {
+        this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, controlState: 'paused', error: { code: 'ZEUS_DIGITAL_TEAM_CANDIDATE_STALE', message: '最终候选现场已变化，必须核对后重新验收。' } });
+        return;
+      }
+    }
+    latestRun = this.options.runs.getById(run.id)!;
+    /** 实际 Git 核对期间的返工会改变运行修订，旧成功快照不能推进任务或流程。 */
+    if (latestRun.revision !== verificationRevision || latestRun.controlState !== 'running' || latestRun.runtimeState.handoff?.status === 'stopping') return;
+    if (!this.projectStatusesRemainValid(latestRun)) {
+      await this.stopPausedRun(this.options.runs.getById(run.id)!);
+      return;
+    }
+    /** 任务完成与团队完成共用最终门禁，不能在节点成果接纳时提前关单。 */
+    for (const node of nodes) {
+      const statusId = node.data.completionStatusId ? this.resolveRunTaskStatus(latestRun, node.data.completionStatusId) : undefined;
+      if (statusId && (this.options.isCompletedTaskStatus?.(latestRun.projectId, statusId) ?? statusId === 'completed'))
+        this.options.advanceTaskStatus?.(latestRun.taskId, statusId, { runId: latestRun.id, nodeId: node.id, phase: 'completed' });
+    }
+    this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'completed', completedAt: this.options.now().toISOString(), error: null });
+  }
+
+  /** 固定子流程引用，父子运行保留关联，并继承父任务的权限上限。 */
+  private async startChildWorkflow(parent: DigitalTeamWorkflowRunRecord, node: Extract<DigitalTeamNode, { type: 'invoke' }>, attempt: DigitalTeamNodeAttemptRecord): Promise<string> {
+    if (node.data.capability.kind !== 'workflow') throw new Error('节点未引用子流程。');
+    const operationIdentity = `workflow-child:${attempt.id}`;
+    const runId = stableIdentity('digital_team_run', operationIdentity);
+    if (this.options.runs.getById(runId)) return runId;
+    const depth = (parent.runtimeState.graph?.depth ?? 0) + 1;
+    if (depth > 4) throw new Error('子流程嵌套不能超过四层。');
+    const task = this.options.tasks.getById(parent.taskId)!;
+    const input: DigitalTeamRunCreateInput = {
+      templateId: node.data.capability.templateId,
+      templateRevision: node.data.capability.templateRevision,
+      title: node.data.title,
+      description: `父流程 ${parent.id} 的子流程调用。`,
+      permissionMode: parent.runtimeState.permissionMode ?? 'read-only',
+      taskFacts: { ...attempt.execution!.input, allowCodeChanges: task.allowCodeChanges, allowTests: task.allowTests, allowGitCommit: task.allowGitCommit },
+    };
+    const frozen = parent.runtimeState.graph?.subflows?.[node.id];
+    if (!frozen) throw routeError('ZEUS_WORKFLOW_FROZEN_CAPABILITY_MISSING', '父运行没有冻结此子流程，请重新创建运行。');
+    for (const [employeeId, configuration] of Object.entries(frozen.employeeConfigurations ?? {}))
+      if (stableJson(this.options.employees.previewProjectEmployee(parent.projectId, employeeId)) !== configuration) throw routeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_CHANGED', '子流程员工配置已变化，请核对后创建新运行。');
+    const context: DigitalTeamCommandContext = { commandId: operationIdentity, operationIdentity, actor: { kind: 'system', id: operationIdentity } };
+    const taskId = stableIdentity('task', `${operationIdentity}\0digital-team`);
+    const accept = (): void => {
+      this.options.taskCreation.create(
+        {
+          projectId: parent.projectId,
+          title: input.title,
+          taskType: 'requirement',
+          description: input.description,
+          sourceContext: { type: 'digital_team_workflow', digitalTeamRunId: runId, parentRunId: parent.id, parentAttemptId: attempt.id },
+          allowCodeChanges: task.allowCodeChanges,
+          allowTests: task.allowTests,
+          allowGitCommit: task.allowGitCommit,
+        },
+        taskId,
+        { ...context, taskOrigin: 'digital_team_workflow' },
+      );
+      this.options.runs.create({
+        id: runId,
+        projectId: parent.projectId,
+        taskId,
+        templateId: frozen.templateId,
+        templateRevision: frozen.templateRevision,
+        definition: structuredClone(frozen.definition),
+        frozenParentAttemptId: attempt.id,
+        taskFacts: { ...input.taskFacts, title: input.title },
+        baseRevisions: structuredClone(parent.baseRevisions),
+        runtimeState: {
+          ...frozen.runtimeState,
+          permissionMode: parent.runtimeState.permissionMode,
+          graph: { ...frozen.runtimeState?.graph, depth, parentRunId: parent.id, parentAttemptId: attempt.id, ownerActorId: parent.runtimeState.graph?.ownerActorId },
+        },
+      });
+      const currentAttempt = this.options.attempts.getById(attempt.id)!;
+      this.options.attempts.update(attempt.id, { expectedRevision: currentAttempt.revision, status: 'waiting', execution: { ...currentAttempt.execution!, childRunId: runId } });
+    };
+    if (this.options.transaction) this.options.transaction(accept);
+    else accept();
+    await this.options.save();
+    return runId;
   }
 
   /** 没有执行或未知副作用的确定失败终结运行，保留全部结果供重新配置或显式返工。 */
@@ -978,7 +1226,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     /** 定向停止不能覆盖先前尚未明确处置的未知结果。 */
     let unknown = this.currentAttempts(run).some((attempt) => (!affectedNodeIds || affectedNodeIds.has(attempt.nodeId)) && attempt.status === 'outcome_unknown');
     /** 暂停父验收同时停止属于本轮的修复子流程，不留下继续写入的后台工作。 */
-    for (const childId of this.associatedRepairRunIds(run)) {
+    for (const childId of this.associatedExecutionRunIds(run)) {
       const child = this.options.runs.getById(childId);
       if (!child || ['completed', 'failed', 'cancelled'].includes(child.status)) continue;
       if (child.controlState === 'running') this.options.runs.update(child.id, { expectedRevision: child.revision, controlState: 'paused' });
@@ -1017,7 +1265,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     const handoff = latest.runtimeState.handoff;
     if (!handoff || this.currentAttempts(latest).some((attempt) => inFlightAttemptStatuses.has(attempt.status) || attempt.status === 'outcome_unknown')) return;
     /** 旧修复分工也必须明确终结，再交给新的人工安排处理原正式缺陷。 */
-    for (const childId of this.associatedRepairRunIds(latest)) {
+    for (const childId of this.associatedExecutionRunIds(latest)) {
       const child = this.options.runs.getById(childId);
       if (!child || ['completed', 'failed', 'cancelled'].includes(child.status)) continue;
       if (child.status === 'outcome_unknown' || this.currentAttempts(child).some((attempt) => inFlightAttemptStatuses.has(attempt.status) || attempt.status === 'outcome_unknown')) return;
@@ -1034,6 +1282,11 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       runtimeState: { ...latest.runtimeState, entryNodeId: handoff.entryNodeId, candidateSourceSha256: null, repairVerificationNodeId: null, repairRunIds: [], verificationRound: null, handoff: { ...handoff, status: 'completed' } },
       error: null,
     });
+  }
+
+  /** 控制命令同时覆盖修复分工和 Invoke 创建的真实子流程。 */
+  private associatedExecutionRunIds(run: DigitalTeamWorkflowRunRecord): string[] {
+    return [...new Set([...this.associatedRepairRunIds(run), ...this.currentAttempts(run).flatMap((attempt) => (attempt.execution?.childRunId ? [attempt.execution.childRunId] : []))])];
   }
 
   /** 读取本轮全部修复关系，旧单测试字段不能遗漏正式缺陷绑定的子流程。 */
@@ -1367,7 +1620,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         this.options.attempts.getById(defect.sourceAttemptId),
         ...(defect.repairRunId && this.options.runs.getById(defect.repairRunId)?.status === 'completed' ? this.options.attempts.listByRun(defect.repairRunId).filter((item) => item.status === 'succeeded') : []),
       ]);
-      const prompt = `${buildNodePrompt(run, node, attempt, this.options.attempts.listByRun(run.id), reworkReason)}${handoffDefects.length ? `\n\n正式缺陷交付关系：\n${stableJson(handoffDefects.map((defect) => ({ id: defect.id, key: defect.key, status: defect.status, sourceAttemptId: defect.sourceAttemptId, repairRunId: defect.repairRunId, repairResults: defect.repairResults })))}` : ''}`;
+      const prompt = `${buildNodePrompt(run, node, attempt, this.options.attempts.listByRun(run.id), reworkReason)}${attempt.execution ? `\n\n本节点准确输入：${stableJson(attempt.execution.input)}\n输出契约：${stableJson(node.data.outputSchema ?? null)}。在 submit_team_result 的 output 中提交结构化输出。` : ''}${handoffDefects.length ? `\n\n正式缺陷交付关系：\n${stableJson(handoffDefects.map((defect) => ({ id: defect.id, key: defect.key, status: defect.status, sourceAttemptId: defect.sourceAttemptId, repairRunId: defect.repairRunId, repairResults: defect.repairResults })))}` : ''}`;
       {
         externalOutcomeUncertain = node.data.executionMode === 'isolated_write';
         const workspace = await this.prepareEmployeeWorkspace(run, node, attempt);
@@ -1701,6 +1954,10 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     const result: DigitalTeamStructuredResult = { ...submittedResult, evidence: this.buildExactTurnEvidence(run, attempt, submittedResult) };
     try {
       await this.verifyResultEvidence(run, node, attempt, result);
+      if (node.data.outputSchema) {
+        const issue = workflowValueIssue(result.output, node.data.outputSchema);
+        if (issue) throw new Error(issue);
+      }
       /** 正式缺陷只能由核对准确候选的测试员工登记，复现证据属于当前实际轮次。 */
       if (result.defects?.length) {
         if (run.runtimeState.parentRepair || node.data.purpose !== 'verify' || node.data.executionMode !== 'candidate_read_only' || result.outcome === 'succeeded' || result.verification !== 'failed')
@@ -1885,6 +2142,10 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         if (node.data.executionMode !== 'isolated_write' && call.arguments.repositoryResults.length > 0)
           throw routeError('ZEUS_DIGITAL_TEAM_RESULT_INVALID', '只读节点的 repositoryResults 必须为空数组；请将已验证候选填写到 verifiedCandidates 后重新提交。', 400);
         /** 先保存业务结论；准确证据在轮次终态后由 Core 补齐。 */
+        if (node.data.outputSchema) {
+          const issue = workflowValueIssue(call.arguments.output, node.data.outputSchema);
+          if (issue) throw routeError('ZEUS_WORKFLOW_OUTPUT_INVALID', issue, 400);
+        }
         const result = { ...structuredClone(call.arguments), evidence: [] } as DigitalTeamStructuredResult;
         if (attempt.result && stableJson(attempt.result) !== stableJson(result)) throw routeError('ZEUS_DIGITAL_TEAM_TOOL_REPLAY_CONFLICT', '当前尝试已提交不同结果。');
         if (!attempt.result) this.options.attempts.update(attempt.id, { expectedRevision: attempt.revision, result });
@@ -2027,6 +2288,7 @@ function directPredecessorIds(run: DigitalTeamWorkflowRunRecord, nodeId: string)
 /** 返工从目标职责对应阶段继续，不破坏未受影响的并行兄弟。 */
 function reworkRunStatus(node: DigitalTeamNode): Extract<DigitalTeamWorkflowRunRecord['status'], 'planning' | 'executing' | 'verifying' | 'summarizing'> {
   if (node.type === 'code_integration') return 'executing';
+  if (['invoke', 'await', 'route', 'join'].includes(node.type)) return 'executing';
   if (node.type !== 'employee') throw routeError('ZEUS_DIGITAL_TEAM_REWORK_INVALID', '该节点不支持返工。', 400);
   if (node.data.purpose === 'plan') return 'planning';
   if (node.data.purpose === 'verify') return 'verifying';

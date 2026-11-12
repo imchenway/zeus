@@ -5,7 +5,7 @@ import type { DigitalTeamRunProjection } from './digitalTeamApiClient.js';
 const chineseRunStatusLabels: Record<DigitalTeamRunStatus, string> = {
   planning: '负责人规划中',
   awaiting_plan_approval: '等待规划批准',
-  executing: '员工执行中',
+  executing: '流程执行中',
   integrating: '正在集成候选',
   verifying: '正在核对成果',
   summarizing: '成果汇总中',
@@ -20,7 +20,7 @@ const chineseRunStatusLabels: Record<DigitalTeamRunStatus, string> = {
 const englishRunStatusLabels: Record<DigitalTeamRunStatus, string> = {
   planning: 'Lead planning',
   awaiting_plan_approval: 'Awaiting plan approval',
-  executing: 'Employees working',
+  executing: 'Workflow running',
   integrating: 'Integrating candidate',
   verifying: 'Verifying results',
   summarizing: 'Summarizing results',
@@ -94,6 +94,7 @@ export function getDigitalTeamRunBlocker(projection: DigitalTeamRunProjection, z
 /** 只读说明仅描述这次冻结运行，不把历史分工当成当前可编辑流程的能力。 */
 export function digitalTeamRunReadOnlyDescription(run: DigitalTeamWorkflowRunRecord, zh = true): string | null {
   /** 人工入口可能只执行冻结图中的后续节点，必须核对实际执行范围。 */
+  if (digitalTeamExecutionDefinition(run).nodes.some((node) => node.type === 'invoke' && node.data.capability.kind !== 'transform')) return null;
   const employees = digitalTeamExecutionDefinition(run).nodes.filter((node) => node.type === 'employee');
   if (!employees.length || employees.some((node) => node.data.executionMode !== 'read_only')) return null;
   return zh ? '本次运行仅执行只读工作，未安排代码修改' : 'This run uses read-only work and does not include code changes';
@@ -116,4 +117,24 @@ function blockingAttemptFallback(attempt: DigitalTeamNodeAttemptRecord, zh: bool
 /** 只检查文字是否可读，不修改错误原因或冻结名称的原文。 */
 function nonEmptyText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** 节点实际状态在画布和详情中使用相同的人类可读名称。 */
+export function digitalTeamAttemptStatusLabel(status: string): string {
+  /** 未选择与失败使用不同名称，避免把未走分支当成执行失败。 */
+  const labels: Record<string, string> = {
+    prepared: '待执行',
+    dispatching: '派发中',
+    active: '执行中',
+    awaiting_approval: '等待批准',
+    waiting: '等待回应',
+    succeeded: '已完成',
+    skipped: '未选择',
+    changes_requested: '待修改',
+    invalidated: '已失效',
+    failed: '失败',
+    outcome_unknown: '结果待核对',
+    cancelled: '已取消',
+  };
+  return labels[status] ?? status;
 }
