@@ -1,5 +1,7 @@
 packages:
   - apps/*
   - packages/*
+# 保留依赖的完整下载地址，避免外部 tarball 被推导为 npm registry 地址。
+lockfileIncludeTarballUrl: true
 allowBuilds:
   node-pty: true
