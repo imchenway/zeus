@@ -1,0 +1,135 @@
+/* 进度共用产品语义色，环境卡片与独立窗口保持相同的信息层级。 */
+.git-delivery-progress {
+  --delivery-progress-color: var(--zeus-brand-text, var(--zeus-product-accent, #6554d9));
+  display: grid;
+  gap: 10px;
+  min-inline-size: 0;
+  color: var(--zeus-product-muted, #74747d);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+.git-delivery-progress[data-delivery-state='attention'] {
+  --delivery-progress-color: var(--session-warning, var(--zeus-status-warning-text, #98620d));
+  color: var(--delivery-progress-color);
+}
+.git-delivery-progress[data-delivery-state='succeeded'] {
+  --delivery-progress-color: var(--zeus-status-success-text, #268353);
+}
+.git-delivery-progress-heading,
+.git-delivery-progress-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+.git-delivery-progress-caption {
+  flex: 1;
+}
+.git-delivery-progress-caption > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-delivery-progress-count {
+  flex: none;
+  color: var(--delivery-progress-color);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+/* 交付步骤沿同一条纵向时间线排列，名称和多仓计数保留横向空间。 */
+.git-delivery-progress-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+.git-delivery-progress-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding-block: 6px;
+  min-inline-size: 0;
+  color: var(--zeus-product-muted);
+  text-align: start;
+  font-size: 12px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+/* 异常步骤可通过键盘查看原因，焦点不改变时间线尺寸。 */
+.git-delivery-progress-step[data-icon-tooltip]:focus-visible {
+  outline: 2px solid var(--zeus-focus-line);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* 连接线停在相邻节点边缘，长名称换行时随本行高度延长。 */
+.git-delivery-progress-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 9px;
+  inset-block-start: 26px;
+  inset-block-end: -6px;
+  inline-size: 1px;
+  background: var(--zeus-control-border);
+  pointer-events: none;
+}
+.git-delivery-progress-step[data-step-state='succeeded']:not(:last-child)::after {
+  background: color-mix(in srgb, var(--zeus-brand-text) 30%, transparent);
+}
+.git-delivery-progress-step-marker {
+  display: grid;
+  place-items: center;
+  inline-size: 20px;
+  block-size: 20px;
+  border-radius: 50%;
+  color: var(--zeus-product-muted);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+.git-delivery-progress-step-marker > svg {
+  inline-size: 12px;
+  block-size: 12px;
+}
+.git-delivery-progress-step-dot {
+  inline-size: 4px;
+  block-size: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+.git-delivery-progress-step[data-step-state='succeeded'] .git-delivery-progress-step-marker,
+.git-delivery-progress-step[data-step-state='partial'] .git-delivery-progress-step-marker {
+  color: var(--zeus-brand-text, var(--zeus-product-accent, #6554d9));
+}
+.git-delivery-progress-step[data-step-state='running'] {
+  color: var(--zeus-product-text);
+  font-weight: 600;
+}
+.git-delivery-progress-step[data-step-state='running'] .git-delivery-progress-step-marker {
+  color: var(--delivery-progress-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--delivery-progress-color) 8%, transparent);
+}
+.git-delivery-progress-step[data-step-state='attention'] .git-delivery-progress-step-marker,
+.git-delivery-progress-step[data-step-state='attention'] {
+  color: var(--delivery-progress-color);
+}
+.git-delivery-progress[data-delivery-state='succeeded'] .git-delivery-progress-step-marker {
+  color: var(--delivery-progress-color);
+}
+.git-delivery-progress-step-count {
+  color: var(--zeus-product-muted);
+  font-variant-numeric: tabular-nums;
+}
+.git-delivery-progress[data-delivery-state='running'] .git-delivery-progress-spinner {
+  animation: git-delivery-progress-spin 1.2s linear infinite;
+}
+@keyframes git-delivery-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .git-delivery-progress[data-delivery-state='running'] .git-delivery-progress-spinner {
+    animation: none;
+  }
+}
