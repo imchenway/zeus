@@ -4152,10 +4152,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           /** 原安排按准确代次等待整体完成，不采用重新安排后的成功状态。 */
           const plan = reference.taskId ? new TaskWorkPlanningRepository(db).get(reference.taskId) : null;
           if (!plan || plan.id !== reference.id || plan.generation !== reference.generation) return { status: 'outcome_unknown', errorCode: 'ZEUS_AUTOMATION_PLAN_REPLACED', errorMessage: '自动化关联的原工作安排已变化，请核对原分工交付。' };
-          /** 必要分工结果未知或失败时不能把仍在等待的旧安排显示为成功。 */
-          const required = plan.stages.flatMap((stage) => stage.items).filter((item) => item.arrangement?.required !== false);
-          const unknown = required.some((item) => item.currentRunId && taskWorkRuns.getById(item.currentRunId)?.status === 'outcome_unknown');
-          if (unknown) return { status: 'outcome_unknown', errorCode: 'ZEUS_AUTOMATION_PLAN_OUTCOME_UNKNOWN', errorMessage: '原工作安排存在结果未知的必要分工。' };
+          /** 串行占位覆盖本代全部分工，非必要分工也可能仍在执行。 */
+          const items = plan.stages.flatMap((stage) => stage.items);
+          /** 读取各分工当前运行，安排取消本身不能证明 Provider 已停止。 */
+          const runs = items.map((item) => (item.currentRunId ? taskWorkRuns.getById(item.currentRunId) : undefined));
+          if (runs.some((run) => run && ['prepared', 'dispatching', 'active', 'waiting_input'].includes(run.status))) return { status: 'running' };
+          if (runs.some((run) => run?.status === 'outcome_unknown')) return { status: 'outcome_unknown', errorCode: 'ZEUS_AUTOMATION_PLAN_OUTCOME_UNKNOWN', errorMessage: '原工作安排存在结果未知的分工。' };
+          /** 全部分工停止后仍保留必要分工的失败，不用取消状态掩盖失败原因。 */
+          const required = items.filter((item) => item.arrangement?.required !== false);
           if (required.some((item) => item.status === 'failed')) return { status: 'failed', errorCode: 'ZEUS_AUTOMATION_PLAN_WORK_FAILED', errorMessage: '原工作安排的必要分工失败。' };
           return { status: plan.state === 'completed' ? 'completed' : plan.state === 'cancelled' ? 'cancelled' : 'running', paused: plan.state === 'paused' || plan.state === 'draft' };
         }
