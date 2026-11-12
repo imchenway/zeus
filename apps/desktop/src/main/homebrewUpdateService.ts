@@ -121,7 +121,21 @@ export function createHomebrewUpdateService(options: CreateHomebrewUpdateService
       await validateManagedCask(cask, options);
       if (!caskMatchesRelease(cask, update)) {
         onProgress({ phase: 'updating' });
-        await retryOperation(() => runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true }), 2);
+        // 全局同步失败时，只有 Zeus Cask 完整核对通过才接受已落地的同步结果。
+        await retryOperation(async () => {
+          try {
+            await runBrew(brewPath, ['update'], { timeoutMs: 5 * 60_000, allowAutoUpdate: true });
+          } catch (updateError) {
+            try {
+              // 公共索引下载失败前，官方 Tap 可能已更新；核对实际 Cask 和当前 App 身份。
+              const refreshedCask = await inspectCask(brewPath);
+              await validateManagedCask(refreshedCask, options);
+              validateCask(refreshedCask, update, options.currentAppPath);
+            } catch {
+              throw updateError;
+            }
+          }
+        }, 2);
         cask = await retryOperation(() => inspectCask(brewPath), 2);
       }
       validateCask(cask, update, options.currentAppPath);
