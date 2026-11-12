@@ -338,6 +338,16 @@
   color: var(--session-danger);
 }
 
+/* 进度放在交付入口下方，标题按钮保留与其他工具相同的点击范围。 */
+.session-quick-actions-delivery {
+  min-inline-size: 0;
+}
+/* 步骤与入口文字对齐，38px 由按钮内边距、图标列和列间距组成。 */
+.session-quick-actions-delivery-progress {
+  padding-block-end: 8px;
+  padding-inline: 38px 8px;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
   cursor: default;
 }

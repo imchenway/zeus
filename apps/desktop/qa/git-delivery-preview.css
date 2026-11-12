@@ -1,0 +1,111 @@
+/* 仅设置预览画布和两处界面的位置，控件样式来自正式组件。 */
+body {
+  margin: 0;
+}
+.preview-app.macos-ai-app.zeus-shell {
+  display: block;
+  min-height: 100vh;
+  height: auto;
+  overflow: auto;
+  background: var(--zeus-product-canvas) !important;
+  color: var(--zeus-product-text);
+  padding: 32px;
+  box-sizing: border-box;
+}
+.preview-toolbar {
+  max-width: 810px;
+  margin: 0 auto 28px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.preview-toolbar h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.preview-toolbar p {
+  margin: 7px 0 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+.preview-toolbar nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.preview-toolbar nav .zeus-select {
+  width: 160px;
+}
+.preview-columns {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 440px);
+  gap: 40px;
+  max-width: 810px;
+  margin: auto;
+  align-items: start;
+}
+.preview-columns > div {
+  min-width: 0;
+}
+.preview-caption {
+  font-size: 11px;
+  color: var(--zeus-product-muted);
+  margin: 0 0 10px;
+}
+.preview-environment {
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 12px;
+  background: var(--zeus-product-panel);
+}
+.preview-environment > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 10px;
+  font-size: 13px;
+}
+.preview-environment > header > span {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+}
+.preview-delivery-window {
+  min-width: 0;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 12px;
+  overflow: clip;
+  background: var(--zeus-product-panel);
+}
+.preview-delivery-window > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--zeus-control-border);
+}
+.preview-delivery-window > header > svg {
+  width: 17px;
+  height: 17px;
+  color: var(--zeus-product-muted);
+}
+/* 窄栏仍使用正式组件的容器查询，不覆盖组件内部布局。 */
+.preview-app[data-narrow='true'] .preview-delivery-window {
+  max-width: 300px;
+}
+@media (max-width: 700px) {
+  .preview-app.macos-ai-app.zeus-shell {
+    padding: 20px;
+  }
+  .preview-columns {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 440px;
+    gap: 28px;
+  }
+  .preview-toolbar {
+    max-width: 440px;
+  }
+}

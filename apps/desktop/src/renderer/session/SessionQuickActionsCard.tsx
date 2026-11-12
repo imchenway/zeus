@@ -35,6 +35,8 @@ import type { DashboardClient, ProjectRecord } from '../apiClient.js';
 import type { GitEnvironmentStatus, GitEnvironmentWorkspace } from '@zeus/shared';
 import { platformShortcutLabel } from '../platform.js';
 import { conversationGitDeliveryTarget } from '../git/conversationGitDeliveryTarget.js';
+import { GitDeliveryProgress } from '../git/GitDeliveryProgress.js';
+import { useGitDeliveryRuns } from '../git/useGitDeliveryRuns.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -168,6 +170,14 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const persistent = hasPersistentSpace && !props.forceCollapsed;
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
+  /** 进度沿用点击交付时的真实范围，冲突会话继续指向来源交付。 */
+  const deliveryTarget = conversationGitDeliveryTarget({ ...props.conversation, taskId }, props.conversation.workspaceId ?? workspace?.id ?? null);
+  /** 项目级单步交付没有组合运行，不读取其他会话的组合进度。 */
+  const deliveryScopeId = deliveryTarget.taskId ?? deliveryTarget.conversationId ?? null;
+  /** 只在卡片可见时订阅交付事件，不增加 Git 文件变化订阅。 */
+  const { runs: deliveryRuns, error: deliveryProgressError } = useGitDeliveryRuns(gitClient, props.conversation.projectId, deliveryScopeId, cardVisible);
+  /** 优先展示当前运行，再显示尚需用户处理的交付。 */
+  const deliveryRun = deliveryRuns.find((run) => run.state === 'queued' || run.state === 'running') ?? deliveryRuns.find((run) => run.state === 'attention');
   /** 浮动快捷面板退场不延长数据订阅；常驻模式继续保持原组件身份。 */
   const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLDivElement>(cardMounted);
   const popoverOpen = cardVisible && !persistent;
@@ -513,29 +523,39 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <ArrowSquareOut aria-hidden="true" weight="regular" />
                   </button>
 
-                  <button
-                    type="button"
-                    className="session-quick-actions-row"
-                    disabled={!canOpenDelivery || openingDelivery?.conversationId === props.conversation.id}
-                    aria-busy={openingDelivery?.conversationId === props.conversation.id || undefined}
-                    data-icon-tooltip={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
-                    onClick={openDelivery}
-                  >
-                    <GithubLogo aria-hidden="true" weight="regular" />
-                    <span className="session-quick-actions-copy">
-                      <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
-                    </span>
-                    <IconTooltip label={deliveryStatus.label}>
-                      <DeliveryStatusIcon
-                        role="img"
-                        aria-label={deliveryStatus.label}
-                        className={`session-quick-actions-delivery-status${deliveryStatus.state === 'loading' ? ' session-conversation-state-spinner' : ''}`}
-                        data-state={deliveryStatus.state}
-                        size={17}
-                        weight="regular"
-                      />
-                    </IconTooltip>
-                  </button>
+                  <div className="session-quick-actions-delivery">
+                    <button
+                      type="button"
+                      className="session-quick-actions-row"
+                      disabled={!canOpenDelivery || openingDelivery?.conversationId === props.conversation.id}
+                      aria-busy={openingDelivery?.conversationId === props.conversation.id || undefined}
+                      data-icon-tooltip={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
+                      onClick={openDelivery}
+                    >
+                      <GithubLogo aria-hidden="true" weight="regular" />
+                      <span className="session-quick-actions-copy">
+                        <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
+                        {deliveryProgressError ? <small role="status">{zh ? '交付进度读取失败' : 'Delivery progress unavailable'}</small> : null}
+                      </span>
+                      {deliveryRun ? null : (
+                        <IconTooltip label={deliveryStatus.label}>
+                          <DeliveryStatusIcon
+                            role="img"
+                            aria-label={deliveryStatus.label}
+                            className={`session-quick-actions-delivery-status${deliveryStatus.state === 'loading' ? ' session-conversation-state-spinner' : ''}`}
+                            data-state={deliveryStatus.state}
+                            size={17}
+                            weight="regular"
+                          />
+                        </IconTooltip>
+                      )}
+                    </button>
+                    {deliveryRun ? (
+                      <div className="session-quick-actions-delivery-progress">
+                        <GitDeliveryProgress run={deliveryRun} zh={zh} />
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
                 <section className="session-quick-actions-sources" aria-label={zh ? '来源' : 'Sources'}>

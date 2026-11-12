@@ -30,9 +30,9 @@ export function readGitDeliverySettings(projectId: string): GitDeliverySettings 
 export interface GitDeliveryCombinationState {
   /** 当前勾选只在运行被接纳后保存为项目偏好。 */
   settings: GitDeliverySettings;
-  /** 功能旁的复选框直接更新本次运行输入。 */
+  /** 组合区的复选框直接更新本次运行输入。 */
   setSettings: Dispatch<SetStateAction<GitDeliverySettings>>;
-  /** 详细设置从功能区打开，底部只保留运行按钮。 */
+  /** 详细设置从组合区标题打开，底部只保留运行按钮。 */
   settingsOpen: boolean;
   /** 关闭弹窗不改变尚未保存的详细设置。 */
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
