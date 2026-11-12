@@ -4,6 +4,7 @@ import type { CopilotAccountCatalog, CopilotLoginStep } from '../features/codex/
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
+import { copyText } from '../ui/clipboard.js';
 
 /** 模型供应商页内的 GitHub Copilot 账号和设备码登录入口。 */
 export function CopilotAccountSettings(props: { client: NativeConversationAppClient | null; language: 'zh-CN' | 'en-US' }): React.JSX.Element {
@@ -19,6 +20,8 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
   const [step, setStep] = useState<CopilotLoginStep | null>(null);
   /** 用户输入仅用于 SDK 显式要求额外信息的步骤。 */
   const [loginInput, setLoginInput] = useState('');
+  /** 复制成功反馈只对应本次设备验证码。 */
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   /** 并发按钮操作共用忙碌状态。 */
   const [busy, setBusy] = useState(false);
   /** 错误只显示当前账号操作的失败原因。 */
@@ -102,11 +105,13 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
     if (!props.client) return;
     setBusy(true);
     setError(null);
+    setCopiedCode(null);
     try {
       const result = await props.client.startCopilotLogin();
       setLoginId(result.loginId);
       setStep(result.step);
       if (result.step.kind === 'error') setError(result.step.message ?? (zh ? 'Copilot 登录失败。' : 'Copilot sign-in failed.'));
+      await openVerificationPage(result.step);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -114,12 +119,35 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
     }
   }
 
-  /** 打开 SDK 指定的 HTTPS 授权地址，浏览器仍由用户完成 GitHub 登录。 */
-  async function openVerificationPage(): Promise<void> {
-    const url = step?.verificationUri ?? step?.url;
-    if (!url) return;
-    const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url });
-    if (!result.opened) setError(zh ? '无法打开 GitHub 授权页面。' : 'Could not open the GitHub verification page.');
+  /** 自动和手动打开共用 SDK 地址，仅为 GitHub 设备授权页附带当前验证码。 */
+  async function openVerificationPage(loginStep = step): Promise<void> {
+    /** 设备授权地址优先于 SDK 的通用打开链接。 */
+    const verificationUri = loginStep?.verificationUri ?? loginStep?.url;
+    if (!verificationUri) return;
+    setError(null);
+    try {
+      /** 标准 URL 编码保留 SDK 原有参数，验证码只附加到 GitHub 设备授权页。 */
+      const url = new URL(verificationUri);
+      if (loginStep?.userCode && url.hostname === 'github.com' && url.pathname === '/login/device') url.searchParams.set('user_code', loginStep.userCode);
+      /** Main 进程独立复验 HTTPS 地址后返回系统浏览器的打开结果。 */
+      const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url: url.href });
+      if (result.opened) return;
+    } catch {
+      // 打开失败后保留验证码与手动入口，用户可以重试本次授权。
+    }
+    setError(zh ? '无法打开 GitHub 授权页面。' : 'Could not open the GitHub verification page.');
+  }
+
+  /** 复用原生及浏览器剪贴板能力，只有写入成功才显示已复制。 */
+  async function copyUserCode(): Promise<void> {
+    if (!step?.userCode) return;
+    setError(null);
+    try {
+      if (!(await copyText(step.userCode))) throw new Error(zh ? '无法复制验证码。' : 'Could not copy the verification code.');
+      setCopiedCode(step.userCode);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   /** 授权页面打开后推进原 flow，等待 SDK 返回完成状态。 */
@@ -217,8 +245,15 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
         ) : null}
       </div>
       {step?.kind === 'device-code' || step?.kind === 'open-url' || step?.kind === 'awaiting' || step?.kind === 'input-required' || step?.kind === 'needs-interaction' ? (
-        <div className="codex-update-row" role="status">
-          {step.userCode ? <strong>{step.userCode}</strong> : null}
+        <div className="codex-update-row" role="status" style={{ flexWrap: 'wrap' }}>
+          {step.userCode ? (
+            <>
+              <strong data-zeus-selectable="text">{step.userCode}</strong>
+              <Button variant="secondary" size="compact" onClick={() => void copyUserCode()}>
+                {copiedCode === step.userCode ? (zh ? '已复制' : 'Copied') : zh ? '复制验证码' : 'Copy code'}
+              </Button>
+            </>
+          ) : null}
           {step.verificationUri || step.url ? (
             <Button variant="secondary" onClick={() => void openVerificationPage()}>
               {zh ? '打开 GitHub 授权页' : 'Open GitHub verification'}
