@@ -19,7 +19,14 @@ export interface HomebrewUpdateIndicatorState {
 }
 
 export interface HomebrewUpdateController {
-  showOrCheck(): Promise<void>;
+  /** 提前启动隐藏的原生窗口，不检查版本，也不改变当前可见性。 */
+  warmup(): Promise<void>;
+  /** 只显示当前状态；首次打开先显示正在检查，不触发网络或安装操作。 */
+  show(): Promise<void>;
+  /** 已提前显示时不再次打开窗口，保留用户在等待期间的关闭选择。 */
+  showOrCheck(input?: { present?: boolean }): Promise<void>;
+  /** 检查开始前的记录失败结束等待状态，不覆盖已运行的下载或安装。 */
+  reportOpenFailure(error: unknown): Promise<void>;
   checkAutomatically(input?: { blockedPrepareVersion?: string | null }): Promise<boolean>;
   getIndicatorState(): HomebrewUpdateIndicatorState;
   restoreIndicatorState(state: HomebrewUpdateIndicatorState): void;
@@ -63,7 +70,8 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   /** 并发进度回调共用一次启动，退出也必须等待正在创建的窗口。 */
   let hostCreation: Promise<NativeUpdateProgressHost> | null = null;
   let phase: ControllerPhase = 'idle';
-  let hidden = false;
+  /** 预热和恢复状态都保持隐藏，只有用户主动打开才显示。 */
+  let hidden = true;
   let closed = false;
   let currentUpdate: DesktopReleaseUpdateStatus | null = null;
   let prepared: PreparedUpdate | null = null;
@@ -359,8 +367,10 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     }
   }
 
+  /** 先显示已有进度；首次点击使用检查状态，不等待操作记录或版本请求。 */
   async function showCurrent(): Promise<void> {
     hidden = false;
+    lastState ??= copyFor(options.language(), 'checking', options.currentVersion);
     const currentHost = await ensureHost();
     if (lastState) currentHost.update({ ...lastState, present: true });
     currentHost.show();
@@ -399,12 +409,22 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   }
 
   return {
-    showOrCheck: () => {
+    warmup: async () => {
+      await ensureHost();
+    },
+    show: showCurrent,
+    showOrCheck: (input) => {
+      /** 提前显示后仅推进检查，不能重新弹出用户刚关闭的窗口。 */
+      const present = input?.present !== false;
       // 手动点击先显示正在执行的任务，不能只等待隐藏的自动检查结束。
-      if (operation) return showCurrent();
-      if (phase === 'preparing' || phase === 'installing' || (phase === 'available' && currentUpdate) || (phase === 'failed' && lastState?.state === 'failed')) return showCurrent();
-      hidden = false;
-      return runExclusive(() => checkForUpdate(true, true).then(() => undefined));
+      if (operation || phase === 'preparing' || phase === 'installing' || (phase === 'available' && currentUpdate) || (phase === 'failed' && lastState?.state === 'failed')) return present ? showCurrent() : Promise.resolve();
+      if (present) hidden = false;
+      return runExclusive(() => checkForUpdate(present, true).then(() => undefined));
+    },
+    reportOpenFailure: async (error) => {
+      // 显示助手未就绪时沿用系统错误框，不自动重启；已有任务保留真实进度。
+      if (closed || !host || operation || lastState?.state !== 'checking') return;
+      await publishFailure(error, 'check');
     },
     checkAutomatically,
     getIndicatorState: () => ({ ...indicatorState }),

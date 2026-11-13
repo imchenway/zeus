@@ -3,12 +3,27 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, open, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { ensurePrivatePathSync, readPrivateFileSync, publishFileSync, windowsSecurityRequest } from '@zeus/storage/platform-security';
+import { ensurePrivatePathSync, readPrivateFileSync, publishFileSync, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import type { CreateReleaseUpdateServiceOptions, DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
 import { releaseUpdateDirectory } from './releaseInstallerProtocol.js';
 
 /** 安装器就绪必须在主程序开始退出之前得到确认。 */
 const installerReadyTimeoutMs = 15_000;
+
+/** WinTrust 的 TRUST_E_NOSIGNATURE；其他签名失败不能进入未签名安装路径。 */
+const unsignedWindowsSignatureStatus = -2146762496;
+
+/** 原生助手返回实际信任状态；无签名产品字段仅在 PE 证书表为空时提供。 */
+interface WindowsReleaseSignature {
+  /** Windows 是否确认签名及其信任链有效。 */
+  valid: boolean;
+  /** WinTrust 返回的有符号状态码，零表示验证成功。 */
+  status: number;
+  /** 已验证的签名证书主体（应用发行者）；没有有效签名时为空。 */
+  subject: string | null;
+  /** PE 的产品名称，仅用于配合清单与摘要核对 Zeus 产物。 */
+  productName: string | null;
+}
 
 /** Windows 更新事务与恢复包的持久化身份。 */
 interface WindowsInstallTransaction {
@@ -24,12 +39,28 @@ interface WindowsInstallTransaction {
   recoverySha256: string;
 }
 
-/** 校验 Windows 安装器与当前应用属于相同的受信任发行者。 */
-export async function verifyWindowsReleaseSignature(installerPath: string, executablePath: string): Promise<void> {
-  /** 原生 WinTrust 校验使用固定助手，不把证书信息当作可执行脚本。 */
-  const installer = windowsSecurityRequest<{ valid: boolean; subject: string }>({ operation: 'verify-authenticode', path: resolve(installerPath) });
-  const application = windowsSecurityRequest<{ valid: boolean; subject: string }>({ operation: 'verify-authenticode', path: resolve(executablePath) });
-  if (!installer.valid || !application.valid || !installer.subject || installer.subject !== application.subject) throw new Error('更新包签名无效或发行者与当前应用不同。');
+/** 使用固定原生助手异步读取签名，证书校验期间保持桌面消息循环可响应。 */
+export function readWindowsReleaseSignature(path: string): Promise<WindowsReleaseSignature> {
+  return windowsSecurityRequestAsync<WindowsReleaseSignature>({ operation: 'verify-authenticode', path: resolve(path) });
+}
+
+/** 产品字段由原生助手的空证书表检查提供，不能把损坏或不可信签名当成未签名。 */
+function isUnsignedWindowsRelease(signature: WindowsReleaseSignature): boolean {
+  return signature.valid === false && signature.status === unsignedWindowsSignatureStatus && signature.productName === 'Zeus';
+}
+
+/** 自动安装与恢复要求同一受信任发行者；手动入口只为真实未签名的当前应用开放例外。 */
+export async function verifyWindowsReleaseSignature(installerPath: string, executablePath: string, manual?: { allowUnsignedInstaller: boolean }): Promise<void> {
+  /** 两份文件独立校验；有效签名仍须有明确发行者身份。 */
+  const [installer, application] = await Promise.all([readWindowsReleaseSignature(installerPath), readWindowsReleaseSignature(executablePath)]);
+  if (installer.valid === true && installer.status === 0 && typeof installer.subject === 'string' && installer.subject.trim()) {
+    if (application.valid === true && application.status === 0 && installer.subject === application.subject) return;
+    // 未签名旧版只能由用户手动升级到有效签名的 Zeus，不能进入自动安装或恢复。
+    if (manual && isUnsignedWindowsRelease(application) && installer.productName === 'Zeus') return;
+  }
+  // Windows 清单未声明签名时，已核对来源和摘要的双方未签名产物可交给用户手动安装。
+  if (manual?.allowUnsignedInstaller && isUnsignedWindowsRelease(application) && isUnsignedWindowsRelease(installer)) return;
+  throw new Error('更新包签名无效或发行者与当前应用不同。');
 }
 
 /** 在应用安装目录外启动 NSIS；安装器持有旧主进程句柄并等待正常退出。 */

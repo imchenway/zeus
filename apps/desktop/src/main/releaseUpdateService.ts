@@ -10,7 +10,7 @@ import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-s
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { isTrustedReleaseResponseUrl, readReleaseUpdateStatus, releaseArtifactDownloadUrls } from '@zeus/local-server/release-core';
-import { installWindowsRelease, openWindowsRecoveryInstaller, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
+import { installWindowsRelease, openWindowsRecoveryInstaller, readWindowsReleaseSignature, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
@@ -199,7 +199,9 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
         if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
-        if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate)) await verifyWindowsReleaseSignature(prepared.artifactPath, options.currentExecutablePath);
+        // Windows 自动安装开关直接来自清单 signed；手动打开仍拒绝坏签名和签名信任降级。
+        if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate))
+          await verifyWindowsReleaseSignature(prepared.artifactPath, options.currentExecutablePath, { allowUnsignedInstaller: !update.automaticInstallEnabled });
         await options.openDownloadedArtifact(prepared.artifactPath);
         return { accepted: true, update, reason: '已请求系统打开安装包，请结束工作并退出 Zeus 后手动替换应用。' };
       }),
@@ -309,6 +311,8 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
   if (process.platform === 'win32') {
     await access(dirname(options.currentExecutablePath), fsConstants.W_OK);
+    // 未签名旧版即使发现已签名新版，也必须由用户手动安装，不能在下载后才被自动安装门禁拦截。
+    if (!(options.testMode && options.allowUntrustedTestUpdate) && !(await readWindowsReleaseSignature(options.currentExecutablePath)).valid) return 'signature';
     return null;
   }
   const appPath = resolve(options.currentAppPath);

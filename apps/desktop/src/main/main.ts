@@ -1484,20 +1484,24 @@ function showUpdateOpenFailure(error: unknown): { opened: false } {
   /** 共用错误说明负责脱敏，并保留结果未知时不得自动重试的语义。 */
   const failure = describeUserFacingError(error, appShellSettings.appLanguage);
   console.warn('Zeus 无法打开更新窗口。', failure.details);
+  void homebrewUpdateController?.reportOpenFailure(error).catch((reportError: unknown) => console.warn('Zeus 无法更新检查失败状态。', reportError));
   dialog.showErrorBox(appShellSettings.appLanguage === 'zh-CN' ? '无法检查更新' : 'Unable to Check for Updates', failure.message);
   return { opened: false };
 }
 
 /** 两端原生菜单共用真实更新检查；结果、预取和重启决策留在原生窗口。 */
 async function checkForUpdatesFromMenu(): Promise<void> {
+  await requestMainWindow();
+  if (fatalStartup) throw new Error('Zeus 启动失败，无法检查更新。');
+  await auxiliaryServicesReady;
+  /** 窗口反馈先于账本写入，版本检查仍在命令门禁通过后执行。 */
+  const controller = homebrewUpdateController;
+  if (!controller) throw new Error('Zeus 更新控制器尚未就绪。');
+  await controller.show();
   const envelope = createSystemMainCommandEnvelope('desktop.automatic_update.menu_check', 'desktop-update');
   await activeMainCommandLedger().execute({ envelope, body: null }, 'desktop.automatic_update.menu_check', async (_body, command) => {
-    await requestMainWindow();
-    if (fatalStartup) throw new Error('Zeus 启动失败，无法检查更新。');
-    await auxiliaryServicesReady;
-    if (!homebrewUpdateController) throw new Error('Zeus 更新控制器尚未就绪。');
     await command.markWriteStarted();
-    await homebrewUpdateController.showOrCheck();
+    await controller.showOrCheck({ present: false });
     return { opened: true, externalOperationId: command.externalOperationId };
   });
 }
@@ -2703,17 +2707,20 @@ function setupIpc(): void {
   ipcMain.handle('zeus:automatic-update-indicator:open', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
-    await auxiliaryServicesReady;
-    const controller = homebrewUpdateController;
-    const result = await activeMainCommandLedger()
-      .execute(request, 'desktop.automatic_update.open', async (_body, command) => {
-        if (!controller) throw new Error('Automatic update controller is unavailable.');
+    try {
+      await auxiliaryServicesReady;
+      /** 与菜单共用先显示、后检查的顺序，不让命令持久化阻塞点击反馈。 */
+      const controller = homebrewUpdateController;
+      if (!controller) throw new Error('Automatic update controller is unavailable.');
+      await controller.show();
+      return await activeMainCommandLedger().execute(request, 'desktop.automatic_update.open', async (_body, command) => {
         await command.markWriteStarted();
-        await controller.showOrCheck();
+        await controller.showOrCheck({ present: false });
         return { opened: true, externalOperationId: command.externalOperationId };
-      })
-      .catch(showUpdateOpenFailure);
-    return result;
+      });
+    } catch (error) {
+      return showUpdateOpenFailure(error);
+    }
   });
   ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -4300,6 +4307,8 @@ async function initializeApplication(): Promise<void> {
             canInstall: assertUpdateCanInstall,
             onInstallReady: requestUpgradeHandoffQuit,
           });
+          // Windows 原生窗口冷启动移到后台；预热失败保留菜单点击时的正常重试。
+          if (process.platform === 'win32') void homebrewUpdateController.warmup().catch((error: unknown) => console.warn('Zeus 更新窗口预热失败。', error));
         }
       } catch (error) {
         releaseUpdateService = undefined;
