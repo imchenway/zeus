@@ -972,21 +972,21 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setError(null);
   }
 
+  /** 单仓与分支批量勾选共用子文件级联逻辑。 */
   function toggleWorkspaceSelection(nextId: string, selected: boolean): void {
-    setSelectedWorkspaceIds((current) => (selected ? Array.from(new Set([...current, nextId])) : current.filter((candidate) => candidate !== nextId)));
-    if (selected && diffScope === 'working') {
-      const paths = collectWorkingFiles(workspaceDetails[nextId]).map((file) => file.path);
-      setSelectedPathsByWorkspace((current) => ({ ...current, [nextId]: paths }));
-    }
+    toggleBranchSelection([nextId], selected);
   }
 
+  /** 当前分支内的仓库与子文件在勾选、取消时一并更新。 */
   function toggleBranchSelection(workspaceIds: string[], selected: boolean): void {
+    /** 批量更新只影响当前分支包含的仓库。 */
     const workspaceIdSet = new Set(workspaceIds);
     setSelectedWorkspaceIds((current) => (selected ? Array.from(new Set([...current, ...workspaceIds])) : current.filter((candidate) => !workspaceIdSet.has(candidate))));
-    if (selected && diffScope === 'working') {
+    if (diffScope === 'working') {
       setSelectedPathsByWorkspace((current) => {
+        /** 保留其他分支和仓库的文件选择。 */
         const next = { ...current };
-        for (const selectedId of workspaceIds) next[selectedId] = collectWorkingFiles(workspaceDetails[selectedId]).map((file) => file.path);
+        for (const selectedId of workspaceIds) next[selectedId] = selected ? collectWorkingFiles(workspaceDetails[selectedId]).map((file) => file.path) : [];
         return next;
       });
     }

@@ -397,15 +397,29 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     }
   }
 
-  /** 仓库与目录批量勾选复用同一入口，不改变审阅焦点。 */
+  /** 仓库与分支勾选同步当前范围内的子文件，不改变审阅焦点。 */
   function toggleRepositories(ids: string[], checked: boolean): void {
     setSelectedIds((current) => (checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id))));
+    if (scope === 'working') {
+      setSelection((current) => {
+        /** 只更新本次勾选的仓库，保留其他仓库的文件选择。 */
+        const next = { ...current };
+        for (const group of groups) {
+          if (ids.includes(group.workspace.id)) next[group.workspace.id] = checked ? group.files.map((file) => file.path) : [];
+        }
+        return next;
+      });
+    }
   }
 
   /** 文件只决定提交范围，重新选文件时同步选中所属仓库。 */
   function toggleFiles(id: string, paths: string[], checked: boolean): void {
-    if (checked) toggleRepositories([id], true);
-    setSelection((current) => ({ ...current, [id]: checked ? [...new Set([...(current[id] ?? []), ...paths])] : (current[id] ?? []).filter((path) => !paths.includes(path)) }));
+    setSelection((current) => {
+      /** 仓库未选中时不恢复隐藏的旧文件选择。 */
+      const currentPaths = selectedIds.includes(id) ? (current[id] ?? []) : [];
+      return { ...current, [id]: checked ? [...new Set([...currentPaths, ...paths])] : currentPaths.filter((path) => !paths.includes(path)) };
+    });
+    if (checked) setSelectedIds((current) => [...new Set([...current, id])]);
   }
 
   /** 批量操作复用现有命令入口，分别显示成功、冲突和失败。 */
