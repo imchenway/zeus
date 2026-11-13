@@ -422,7 +422,8 @@ export interface LocalSettingsExportSnapshot {
   };
   settings: {
     appShell: AppShellSettingsSnapshot;
-    runtime: RuntimeSettingsSnapshot;
+    /** 导出模型、程序路径与受限偏好，不携带可能含凭据的执行文本。 */
+    runtime: Pick<RuntimeSettingsSnapshot, 'defaultAdapterId' | 'adapterModels' | 'adapterCliPaths' | 'shell' | 'executionTimeoutSeconds' | 'logRetentionDays' | 'autoConfirmationPolicy'>;
     telegramNotification: TelegramNotificationSettingsSnapshot;
     telegramSecurity: TelegramSecuritySettingsSnapshot;
   };
@@ -432,7 +433,8 @@ export interface ImportLocalSettingsBody {
   schemaVersion?: number;
   settings?: {
     appShell?: UpdateAppShellSettingsBody;
-    runtime?: RuntimeSettingsSnapshot;
+    /** 脱敏快照省略的执行配置保留本机已有值。 */
+    runtime?: Partial<RuntimeSettingsSnapshot>;
     telegramNotification?: TelegramNotificationSettingsSnapshot;
     telegramSecurity?: TelegramSecuritySettingsSnapshot;
   };
