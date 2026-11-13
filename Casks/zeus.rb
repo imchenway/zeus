@@ -1,8 +1,8 @@
 cask "zeus" do
-  version "0.1.0"
-  sha256 "5ba434a0c71b4e8140eb065df6b16e839cf5f17b97c0a4adcbd7d6f07f3a52a9"
+  version "0.4.57"
+  sha256 "cc8432312b1a02f3aa720431945438ce62802107f3a67fe6b503aba9dcc030ac"
 
-  url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-arm64.dmg"
+  url "https://zeus-download.hyphatech.cn/zeus/releases/#{version}/Zeus-#{version}-arm64.dmg"
   name "Zeus"
   desc "Local-first AI development workbench"
   homepage "https://github.com/imchenway/zeus"

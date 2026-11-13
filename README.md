@@ -6,7 +6,7 @@
 
 本地优先的 AI 研发工作台 · macOS / Windows
 
-[官网](https://zeus-ai-workbench.imchenway.chatgpt.site/) · [下载](https://github.com/imchenway/zeus/releases/latest) · [产品导览](https://zeus-ai-workbench.imchenway.chatgpt.site/tour.html) · [问题反馈](https://github.com/imchenway/zeus/issues)
+[官网](https://zeus-ai-workbench.imchenway.chatgpt.site/) · [下载](#下载与安装) · [产品导览](https://zeus-ai-workbench.imchenway.chatgpt.site/tour.html) · [问题反馈](https://github.com/imchenway/zeus/issues)
 
 [![Latest release](https://img.shields.io/github/v/release/imchenway/zeus?style=flat-square&color=7560D8&label=release)](https://github.com/imchenway/zeus/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-7560D8?style=flat-square)](LICENSE)
@@ -44,13 +44,13 @@ Zeus 将项目任务、AI 会话、源码编辑、Git 和自动化协作整合�
 
 ## 下载与安装
 
-从 [GitHub 最新发布](https://github.com/imchenway/zeus/releases/latest) 获取安装包，无需从源码构建。
+按系统和架构选择安装包，无需从源码构建。
 
 | 系统 | 架构 | 选择的安装包 |
 | --- | --- | --- |
-| macOS 13 或更高版本 | Apple Silicon | `Zeus-<版本>-arm64.dmg` |
-| Windows 10 22H2 / Windows 11 | Intel / AMD x64 | `Zeus-<版本>-win32-x64.exe` |
-| Windows 10 22H2 / Windows 11 | ARM64 | `Zeus-<版本>-win32-arm64.exe` |
+| macOS 13 或更高版本 | Apple Silicon | [下载 DMG](https://zeus-download.hyphatech.cn/zeus/updates/Zeus-arm64.dmg) |
+| Windows 10 22H2 / Windows 11 | Intel / AMD x64 | [下载 EXE](https://zeus-download.hyphatech.cn/zeus/updates/Zeus-win32-x64.exe) |
+| Windows 10 22H2 / Windows 11 | ARM64 | [下载 EXE](https://zeus-download.hyphatech.cn/zeus/updates/Zeus-win32-arm64.exe) |
 
 Windows 可在「设置 → 系统 → 关于」中确认系统类型。双击 EXE 安装包即可安装，无需 WSL。
 
@@ -65,7 +65,7 @@ brew install --cask imchenway/tap/zeus
 
 签名与公证状态以对应版本的发布清单为准。如果 macOS 提示无法验证 Zeus：
 
-1. 确认安装包来自本仓库的正式发布页。
+1. 确认安装包来自本 README 的下载链接或本仓库的正式发布页。
 2. 关闭提示，打开「系统设置 → 隐私与安全性」。
 3. 在安全性区域找到 Zeus，点击「仍要打开」，再按系统提示确认。
 
@@ -82,7 +82,7 @@ Homebrew 用户：
 brew upgrade --cask imchenway/tap/zeus
 ```
 
-手动安装用户：先退出 Zeus，再从[最新发布](https://github.com/imchenway/zeus/releases/latest)下载对应系统与架构的安装包，完成升级。更新内容与签名状态请查看该版本的发布说明和清单。
+手动安装用户：先退出 Zeus，再从[下载与安装](#下载与安装)获取对应系统与架构的安装包，完成升级。更新内容与签名状态请查看[最新发布](https://github.com/imchenway/zeus/releases/latest)中的发布说明和清单。
 
 </details>
 

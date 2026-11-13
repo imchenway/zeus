@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { parseBoolean, renderCdnReleaseNotes, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile, verifyPublicCdnManifest } from './release-script-utils.mjs';
+import { parseBoolean, releaseCdnBaseUrl, renderCdnReleaseNotes, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile, verifyPublicCdnDownload, verifyPublicCdnManifest } from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
   observeReleaseWorkflowExecution,
@@ -407,6 +407,8 @@ export async function verifyPublishedRelease(input) {
         verifyPublicCdnManifest(windowsRelease.manifest, 'zeus-release-manifest-win32.json'),
         verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json', fetch, true),
         verifyPublicCdnManifest(windowsRelease.manifest, 'zeus-release-manifest-win32.json', fetch, true),
+        ...manifest.artifacts.map((artifact) => verifyPublicCdnDownload(manifest, artifact)),
+        ...windowsRelease.manifest.artifacts.map((artifact) => verifyPublicCdnDownload(windowsRelease.manifest, artifact)),
       ]);
     }
 
@@ -422,7 +424,8 @@ export async function verifyPublishedRelease(input) {
     }
 
     const cask = gh(['api', '-H', 'Accept: application/vnd.github.raw+json', `repos/${homebrewRepository}/contents/Casks/zeus.rb?ref=main`], publicVerificationReadOptions(input));
-    for (const expected of [`version "${input.releaseVersion}"`, `sha256 "${dmgSha256}"`, 'depends_on arch: :arm64']) {
+    /** 正式 Tap 必须指向官方 CDN，版本和摘要相同也不能漏检下载来源。 */
+    for (const expected of [`version "${input.releaseVersion}"`, `sha256 "${dmgSha256}"`, `url "${releaseCdnBaseUrl}/releases/#{version}/Zeus-#{version}-arm64.dmg"`, 'depends_on arch: :arm64']) {
       if (!cask.includes(expected)) throw new Error(`Homebrew Tap Cask 与公开 DMG 不一致，缺少：${expected}`);
     }
 

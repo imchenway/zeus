@@ -3,7 +3,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { sha256File } from './release-script-utils.mjs';
+import { releaseCdnBaseUrl, sha256File } from './release-script-utils.mjs';
 
 export { sha256File } from './release-script-utils.mjs';
 
@@ -20,13 +20,14 @@ function normalizeCaskArchitecture(arch) {
   throw new Error(`Zeus Homebrew cask 不支持架构：${arch}`);
 }
 
+/** Cask 使用官方 CDN 的固定版本安装包，并保留 Homebrew 的摘要和架构校验。 */
 export function renderHomebrewCask({ version, arch, sha256 }) {
   const normalizedArch = normalizeCaskArchitecture(arch);
   return `cask "zeus" do
   version "${version}"
   sha256 "${sha256}"
 
-  url "https://github.com/imchenway/zeus/releases/download/v#{version}/Zeus-#{version}-${normalizedArch.artifact}.dmg"
+  url "${releaseCdnBaseUrl}/releases/#{version}/Zeus-#{version}-${normalizedArch.artifact}.dmg"
   name "Zeus"
   desc "Local-first AI development workbench"
   homepage "https://github.com/imchenway/zeus"

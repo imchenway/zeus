@@ -5,7 +5,17 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { cdnReleaseManifest, releaseCdnBaseUrl, renderCdnReleaseNotes, requiredVersion, sha256File, verifyPublicCdnManifest } from './release-script-utils.mjs';
+import {
+  cdnReleaseManifest,
+  releaseCdnBaseUrl,
+  releaseCdnStableCacheControl,
+  renderCdnReleaseNotes,
+  requiredVersion,
+  sha256File,
+  stableReleaseArtifactFileName,
+  verifyPublicCdnDownload,
+  verifyPublicCdnManifest,
+} from './release-script-utils.mjs';
 
 /** 各平台固定清单名同时用于不可变版本目录和可变更新目录。 */
 const manifestNames = { darwin: 'zeus-release-manifest.json', win32: 'zeus-release-manifest-win32.json' };
@@ -24,7 +34,7 @@ export function releaseCdnConfiguration(env = process.env) {
   return { bucket, region, baseUrl };
 }
 
-/** 只将安装包复制到固定版本目录；只有 activate 阶段才能修改稳定更新清单。 */
+/** stage 只准备版本目录；activate 才更新固定下载入口和稳定清单。 */
 export async function publishReleaseCdn({ directory, configuration, version, sourceCommit, activate = false }, execute = executeReleaseCommand, request = fetch) {
   requiredVersion(version);
   if (!/^[a-f0-9]{40}$/u.test(sourceCommit)) throw new Error('OSS 发布缺少固定候选提交。');
@@ -101,6 +111,8 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       /** 指针写入由两个工作流共同的 publish 并发组串行保护。 */
       const key = `zeus/updates/${file.fileName}`;
       const previous = headObject(key);
+      /** 同版重跑仍修补安装包入口，不重复覆盖已经核对的稳定清单。 */
+      let sameVersion = false;
       if (previous) {
         /** 只回读小型稳定清单，不通过不可靠的同名覆盖猜测当前版本。 */
         const previousPath = join(temporary, `previous-${file.fileName}`);
@@ -121,9 +133,19 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
         if (order > 0) continue;
         if (order === 0) {
           assertStoredFile(file, previous);
-          continue;
+          sameVersion = true;
         }
       }
+      /** 从已校验的版本对象服务端复制，README 使用的入口不再含版本号。 */
+      for (const artifact of file.manifest.artifacts) {
+        const installer = files.find((entry) => entry.fileName === artifact.fileName);
+        const downloadKey = `zeus/updates/${stableReleaseArtifactFileName(version, artifact.fileName)}`;
+        copyObject(installer, downloadKey, false, objectUrl(installer.key));
+        assertStoredFile(installer, headObject(downloadKey));
+      }
+      /** CDN 仍返回旧缓存时等待其过期，全部入口可用后才推进更新清单。 */
+      await Promise.all(file.manifest.artifacts.map((artifact) => verifyPublicCdnDownload(file.manifest, artifact, request)));
+      if (sameVersion) continue;
       copyObject(file, key, false);
       assertStoredFile(file, headObject(key));
       activated.push(file.platform);
@@ -158,13 +180,14 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
     }
   }
 
-  /** 版本目录文件保持不可变，稳定清单使用一分钟缓存；所有对象继承私有 Bucket ACL。 */
-  function copyObject(file, key, immutable) {
+  /** 版本目录不可变；可变入口使用一分钟缓存，并保留实际版本文件名供下载保存。 */
+  function copyObject(file, key, immutable, source = file.path) {
     runOssutil([
       'cp',
-      file.path,
+      source,
       objectUrl(key),
       immutable ? '--ignore-existing' : '--force',
+      ...(source === file.path ? [] : ['--copy-props', 'metadata', '--metadata-directive', 'REPLACE', '--content-disposition', `attachment; filename="${file.fileName}"`]),
       '--metadata',
       `sha256=${file.sha256}`,
       '--metadata',
@@ -172,7 +195,7 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       '--content-type',
       file.contentType,
       '--cache-control',
-      immutable ? 'public,max-age=2592000,immutable,no-transform' : 'public,max-age=60,must-revalidate,no-transform',
+      immutable ? 'public,max-age=2592000,immutable,no-transform' : releaseCdnStableCacheControl,
     ]);
   }
 
