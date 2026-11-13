@@ -8,7 +8,7 @@ import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
 import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
+import { normalizeTaskTableColumnPreferences, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
   type AiRuntimeSession,
@@ -36,14 +36,12 @@ import {
   mergeAppShellSettingsSaveResponse,
   normalizeProjectSidebarPreferredWidth,
   normalizeRendererAppShellSettings,
-  normalizeTaskStatusFilter,
   persistProjectSidebarPreferredWidth,
   PROJECT_SIDEBAR_DEFAULT_WIDTH,
   PROJECT_SIDEBAR_MAX_WIDTH,
   type ProjectCodeWorkspaceMode,
   type ProjectSidebarDragState,
   type ProjectWorkspaceSection,
-  resolveTaskManagementStatusConfig,
   resolveTaskTableColumns,
   taskTableColumnPreferencesEqual,
   toAppShellSettingsSavePayload,
@@ -218,7 +216,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     telegramAllowedUserIdsInput,
     telegramNotificationChatIdsInput,
     telegramNotificationSettings,
-    telegramSecuritySettings,
     telegramTokenInput,
     templateTaskIdentityRef,
     uiCopy,
@@ -921,64 +918,43 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
   }
 
+  /** 仅在文件确实保存后更新最近导出状态，取消时结束本次操作。 */
   async function exportLocalSettings(): Promise<void> {
     if (!props.onExportLocalSettings) return;
     setActionState('loading-runtime');
     try {
       const exported = await props.onExportLocalSettings();
       const saved = props.onExportSettingsFile ? await props.onExportSettingsFile(exported) : { saved: false, filePath: null };
-      setDataPortabilityStatus({ kind: 'exported', target: saved.saved && saved.filePath ? saved.filePath : exported.exportedAt });
+      if (!saved.saved || !saved.filePath) {
+        setActionState('idle');
+        return;
+      }
+      setDataPortabilityStatus({ kind: 'exported', target: saved.filePath });
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);
     }
   }
 
+  /** 只提交用户选中的设置快照，取消选择不能触发配置写入。 */
   async function importLocalSettings(): Promise<void> {
     if (!props.onImportLocalSettings) return;
     setActionState('loading-runtime');
     try {
       const selected = props.onImportSettingsFile ? await props.onImportSettingsFile() : { imported: false, filePath: null };
-      const result = await props.onImportLocalSettings(
-        selected.snapshot
-          ? {
-              schemaVersion: 1,
-              settings: {
-                appShell: toSafeAppShellImport(selected.snapshot.settings.appShell),
-                runtime: selected.snapshot.settings.runtime,
-                telegramNotification: selected.snapshot.settings.telegramNotification,
-                telegramSecurity: selected.snapshot.settings.telegramSecurity,
-              },
-            }
-          : {
-              schemaVersion: 1,
-              settings: {
-                appShell: {
-                  appLanguage: appShellSettings.appLanguage,
-                  appearance: appShellSettings.appearance,
-                  webviewDebugEnabled: appShellSettings.webviewDebugEnabled,
-                  developerModeEnabled: appShellSettings.developerModeEnabled,
-                  multiWindowEnabled: appShellSettings.multiWindowEnabled,
-                  backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
-                  desktopNotificationsEnabled: appShellSettings.desktopNotificationsEnabled,
-                  openAtLoginEnabled: appShellSettings.openAtLoginEnabled,
-                  autoUpdateChannel: appShellSettings.autoUpdateChannel,
-                  defaultProjectId: appShellSettings.defaultProjectId,
-                  defaultModel: appShellSettings.defaultModel,
-                  defaultTaskTemplateId: appShellSettings.defaultTaskTemplateId,
-                  taskTableColumns: normalizeTaskTableColumnPreferences(appShellSettings.taskTableColumns),
-                  taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(appShellSettings.taskTableEnumSortOrders),
-                  taskManagementStatusTemplate: resolveTaskManagementStatusConfig(appShellSettings),
-                  taskStatusFilter: normalizeTaskStatusFilter(appShellSettings.taskStatusFilter),
-                  taskViewMode: appShellSettings.taskViewMode,
-                  taskPageView: appShellSettings.taskPageView,
-                },
-                runtime: runtimeSettings,
-                telegramNotification: telegramNotificationSettings,
-                telegramSecurity: telegramSecuritySettings,
-              },
-            },
-      );
+      if (!selected.imported || !selected.snapshot) {
+        setActionState('idle');
+        return;
+      }
+      const result = await props.onImportLocalSettings({
+        schemaVersion: 1,
+        settings: {
+          appShell: toSafeAppShellImport(selected.snapshot.settings.appShell),
+          runtime: selected.snapshot.settings.runtime,
+          telegramNotification: selected.snapshot.settings.telegramNotification,
+          telegramSecurity: selected.snapshot.settings.telegramSecurity,
+        },
+      });
       if (props.onLoadAppShellSettings) setAppShellSettings(normalizeRendererAppShellSettings(await props.onLoadAppShellSettings()));
       if (props.onLoadRuntimeSettings) setRuntimeSettings(normalizeRuntimeSettings(await props.onLoadRuntimeSettings()));
       if (props.onLoadTelegramNotificationSettings) {
@@ -991,7 +967,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         setTelegramSecuritySettings(settings);
         setTelegramAllowedUserIdsInput(settings.allowedUserIds.join(', '));
       }
-      setDataPortabilityStatus({ kind: 'imported', target: selected.imported && selected.filePath ? selected.filePath : result.importedAt, changedSettings: result.importedSettings });
+      setDataPortabilityStatus({ kind: 'imported', target: selected.filePath ?? result.importedAt, changedSettings: result.importedSettings });
       setActionState('idle');
     } catch (error) {
       recordLocalError('renderer-action', error);

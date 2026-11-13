@@ -4729,7 +4729,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       redaction: { secretsRedacted: true },
       settings: {
         appShell: platformMutableState.appShellSettings,
-        runtime: platformMutableState.runtimeSettings,
+        // 环境变量、CLI 参数和启动脚本可含凭据，仅导出模型、程序路径与受限偏好。
+        runtime: {
+          defaultAdapterId: platformMutableState.runtimeSettings.defaultAdapterId,
+          adapterModels: platformMutableState.runtimeSettings.adapterModels,
+          adapterCliPaths: platformMutableState.runtimeSettings.adapterCliPaths,
+          shell: platformMutableState.runtimeSettings.shell,
+          executionTimeoutSeconds: platformMutableState.runtimeSettings.executionTimeoutSeconds,
+          logRetentionDays: platformMutableState.runtimeSettings.logRetentionDays,
+          autoConfirmationPolicy: platformMutableState.runtimeSettings.autoConfirmationPolicy,
+        },
         telegramNotification: platformMutableState.telegramNotificationSettings,
         telegramSecurity: platformMutableState.telegramSecuritySettings,
       },
@@ -4756,7 +4765,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       ) {
         return reply.code(400).send({ error: 'ZEUS_PROJECT_PREFERENCES_REMOVED', message: '导入内容包含已移除的项目独立设置，请使用全局设置。' });
       }
-      const plannedRuntime = parsed.input.settings.runtime ? normalizeImportedRuntimeSettings(parsed.input.settings.runtime) : null;
+      /** 脱敏快照未携带的执行配置保留本机值，不能用空值覆盖已有凭据。 */
+      const plannedRuntime = parsed.input.settings.runtime
+        ? normalizeImportedRuntimeSettings({
+            ...platformMutableState.runtimeSettings,
+            ...parsed.input.settings.runtime,
+            // 旧快照携带脚本却没有解释器时，仍按原有 Unix 脚本语义校验。
+            ...(parsed.input.settings.runtime.terminalStartupCommand !== undefined ? { terminalStartupShell: parsed.input.settings.runtime.terminalStartupShell ?? 'sh' } : {}),
+          })
+        : null;
       const plannedTelegramNotification = parsed.input.settings.telegramNotification ? normalizeImportedTelegramNotificationSettings(parsed.input.settings.telegramNotification) : null;
       const plannedTelegramSecurity = parsed.input.settings.telegramSecurity ? normalizeImportedTelegramSecuritySettings(parsed.input.settings.telegramSecurity) : null;
       if (parsed.input.settings.runtime && !plannedRuntime) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'runtime settings are invalid or unsafe' });

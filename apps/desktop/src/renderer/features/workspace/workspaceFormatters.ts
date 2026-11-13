@@ -2,6 +2,7 @@ import { defaultTaskManagementStatusConfig, normalizeInputSuggestionSettings, no
 import { type AppLanguage } from './workspaceCopy.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
+import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import { getLanguageCopy, normalizeCodeWorkspaceByProject, normalizeTaskExpandedIdsByProject, normalizeTaskPageView, normalizeTaskStatusFilter, normalizeTaskViewMode } from './workspaceSupport.js';
 
 export const GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE = 'ZEUS HIGH RISK';
@@ -158,42 +159,14 @@ export function runtimeLogMatches(entry: AiRuntimeLogEntry, query: string): bool
   return `${entry.stream} ${entry.text} ${entry.createdAt}`.toLowerCase().includes(normalized);
 }
 
-export function toSafeAppShellImport(
-  raw: Partial<AppShellSettings> | undefined,
-):
-  | Pick<
-      AppShellSettings,
-      | 'appLanguage'
-      | 'appearance'
-      | 'mainLayout'
-      | 'webviewDebugEnabled'
-      | 'developerModeEnabled'
-      | 'multiWindowEnabled'
-      | 'backgroundModeEnabled'
-      | 'desktopNotificationsEnabled'
-      | 'inputSuggestions'
-      | 'openAtLoginEnabled'
-      | 'autoUpdateChannel'
-      | 'defaultProjectId'
-      | 'pinnedProjectIds'
-      | 'collapsedProjectIds'
-      | 'defaultModel'
-      | 'defaultTaskTemplateId'
-      | 'taskTableColumns'
-      | 'taskTableEnumSortOrders'
-      | 'taskManagementStatusTemplate'
-      | 'taskStatusFilter'
-      | 'taskViewMode'
-      | 'taskPageView'
-      | 'taskExpandedIdsByProject'
-      | 'codeWorkspaceByProject'
-    >
-  | undefined {
+/** 只恢复可迁移的界面偏好，本机路径保持由服务端管理。 */
+export function toSafeAppShellImport(raw: Partial<AppShellSettings> | undefined): UpdateAppShellSettingsRequest | undefined {
   if (!raw) return undefined;
   return {
     appLanguage: raw.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
     appearance: raw.appearance === 'light' || raw.appearance === 'dark' || raw.appearance === 'system' ? raw.appearance : 'system',
     mainLayout: raw.mainLayout === 'current' ? 'current' : 'upstream',
+    taskBranchPrefix: raw.taskBranchPrefix,
     webviewDebugEnabled: raw.webviewDebugEnabled === true,
     developerModeEnabled: raw.developerModeEnabled === true,
     multiWindowEnabled: typeof raw.multiWindowEnabled === 'boolean' ? raw.multiWindowEnabled : true,
