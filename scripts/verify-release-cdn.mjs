@@ -15,7 +15,7 @@ import { caskMatchesRelease, prefetchHomebrewCdnArtifact } from '../apps/desktop
 import { isTrustedReleaseResponseUrl, parseReleaseUpdateManifest, readReleaseUpdateStatus, releaseArtifactDownloadUrls, releaseDownloadBaseUrl, releaseUpdateManifestUrls } from '../packages/local-server/src/releaseCore.ts';
 import { renderReleaseManifest } from './generate-release-manifest.mjs';
 import { publishReleaseCdn, releaseCdnConfiguration } from './publish-release-cdn.mjs';
-import { cdnReleaseManifest, releaseCdnBaseUrl, renderCdnReleaseNotes, sha256Text, verifyPublicCdnManifest } from './release-script-utils.mjs';
+import { cdnReleaseManifest, releaseCdnBaseUrl, renderCdnReleaseNotes, sha256Text, verifyPublicCdnDownload, verifyPublicCdnManifest } from './release-script-utils.mjs';
 
 /** 所有制品、网络和 OSS 操作均隔离在临时目录及内存，不连接真实发布服务。 */
 const directory = await mkdtemp(join(tmpdir(), 'zeus-release-cdn-check-'));
@@ -86,20 +86,32 @@ function isolatedDistribution() {
       const object = objects.get(key);
       if (!object) throw Object.assign(new Error('Object absent'), { stderr: 'Error Code: NoSuchKey.' });
       return JSON.stringify({
-        Header: { 'Content-Length': [String(object.bytes.length)], 'X-Oss-Meta-Sha256': [object.sha256], 'X-Oss-Meta-Source-Commit': [sourceCommit], 'X-Oss-Hash-Crc64ecma': [key === state.corruptKey ? '0' : remoteChecksum(object.bytes)] },
+        Header: {
+          'Content-Length': [String(object.bytes.length)],
+          'X-Oss-Meta-Sha256': [object.sha256],
+          'X-Oss-Meta-Source-Commit': [object.sourceCommit],
+          'X-Oss-Hash-Crc64ecma': [key === state.corruptKey ? '0' : remoteChecksum(object.bytes)],
+          'Cache-Control': [object.cacheControl],
+          'Content-Disposition': [object.contentDisposition],
+        },
       });
     }
     assert.equal(args[0], 'cp');
-    if (args[1].startsWith('oss://')) {
+    if (args[1].startsWith('oss://') && !args[2].startsWith('oss://')) {
       writeFileSync(args[2], objects.get(new URL(args[1]).pathname.slice(1)).bytes);
       return '';
     }
     const key = new URL(args[2]).pathname.slice(1);
     if (key === state.failKey) throw new Error('Isolated upload interrupted');
     if (objects.has(key) && args.includes('--ignore-existing')) return '';
-    const bytes = readFileSync(args[1]);
+    /** OSS 复制读取内存中的源对象，只有本地上传才访问文件系统。 */
+    const bytes = args[1].startsWith('oss://') ? objects.get(new URL(args[1]).pathname.slice(1)).bytes : readFileSync(args[1]);
+    /** 元数据取自实际命令参数，不能用固定候选值掩盖复制属性错误。 */
     const sha256 = args.find((value) => value.startsWith('sha256='))?.slice('sha256='.length);
-    objects.set(key, { bytes, sha256 });
+    const commit = args.find((value) => value.startsWith('source-commit='))?.slice('source-commit='.length);
+    const cacheControl = args[args.indexOf('--cache-control') + 1];
+    const contentDisposition = args.includes('--content-disposition') ? args[args.indexOf('--content-disposition') + 1] : '';
+    objects.set(key, { bytes, sha256, sourceCommit: commit, cacheControl, contentDisposition });
     writes.push(key);
     return '';
   }
@@ -109,7 +121,15 @@ function isolatedDistribution() {
     assert.equal(new URL(url).origin, new URL(releaseCdnBaseUrl).origin);
     const object = objects.get(decodeURIComponent(new URL(url).pathname.slice(1)));
     if (state.unavailable || !object) return new Response(null, { status: 404 });
-    return new Response(init.method === 'HEAD' ? null : object.bytes, { headers: { 'content-length': String(object.bytes.length), 'x-oss-meta-sha256': object.sha256 } });
+    return new Response(init.method === 'HEAD' ? null : object.bytes, {
+      headers: {
+        'content-length': String(object.bytes.length),
+        'x-oss-meta-sha256': object.sha256,
+        'x-oss-meta-source-commit': object.sourceCommit,
+        'cache-control': object.cacheControl,
+        'content-disposition': object.contentDisposition,
+      },
+    });
   }
 }
 
@@ -376,6 +396,36 @@ try {
   const activated = await publishReleaseCdn({ ...publication, activate: true }, distribution.execute, distribution.request);
   assert.deepEqual(activated.activated, ['darwin', 'win32']);
   await verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json', distribution.request, true);
+  /** 三个固定入口必须返回对应平台制品，并保留实际版本文件名。 */
+  for (const [platform, arch, key] of [
+    ['darwin', 'arm64', 'zeus/updates/Zeus-arm64.dmg'],
+    ['win32', 'x64', 'zeus/updates/Zeus-win32-x64.exe'],
+    ['win32', 'arm64', 'zeus/updates/Zeus-win32-arm64.exe'],
+  ]) {
+    const candidate = manifests[platform];
+    const installer = candidate.artifacts.find((entry) => entry.arch === arch);
+    const object = distribution.objects.get(key);
+    assert.equal(digest(object.bytes), installer.sha256);
+    assert.equal(object.contentDisposition, `attachment; filename="${installer.fileName}"`);
+    await verifyPublicCdnDownload(candidate, installer, distribution.request);
+  }
+  /** 同版重跑只修补缺失入口，完整的其他对象不能重复写入。 */
+  const repairKey = 'zeus/updates/Zeus-win32-arm64.exe';
+  distribution.objects.delete(repairKey);
+  const beforeRepair = distribution.writes.length;
+  await publishReleaseCdn({ ...publication, activate: true }, distribution.execute, distribution.request);
+  assert.equal(distribution.writes.length, beforeRepair + 1);
+  assert.equal(distribution.writes.at(-1), repairKey);
+  /** 错误的长期缓存策略需要修复，不能因字节和版本一致而跳过。 */
+  distribution.objects.get(repairKey).cacheControl = 'public,max-age=2592000,immutable,no-transform';
+  await publishReleaseCdn({ ...publication, activate: true }, distribution.execute, distribution.request);
+  assert.equal(distribution.writes.length, beforeRepair + 2);
+  assert.equal(distribution.writes.at(-1), repairKey);
+  await verifyPublicCdnDownload(
+    manifests.win32,
+    manifests.win32.artifacts.find((entry) => entry.arch === 'arm64'),
+    distribution.request,
+  );
   const writes = distribution.writes.length;
   await publishReleaseCdn(publication, distribution.execute, distribution.request);
   await publishReleaseCdn({ ...publication, activate: true }, distribution.execute, distribution.request);

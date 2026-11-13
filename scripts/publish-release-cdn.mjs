@@ -140,8 +140,13 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       for (const artifact of file.manifest.artifacts) {
         const installer = files.find((entry) => entry.fileName === artifact.fileName);
         const downloadKey = `zeus/updates/${stableReleaseArtifactFileName(version, artifact.fileName)}`;
-        copyObject(installer, downloadKey, false, objectUrl(installer.key));
-        assertStoredFile(installer, headObject(downloadKey));
+        /** 同版完整对象直接复用；缺失、旧版本或缓存属性不符时才重新复制。 */
+        let headers = headObject(downloadKey);
+        if (!storedFileMatches(installer, headers) || headers['cache-control'] !== releaseCdnStableCacheControl || headers['content-disposition'] !== `attachment; filename="${installer.fileName}"`) {
+          copyObject(installer, downloadKey, false, objectUrl(installer.key));
+          headers = headObject(downloadKey);
+        }
+        assertStoredFile(installer, headers);
       }
       /** CDN 仍返回旧缓存时等待其过期，全部入口可用后才推进更新清单。 */
       await Promise.all(file.manifest.artifacts.map((artifact) => verifyPublicCdnDownload(file.manifest, artifact, request)));
@@ -199,10 +204,16 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
     ]);
   }
 
-  /** SHA-256 候选元数据、字节数和服务端 CRC64 必须同时匹配，不信任分片 ETag。 */
+  /** 候选摘要、提交、字节数与服务端 CRC64 共同决定对象能否复用。 */
+  function storedFileMatches(file, headers) {
+    return Boolean(
+      headers && headers['x-oss-meta-sha256'] === file.sha256 && headers['x-oss-meta-source-commit'] === sourceCommit && String(headers['content-length']) === String(file.size) && headers['x-oss-hash-crc64ecma'] === file.crc64,
+    );
+  }
+
+  /** 已存在的不可变制品必须匹配固定候选，不能自动覆盖或忽略不一致。 */
   function assertStoredFile(file, headers) {
-    if (!headers || headers['x-oss-meta-sha256'] !== file.sha256 || headers['x-oss-meta-source-commit'] !== sourceCommit || String(headers['content-length']) !== String(file.size) || headers['x-oss-hash-crc64ecma'] !== file.crc64)
-      throw new Error(`OSS 已存制品与固定候选不一致：${file.key}`);
+    if (!storedFileMatches(file, headers)) throw new Error(`OSS 已存制品与固定候选不一致：${file.key}`);
   }
 
   /** 公开 HEAD 请求原始字节长度，避免 CDN 压缩导致大小误判；服务端完整性由 OSS 元数据及 CRC64 校验确认。 */
