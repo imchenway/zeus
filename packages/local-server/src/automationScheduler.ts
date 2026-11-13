@@ -49,6 +49,8 @@ export interface AutomationScheduler {
 }
 
 const interactionConversationStages = new Set(['waiting_user', 'waiting_approval', 'paused', 'archived']);
+/** 删除规则只取消尚未接纳的目标，已接纳工作仍按原引用结算。 */
+const deletedTargetReason = 'ZEUS_AUTOMATION_DELETED: 自动化已删除，未接纳的目标已取消。';
 
 export function createAutomationScheduler(options: AutomationSchedulerOptions): AutomationScheduler {
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -69,6 +71,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     const now = options.now();
     acceptDue(now);
     acceptEvents();
+    options.runs.cancelDeletedQueuedRuns();
     reconcileRunning();
     /** 未完成逐目标派发的原运行优先恢复，不能让排队运行越过它。 */
     for (const candidate of [...options.runs.listInFlight().filter((run) => run.status === 'dispatching'), ...options.runs.listDispatchable(8)]) await dispatch(candidate);
@@ -206,22 +209,52 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
 
   function markOutcomeUnknown(run: AutomationRunRecord, message: string): void {
     // 结果未知时暂停后续调度，避免旧操作仍在执行而新队列继续产生副作用。
-    options.tasks.setStatus(run.automationId, 'paused');
+    if (options.tasks.getById(run.automationId)) options.tasks.setStatus(run.automationId, 'paused');
     options.runs.setTerminal(run.id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN', message);
     options.publish('automation.run.terminal', { automationId: run.automationId, runId: run.id, projectId: run.projectId, status: 'outcome_unknown', unread: true });
   }
 
+  /** 删除后只核对原接纳账本，不再派发剩余目标，也不提前结束已接纳工作。 */
+  function reconcileDeletedDispatch(candidate: AutomationRunRecord): AutomationRunRecord {
+    const run = options.runs.ensureDispatchTargets(candidate.id);
+    for (const target of run.dispatchTargets) {
+      if (target.status === 'accepted' || target.status === 'skipped') continue;
+      try {
+        /** accepting 可能已接纳但尚未保存引用，先沿原来源身份补齐事实。 */
+        const accepted = target.status === 'accepting' ? options.runs.findAcceptedExecution(target) : null;
+        options.runs.updateDispatchTarget(run.id, { ...target, status: accepted ? 'accepted' : 'skipped', reference: accepted || null, reason: accepted ? null : deletedTargetReason });
+      } catch (error) {
+        /** 冲突回执保留未决目标，已知工作停止后才能结算结果未知。 */
+        options.runs.updateDispatchTarget(run.id, { ...target, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    /** 只有全部目标已核对，才能进入通常的执行结果对账。 */
+    const updated = options.runs.getById(run.id)!;
+    return updated.dispatchTargets.every((target) => target.status === 'accepted' || target.status === 'skipped') ? options.runs.completeDispatch(run.id) : updated;
+  }
+
   function reconcileRunning(): void {
-    for (const run of options.runs.listInFlight()) {
+    for (const candidate of options.runs.listInFlight()) {
+      /** 删除不撤销既有接纳事实；遗留派发也在每轮对账中收口。 */
+      const deletedDispatch = candidate.status === 'dispatching' && !options.tasks.getById(candidate.automationId);
+      const run = deletedDispatch ? reconcileDeletedDispatch(candidate) : candidate;
+      /** 持久化原因按错误码识别，文案调整不改变旧运行的取消语义。 */
+      const cancelledByDeletion = run.dispatchTargets.some((target) => target.status === 'skipped' && target.reason?.startsWith('ZEUS_AUTOMATION_DELETED:'));
+      /** 未决回执不能当作取消成功；仍有工作时继续等其真实结果。 */
+      if (deletedDispatch && run.status === 'dispatching' && run.executionReferences.length === 0) {
+        markOutcomeUnknown(run, run.dispatchTargets.find((target) => target.status === 'accepting')?.reason ?? '删除后的接纳结果尚不能核对。');
+        continue;
+      }
       if (run.status === 'running' && run.dispatchTargets.length > 0 && !run.dispatchCompletedAt) {
         options.runs.recordIncompleteReconciliation(run.id, '运行仍有目标没有明确接纳结果，不能结算整体成功。');
         continue;
       }
       if (run.status === 'running' && run.dispatchCompletedAt && run.executionReferences.length === 0) {
-        settle(run, 'blocked', 'ZEUS_AUTOMATION_NO_ELIGIBLE_TASK', '全部目标均无可领取任务，本次没有执行工作。');
+        if (cancelledByDeletion) settle(run, 'cancelled', 'ZEUS_AUTOMATION_DELETED', '自动化已删除，尚未接纳的工作已取消。');
+        else settle(run, 'blocked', 'ZEUS_AUTOMATION_NO_ELIGIBLE_TASK', '全部目标均无可领取任务，本次没有执行工作。');
         continue;
       }
-      if ((run.status === 'running' || run.status === 'awaiting_review') && run.executionReferences.length > 0) {
+      if ((run.status === 'running' || run.status === 'awaiting_review' || deletedDispatch) && run.executionReferences.length > 0) {
         const states = run.executionReferences.map((reference) => options.readExecution?.(reference));
         if (states.some((state) => !state)) {
           markOutcomeUnknown(run, '运行关联的工作或流程已不可用，请核对实际交付记录。');
@@ -232,12 +265,17 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           markOutcomeUnknown(run, '关联执行的结果未知，自动化不会重新派发。');
           continue;
         }
+        if (run.status === 'dispatching') {
+          markOutcomeUnknown(run, run.dispatchTargets.find((target) => target.status === 'accepting')?.reason ?? '删除后的接纳结果尚不能核对。');
+          continue;
+        }
         /** 多目标运行保留真实失败，其他目标的用户取消不能掩盖失败原因。 */
         const failed = states.find((state) => state?.status === 'failed');
         /** 全部执行均已停止后，准确保留用户取消结果，同时释放下一次独立触发。 */
         const cancelled = states.find((state) => state?.status === 'cancelled');
         if (failed) settle(run, 'failed', failed.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_FAILED', failed.errorMessage ?? '关联工作或流程未完成。');
         else if (cancelled) settle(run, 'cancelled', cancelled.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_CANCELLED', cancelled.errorMessage ?? '关联工作或流程已取消。');
+        else if (cancelledByDeletion) settle(run, 'cancelled', 'ZEUS_AUTOMATION_DELETED', '自动化已删除，部分未接纳的目标已取消。');
         else if (states.some((state) => state?.status === 'awaiting_review')) {
           /** 全部工作停止执行后，独立员工工作可排下一轮；项目流程继续等待验收。 */
           const updated = options.runs.markAwaitingReview(run.id);

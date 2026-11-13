@@ -1,8 +1,39 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 /** CI 与 Release 正文使用的官方分发目录，与客户端可信来源保持一致。 */
 export const releaseCdnBaseUrl = 'https://zeus-download.hyphatech.cn/zeus';
+
+/** 可变下载入口与更新清单最多缓存一分钟，版本目录继续使用长期缓存。 */
+export const releaseCdnStableCacheControl = 'public,max-age=60,must-revalidate,no-transform';
+
+/** 固定下载名仅接受正式支持的平台与架构，不能构造任意 OSS 对象路径。 */
+export function stableReleaseArtifactFileName(version, fileName) {
+  const prefix = `Zeus-${requiredVersion(version)}-`;
+  const suffix = fileName.slice(prefix.length);
+  if (!fileName.startsWith(prefix) || !['arm64.dmg', 'win32-x64.exe', 'win32-arm64.exe'].includes(suffix)) throw new Error(`固定下载入口的安装包名称无效：${fileName}`);
+  return `Zeus-${suffix}`;
+}
+
+/** 公开固定入口必须提供当前候选；只为一分钟内的旧缓存保留有界等待。 */
+export async function verifyPublicCdnDownload(manifest, artifact, request = fetch) {
+  const fileName = stableReleaseArtifactFileName(manifest.version, artifact.fileName);
+  for (let attempt = 0; attempt <= 12; attempt += 1) {
+    const response = await request(`${releaseCdnBaseUrl}/updates/${fileName}`, { method: 'HEAD', headers: { 'Accept-Encoding': 'identity' }, redirect: 'error', signal: AbortSignal.timeout(15_000) });
+    if (
+      response.ok &&
+      response.headers.get('x-oss-meta-sha256') === artifact.sha256 &&
+      response.headers.get('x-oss-meta-source-commit') === manifest.sourceCommit &&
+      response.headers.get('content-length') === String(artifact.sizeBytes) &&
+      response.headers.get('cache-control') === releaseCdnStableCacheControl &&
+      response.headers.get('content-disposition') === `attachment; filename="${artifact.fileName}"`
+    )
+      return;
+    if (attempt === 12 || (!response.ok && response.status !== 404)) throw new Error(`CDN 固定下载入口与当前候选不一致：${fileName}，HTTP ${response.status}`);
+    await delay(5_000);
+  }
+}
 
 /** CDN 清单保留候选身份、摘要、签名和平台，只替换安装包的传输地址。 */
 export function cdnReleaseManifest(manifest) {

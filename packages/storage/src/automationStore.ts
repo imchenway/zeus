@@ -1124,6 +1124,15 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running', 'awaiting_review') ORDER BY accepted_at, id`).map(mapRun);
   }
 
+  /** 删除规则后的未派发队列按取消收口，也覆盖删除前遗留的记录。 */
+  cancelDeletedQueuedRuns(): void {
+    this.db.transaction(() => {
+      for (const run of this.db.select<{ id: string }>("SELECT id FROM automation_runs WHERE status = 'queued' AND automation_id IN (SELECT id FROM automation_tasks WHERE deleted_at IS NOT NULL)")) {
+        this.setTerminal(run.id, 'cancelled', 'ZEUS_AUTOMATION_DELETED', '自动化已删除，本次尚未开始的运行已取消。');
+      }
+    });
+  }
+
   findAcceptedSubmission(run: AutomationRunRecord): { conversationId: string; submissionId: string } | undefined {
     return this.db.get<{ conversationId: string; submissionId: string }>(
       `SELECT s.conversation_id AS conversationId, s.id AS submissionId FROM conversation_submissions s
@@ -1307,7 +1316,9 @@ export class AutomationRunRepository {
       const run = this.getById(id);
       if (!run) throw new Error('ZEUS_AUTOMATION_RUN_NOT_FOUND: 自动化运行不存在。');
       if (run.status !== 'dispatching') return run;
-      new AutomationTaskRepository(this.db).setStatus(run.automationId, 'paused');
+      /** 接纳异常可能晚于删除返回，只暂停仍存在的规则。 */
+      const tasks = new AutomationTaskRepository(this.db);
+      if (tasks.getById(run.automationId)) tasks.setStatus(run.automationId, 'paused');
       this.db.execute('UPDATE automation_runs SET unread = 1, error_code = ?, error_message = ?, updated_at = ? WHERE id = ?', [errorCode, errorMessage, nowIso(), id]);
       return this.getById(id)!;
     });
@@ -1360,7 +1371,9 @@ export class AutomationRunRepository {
       JSON.stringify({ previousStatus: run.status, checkedAt: nowIso(), reason, completedAt: run.completedAt }),
       id,
     ]);
-    new AutomationTaskRepository(this.db).setStatus(run.automationId, 'paused');
+    /** 历史运行仍须记录未知结果，规则删除不能中断核对。 */
+    const tasks = new AutomationTaskRepository(this.db);
+    if (tasks.getById(run.automationId)) tasks.setStatus(run.automationId, 'paused');
     return this.setTerminal(id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_INCOMPLETE', reason);
   }
 
