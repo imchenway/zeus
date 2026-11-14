@@ -1638,7 +1638,24 @@ export class ConversationRepository {
     return restored;
   }
 
-  /** 仅首发自动命名入口可以启用初始标题，手动或已完成命名不会被重新启用。 */
+  /** 按主键向后恢复自动创建任务的未完成命名，每页最多 25 条，不重复扫描页首。 */
+  listPendingAutomaticTitleIds(afterId: string): string[] {
+    return this.db
+      .select<{ id: string }>(
+        `SELECT conversation.id FROM conversations AS conversation
+       JOIN tasks AS task ON task.id = conversation.task_id AND task.project_id = conversation.project_id
+       WHERE conversation.id > ? AND conversation.title_source IN ('initial', 'pending')
+         AND conversation.archived = 0 AND conversation.origin_kind = 'ordinary' AND conversation.listing_scope = 'ordinary'
+         AND task.created_from = 'conversation' AND task.archived = 0 AND task.deleted_at IS NULL
+         AND CASE WHEN json_valid(task.source_context_json) THEN json_extract(task.source_context_json, '$.conversationId') END = conversation.id
+         AND EXISTS (SELECT 1 FROM conversation_submissions WHERE conversation_id = conversation.id)
+       ORDER BY conversation.id LIMIT 25`,
+        [afterId],
+      )
+      .map((row) => row.id);
+  }
+
+  /** 首发及启动恢复可以启用初始标题，手动或已完成命名不会被重新启用。 */
   enableAutomaticTitle(conversationId: string): void {
     this.db.execute(`UPDATE conversations SET title_source = 'pending' WHERE id = ? AND title_source = 'initial'`, [conversationId]);
   }

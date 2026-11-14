@@ -2996,6 +2996,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!expertRoute) return;
     const mappedType = expertRoute.type;
     payload = expertRoute.payload;
+    /** 主会话的完整正文或可读摘要已保存即可命名，不等待长任务整轮结束。 */
+    if (
+      mappedType === 'conversation.item.completed' &&
+      payload.status === 'completed' &&
+      !payload.internalOperation &&
+      !payload.sourceConversationId &&
+      (payload.itemType === 'agentMessage' || payload.itemType === 'reasoning') &&
+      typeof payload.textContent === 'string' &&
+      payload.textContent.trim() &&
+      typeof payload.conversationId === 'string' &&
+      typeof payload.turnId === 'string'
+    ) {
+      conversationTitles?.schedule(payload.conversationId, payload.turnId);
+    }
     if (mappedType === 'conversation.turn.completed' && payload.status === 'completed' && !payload.internalOperation && typeof payload.conversationId === 'string') conversationTitles?.schedule(payload.conversationId);
     /** 异步问题完成后刷新项目待回复提示，普通条目和文本增量不增加聚合查询。 */
     const asyncQuestionCompleted = mappedType === 'conversation.item.completed' && payload.itemPayload !== null && typeof payload.itemPayload === 'object' && asyncMessageQuestions(payload.itemPayload as Record<string, unknown>).length > 0;
@@ -3363,7 +3377,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     modelConnections,
     codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
     publish: (type, payload) => (type.startsWith('conversation.') ? publishNativeConversationEvent(type, payload) : publishRealtimeEvent(type, payload)),
-    onFailure: (conversationId) => server.log.warn({ conversationId }, '会话自动命名未完成，保留原名称'),
+    onFailure: (conversationId) => server.log.warn({ conversationId }, '会话自动命名请求未完成，将重试或使用本地短标题'),
   });
   server.addHook('onClose', () => conversationTitles?.close());
 
@@ -4197,6 +4211,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   if (!readOnlyValidation && executionHostDispatchMayResume) {
+    conversationTitles.recover();
     startupRecovery = recoverStartupProviders().catch(async (error: unknown) => {
       if (startupRecoveryStopping) return;
       // 远端恢复失败只阻止调度，主页和已有本地记录仍可读取。
