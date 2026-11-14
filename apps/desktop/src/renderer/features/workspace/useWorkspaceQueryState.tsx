@@ -273,6 +273,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [nativeConversationStatusSyncState, setNativeConversationStatusSyncState] = useState<ZeusRealtimeConnectionState | 'syncing' | 'stale'>(() => (props.onSubscribeRealtimeEvents ? 'connecting' : 'connected'));
   const [initialNativeConversationHotCache] = useState<SessionHotCache>(initialSessionHotCache);
   const nativeConversationHotCacheRef = useRef<SessionHotCache>(initialNativeConversationHotCache);
+  /** 仅保留最近一次持久接纳的首发显示，完整快照到达后释放。 */
+  const [nativeConversationStartState, setNativeConversationStartState] = useState<NativeSessionState | null>(null);
   const sessionViewCachePersistTimerRef = useRef<number | null>(null);
   const [projectSidebarViewportWidth, setProjectSidebarViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
   const [projectSidebarPreferredWidth, setProjectSidebarPreferredWidth] = useState(() => readProjectSidebarPreferredWidth(browserProjectSidebarWidthStorage()));
@@ -1258,6 +1260,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
       if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
       const remembered = refreshSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
+      if (state.snapshot) setNativeConversationStartState((current) => (current?.conversationId === conversationId ? null : current));
       // 只有本次进程已经完成权威水合，才把显示缓存推进到磁盘；旧缓存刷新失败不能续期。
       if (remembered && state.transportState === 'ready') {
         dirtySessionViewCacheRef.current.add(conversationId);
@@ -1543,6 +1546,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     nativeConversationChoicesByTaskRef,
     nativeConversationGroups,
     nativeConversationHotCacheRef,
+    nativeConversationStartState,
+    setNativeConversationStartState,
     nativeConversationRuntimeStates,
     nativeConversationStartEnvelopeManager,
     nativeConversationStatusSyncState,

@@ -238,7 +238,19 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   let scheduledPersistDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPersistDirty = false;
   let persistenceChain = Promise.resolve();
-  const modelRequestTiming = createCodexModelRequestTimingTracker();
+  const modelRequestTiming = createCodexModelRequestTimingTracker((conversationId, turnId, timestamp) => {
+    if (!options.recordDispatchPerformance) return;
+    const turn = options.turns.getById(turnId);
+    if (!turn?.clientSubmissionId) return;
+    options.recordDispatchPerformance({
+      conversationId,
+      submissionId: turn.clientSubmissionId,
+      phase: 'first_text',
+      startedAt: turn.createdAt,
+      completedAt: timestamp,
+      durationMs: Date.parse(timestamp) - Date.parse(turn.createdAt),
+    });
+  });
   const providerEvents = createCodexProviderEventFlow({
     manager: options.manager,
     flowControl: options.eventFlow,

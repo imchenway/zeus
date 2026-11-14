@@ -2747,6 +2747,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       selectedAgentKind === 'pi' || selectedAgentKind === 'copilot'
         ? await sdkCoordinator(selectedAgentKind).startConversation({
             conversationId: reservation.conversationId,
+            // 首发先持久接纳，沿用队列入口在回执之后准备运行时。
+            holdDispatch: true,
             contextCapacityTokens: reservation.contextCapacityTokens,
             submissionId: reservation.submissionId,
             projectId: project.id,
@@ -2780,6 +2782,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           })
         : await codexNativeCoordinator.startProjectConversation({
             conversationId: reservation.conversationId,
+            deferInitialDispatch: true,
             contextCapacityTokens: reservation.contextCapacityTokens,
             submissionId: reservation.submissionId,
             projectId: project.id,
@@ -2822,7 +2825,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     ) {
       throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Project conversation acceptance did not persist the exact reserved resources.');
     }
-    return toNativeDurableAcceptance(stableOperationId, idempotencyKey, conversation, submission);
+    const acceptance = toNativeDurableAcceptance(stableOperationId, idempotencyKey, conversation, submission);
+    // 下一轮事件循环才派发，让创建回执先完成当前命令的持久提交。
+    setImmediate(() => void dispatchUnifiedConversationQueueHead?.(conversation.id).catch(() => undefined));
+    return acceptance;
   }
 
   function recoverProjectConversationAcceptance(project: ZeusProjectRecord, idempotencyKey: string, expected: ProjectConversationAcceptanceReservation, persistedResourceId: string | null) {
@@ -3093,7 +3099,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
         ...((plan.skills ?? (plan.skill ? [plan.skill] : undefined)) ? { skills: plan.skills ?? [plan.skill!] } : {}),
         ...(plan.computerUseRequested ? { computerUseRequested: true } : {}),
-        ...(plan.holdDispatch ? { holdDispatch: true } : {}),
+        ...(plan.holdDispatch || plan.deferInitialDispatch ? { holdDispatch: true } : {}),
         ...(plan.operationContext ? { operationContext: plan.operationContext } : {}),
         ...(plan.internalOperation ? { internalOperation: true } : {}),
         permissionMode: plan.permissionMode,
@@ -3105,7 +3111,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         providerWriteLifecycle: plan.providerWriteLifecycle,
         segmentLifecycle,
       });
-      if (plan.deferInitialDispatch) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
+      if (plan.deferInitialDispatch) setImmediate(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
       return operation;
     }
     const operation = await codexNativeCoordinator.startTaskConversation({
@@ -3153,7 +3159,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ...(plan.goalObjective ? { goalObjective: plan.goalObjective } : {}),
       segmentLifecycle,
     });
-    if (plan.deferInitialDispatch) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
+    if (plan.deferInitialDispatch) setImmediate(() => void dispatchUnifiedConversationQueueHead?.(plan.conversationId).catch(() => undefined));
     return operation;
   }
 
@@ -3946,6 +3952,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(inheritedBinding?.environmentId ? { environmentId: inheritedBinding.environmentId } : {}),
           ...(inheritedBinding?.workspaceId ? { workspaceId: inheritedBinding.workspaceId } : {}),
           executionWorkspaceMode: realpathSync(executionCwd) === realpathSync(project.localPath) ? 'direct' : 'worktree',
+          deferInitialDispatch: true,
           writableRoots: inheritedBinding?.writableRoots ?? [project.localPath],
           allowCodeChanges: task.allowCodeChanges,
           allowTests: task.allowTests,

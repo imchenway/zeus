@@ -2112,6 +2112,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
   try {
     codexNativeCoordinator = createCodexNativeConversationCoordinator({
+      recordDispatchPerformance: (sample) => apiPerformance.recordConversationDispatch(sample),
       manager: codexAppServerManager,
       enabled: codexNativeEnabled,
       commandPath: currentCodexRuntimeCommandPath,
@@ -4050,7 +4051,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     try {
       await stopStartupProviders();
     } finally {
-      await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
+      try {
+        await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
+      } finally {
+        zeusPluginService?.close();
+      }
     }
   };
   taskWorkTools = platformRoutes.workTools;

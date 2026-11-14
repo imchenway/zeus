@@ -10,7 +10,8 @@ export interface CodexModelRequestTimingTracker {
   clear(conversationId: string, turnId: string): void;
 }
 
-export function createCodexModelRequestTimingTracker(): CodexModelRequestTimingTracker {
+/** 首段正文到达时可同步记录诊断，已有持久用量口径保持独立。 */
+export function createCodexModelRequestTimingTracker(onFirstText?: (conversationId: string, turnId: string, timestamp: string) => void): CodexModelRequestTimingTracker {
   const timings = new Map<string, CodexModelRequestTimingSnapshot>();
   const keyOf = (conversationId: string, turnId: string) => `${conversationId}\0${turnId}`;
   const empty = (): CodexModelRequestTimingSnapshot => ({ firstVisibleOutputAt: null, firstTextOutputAt: null, hasNonTextOutput: false });
@@ -19,7 +20,10 @@ export function createCodexModelRequestTimingTracker(): CodexModelRequestTimingT
       const key = keyOf(conversationId, turnId);
       const current = timings.get(key) ?? empty();
       if (kind !== 'non_text' && current.firstVisibleOutputAt === null) current.firstVisibleOutputAt = timestamp;
-      if (kind === 'visible_text' && current.firstTextOutputAt === null) current.firstTextOutputAt = timestamp;
+      if (kind === 'visible_text' && current.firstTextOutputAt === null) {
+        current.firstTextOutputAt = timestamp;
+        onFirstText?.(conversationId, turnId, timestamp);
+      }
       if (kind === 'non_text') current.hasNonTextOutput = true;
       timings.set(key, current);
     },

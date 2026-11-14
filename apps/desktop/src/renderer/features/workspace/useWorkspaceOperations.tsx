@@ -128,6 +128,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     selectedProject,
     selectedTaskModelPushOperation,
     selectedTaskModelPushOptimisticState,
+    nativeConversationStartState,
     sessionWorkspaceCopy,
     setActionState,
     setActiveNavTarget,
@@ -1850,7 +1851,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           terminalClient={sessionTerminalClient}
           choices={nativeSessionChoices}
           initialCachedState={nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state}
-          initialOptimisticState={selectedTaskModelPushOptimisticState}
+          initialOptimisticState={selectedTaskModelPushOptimisticState ?? (nativeConversationStartState?.conversationId === selectedNativeConversation.id ? nativeConversationStartState : undefined)}
           initialCapabilities={selectedTaskModelPushOperation?.capabilities}
           stableConversationId={selectedTaskModelPushOperation?.navigationId}
           creationStatus={
