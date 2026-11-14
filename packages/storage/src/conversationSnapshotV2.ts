@@ -32,6 +32,7 @@ import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from '.
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 import { ConversationTranscriptRepository, providerFacet } from './conversationTranscriptStore.js';
 import { createHash } from 'node:crypto';
+import { inputSuggestionUserTurnSql } from './inputSuggestionStore.js';
 import { ConversationSystemMessageRepository } from './conversationSystemMessageStore.js';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1099,6 +1100,19 @@ export class ConversationSnapshotV2Repository {
     /** 所有正文及内容句柄仍绑定调用方指定的同一会话。 */
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
     return this.latestTurnsByStatus(conversationId, ['completed', 'interrupted', 'failed'], 3).map((turn) => this.toTurnSummary(conversationId, turn));
+  }
+
+  /** 自动预测只把真实用户轮次视为新回复，内部压缩不替换完成锚点。 */
+  readInputSuggestionSnapshot(conversationIdValue: string): ConversationSnapshotV2 {
+    const snapshot = this.readSnapshot(conversationIdValue, { closedTurnLimit: 1, includeSessionMetrics: false });
+    const turn = this.db.get<TurnRow>(
+      `${turnSummarySelectSql()} FROM conversation_turns
+      WHERE conversation_id=? AND status IN ('completed','interrupted','failed') AND ${inputSuggestionUserTurnSql}
+      ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [snapshot.conversation.id],
+    );
+    const activeTurn = snapshot.activeTurn;
+    return { ...snapshot, activeTurn: activeTurn && (activeTurn.submissionId || activeTurn.openingUserMessage) ? activeTurn : null, recentClosedTurns: turn ? [this.toTurnSummary(snapshot.conversation.id, turn)] : [] };
   }
 
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {

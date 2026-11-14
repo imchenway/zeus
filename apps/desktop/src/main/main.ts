@@ -1,5 +1,6 @@
 import { listProjectSourceWorktrees } from './projectSourceWorktrees.js';
 import { registerFilePreview } from './filePreview.js';
+import { startInputSuggestionNetworkBridge } from './inputSuggestionNetworkBridge.js';
 import { getApplicationIcon } from './applicationIcon.js';
 import {
   canonicalCommandInputJson,
@@ -4241,6 +4242,10 @@ async function initializeApplication(): Promise<void> {
     traceApplicationStartup('local_server_ready');
     // 读取宿主实际生效值；后台宿主仍在工作时，保存的新设置留待完整退出后统一启用。
     await initializeNetworkProxy(localServerRuntime.config);
+    if (!readOnlyValidationDescriptor) {
+      const stopSuggestionNetworkBridge = startInputSuggestionNetworkBridge(() => localServerRuntime?.config);
+      app.once('will-quit', stopSuggestionNetworkBridge);
+    }
     // 代理已生效后才启用外部浏览器；失败留给该功能自己的调用者。
     externalBrowserReady = browserHost.initializeExternalBrowsers();
     void externalBrowserReady.catch((error) => console.warn('外部浏览器初始化失败。', error));

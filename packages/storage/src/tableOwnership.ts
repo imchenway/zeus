@@ -149,6 +149,7 @@ const ownershipGroups = [
       'conversation_worktree_recovery',
       'conversation_submissions',
       'conversation_turns',
+      'input_suggestion_jobs',
       'conversation_goals',
       'conversation_goal_events',
       'conversation_plan_actions',

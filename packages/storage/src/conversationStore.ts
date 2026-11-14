@@ -5,6 +5,7 @@ import type { SQLInputValue } from 'node:sqlite';
 import { randomId } from './randomId.js';
 import { type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type TokenUsageBreakdown } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { captureCompletedInputSuggestion } from './inputSuggestionStore.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 import { pruneArchivedConversationSyncEvents } from './conversationSyncEventStore.js';
@@ -1977,6 +1978,7 @@ export class ConversationTurnRepository {
     );
   }
 
+  /** 轮次完成与自动建议待办同事务保存，完成事件丢失后仍可恢复生成。 */
   upsert(
     input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson' | 'agentKind' | 'nativeRunId'> & {
       id?: string;
@@ -1985,42 +1987,46 @@ export class ConversationTurnRepository {
       nativeRunId?: string | null;
     },
   ): ZeusConversationTurnRecord {
-    const status = assertEnum(input.status, ['queued', 'dispatching', 'running', 'waiting', 'paused', 'completed', 'interrupted', 'failed'] as const, 'conversation turn status');
-    const existing = input.providerTurnId ? this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE provider_thread_id = ? AND provider_turn_id = ?`, [input.providerThreadId, input.providerTurnId]) : undefined;
-    if (existing?.status === 'completed') {
-      if (!existing.client_submission_id && input.clientSubmissionId) {
-        this.db.execute(`UPDATE conversation_turns SET client_submission_id = ?, updated_at = ? WHERE id = ?`, [input.clientSubmissionId, input.updatedAt, existing.id]);
-        return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [existing.id])!);
+    return this.db.transaction(() => {
+      const status = assertEnum(input.status, ['queued', 'dispatching', 'running', 'waiting', 'paused', 'completed', 'interrupted', 'failed'] as const, 'conversation turn status');
+      const existing = input.providerTurnId ? this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE provider_thread_id = ? AND provider_turn_id = ?`, [input.providerThreadId, input.providerTurnId]) : undefined;
+      if (existing?.status === 'completed') {
+        if (!existing.client_submission_id && input.clientSubmissionId) {
+          this.db.execute(`UPDATE conversation_turns SET client_submission_id = ?, updated_at = ? WHERE id = ?`, [input.clientSubmissionId, input.updatedAt, existing.id]);
+          captureCompletedInputSuggestion(this.db, existing.id, input.updatedAt);
+          return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [existing.id])!);
+        }
+        return mapConversationTurnRow(existing);
       }
-      return mapConversationTurnRow(existing);
-    }
-    const id = existing?.id ?? input.id ?? `conversation_turn_${randomId(12)}`;
-    const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
-    this.db.execute(
-      `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
+      const id = existing?.id ?? input.id ?? `conversation_turn_${randomId(12)}`;
+      const errorJson = input.error === undefined ? null : JSON.stringify(input.error);
+      this.db.execute(
+        `INSERT INTO conversation_turns (id, conversation_id, provider_thread_id, provider_turn_id, client_submission_id, status, error_json, started_at, completed_at, created_at, updated_at, agent_kind, native_run_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET provider_thread_id = excluded.provider_thread_id, provider_turn_id = excluded.provider_turn_id,
        client_submission_id = COALESCE(excluded.client_submission_id, conversation_turns.client_submission_id),
        status = excluded.status, error_json = excluded.error_json, started_at = COALESCE(excluded.started_at, conversation_turns.started_at),
        completed_at = excluded.completed_at, updated_at = excluded.updated_at, agent_kind = excluded.agent_kind, native_run_id = COALESCE(excluded.native_run_id, conversation_turns.native_run_id)`,
-      [
-        id,
-        input.conversationId,
-        input.providerThreadId,
-        input.providerTurnId,
-        input.clientSubmissionId,
-        status,
-        errorJson,
-        input.startedAt,
-        input.completedAt,
-        input.createdAt,
-        input.updatedAt,
-        input.agentKind ?? 'codex',
-        input.nativeRunId ?? input.providerTurnId,
-      ],
-    );
-    syncConversationStage(this.db, input.conversationId, input.updatedAt);
-    return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
+        [
+          id,
+          input.conversationId,
+          input.providerThreadId,
+          input.providerTurnId,
+          input.clientSubmissionId,
+          status,
+          errorJson,
+          input.startedAt,
+          input.completedAt,
+          input.createdAt,
+          input.updatedAt,
+          input.agentKind ?? 'codex',
+          input.nativeRunId ?? input.providerTurnId,
+        ],
+      );
+      if (status === 'completed') captureCompletedInputSuggestion(this.db, id, input.updatedAt);
+      syncConversationStage(this.db, input.conversationId, input.updatedAt);
+      return mapConversationTurnRow(this.db.get<DbConversationTurnRow>(`SELECT * FROM conversation_turns WHERE id = ?`, [id])!);
+    });
   }
 
   getById(id: string): ZeusConversationTurnRecord | undefined {

@@ -239,15 +239,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     draft: editorValue,
     // 待处理问题由后台读取权威状态；这里仅报告即时输入限制，避免落后的会话投影漏掉完成事件。
     automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
-    automaticGenerationEligible:
-      inputWritable &&
-      !goalInputActive &&
-      !goalOperationBusy &&
-      !inputResources.processing &&
-      props.state.attachments.length === 0 &&
-      !props.state.browserSubmission &&
-      props.state.contextDraft.responseAnnotations.length === 0 &&
-      props.state.contextDraft.codeComments.length === 0,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     eligible: inputWritable && !busy && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,

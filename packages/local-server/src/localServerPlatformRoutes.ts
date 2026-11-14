@@ -13,7 +13,7 @@ import { resolveConversationGitRepository, resolveConversationGitWorkspace } fro
 import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
-import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
+import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, InputSuggestionJobRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
 import { WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
@@ -1498,9 +1498,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 正式运行持久保存诊断；只读验收不向正式目录写入文件。 */
   const inputSuggestionDiagnostics = readOnlyValidation ? undefined : createInputSuggestionDiagnosticLog({ directory: dataLayout.localLogs, source: 'core', appVersion: executionHostAppVersion, instanceId: executionHostInstanceId });
   /** 建议拥有自己的取消范围，设置修改不会中断主会话。 */
-  const cancelInputSuggestions = registerInputSuggestionRoutes({
+  const inputSuggestionService = registerInputSuggestionRoutes({
     server,
     repository: conversationSnapshotV2,
+    jobs: readOnlyValidation ? undefined : new InputSuggestionJobRepository(db),
+    subscribeEvents: subscribeRealtimeEvents,
+    publish: publishRealtimeEvent,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
     conversationModelRef: (conversationId) => {
@@ -1517,8 +1520,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (parseModelRef(selected)) return selected;
       return sourceId ? modelRef(sourceId, selected) : null;
     },
-    codexManager: codexAppServerManager,
-    nativeConversation: (conversationId) => conversations.getRecordById(conversationId),
     /** 只读取本会话队列，提交尚未建轮次时也不能使用上一轮回复。 */
     hasPendingSubmission: (conversationId) => conversationSubmissions.listQueueProjectionByConversation(conversationId).some((submission: ZeusConversationSubmissionRecord) => ['queued', 'dispatching', 'active'].includes(submission.status)),
     readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
@@ -4549,7 +4550,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     zentaoCredentials,
     projects,
     secretStore,
-    refreshModelRuntime: () => piNativeCoordinator.refreshModelRuntime(),
+    refreshModelRuntime: async () => {
+      try {
+        await piNativeCoordinator.refreshModelRuntime();
+      } finally {
+        inputSuggestionService.availabilityChanged();
+      }
+    },
     readSecuritySecrets: async () => ({
       telegramBotToken: getSecretPresenceLabel(await readTelegramToken()),
       externalApiKey: getSecretPresenceLabel(await secretStore.getSecret('external.apiKey')),
@@ -4710,9 +4717,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef ||
         previousSettings.inputSuggestions?.followConversationModel !== mutation.result.inputSuggestions?.followConversationModel ||
         previousSettings.inputSuggestions?.effort !== mutation.result.inputSuggestions?.effort ||
+        Boolean(previousSettings.inputSuggestions?.followConversationModel) !== Boolean(mutation.result.inputSuggestions?.followConversationModel) ||
         previousSettings.inputSuggestions?.serviceTier !== mutation.result.inputSuggestions?.serviceTier
       )
-        cancelInputSuggestions();
+        inputSuggestionService.settingsChanged();
       return platformMutableState.appShellSettings;
     } catch (error) {
       const mapped = settingsCommandHttpError(error, redactSensitiveText);
@@ -4831,8 +4839,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         },
       });
       if (mutation.result.planned.appShell) {
-        cancelInputSuggestions();
         platformMutableState.appShellSettings = mutation.result.planned.appShell;
+        inputSuggestionService.settingsChanged();
       }
       if (mutation.result.planned.runtime) platformMutableState.runtimeSettings = mutation.result.planned.runtime;
       if (mutation.result.planned.telegramNotification) platformMutableState.telegramNotificationSettings = mutation.result.planned.telegramNotification;

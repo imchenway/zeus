@@ -4155,20 +4155,6 @@ function conversationDraftStorageKey(projectId: string, conversationId: string):
   return `zeus.native-session-draft:${projectId}:${conversationId}`;
 }
 
-/** 未打开会话同样检查附件和待发送上下文，未发送文字不阻止建议生成。 */
-export function conversationDraftAllowsInputSuggestion(projectId: string, conversationId: string): boolean {
-  /** 无法读取草稿时不猜测为空，避免覆盖用户已有输入的意图。 */
-  const storage = browserStorage();
-  if (!storage) return false;
-  /** 后台自动生成不能把读取失败后的空草稿当作真实用户输入。 */
-  let readFailed = false;
-  /** 复用正式草稿读取与归一化逻辑，不复制存储格式。 */
-  const draft = readPersistedDraft(storage, conversationDraftStorageKey(projectId, conversationId), () => {
-    readFailed = true;
-  });
-  return !readFailed && draft.attachments.length === 0 && !draft.browserSubmission && !hasConversationContext(draft.contextDraft ?? emptyConversationContextDraft);
-}
-
 function browserStorage(): SessionDraftStorage | undefined {
   try {
     return typeof window === 'undefined' ? undefined : window.localStorage;

@@ -220,6 +220,9 @@ export type NativeConversationAppClient = import('../../git/GitDeliveryRunContro
   Pick<
     DashboardClient,
     | 'loadHomeAttention'
+    | 'loadAutomaticInputSuggestion'
+    | 'ensureAutomaticInputSuggestion'
+    | 'dismissAutomaticInputSuggestion'
     | 'loadHomeRuntime'
     | 'loadConversationGitHistory'
     | 'loadProjectGitComparisonDiff'
