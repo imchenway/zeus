@@ -1,6 +1,11 @@
 import { basename, extname, isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
+
+/** 原生文件引用解析使用独立参数传递路径，不经过 shell。 */
+const execFile = promisify(execFileCallback);
 
 export type TaskClipboardAttachmentPayload = { name: string; type: string; data: ArrayBuffer };
 
@@ -97,11 +102,36 @@ export function buildTaskAttachmentPreviewDataUrl(data: Uint8Array, mimeType: st
   return `data:${normalizedMimeType};base64,${Buffer.from(data).toString('base64')}`;
 }
 
+/** macOS 文件 ID 引用交给 Foundation 转成路径，普通路径不启动外部进程。 */
+export async function resolveTaskClipboardFilePath(filePath: string): Promise<string> {
+  if (process.platform !== 'darwin' || !filePath.startsWith('/.file/id=')) return filePath;
+  try {
+    /** JSON 保留文件名中的空格、换行和非 ASCII 字符。 */
+    const { stdout } = await execFile('/usr/bin/osascript', [
+      '-l', 'JavaScript', '-e',
+      `function run(argv) {
+  ObjC.import('Foundation');
+  // 文件引用 URL 必须先转换为路径 URL，不能直接提取原引用的 path。
+  const url = $.NSURL.URLWithString(argv[0]).filePathURL;
+  return JSON.stringify(url.isNil() ? null : ObjC.unwrap(url.path));
+}`, pathToFileURL(filePath).href,
+    ], { timeout: 1000, maxBuffer: 64 * 1024 });
+    /** 后续文件读取仍负责存在性、类型及授权边界校验。 */
+    const resolvedPath: unknown = JSON.parse(stdout);
+    if (typeof resolvedPath === 'string' && isAbsolute(resolvedPath) && !resolvedPath.includes('\0')) return resolvedPath;
+  } catch {
+    // 保留原引用，由原有文件读取错误和同次图片回退处理不可用来源。
+  }
+  return filePath;
+}
+
+/** 文件引用先解析真实路径，再读取原内容并生成附件名称和类型。 */
 export async function readTaskAttachmentFilePathPayloads(filePaths: string[], readBinaryFile: (filePath: string) => Promise<Uint8Array> = readFile): Promise<TaskClipboardAttachmentPayload[]> {
   const attachments: TaskClipboardAttachmentPayload[] = [];
   const seenFilePaths = new Set<string>();
   for (const filePath of filePaths) {
-    const normalizedPath = filePath.trim();
+    /** 文件 ID 与普通路径解析后使用相同身份去重。 */
+    const normalizedPath = await resolveTaskClipboardFilePath(filePath.trim());
     if (!normalizedPath || seenFilePaths.has(normalizedPath)) continue;
     seenFilePaths.add(normalizedPath);
     try {

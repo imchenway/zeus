@@ -64,6 +64,7 @@ import {
   isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
   readTaskClipboardFileReferencesFromClipboard,
+  resolveTaskClipboardFilePath,
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
@@ -3873,7 +3874,8 @@ async function saveTaskResourcePaths(paths: string[], commandId: string): Promis
   for (const [index, path] of paths.slice(0, maximumTaskResourceCount).entries()) {
     if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) continue;
     try {
-      const canonicalPath = await realpath(path);
+      /** 任务与会话共用 macOS 文件引用解析，随后继续真实路径校验。 */
+      const canonicalPath = await realpath(await resolveTaskClipboardFilePath(path));
       if (seen.has(canonicalPath)) continue;
       seen.add(canonicalPath);
       const sourceStat = await lstat(canonicalPath);
