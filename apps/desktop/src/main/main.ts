@@ -4325,11 +4325,18 @@ async function initializeApplication(): Promise<void> {
             controller: homebrewUpdateController,
             updateCodexAutomatically,
             onIndicatorChange: broadcastAutomaticUpdateIndicator,
-            notifyReady: (latestVersion, showProgress) => {
+            notifyReady: (latestVersion, showProgress, manualInstall) => {
               if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
               const notification = new Notification({
                 title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
-                body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已下载。重启后可安装更新。` : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
+                body:
+                  appShellSettings.appLanguage === 'zh-CN'
+                    ? manualInstall
+                      ? `Zeus ${latestVersion} 已下载。打开安装包完成安装。`
+                      : `Zeus ${latestVersion} 已下载。重启后可安装更新。`
+                    : manualInstall
+                      ? `Zeus ${latestVersion} is downloaded. Open the installer to install the update.`
+                      : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
               });
               notification.on('click', () => void showProgress().catch(showUpdateOpenFailure));
               notification.show();

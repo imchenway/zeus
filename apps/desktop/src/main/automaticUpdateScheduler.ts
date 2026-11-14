@@ -29,8 +29,8 @@ interface CreateAutomaticUpdateSchedulerOptions {
   failedCheckRetryMs?: number;
   controller: HomebrewUpdateController;
   onIndicatorChange: (state: HomebrewUpdateIndicatorState) => void;
-  /** 通知点击保留打开结果，由桌面入口展示窗口启动失败。 */
-  notifyReady: (latestVersion: string, showProgress: () => Promise<void>) => boolean;
+  /** 下载完成通知区分手动安装与重启安装；点击保留窗口打开结果。 */
+  notifyReady: (latestVersion: string, showProgress: () => Promise<void>, manualInstall: boolean) => boolean;
   /** 与 Zeus 检测共用到期触发，受管 Codex 经过持久化门禁后进入既有安全更新链。 */
   updateCodexAutomatically?: (reserveUpdate: ReserveAutomaticCodexUpdate) => Promise<void>;
 }
@@ -144,8 +144,8 @@ export function createAutomaticUpdateScheduler(options: CreateAutomaticUpdateSch
     persisted = { ...persisted, blockedPrepareVersion, indicator: { ...state } };
     broadcastIndicator(state);
     schedulePersistence();
-    if (state.phase !== 'ready' || !state.latestVersion || state.latestVersion === persisted.lastNotifiedVersion) return;
-    const notified = options.notifyReady(state.latestVersion, () => options.controller.showOrCheck());
+    if ((state.phase !== 'ready' && state.phase !== 'downloaded') || !state.latestVersion || state.latestVersion === persisted.lastNotifiedVersion) return;
+    const notified = options.notifyReady(state.latestVersion, () => options.controller.showOrCheck(), state.phase === 'downloaded');
     if (!notified) return;
     persisted = { ...persisted, lastNotifiedVersion: state.latestVersion };
     schedulePersistence();
@@ -221,8 +221,8 @@ export function createAutomaticUpdateScheduler(options: CreateAutomaticUpdateSch
     removeCheckCompletedListener = options.controller.onCheckCompleted(recordCheckCompleted);
     persisted = { ...persisted, indicator: options.controller.getIndicatorState() };
     options.onIndicatorChange({ ...persisted.indicator });
-    if (persisted.indicator.phase === 'available' || persisted.indicator.phase === 'preparing' || persisted.indicator.phase === 'retrying') {
-      // 进程中断过预取时不伪装成仍在下载；启动后短暂让出首屏，再从发布清单恢复真实任务。
+    if (persisted.indicator.phase !== 'idle' && persisted.indicator.phase !== 'failed') {
+      // 发现过更新时重新读取发布清单并复验磁盘缓存，恢复当前进程的下载结果。
       persisted = { ...persisted, lastCheckCompletedAt: null };
     }
     scheduleFromLastCheck();
