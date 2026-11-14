@@ -222,8 +222,8 @@ function SourceWorkspaceView(props: {
       setOpenError(error);
     }
   }
-  /** 另存为只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
-  async function fileAction(action: 'export'): Promise<void> {
+  /** 图片和文件操作只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
+  async function fileAction(action: 'export' | 'open' | 'reveal'): Promise<void> {
     /** 当前受信桥接同时负责授权读取、系统操作和授权释放。 */
     const bridge = window.zeus;
     if (!bridge) {
@@ -455,7 +455,7 @@ function SourceWorkspaceView(props: {
       >
         <div ref={contentScroll} className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
           {props.preview.kind === 'image' ? (
-            <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
+            <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} onFileAction={fileAction} />
           ) : renderedMarkdown ? (
             <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${tabId}`} phase="final" language={props.language} documentMode />
           ) : (

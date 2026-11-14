@@ -396,6 +396,8 @@ export function createDesktopApi(transport: DesktopTransport) {
       ),
     /** 转交文件预览中的用户操作。 */
     actOnFilePreview: (id: string, action: string) => transport.invoke('zeus:file-preview:action', id, action),
+    /** 将预览图片像素交给系统剪贴板或原生保存对话框。 */
+    actOnImagePreview: (dataUrl: string, action: 'copy' | 'export', name: string) => transport.invoke('zeus:image-preview:action', dataUrl, action, name),
     /** 读取文件预览对应版本的来源。 */
     loadFilePreviewBlame: (id: string) => transport.invoke('zeus:file-preview:blame', id),
     /** 接收打开预览所属源码工作区的请求。 */
