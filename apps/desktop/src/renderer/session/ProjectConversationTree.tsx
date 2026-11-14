@@ -1,5 +1,5 @@
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { type AnimationEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
+import { type AnimationEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -149,6 +149,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   /** 焦点和上下键导航沿用实际展示的顺序。 */
   const visibleConversations = flattenedGroups.flatMap((group) => group.visibleConversations);
   const conversationIds = visibleConversations.map((entry) => conversationNavigationId(entry.conversation));
+  /** 仅在可见成员或顺序变化时平移原有行，状态图标刷新不重启动效。 */
+  const conversationListRef = useConversationReorderMotion(JSON.stringify(conversationIds));
   const allConversationIds = props.groups.flatMap((project) => flattenProjectConversations(project, '', props.language).map((entry) => conversationNavigationId(entry.conversation)));
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
@@ -197,7 +199,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       return (
-        <li className="session-conversation-tree-item" key={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
+        <li className="session-conversation-tree-item" key={navigationId} data-conversation-motion-id={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
           <button
             type="button"
             className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
@@ -253,7 +255,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
 
   return (
     <>
-      <nav className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
+      <nav ref={conversationListRef} className="session-project-conversation-tree" aria-label={copy.aria} onKeyDown={handleTreeKeyDown}>
         {flattenedGroups.map(({ project, conversations, visibleConversations }) => (
           <section className="session-conversation-project-group" key={project.projectId} aria-label={project.projectName}>
             {!props.compactProjectLabel && props.onStartConversation ? <ProjectConversationHeader project={project} language={props.language} onStartConversation={props.onStartConversation} /> : null}
@@ -279,6 +281,56 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       />
     </>
   );
+}
+
+/** 会话沿自然位置重排；连续更新接续当前位移，首屏及减少动态效果时直接显示结果。 */
+function useConversationReorderMotion(layoutKey: string) {
+  /** 测量仅限当前项目的会话列表。 */
+  const ref = useRef<HTMLElement>(null);
+  /** 自然位置不包含动画位移，侧栏滚动也不会改变它。 */
+  const positionsRef = useRef(new Map<string, number>());
+  /** 每行最多保留一段可被接续的原生动画。 */
+  const animationsRef = useRef(new Map<HTMLElement, Animation>());
+  useLayoutEffect(() => {
+    const list = ref.current;
+    if (!list) return;
+    /** 先完成全部位置读取，再统一写入动画，避免逐行触发布局。 */
+    const positions = new Map<string, number>();
+    const moves: { element: HTMLElement; offset: number }[] = [];
+    for (const element of list.querySelectorAll<HTMLElement>('[data-conversation-motion-id]')) {
+      const id = element.dataset.conversationMotionId!;
+      const top = element.offsetTop;
+      const previousTop = positionsRef.current.get(id);
+      /** 旧动画尚未结束时，接住用户此刻看到的位置。 */
+      const translation = animationsRef.current.has(element) ? Number.parseFloat(getComputedStyle(element).translate.split(' ')[1] ?? '0') || 0 : 0;
+      positions.set(id, top);
+      if (previousTop !== undefined && Math.abs(previousTop + translation - top) >= 1) moves.push({ element, offset: previousTop + translation - top });
+    }
+    for (const animation of animationsRef.current.values()) animation.cancel();
+    animationsRef.current.clear();
+    positionsRef.current = positions;
+    if (moves.length === 0 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    /** 行位移复用品牌层级动效的时长和缓动，不改变透明度及选中态。 */
+    const style = getComputedStyle(list);
+    /** CSS 时间统一换算为毫秒，ms 与 s 的同值表达使用相同时长。 */
+    const duration = CSSNumericValue.parse(style.getPropertyValue('--zeus-motion-duration-layer-enter') || '220ms').to('ms').value;
+    const easing = style.getPropertyValue('--zeus-motion-ease-out').trim() || 'ease-out';
+    for (const { element, offset } of moves) {
+      const animation = element.animate([{ translate: `0 ${offset}px` }, { translate: '0 0' }], { duration, easing });
+      animationsRef.current.set(element, animation);
+      /** 动画完成后释放句柄，旧回调不能清除接续的新动画。 */
+      animation.onfinish = () => {
+        if (animationsRef.current.get(element) === animation) animationsRef.current.delete(element);
+      };
+    }
+  }, [layoutKey]);
+  useEffect(
+    () => () => {
+      for (const animation of animationsRef.current.values()) animation.cancel();
+    },
+    [],
+  );
+  return ref;
 }
 
 function conversationNavigationId(conversation: NativeConversationChoice): string {
