@@ -4514,7 +4514,7 @@ export function NewConversationComposer(props: {
               creationStatus={startingTranscript ? { state: 'creating', message: props.language === 'zh-CN' ? '正在创建会话' : 'Creating conversation' } : undefined}
             />
           ) : null}
-          <div className="session-new-conversation-draft" hidden={Boolean(startingTranscript)}>
+          <div className="session-new-conversation-draft" data-starting={Boolean(startingTranscript) || undefined}>
             {props.docked ? (
               composer
             ) : (
