@@ -1193,7 +1193,7 @@ export function SidebarNav(props: {
                     }
                   />
                   {showConversationNavigation ? (
-                    <Collapsible open={expanded} id={projectConversationsId}>
+                    <Collapsible open={expanded} id={projectConversationsId} animateHeight>
                       <div className="project-sidebar-conversations">
                         {showConversationNavigation && conversationGroup ? (
                           <ProjectConversationTree
