@@ -60,7 +60,7 @@ export interface InputSuggestionResult {
   completedTurnId: string | null;
   /** 实际解析的建议模型；未生成时允许为空。 */
   modelRef: string | null;
-  /** 明确可恢复的材料或输出失败允许有界重试；false 禁止重试，缺项按临时故障判断。 */
+  /** 明确可恢复的材料或输出失败允许重试；false 禁止重试，缺项按临时故障判断。 */
   retryable?: boolean;
   /** 空值表示无需改写、未生成或生成失败，不属于输入正文。 */
   text: string | null;
@@ -68,6 +68,66 @@ export interface InputSuggestionResult {
   reason: 'disabled' | 'context_unavailable' | 'model_unavailable' | 'effort_unavailable' | 'service_tier_unavailable' | 'no_change' | 'timed_out' | 'failed' | 'cancelled' | null;
   /** 失败时保留有界、脱敏的原因，复用应用统一错误详情入口。 */
   cause?: UserFacingErrorCause;
+}
+
+/** Core 保存的自动建议状态，窗口重建后按所属会话重新读取。 */
+export interface AutomaticInputSuggestionState extends InputSuggestionResult {
+  /** 建议模型、推理深度和速度共同确定的配置身份。 */
+  modelKey: string;
+  /** 待生成、生成中、有结果、需修正配置或明确取消。 */
+  state: 'pending' | 'running' | 'ready' | 'blocked' | 'cancelled';
+  /** 已领取的生成尝试次数，离线等待不计入。 */
+  attemptCount: number;
+  /** 下一次允许生成的 UTC 时刻，已结束时为空。 */
+  nextAttemptAt: string | null;
+  /** 宿主报告离线时保留待办并暂停模型请求。 */
+  waitingForNetwork: boolean;
+}
+
+/** 自动建议和手动输入共用配置身份，不包含未提交草稿或秘密。 */
+export function inputSuggestionModelKey(settings: InputSuggestionSettings | undefined): string {
+  return JSON.stringify([settings?.followConversationModel ? 'conversation' : (settings?.modelRef ?? null), settings?.effort ?? null, settings?.serviceTier ?? null]);
+}
+
+/** 只有明确的临时故障允许自动恢复，配置、权限和鉴权错误保留具体原因。 */
+const transientInputSuggestionErrors = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'ZEUS_EXECUTION_HOST_DRAINING',
+  'ZEUS_CODEX_RPC_TIMEOUT',
+  'ZEUS_CODEX_MODEL_AT_CAPACITY',
+  'serverOverloaded',
+  'ZEUS_MODEL_HTTP_408',
+  'ZEUS_MODEL_HTTP_429',
+  'ZEUS_MODEL_HTTP_500',
+  'ZEUS_MODEL_HTTP_502',
+  'ZEUS_MODEL_HTTP_503',
+  'ZEUS_MODEL_HTTP_504',
+  'ZEUS_MODEL_CATALOG_TIMEOUT',
+  'ZEUS_MODEL_CATALOG_CONNECT_TIMEOUT',
+  'ZEUS_MODEL_CATALOG_CONNECTION_RESET',
+  'ZEUS_MODEL_CATALOG_NETWORK_FAILED',
+  'ZEUS_MODEL_TEXT_INCOMPLETE',
+]);
+
+/** 自动建议持续退避，最长间隔三十秒；手动操作仍最多重试两次。 */
+export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause' | 'retryable'>, retries: number, trigger: InputSuggestionRequest['trigger'] = 'manual'): number | null {
+  if (result.retryable === false || (trigger !== 'automatic' && retries >= 2)) return null;
+  if (result.retryable !== true) {
+    if (result.reason !== 'timed_out' && result.reason !== 'failed') return null;
+    for (let cause = result.cause; cause; cause = cause.cause) {
+      if (cause.code && !transientInputSuggestionErrors.has(cause.code)) return null;
+    }
+  }
+  return retries === 0 ? 2_000 : Math.min(5_000 * 2 ** Math.min(retries - 1, 3), 30_000);
 }
 
 /** 界面仅报告状态和长度，不通过诊断通路发送草稿或建议正文。 */

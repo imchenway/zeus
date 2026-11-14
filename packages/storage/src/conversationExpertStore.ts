@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { captureCompletedInputSuggestion } from './inputSuggestionStore.js';
 import { nextQueuePositionFor } from './conversationStore.js';
 import { randomId } from './randomId.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
@@ -516,22 +517,27 @@ export class ConversationExpertRepository {
     });
   }
 
+  /** 最后一位专家结束后，父轮次与建议待办一起保存。 */
   finishRoundIfTerminal(submissionId: string, updatedAt: string): void {
-    const remaining = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_expert_executions WHERE submission_id = ? AND status NOT IN ('completed', 'failed', 'interrupted', 'cancelled')`, [submissionId])?.count ?? 0;
-    if (remaining > 0) return;
-    const submission = this.db.get<{ conversation_id: string }>(`SELECT conversation_id FROM conversation_submissions WHERE id = ?`, [submissionId]);
-    if (!submission) return;
-    this.projectTerminalExecutions(submissionId);
-    this.db.execute(`UPDATE conversation_submissions SET status = 'completed', submission_outcome = 'terminal', resolved_at = ?, updated_at = ? WHERE id = ?`, [updatedAt, updatedAt, submissionId]);
-    this.db.execute(`UPDATE conversation_turns SET status = 'completed', completed_at = ?, updated_at = ? WHERE client_submission_id = ? AND provider_turn_id IS NULL`, [updatedAt, updatedAt, submissionId]);
-    const pendingRound = this.db.get<{ present: number }>(
-      `SELECT 1 AS present
+    this.db.transaction(() => {
+      const remaining =
+        this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_expert_executions WHERE submission_id = ? AND status NOT IN ('completed', 'failed', 'interrupted', 'cancelled')`, [submissionId])?.count ?? 0;
+      if (remaining > 0) return;
+      const submission = this.db.get<{ conversation_id: string }>(`SELECT conversation_id FROM conversation_submissions WHERE id = ?`, [submissionId]);
+      if (!submission) return;
+      this.projectTerminalExecutions(submissionId);
+      this.db.execute(`UPDATE conversation_submissions SET status = 'completed', submission_outcome = 'terminal', resolved_at = ?, updated_at = ? WHERE id = ?`, [updatedAt, updatedAt, submissionId]);
+      this.db.execute(`UPDATE conversation_turns SET status = 'completed', completed_at = ?, updated_at = ? WHERE client_submission_id = ? AND provider_turn_id IS NULL`, [updatedAt, updatedAt, submissionId]);
+      for (const turn of this.db.select<{ id: string }>('SELECT id FROM conversation_turns WHERE client_submission_id=? AND provider_turn_id IS NULL', [submissionId])) captureCompletedInputSuggestion(this.db, turn.id, updatedAt);
+      const pendingRound = this.db.get<{ present: number }>(
+        `SELECT 1 AS present
          FROM conversation_expert_executions
         WHERE conversation_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting')
         LIMIT 1`,
-      [submission.conversation_id],
-    );
-    this.db.execute(`UPDATE conversations SET stage = ?, stage_updated_at = ?, updated_at = ? WHERE id = ?`, [pendingRound ? 'running' : 'completed', updatedAt, updatedAt, submission.conversation_id]);
+        [submission.conversation_id],
+      );
+      this.db.execute(`UPDATE conversations SET stage = ?, stage_updated_at = ?, updated_at = ? WHERE id = ?`, [pendingRound ? 'running' : 'completed', updatedAt, updatedAt, submission.conversation_id]);
+    });
   }
 
   private projectTerminalExecutions(submissionId: string): void {

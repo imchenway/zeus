@@ -1,44 +1,16 @@
-import { userFacingErrorCause, type InputSuggestionRequest, type InputSuggestionResult, type InputSuggestionSettings, type InputSuggestionUiDiagnostic } from '@zeus/shared';
+import {
+  inputSuggestionModelKey,
+  inputSuggestionRetryDelay,
+  userFacingErrorCause,
+  type AutomaticInputSuggestionState,
+  type InputSuggestionRequest,
+  type InputSuggestionResult,
+  type InputSuggestionSettings,
+  type InputSuggestionUiDiagnostic,
+} from '@zeus/shared';
+import type { ConversationApiClient } from '../features/conversations/conversationApiClient.js';
 
-/** 仅对无工具的建议生成恢复已知临时故障，不复用主会话发送的重试规则。 */
-const transientSuggestionErrors = new Set([
-  'ECONNRESET',
-  'ECONNREFUSED',
-  'ETIMEDOUT',
-  'EPIPE',
-  'EAI_AGAIN',
-  'UND_ERR_SOCKET',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_HEADERS_TIMEOUT',
-  'ZEUS_EXECUTION_HOST_DRAINING',
-  'ZEUS_CODEX_RPC_TIMEOUT',
-  'ZEUS_CODEX_MODEL_AT_CAPACITY',
-  'serverOverloaded',
-  'ZEUS_MODEL_HTTP_408',
-  'ZEUS_MODEL_HTTP_429',
-  'ZEUS_MODEL_HTTP_500',
-  'ZEUS_MODEL_HTTP_502',
-  'ZEUS_MODEL_HTTP_503',
-  'ZEUS_MODEL_HTTP_504',
-  'ZEUS_MODEL_CATALOG_TIMEOUT',
-  'ZEUS_MODEL_CATALOG_CONNECT_TIMEOUT',
-  'ZEUS_MODEL_CATALOG_CONNECTION_RESET',
-  'ZEUS_MODEL_CATALOG_NETWORK_FAILED',
-  'ZEUS_MODEL_TEXT_INCOMPLETE',
-]);
-
-/** 可恢复失败首次等待两秒，再次等待五秒；明确配置错误和无需改写不重复请求。 */
-export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause' | 'retryable'>, retries: number): number | null {
-  if (result.retryable === false || retries >= 2) return null;
-  // 服务端仅对材料尚未就绪、规则变化和已完成但无效的输出明确允许重试。
-  if (result.retryable === true) return retries === 0 ? 2_000 : 5_000;
-  if (result.reason !== 'timed_out' && result.reason !== 'failed') return null;
-  // 无结构化原因的生成失败也受同一上限约束；不通过报错正文猜测权限或网络状态。
-  for (let cause = result.cause; cause; cause = cause.cause) {
-    if (cause.code && !transientSuggestionErrors.has(cause.code)) return null;
-  }
-  return retries === 0 ? 2_000 : 5_000;
-}
+export { inputSuggestionRetryDelay } from '@zeus/shared';
 
 /** 后台触发和输入框读取共用完全相同的会话、模型及轮次身份。 */
 export function inputSuggestionIdentity(options: {
@@ -56,14 +28,18 @@ export function inputSuggestionIdentity(options: {
   /** 显式元组防止分隔字符造成身份冲突。 */
   const sessionKey = JSON.stringify(options.conversationId ? ['conversation', options.projectId, options.conversationId] : ['draft', options.projectId ?? '', options.scopeKey ?? '']);
   /** 跟随或专用模型、推理深度和速度共同确定配置身份。 */
-  const modelKey = JSON.stringify([options.settings?.followConversationModel ? 'conversation' : (options.settings?.modelRef ?? null), options.settings?.effort ?? null, options.settings?.serviceTier ?? null]);
+  const modelKey = inputSuggestionModelKey(options.settings);
   /** 手动结果不随主会话轮次推进失效。 */
   const resultKey = JSON.stringify([sessionKey, modelKey]);
-  return { sessionKey, modelKey, resultKey, automaticResultKey: JSON.stringify([resultKey, options.turnId ?? null]) };
+  /** 自动生成独立于手动润色，完成事件不因手动请求占用而丢失。 */
+  const automaticSessionKey = JSON.stringify([sessionKey, 'automatic']);
+  return { sessionKey, automaticSessionKey, modelKey, resultKey, automaticResultKey: JSON.stringify([resultKey, options.turnId ?? null]) };
 }
 
 /** 请求和结果属于会话，输入框只订阅当前会话的快照。 */
 interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | 'reason' | 'cause' | 'modelRef'> {
+  /** 持久自动任务的原轮次，手动请求可以为空。 */
+  completedTurnId: string | null;
   /** 每次主动或自动生成的稳定身份，重试不创建另一份候选。 */
   requestId: string;
   /** 手动结果绑定会话与模型，自动结果另绑定完成轮次。 */
@@ -82,9 +58,11 @@ interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | '
   retryAttempt: number;
   /** 等待自动重试时保留计划时刻，生成中与结束后为空。 */
   retryAt: number | null;
+  /** 系统报告离线时暂停发出请求，联网后继续当前尝试。 */
+  waitingForNetwork: boolean;
 }
 
-/** 一个会话最多持有一个正在生成的请求，不依赖组件挂载。 */
+/** 每个候选槽位持有一个请求，自动建议和手动润色独立复用，不依赖组件挂载。 */
 class InputSuggestionSession {
   /** 不可变快照满足 React 外部状态订阅要求。 */
   private result: InputSuggestionSnapshot | null = null;
@@ -92,26 +70,124 @@ class InputSuggestionSession {
   private controller: AbortController | null = null;
   /** 已展示预览的请求不因输入框重新挂载而再次弹出。 */
   private presentedRequestId: string | null = null;
-  /** 自动完成事件跨页面去重，重开会话不能重复产生用量。 */
-  private requestedTurn: string | null = null;
   /** 用户消息事件可能重复送达，只在新的稳定身份出现时清除旧候选。 */
   private observedUserInputs = new Set<string>();
-  /** 输入框登记附件、目标和权限限制；未发送文字不阻止后台生成。 */
-  private automaticEligibility = new Map<symbol, boolean>();
   /** 每个会话独立通知，后台结果不会刷新其他会话。 */
   private listeners = new Set<() => void>();
+  /** 自动建议只读取所属项目和会话的持久状态。 */
+  private automaticScope: { projectId: string; conversationId: string } | null = null;
+  /** 取消读取不会取消 Core 中的模型生成。 */
+  private automaticRead: AbortController | null = null;
+  /** 可见会话每五秒补读，推送丢失仍能恢复结果。 */
+  private automaticTimer: ReturnType<typeof setInterval> | null = null;
+  /** 读取期间到达的推送只合并为一次后续刷新。 */
+  private automaticReadAgain = false;
+  /** 明确关闭的轮次先在本地隐藏，直到取消操作成功写入 Core。 */
+  private dismissedAutomaticTurn: string | null = null;
+  /** 本机连接临时不可用时保留取消意图，下次读取前重试。 */
+  private automaticDismissPending = false;
+  /** 首次打开和配置变化只登记一次恢复，不把定时补读变成反复入队。 */
+  private automaticEnsured = false;
+  /** 当前窗口采用的配置身份，用于重新登记模型变更。 */
+  private automaticSettingsKey: string | null = null;
 
-  /** 切换页面只移除显示订阅，保留请求和结果。 */
+  /** 切页只取消自动状态补读，Core 生成和手动请求继续由各自状态持有。 */
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
+    if (this.automaticScope && !this.automaticTimer) {
+      this.automaticEnsured = false;
+      this.automaticTimer = setInterval(() => this.refreshAutomatic(), 5_000);
+      this.refreshAutomatic();
+    }
     return () => {
       this.listeners.delete(listener);
+      if (this.listeners.size === 0) {
+        if (this.automaticTimer) clearInterval(this.automaticTimer);
+        this.automaticTimer = null;
+        this.automaticRead?.abort();
+      }
       pruneInputSuggestionSessions();
     };
   };
 
   /** 同一结果始终返回同一引用，避免重复渲染。 */
   getSnapshot = (): InputSuggestionSnapshot | null => this.result;
+
+  /** 注册读取归属，不创建模型请求。 */
+  configureAutomatic(projectId: string, conversationId: string): void {
+    this.automaticScope = { projectId, conversationId };
+  }
+
+  /** 新要求只清理本窗口投影，任务是否过期由 Core 判定。 */
+  invalidateAutomatic(): void {
+    this.automaticEnsured = false;
+    this.automaticRead?.abort();
+    this.publish(null);
+    this.refreshAutomatic();
+  }
+
+  /** 推送、首次订阅与定时补读共用一条可取消的只读请求。 */
+  refreshAutomatic(): void {
+    if (!this.automaticScope || !automaticClient || (this.listeners.size === 0 && !this.automaticDismissPending)) return;
+    if (this.automaticRead) {
+      this.automaticReadAgain = true;
+      return;
+    }
+    const scope = this.automaticScope;
+    const client = automaticClient;
+    const controller = new AbortController();
+    this.automaticRead = controller;
+    void (async () => {
+      if (this.automaticDismissPending && this.dismissedAutomaticTurn) {
+        await client.dismissAutomaticInputSuggestion(scope.projectId, scope.conversationId, this.dismissedAutomaticTurn, controller.signal);
+        this.automaticDismissPending = false;
+      }
+      if (!this.automaticEnsured) {
+        await client.ensureAutomaticInputSuggestion(scope.projectId, scope.conversationId, controller.signal);
+        this.automaticEnsured = true;
+      }
+      const { suggestion } = await client.loadAutomaticInputSuggestion(scope.projectId, scope.conversationId, controller.signal);
+      if (!controller.signal.aborted) this.applyAutomatic(suggestion);
+    })()
+      .catch(() => {
+        // 连接恢复后补读；读取失败不删除已有候选，也不冒充模型生成失败。
+      })
+      .finally(() => {
+        if (this.automaticRead === controller) this.automaticRead = null;
+        if (this.automaticReadAgain) {
+          this.automaticReadAgain = false;
+          this.refreshAutomatic();
+        }
+        pruneInputSuggestionSessions();
+      });
+  }
+
+  /** 同一轮明确取消后不因迟到读取恢复候选。 */
+  private applyAutomatic(state: AutomaticInputSuggestionState | null): void {
+    if (!state || state.state === 'cancelled' || state.completedTurnId === this.dismissedAutomaticTurn) {
+      this.publish(null);
+      return;
+    }
+    const pending = state.state === 'pending' || state.state === 'running';
+    const snapshot: InputSuggestionSnapshot = {
+      completedTurnId: state.completedTurnId,
+      requestId: JSON.stringify([state.completedTurnId, state.modelKey]),
+      key: JSON.stringify([this.automaticScope, state.completedTurnId, state.modelKey]),
+      modelKey: state.modelKey,
+      modelRef: state.modelRef,
+      sourceDraft: '',
+      mode: 'suggest',
+      trigger: 'automatic',
+      pending,
+      text: state.text,
+      reason: pending ? null : state.reason,
+      cause: state.cause,
+      retryAttempt: Math.max(0, state.attemptCount - (state.state === 'pending' ? 0 : 1)),
+      retryAt: state.nextAttemptAt ? Date.parse(state.nextAttemptAt) : null,
+      waitingForNetwork: pending && state.waitingForNetwork,
+    };
+    if (JSON.stringify(this.result) !== JSON.stringify(snapshot)) this.publish(snapshot);
+  }
 
   /** 只有当前手动请求的有效结果可以首次展开预览。 */
   claimPreview = (requestId: string): boolean => {
@@ -120,36 +196,10 @@ class InputSuggestionSession {
     return true;
   };
 
-  /** 消费完成事件后不再重放，清空草稿或切换页面都不能重置。 */
-  consumeAutomaticTurn(key: string): boolean {
-    if (this.requestedTurn === key) return false;
-    this.requestedTurn = key;
-    return true;
-  }
-
-  /** 附件、目标或权限限制使自动建议失效；普通文字输入不进入此限制。 */
-  observeAutomaticEligibility(owner: symbol, eligible: boolean): () => void {
-    this.automaticEligibility.set(owner, eligible);
-    if (!eligible) this.dismissAutomatic();
-    return () => {
-      this.automaticEligibility.delete(owner);
-    };
-  }
-
   /** 编辑只使原文润色失效，空输入建议继续生成并在删空后展示。 */
   invalidateDraft(): void {
     if (this.result?.mode === 'suggest' && this.result.sourceDraft === '') return;
     this.dismiss();
-  }
-
-  /** 后台结果只写入建议缓存，已有请求或候选不被新的自动请求抢占。 */
-  get automaticAllowed(): boolean {
-    return !this.controller && !this.result && [...this.automaticEligibility.values()].every(Boolean);
-  }
-
-  /** 主会话继续运行时只清除自动预测，手动润色仍可独立完成。 */
-  dismissAutomatic(): void {
-    if (this.result?.trigger === 'automatic') this.dismiss();
   }
 
   /** 已发送要求变化时清除候选，普通助手进度不走此入口。 */
@@ -160,14 +210,24 @@ class InputSuggestionSession {
     this.dismiss();
   }
 
-  /** 正在使用或生成的会话不能被容量回收中断。 */
+  /** 活动请求和可见投影不回收，已结束的自动投影可从 Core 重新读取。 */
   get retained(): boolean {
-    return this.controller !== null || this.listeners.size > 0;
+    return this.controller !== null || this.automaticRead !== null || this.automaticDismissPending || this.listeners.size > 0;
   }
 
   /** 发送、采用、明确取消或上下文失效时清理；旧浮层不能取消新请求。 */
   dismiss = (requestId?: string): void => {
     if (requestId !== undefined && this.result?.requestId !== requestId) return;
+    if (this.automaticScope) {
+      if (this.result?.completedTurnId) {
+        this.dismissedAutomaticTurn = this.result.completedTurnId;
+        this.automaticDismissPending = true;
+      }
+      this.automaticRead?.abort();
+      this.publish(null);
+      this.refreshAutomatic();
+      return;
+    }
     this.controller?.abort();
     this.controller = null;
     this.presentedRequestId = null;
@@ -176,6 +236,15 @@ class InputSuggestionSession {
 
   /** 配置变化也清理不可见会话，旧模型的迟到结果不能恢复。 */
   invalidateSettings(modelKey: string, automaticEnabled: boolean): void {
+    if (this.automaticScope) {
+      if (this.automaticSettingsKey !== modelKey) {
+        this.automaticSettingsKey = modelKey;
+        this.automaticEnsured = false;
+      }
+      if (this.result && (this.result.modelKey !== modelKey || !automaticEnabled)) this.publish(null);
+      if (automaticEnabled) this.refreshAutomatic();
+      return;
+    }
     if (this.result && (this.result.modelKey !== modelKey || (this.result.trigger !== 'manual' && !automaticEnabled))) this.dismiss();
   }
 
@@ -214,6 +283,7 @@ class InputSuggestionSession {
     controller.signal.addEventListener('abort', () => record('ui_cancelled', 'client_cancelled'), { once: true });
     /** 等待和完成使用同一份原文及请求归属。 */
     const snapshot: InputSuggestionSnapshot = {
+      completedTurnId: options.request.completedTurnId ?? null,
       requestId: diagnosticId,
       key: options.key,
       modelKey: options.modelKey,
@@ -226,18 +296,38 @@ class InputSuggestionSession {
       reason: null,
       retryAttempt: 0,
       retryAt: null,
+      waitingForNetwork: false,
     };
     this.publish(snapshot);
     void (async () => {
       try {
         for (let retryAttempt = 0; !controller.signal.aborted; retryAttempt += 1) {
+          if (typeof window !== 'undefined' && window.navigator.onLine === false) {
+            this.publish({ ...snapshot, retryAttempt, waitingForNetwork: true });
+            await new Promise<void>((resolve) => {
+              /** 联网或取消后解除全部监听，离线等待不创建请求或消耗尝试次数。 */
+              const finish = (): void => {
+                window.removeEventListener('online', resume);
+                controller.signal.removeEventListener('abort', finish);
+                resolve();
+              };
+              /** 注册完成后复核状态，避免错过注册期间的联网或取消。 */
+              const resume = (): void => {
+                if (controller.signal.aborted || window.navigator.onLine !== false) finish();
+              };
+              window.addEventListener('online', resume);
+              controller.signal.addEventListener('abort', finish, { once: true });
+              resume();
+            });
+            if (controller.signal.aborted) return;
+          }
           if (retryAttempt > 0) {
             diagnosticId = crypto.randomUUID();
             startedAt = performance.now();
-            this.publish({ ...snapshot, retryAttempt });
           }
+          this.publish({ ...snapshot, retryAttempt });
           record('ui_started');
-          /** 响应失败和传输失败都进入同一条有界恢复通路。 */
+          /** 响应失败和传输失败共用恢复通路，自动建议持续恢复临时故障。 */
           let response: InputSuggestionResult;
           try {
             response = await options.generate(options.request, controller.signal, diagnosticId);
@@ -256,7 +346,7 @@ class InputSuggestionSession {
             return;
           }
           /** 有效候选不重复生成，剩余失败按明确原因决定是否等待。 */
-          const retryDelay = response.text ? null : inputSuggestionRetryDelay(response, retryAttempt);
+          const retryDelay = response.text ? null : inputSuggestionRetryDelay(response, retryAttempt, options.request.trigger);
           if (retryDelay === null) {
             this.publish({ ...snapshot, modelRef: response.modelRef, text: response.text, reason: response.reason, cause: response.cause, pending: false, retryAttempt });
             record('ui_result_stored', response.reason ?? 'generated', response.text?.length ?? 0);
@@ -291,9 +381,11 @@ class InputSuggestionSession {
   }
 }
 
-/** 当前窗口缓存最近使用的会话，不将未采纳正文写入持久化存储。 */
+/** 当前窗口仅保留最近使用的投影；自动任务和结果由 Core 持久保存。 */
 const sessions = new Map<string, InputSuggestionSession>();
-/** 限制已结束且无人查看的缓存数量，活动请求永不因容量被取消。 */
+/** 当前已认证客户端只提供持久状态的读取与明确取消。 */
+let automaticClient: Pick<ConversationApiClient, 'loadAutomaticInputSuggestion' | 'ensureAutomaticInputSuggestion' | 'dismissAutomaticInputSuggestion'> | null = null;
+/** 回收无人使用的草稿和手动状态，活动请求及自动候选不按容量淘汰。 */
 const retainedSessionLimit = 100;
 
 /** 仅淘汰最久未访问、已结束且没有显示订阅的记录。 */
@@ -312,6 +404,24 @@ export function getInputSuggestionSession(key: string): InputSuggestionSession {
   sessions.set(key, session);
   pruneInputSuggestionSessions(session);
   return session;
+}
+
+/** 自动建议复用会话状态订阅，不把读取动作变成新的生成请求。 */
+export function getAutomaticInputSuggestionSession(projectId: string, conversationId: string): InputSuggestionSession {
+  const session = getInputSuggestionSession(inputSuggestionIdentity({ projectId, conversationId }).automaticSessionKey);
+  session.configureAutomatic(projectId, conversationId);
+  return session;
+}
+
+/** 工作台挂载或连接更新后，补读已有可见会话；退订不取消 Core 任务。 */
+export function configureAutomaticInputSuggestionClient(client: typeof automaticClient): void {
+  automaticClient = client;
+  refreshAutomaticInputSuggestions();
+}
+
+/** 推送丢失后的重连和系统网络变化均补读当前可见会话。 */
+export function refreshAutomaticInputSuggestions(): void {
+  for (const session of sessions.values()) session.refreshAutomatic();
 }
 
 /** 专用模型或自动开关变化时，同步所有已经发起过建议的会话。 */

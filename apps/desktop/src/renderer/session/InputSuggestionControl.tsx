@@ -28,8 +28,8 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
   service_tier_unavailable: { 'zh-CN': '该模型不支持已选 Fast 模式，请在通用设置中选择标准速度或更换模型。', 'en-US': 'Fast mode is unavailable for this model. Choose Standard speed or another model in General settings.' },
   /** 原文可直接使用，不创建没有差异的候选。 */
   no_change: { 'zh-CN': '当前表达已清楚，可以直接使用。', 'en-US': 'Your draft is already clear and ready to use.' },
-  /** 每次尝试独立限时，自动重试用尽后仍保留原文。 */
-  timed_out: { 'zh-CN': '单次生成超过 20 秒，已停止。原文已保留。', 'en-US': 'The generation attempt stopped after 20 seconds. Your draft is unchanged.' },
+  /** 准备与模型响应分别限时，失败不修改原文。 */
+  timed_out: { 'zh-CN': '本次生成超时。原文已保留。', 'en-US': 'The generation attempt timed out. Your draft is unchanged.' },
   /** 具体原因由应用共用错误入口显示。 */
   failed: { 'zh-CN': '生成失败。', 'en-US': 'Generation failed.' },
   /** 用户取消不额外打扰输入。 */
@@ -70,12 +70,17 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
       : props.suggestion.reason
         ? feedback[props.suggestion.reason][props.language]
         : '';
+  /** 自动建议持续重试；手动操作显示原有两次重试上限。 */
+  const retryProgress = `${props.suggestion.retryAttempt}${props.suggestion.trigger === 'automatic' ? '' : '/2'}`;
   /** 重试进度仍使用同一个图标和提示，等待期间允许取消且不闪现错误。 */
-  const message =
-    props.suggestion.pending && props.suggestion.retryAttempt > 0
+  const message = props.suggestion.waitingForNetwork
+    ? props.language === 'zh-CN'
+      ? '网络已断开，联网后继续生成…'
+      : 'Offline. Generation will resume when the network reconnects…'
+    : props.suggestion.pending && props.suggestion.retryAttempt > 0
       ? props.language === 'zh-CN'
-        ? `${props.suggestion.retryAt ? '暂未生成成功，等待自动重试' : '正在自动重试'}（${props.suggestion.retryAttempt}/2）${props.suggestion.mode === 'polish' ? '，修改原文将取消' : ''}…`
-        : `${props.suggestion.retryAt ? 'Waiting to retry' : 'Retrying'} (${props.suggestion.retryAttempt}/2)${props.suggestion.mode === 'polish' ? '; editing cancels generation' : ''}…`
+        ? `${props.suggestion.retryAt ? '暂未生成成功，等待自动重试' : '正在自动重试'}（${retryProgress}）${props.suggestion.mode === 'polish' ? '，修改原文将取消' : ''}…`
+        : `${props.suggestion.retryAt ? 'Waiting to retry' : 'Retrying'} (${retryProgress})${props.suggestion.mode === 'polish' ? '; editing cancels generation' : ''}…`
       : !props.suggestion.pending && failed && props.suggestion.retryAttempt > 0
         ? `${props.language === 'zh-CN' ? '自动重试后仍未成功。' : 'Automatic retry did not succeed. '}${outcomeMessage}`
         : outcomeMessage;
@@ -107,9 +112,11 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   const label = [message, actionLabel].filter(Boolean).join(' ');
   /** 生成期间统一显示简短状态，常态保留名称和快捷键，故障保留具体反馈。 */
   const tooltip = props.suggestion.pending
-    ? props.language === 'zh-CN'
-      ? '生成中...'
-      : 'Generating...'
+    ? props.suggestion.waitingForNetwork
+      ? message
+      : props.language === 'zh-CN'
+        ? '生成中...'
+        : 'Generating...'
     : failed || !props.configured || props.suggestion.reason === 'no_change'
       ? label
       : [props.language === 'zh-CN' ? '输入建议' : 'Input suggestions', props.suggestion.available && (!props.draft || props.suggestion.completion || hasPreview) ? 'Tab' : ''].filter(Boolean).join(' · ');
@@ -130,7 +137,7 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
           disabled={!props.suggestion.available && !props.suggestion.pending && !failed}
           onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => {
-            if (props.suggestion.pending) props.suggestion.dismiss();
+            if (props.suggestion.pending) props.suggestion.dismiss(props.suggestion.requestId ?? undefined);
             else if (canRetry) {
               // 复用主动生成入口，立即进入加载状态；错误原因仍可在重试前悬停或聚焦查看。
               event.preventDefault();
@@ -151,11 +158,11 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
             if (event.key !== 'Escape') return;
             event.preventDefault();
             event.stopPropagation();
-            props.suggestion.dismiss();
+            if (props.suggestion.requestId) props.suggestion.dismiss(props.suggestion.requestId);
           }}
         >
           {props.suggestion.pending ? (
-            <CircleNotchIcon className="session-suggestion-spinner" aria-hidden="true" />
+            <CircleNotchIcon className={props.suggestion.waitingForNetwork ? undefined : 'session-suggestion-spinner'} aria-hidden="true" />
           ) : canRetry ? (
             <ArrowClockwiseIcon aria-hidden="true" />
           ) : failed ? (
