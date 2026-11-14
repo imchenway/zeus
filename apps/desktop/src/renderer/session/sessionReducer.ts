@@ -79,7 +79,7 @@ export type NativeSessionAction =
   | { type: 'operation_started'; operation: string }
   | { type: 'operation_finished'; operation: string; error?: NativeSessionError | null }
   | { type: 'interrupt_started'; turnId: string }
-  | { type: 'interrupt_failed'; previousConversationState: ConversationState; error: NativeSessionError }
+  | { type: 'interrupt_failed'; turnId: string; previousConversationState: ConversationState; error: NativeSessionError }
   | { type: 'request_resolved'; requestId: string }
   | { type: 'event_received'; event: NativeConversationEvent; suppressRequestAuthority?: boolean }
   | { type: 'draft_changed'; draft: string }
@@ -291,6 +291,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
     case 'interrupt_started':
       return state.activeTurnId !== action.turnId ? state : { ...state, conversationState: 'interrupting', error: null };
     case 'interrupt_failed':
+      // 只有仍在停止同一轮次时才能恢复，终态和新轮次优先于旧请求失败。
+      if (state.activeTurnId !== action.turnId || state.terminalTurnIds[action.turnId] || state.conversationState !== 'interrupting') return state;
       return { ...state, conversationState: action.previousConversationState, error: action.error };
     case 'request_resolved': {
       const wasPending = state.pendingRequests.some((request) => request.id === action.requestId);
@@ -330,6 +332,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
+      if (!optimistic || !['pending', 'unconfirmed'].includes(optimistic.status)) return state;
       return {
         ...state,
         ...(optimistic
@@ -354,6 +357,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
+      if (!optimistic || !['pending', 'unconfirmed'].includes(optimistic.status)) return state;
       return {
         ...state,
         ...(optimistic

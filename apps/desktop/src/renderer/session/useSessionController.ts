@@ -71,7 +71,21 @@ const CONVERSATION_SCHEMA_GENERATION = '2026-08-16-unified-conversation-segments
 const CONVERSATION_SYNC_STREAM_GENERATION = 'zeus-conversation-sync-v2' as const;
 export const conversationHydrationTimeoutMs = 20_000;
 export const conversationRealtimeOpenTimeoutMs = 5_000;
+/** 单条消息等待接纳的上限，单位毫秒；超时仅触发只读核对。 */
+export const conversationSendAcceptanceTimeoutMs = 20_000;
 export const conversationGoalHydrationTimeoutMs = 1_000;
+
+/** 接纳超时不能证明消息未执行，原消息继续保留供核对。 */
+class ConversationSendAcceptanceTimeoutError extends Error {
+  /** 送达组件按此错误保留结果未知，而非明确失败。 */
+  readonly code = 'ZEUS_CONVERSATION_SEND_ACCEPTANCE_TIMEOUT';
+
+  /** 提示用户当前等待的是接纳结果。 */
+  constructor() {
+    super('消息接纳未在 20 秒内确认，正在核对发送结果。');
+    this.name = 'ConversationSendAcceptanceTimeoutError';
+  }
+}
 
 class ConversationHydrationTimeoutError extends Error {
   readonly code = 'ZEUS_CONVERSATION_HYDRATION_TIMEOUT';
@@ -819,6 +833,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   /** 消息发送按客户端消息身份独立执行，不占用会话级操作锁。 */
   const sendOperations = new Map<string, Promise<NativeOperationAcceptance | void>>();
+  /** 权威事件可独立结束接纳等待，不必等待原 HTTP 连接关闭。 */
+  const sendAcceptanceResolvers = new Map<string, (acceptance: NativeOperationAcceptance | void) => void>();
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
   let browserCommentMarkFlush: Promise<void> | null = null;
   let nextTurnSettingsWrite: Promise<NativeNextTurnSettings> | null = null;
@@ -997,10 +1013,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  /** 本地输入同步显示，服务端历史与位置继续在同一次归约中接管。 */
+  /** 连接与本地输入同步更新，服务端历史与位置继续在同一次归约中接管。 */
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
-    /** 这些动作不引入持久位置；缓冲它们会延迟气泡、读取旧草稿，甚至在恢复失败时丢失本地显示。 */
-    const localInputAction =
+    /** 连接就绪不能等待正文位置，否则续发会读到旧连接状态并失去唤醒；本地输入同样不依赖持久位置。 */
+    const immediateAction =
+      action.type === 'transport_changed' ||
       action.type === 'draft_changed' ||
       action.type === 'attachments_changed' ||
       action.type === 'browser_submission_changed' ||
@@ -1018,7 +1035,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const incomingEpoch =
       action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
     if (
-      !localInputAction &&
+      !immediateAction &&
       action.type !== 'transcript_placements_hydrated' &&
       (placementRecovery ||
         missingInputPlacement ||
@@ -1249,6 +1266,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   /** 原子接管权威会话正文，并在首帧之后渐进补齐非正文信息。 */
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
+    const token = connectionToken;
     if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || snapshot.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
     }
@@ -1266,6 +1284,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const projectedSnapshot = withoutResolvedRequests(snapshotWithExecutionContext);
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
     if (placementRecovery) await placementRecovery;
+    if (disposed || token !== connectionToken) return;
     if (refreshMetadata) {
       metadataHydrationConnection = connectionToken;
       if (!snapshot.executionContext) void hydrateExecutionContext();
@@ -1519,6 +1538,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
     dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    if (state.snapshot && (event.type === 'conversation.queue.changed' || event.type === 'conversation.turn.started' || event.type === 'conversation.item.completed')) {
+      void reconcilePersistedAcceptance({ ...state.snapshot, submissions: state.queue?.submissions ?? state.snapshot.submissions }).catch(failConversationSync);
+    }
     if (event.type === 'conversation.turn.completed' || ((event.type === 'conversation.item.started' || event.type === 'conversation.item.completed') && event.payload.itemType === 'commandExecution')) void hydrateExecutionContext();
     if (event.type === 'conversation.turn.change_set.changed') hydrateFullTerminalChangeSet(event);
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
@@ -1611,12 +1633,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function acceptedEnvelopeIsDurable(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    if (envelopeHasProviderUserFact(snapshot, envelope)) return true;
+    if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || envelopeHasProviderUserFact(snapshot, envelope)) return true;
     return matchingEnvelopeSubmissions(snapshot, envelope).some(submissionIsDurableEnvelopeEvidence);
   }
 
   function envelopeWasTerminalWithoutProviderFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
-    if (envelopeHasProviderUserFact(snapshot, envelope)) return false;
+    if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || envelopeHasProviderUserFact(snapshot, envelope)) return false;
     const matchingSubmissions = matchingEnvelopeSubmissions(snapshot, envelope);
     return matchingSubmissions.length > 0 && matchingSubmissions.every((submission) => submission.status === 'failed' || submission.status === 'deleted' || submission.status === 'cancelled' || isManualConfirmationSubmission(submission));
   }
@@ -1641,6 +1663,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'send_terminal', clientUserMessageId: envelope.clientUserMessageId });
     persistDraft();
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    sendAcceptanceResolvers.get(envelope.clientUserMessageId)?.();
+    void flushDeferredSends();
   }
 
   function acceptedStatus(acceptance: NativeOperationAcceptance): string {
@@ -1660,6 +1684,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
       ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
       ...(typeof providerTurnIdValue === 'string' && providerTurnIdValue ? { providerTurnId: providerTurnIdValue } : {}),
     });
+    sendAcceptanceResolvers.get(clientUserMessageId)?.(acceptance);
+    reportSendState(clientUserMessageId, 'accepted');
+    void flushDeferredSends();
+  }
+
+  /** 同一身份的接纳事实只向前推进，迟到 HTTP 成功不能复活已销账的消息。 */
+  function recordSendAcceptance(envelope: PendingSendEnvelope, acceptance: NativeOperationAcceptance): void {
+    const current = recoverableSend(envelope.clientUserMessageId);
+    if (disposed || !current || current.deliveryState === 'accepted') return;
+    const acceptedEnvelope: PendingSendEnvelope = { ...current, deliveryState: 'accepted', acceptance };
+    retainRecoverableSend(acceptedEnvelope);
+    dispatchSendAccepted(envelope.clientUserMessageId, acceptance);
+    persistDraft();
+    schedulePendingSendReconcile(acceptedEnvelope);
   }
 
   function browserCommentMarkFromEnvelope(envelope: PendingSendEnvelope): PendingBrowserCommentMark | null {
@@ -1745,6 +1783,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     recoverableSends = recoverableSends.filter((candidate) => candidate.clientUserMessageId !== envelope.clientUserMessageId);
     persistDraft();
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    sendAcceptanceResolvers.get(envelope.clientUserMessageId)?.(envelope.acceptance);
+    void flushDeferredSends();
     void flushPendingBrowserCommentMarks();
   }
 
@@ -1811,12 +1851,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function reconcileAcceptedSend(envelope: PendingSendEnvelope): Promise<boolean> {
     if (envelope.deliveryState !== 'accepted' || !envelope.acceptance || disposed || !recoverableSend(envelope.clientUserMessageId)) return true;
     const buffered = createRealtimeEventBuffer('targeted-hydration');
+    const token = connectionToken;
     targetedHydrationBuffer = buffered;
     try {
       if (await reconcileSubmissionReceipt(envelope)) return true;
       const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
-      if (disposed || !recoverableSend(envelope.clientUserMessageId)) return true;
+      if (disposed || token !== connectionToken || !recoverableSend(envelope.clientUserMessageId)) return true;
       await applyAuthoritativeSnapshot(snapshot);
+      if (disposed || token !== connectionToken) return false;
+      if (!recoverableSend(envelope.clientUserMessageId)) return true;
       if (envelopeWasTerminalWithoutProviderFact(snapshot, envelope)) {
         finalizeTerminalEnvelope(envelope);
         return true;
@@ -1837,7 +1880,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return false;
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
-      if (!buffered.overflowed) {
+      if (!disposed && token === connectionToken && !buffered.overflowed) {
         for (const event of buffered.events) applyRealtimeEvent(event);
       }
       buffered.events.length = 0;
@@ -1965,17 +2008,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   async function reconcileFailedSend(envelope: PendingSendEnvelope): Promise<FailedSendReconciliation> {
+    const token = connectionToken;
     const buffered = createRealtimeEventBuffer('targeted-hydration');
     targetedHydrationBuffer = buffered;
     try {
       const snapshot = await withSessionTimeout(loadConversationForHydration(), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
-      if (disposed || sendOperations.has(envelope.clientUserMessageId) || !recoverableSend(envelope.clientUserMessageId)) return { kind: 'unknown' };
+      if (disposed || token !== connectionToken || sendOperations.has(envelope.clientUserMessageId) || !recoverableSend(envelope.clientUserMessageId)) return { kind: 'unknown' };
       await applyAuthoritativeSnapshot(snapshot);
+      if (disposed || token !== connectionToken) return { kind: 'unknown' };
+      // 位置恢复期间可能已收到成功回执或发起明确重试，旧读取不能重新写回账本。
+      if (recoverableSend(envelope.clientUserMessageId) !== envelope || sendOperations.has(envelope.clientUserMessageId)) return { kind: 'unknown' };
       if (envelopeWasTerminalWithoutProviderFact(snapshot, envelope)) {
         finalizeTerminalEnvelope(envelope);
         return { kind: 'terminal' };
       }
-      if (!acceptedEnvelopeIsDurable(snapshot, envelope)) return { kind: 'absent' };
+      // 快照没有消息不代表仍在途的提交不会稍后入账；未知请求不能据此改判失败。
+      if (!acceptedEnvelopeIsDurable(snapshot, envelope)) return { kind: envelope.deliveryState === 'uncertain' ? 'unknown' : 'absent' };
 
       const acceptance = acceptanceFromDurableSnapshot(snapshot, envelope);
       retainRecoverableSend({ ...envelope, deliveryState: 'accepted', acceptance });
@@ -1986,7 +2034,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return { kind: 'unknown' };
     } finally {
       if (targetedHydrationBuffer === buffered) targetedHydrationBuffer = null;
-      if (!buffered.overflowed) {
+      if (!disposed && token === connectionToken && !buffered.overflowed) {
         for (const event of buffered.events) applyRealtimeEvent(event);
       }
       buffered.events.length = 0;
@@ -2172,6 +2220,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       isDisconnected: () => disconnected,
       markInactive() {
         active = false;
+        disconnected = true;
         eventTarget.removeEventListener?.('open', handleOpen);
         eventTarget.removeEventListener?.('close', handleDisconnect);
         eventTarget.removeEventListener?.('error', handleDisconnect);
@@ -2373,7 +2422,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function ensureRealtimeConnection(): Promise<void> {
-    if (disposed || realtimeSubscribed) return Promise.resolve();
+    if (disposed || (realtimeSubscribed && state.transportState === 'ready' && state.snapshot?.id === options.conversationId)) return Promise.resolve();
     if (realtimeConnectionPromise) return realtimeConnectionPromise;
     cancelReconnectLoop();
     const attempt = hydrate(true, 'required');
@@ -2445,8 +2494,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (!subscribeRealtime) {
         if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         await applyAuthoritativeSnapshot(snapshot);
+        if (disposed || token !== connectionToken) return;
         // 浏览历史只能读取持久事实；首次发送进入 required 水合后才允许恢复发送账本和实时副作用。
         if (!lazySnapshotHydration) await reconcilePersistedAcceptance(snapshot);
+        if (disposed || token !== connectionToken) return;
         syncProjectionSuspended = false;
         hydrating = false;
         ready = true;
@@ -2476,16 +2527,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
       // 正文可能已在同一事件水位提前显示，完整快照仍须接管队列与交互状态。
       await applyAuthoritativeSnapshot(snapshot);
+      if (disposed || token !== connectionToken || socket !== nextSocket) return;
       await reconcilePersistedAcceptance(snapshot);
+      if (disposed || token !== connectionToken || socket !== nextSocket) return;
       try {
         await withSessionTimeout(lifecycle.opened, conversationRealtimeOpenTimeoutMs, () => new ConversationRealtimeOpenTimeoutError());
       } catch (socketError) {
+        if (disposed || token !== connectionToken || socket !== nextSocket) return;
         lifecycle.markInactive();
         if (socket === nextSocket) socket = null;
         nextSocket.close();
         throw socketError;
       }
 
+      if (disposed || token !== connectionToken || socket !== nextSocket) return;
       if (lifecycle.isDisconnected()) throw new SocketDisconnectedDuringHydrationError();
       if (hydrationOverflowError) throw hydrationOverflowError;
       realtimeSubscribed = true;
@@ -2500,8 +2555,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
       void flushDeferredSends();
     } catch (error) {
       hydrating = false;
+      if (disposed || token !== connectionToken) return;
       const shouldScheduleReconnect =
-        !disposed && token === connectionToken && !(error instanceof ConversationRealtimeOpenTimeoutError) && (error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true);
+        error instanceof ConversationRealtimeOpenTimeoutError || error instanceof ConversationHydrationTimeoutError || error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true;
       if (!disposed && token === connectionToken) {
         socketLifecycle?.markInactive();
         socketLifecycle = null;
@@ -2537,6 +2593,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
       })
       .finally(() => {
         if (activeOperation?.promise === promise) activeOperation = null;
+        // 操作占用可能挡住连接完成时的续发，释放后沿原消息身份继续排空。
+        for (const envelope of recoverableSends) {
+          if (!disposed && !activeOperation && (envelope.deliveryState === 'uncertain' || envelope.deliveryState === 'accepted')) schedulePendingSendReconcile(envelope);
+        }
+        void flushDeferredSends();
       });
     activeOperation = { key, promise };
     return promise;
@@ -2564,6 +2625,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     retainRecoverableSend(trackedEnvelope);
     persistDraft();
     const previousConversationState = state.conversationState;
+    reportSendState(trackedEnvelope.clientUserMessageId, 'submitting');
+    /** 实时回执与 HTTP 返回竞争同一条消息的接纳结果。 */
+    const observedAcceptance = new Promise<NativeOperationAcceptance | void>((resolve) => sendAcceptanceResolvers.set(trackedEnvelope.clientUserMessageId, resolve));
     /** 请求 Promise 仅由该客户端消息身份持有。 */
     const operation = (async () => {
       dispatch({
@@ -2588,42 +2652,45 @@ export function createSessionController(options: CreateSessionControllerOptions)
       retainRecoverableSend(trackedEnvelope);
       persistDraft();
       try {
-        const acceptance = await options.client.sendNativeMessage(options.projectId, options.conversationId, {
-          content: trackedEnvelope.content,
-          ...(trackedEnvelope.displayText ? { displayText: trackedEnvelope.displayText } : {}),
-          composerDraft: trackedEnvelope.draft,
-          attachments: trackedEnvelope.attachments,
-          ...(trackedEnvelope.browserSubmission?.comments.length ? { browserComments: trackedEnvelope.browserSubmission.comments } : {}),
-          ...(trackedEnvelope.browserSubmission ? { browserCommentContent: trackedEnvelope.browserSubmission.content } : {}),
-          ...(hasConversationContext(trackedEnvelope.contextDraft) ? { conversationContext: trackedEnvelope.contextDraft } : {}),
-          delivery: trackedEnvelope.delivery,
-          ...(trackedEnvelope.questionAnswer ? { questionAnswer: trackedEnvelope.questionAnswer } : {}),
-          ...(trackedEnvelope.expectedTurnId ? { expectedTurnId: trackedEnvelope.expectedTurnId } : {}),
-          ...(trackedEnvelope.model ? { model: trackedEnvelope.model } : {}),
-          ...(trackedEnvelope.agentKind ? { agentKind: trackedEnvelope.agentKind } : {}),
-          ...(trackedEnvelope.effort ? { effort: trackedEnvelope.effort } : {}),
-          ...(trackedEnvelope.contextCapacityTokens !== undefined ? { contextCapacityTokens: trackedEnvelope.contextCapacityTokens } : {}),
-          ...(Object.prototype.hasOwnProperty.call(trackedEnvelope, 'serviceTier') ? { serviceTier: trackedEnvelope.serviceTier } : {}),
-          ...(trackedEnvelope.permissionMode ? { permissionMode: trackedEnvelope.permissionMode } : {}),
-          collaborationMode: trackedEnvelope.collaborationMode,
-          ...(trackedEnvelope.pluginReferences?.length ? { pluginReferences: trackedEnvelope.pluginReferences } : {}),
-          ...(trackedEnvelope.expertMentions?.length ? { expertMentions: trackedEnvelope.expertMentions } : {}),
-          ...(trackedEnvelope.skillReferences?.length ? { skillReferences: trackedEnvelope.skillReferences } : {}),
-          ...(trackedEnvelope.computerUseRequested ? { computerUseRequested: true } : {}),
-          idempotencyKey: trackedEnvelope.idempotencyKey,
-          clientUserMessageId: trackedEnvelope.clientUserMessageId,
-        });
-        /** HTTP 回执只更新当前消息，耐久状态交给后台只读核对。 */
-        const acceptedEnvelope: PendingSendEnvelope = { ...trackedEnvelope, deliveryState: 'accepted', acceptance };
-        retainRecoverableSend(acceptedEnvelope);
-        dispatchSendAccepted(trackedEnvelope.clientUserMessageId, acceptance);
-        persistDraft();
-        schedulePendingSendReconcile(acceptedEnvelope);
-        return acceptance;
+        const request = options.client
+          .sendNativeMessage(options.projectId, options.conversationId, {
+            content: trackedEnvelope.content,
+            ...(trackedEnvelope.displayText ? { displayText: trackedEnvelope.displayText } : {}),
+            composerDraft: trackedEnvelope.draft,
+            attachments: trackedEnvelope.attachments,
+            ...(trackedEnvelope.browserSubmission?.comments.length ? { browserComments: trackedEnvelope.browserSubmission.comments } : {}),
+            ...(trackedEnvelope.browserSubmission ? { browserCommentContent: trackedEnvelope.browserSubmission.content } : {}),
+            ...(hasConversationContext(trackedEnvelope.contextDraft) ? { conversationContext: trackedEnvelope.contextDraft } : {}),
+            delivery: trackedEnvelope.delivery,
+            ...(trackedEnvelope.questionAnswer ? { questionAnswer: trackedEnvelope.questionAnswer } : {}),
+            ...(trackedEnvelope.expectedTurnId ? { expectedTurnId: trackedEnvelope.expectedTurnId } : {}),
+            ...(trackedEnvelope.model ? { model: trackedEnvelope.model } : {}),
+            ...(trackedEnvelope.agentKind ? { agentKind: trackedEnvelope.agentKind } : {}),
+            ...(trackedEnvelope.effort ? { effort: trackedEnvelope.effort } : {}),
+            ...(trackedEnvelope.contextCapacityTokens !== undefined ? { contextCapacityTokens: trackedEnvelope.contextCapacityTokens } : {}),
+            ...(Object.prototype.hasOwnProperty.call(trackedEnvelope, 'serviceTier') ? { serviceTier: trackedEnvelope.serviceTier } : {}),
+            ...(trackedEnvelope.permissionMode ? { permissionMode: trackedEnvelope.permissionMode } : {}),
+            collaborationMode: trackedEnvelope.collaborationMode,
+            ...(trackedEnvelope.pluginReferences?.length ? { pluginReferences: trackedEnvelope.pluginReferences } : {}),
+            ...(trackedEnvelope.expertMentions?.length ? { expertMentions: trackedEnvelope.expertMentions } : {}),
+            ...(trackedEnvelope.skillReferences?.length ? { skillReferences: trackedEnvelope.skillReferences } : {}),
+            ...(trackedEnvelope.computerUseRequested ? { computerUseRequested: true } : {}),
+            idempotencyKey: trackedEnvelope.idempotencyKey,
+            clientUserMessageId: trackedEnvelope.clientUserMessageId,
+          })
+          .then((acceptance) => {
+            // 超时之后仍接收迟到的成功事实；失败只由本次有界等待处理。
+            recordSendAcceptance(trackedEnvelope, acceptance);
+            return acceptance;
+          });
+        return await withSessionTimeout(Promise.race([request, observedAcceptance]), conversationSendAcceptanceTimeoutMs, () => new ConversationSendAcceptanceTimeoutError());
       } catch (error) {
+        const current = recoverableSend(trackedEnvelope.clientUserMessageId);
+        // 快照或实时事件可能先于 HTTP 失败确认消息，禁止恢复旧的失败副本。
+        if (disposed || !current || current.deliveryState === 'accepted') return current?.acceptance;
         /** 统一错误结构只写入当前消息气泡。 */
         const failure = toSessionError(error, true);
-        /** 明确拒绝与结果未知分开显示，但两者都不阻止后续消息。 */
+        /** 明确拒绝可继续接纳后续消息，未知结果必须先核对顺序。 */
         const explicitFailure = sendFailureIsExplicit(failure) || failure.code === 'ZEUS_ASYNC_QUESTION_TURN_ENDED';
         /** 失败副本保留原附件、消息身份和幂等键。 */
         const unresolvedEnvelope: PendingSendEnvelope = {
@@ -2632,6 +2699,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           deliveryError: failure,
         };
         retainRecoverableSend(unresolvedEnvelope);
+        reportSendState(trackedEnvelope.clientUserMessageId, explicitFailure ? 'failed' : 'uncertain');
         dispatch(
           explicitFailure
             ? {
@@ -2648,7 +2716,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               },
         );
         persistDraft();
-        // 结果不确定只影响本消息，后台只读核对不会阻止用户继续发送。
+        // 结果未知保留原身份并只读核对；普通待发消息继续保持接纳顺序。
         if (!explicitFailure) {
           dispatch({ type: 'send_reconcile_progress', clientUserMessageId: trackedEnvelope.clientUserMessageId, attempt: 1, maxAttempts: pendingSendReconcileAttempts });
           schedulePendingSendReconcile(unresolvedEnvelope);
@@ -2658,17 +2726,47 @@ export function createSessionController(options: CreateSessionControllerOptions)
         throw error;
       }
     })().finally(() => {
-      if (sendOperations.get(trackedEnvelope.clientUserMessageId) === operation) sendOperations.delete(trackedEnvelope.clientUserMessageId);
+      if (sendOperations.get(trackedEnvelope.clientUserMessageId) === operation) {
+        sendOperations.delete(trackedEnvelope.clientUserMessageId);
+        sendAcceptanceResolvers.delete(trackedEnvelope.clientUserMessageId);
+      }
       void flushDeferredSends();
     });
     sendOperations.set(trackedEnvelope.clientUserMessageId, operation);
     return operation;
   }
 
+  /** 普通消息的未知接纳结果不能被后续普通消息越过；直接引导仍独立提交。 */
+  function hasUnresolvedAdmission(): boolean {
+    return sendOperations.size > 0 || recoverableSends.some((envelope) => envelope.delivery === 'queue' && (envelope.deliveryState === 'pending' || envelope.deliveryState === 'uncertain'));
+  }
+
+  /** 记录送达迁移及实际阻塞条件，不记录正文、附件或上下文内容。 */
+  function reportSendState(clientUserMessageId: string, phase: string): void {
+    if (typeof window === 'undefined') return;
+    window.zeus?.reportRendererRuntimeError?.(
+      JSON.stringify({
+        kind: 'conversation_delivery',
+        conversationId: options.conversationId,
+        clientUserMessageId,
+        phase,
+        at: new Date().toISOString(),
+        connectionToken,
+        transportState: state.transportState,
+        realtimeSubscribed,
+        snapshotMatches: state.snapshot?.id === options.conversationId,
+        activeOperation: activeOperation?.key.split(':')[0] ?? null,
+        inFlightCount: sendOperations.size,
+        unresolvedAdmission: hasUnresolvedAdmission(),
+        deferredCount: deferredSends.length,
+      }),
+    );
+  }
+
   /** 普通消息与问题回答共用待发队列；只冻结一次内容，内部等待结束后自动接续。 */
   function sendOrDeferEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
     /** 普通连续发送按意图顺序接纳；直接引导不等待普通提交的回执。 */
-    const waitingForAcceptance = envelope.delivery === 'queue' && (deferredSends.length > 0 || sendOperations.size > 0);
+    const waitingForAcceptance = envelope.delivery === 'queue' && (deferredSends.length > 0 || hasUnresolvedAdmission());
     /** 连接等待与前序接纳等待分开，已连接的排队消息不能显示为正在重连。 */
     const waitingForConnection = state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed;
     if (waitingForAcceptance || waitingForConnection) {
@@ -2693,7 +2791,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         queuedUntilHydrated: waitingForConnection,
       });
       persistDraft();
-      if (state.transportState !== 'ready' || !realtimeSubscribed) {
+      reportSendState(envelope.clientUserMessageId, 'deferred');
+      if (waitingForConnection) {
         void ensureRealtimeConnection().catch(() => undefined);
       } else {
         void flushDeferredSends();
@@ -2706,15 +2805,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
   /** 连接就绪后按保存顺序提交待发消息；单条失败不会终止后续消息。 */
   async function flushDeferredSends(): Promise<void> {
     // 接纳完成会继续排空；重连、续发和回执回调不能并行取走后续消息。
-    if (disposed || state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation || sendOperations.size > 0) return;
-    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && sendOperations.size === 0) {
+    if (disposed) return;
+    if (state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation || hasUnresolvedAdmission()) {
+      if (deferredSends[0]) reportSendState(deferredSends[0].clientUserMessageId, 'waiting');
+      return;
+    }
+    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && !hasUnresolvedAdmission()) {
       const envelope = deferredSends[0]!;
       deferredSends = deferredSends.slice(1);
-      persistDraft();
       try {
         await submitEnvelope(envelope);
       } catch {
-        // 失败已经记录在该消息自己的账本中，继续提交下一条消息。
+        // 明确失败允许继续；结果未知由接纳门控保留顺序。
       }
     }
   }
@@ -2737,7 +2839,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
     delete retry.acceptance;
     delete retry.deliveryError;
     recoverableSends = recoverableSends.filter((candidate) => candidate.clientUserMessageId !== clientUserMessageId);
-    return sendOrDeferEnvelope(retry);
+    // 用户明确重试原消息时，它必须先于此前等待它的后续输入重新接纳。
+    if (state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId) return submitEnvelope(retry);
+    deferredSends = [retry, ...deferredSends.filter((candidate) => candidate.clientUserMessageId !== clientUserMessageId)];
+    persistDraft();
+    await ensureRealtimeConnection();
+    void flushDeferredSends();
   }
 
   async function cancelPendingSend(clientUserMessageId: string): Promise<void> {
@@ -3445,6 +3552,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const resolve of sendAcceptanceResolvers.values()) resolve();
+      sendAcceptanceResolvers.clear();
       for (const request of resourceRequests) request.abort();
       finishPendingSendReconcileWait?.();
       for (const context of transcriptHydrations) context.controller.abort(new DOMException('会话已关闭。', 'AbortError'));
@@ -3858,13 +3967,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
       }
       const previousConversationState = state.conversationState;
+      const token = connectionToken;
       dispatch({ type: 'interrupt_started', turnId });
       return runOperation(
         operation,
         () => options.client.interruptNativeTurn(options.projectId, options.conversationId, turnId),
         () => undefined,
       ).catch((error) => {
-        dispatch({ type: 'interrupt_failed', previousConversationState, error: toSessionError(error, true) });
+        if (!disposed && token === connectionToken) dispatch({ type: 'interrupt_failed', turnId, previousConversationState, error: toSessionError(error, true) });
         throw error;
       });
     },
