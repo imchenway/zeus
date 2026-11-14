@@ -1,10 +1,10 @@
 import { activeSystemWindow } from './systemWindows.js';
 import { openRegularFileNoFollow } from '@zeus/storage/platform-security';
-import { BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -620,6 +620,28 @@ export function registerFilePreview(services: {
     const result = await getFilePreviewBlame(grant.source.git, path);
     await currentPath(grant);
     return result;
+  });
+
+  /** 图片像素仅由受信窗口提交；不接受任意路径或通过 URL 读取本机文件。 */
+  ipcMain.handle('zeus:image-preview:action', async (event, dataUrl: unknown, action: unknown, name: unknown) => {
+    /** 对话框归属发起操作的受信窗口。 */
+    const window = services.requireWindow(event);
+    if ((action !== 'copy' && action !== 'export') || typeof name !== 'string' || !name || name.length > 255) throw new Error('图片操作无效。');
+    /** 只接受预览画布输出的 PNG，编码前后均受现有图片大小上限约束。 */
+    const prefix = 'data:image/png;base64,';
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith(prefix) || dataUrl.length > prefix.length + Math.ceil(filePreviewLimits.image / 3) * 4) throw new Error('图片数据无效或超过大小上限。');
+    /** 限制后的像素数据不包含来源路径与预览授权令牌。 */
+    const bytes = Buffer.from(dataUrl.slice(prefix.length), 'base64');
+    if (bytes.length > filePreviewLimits.image || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('图片数据不是有效的 PNG。');
+    /** 剪贴板使用系统图片格式，不能把图片地址作为文字复制。 */
+    const image = nativeImage.createFromBuffer(bytes);
+    if (image.isEmpty()) throw new Error('图片无法解码。');
+    if (action === 'copy') clipboard.writeImage(image);
+    else {
+      /** 只有用户选定的目标才允许写入，取消保存不产生文件。 */
+      const result = await dialog.showSaveDialog(activeSystemWindow(window), { defaultPath: `${basename(name, '.png')}.png`, filters: [{ name: 'PNG', extensions: ['png'] }] });
+      if (!result.canceled && result.filePath) await writeFile(result.filePath, bytes);
+    }
   });
 
   ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => {

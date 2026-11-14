@@ -220,6 +220,8 @@ declare global {
       /** 交付菜单共享任务与项目工作区操作。 */
       actOnGitDeliveryFiles: (input: import('@zeus/shared').GitDeliveryFileActionInput) => Promise<{ completed: true }>;
       actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => Promise<void>;
+      /** 只复制或另存预览图片的 PNG 像素，不接收本地文件路径。 */
+      actOnImagePreview: (dataUrl: string, action: 'copy' | 'export', name: string) => Promise<void>;
       /** 只恢复两端预览中选中的行区块，并返回更新后的预览授权。 */
       /** 将完整草稿保存到当前授权工作区文件。 */
       saveFilePreview: (input: import('@zeus/shared').FilePreviewSaveInput) => Promise<import('@zeus/shared').FilePreviewItem[]>;

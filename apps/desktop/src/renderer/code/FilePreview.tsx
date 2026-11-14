@@ -1,5 +1,6 @@
 import { FileSelectionQuestionContext } from '../session/sideQuestionContext.js';
 import { useWindowDocument } from '../ui/windowDocument.js';
+import { createPortal } from 'react-dom';
 import { createContext, useContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ReadingStateScope, useReadingScroll, useReadingState } from '../ui/readingState.js';
 import { isMacOSPlatform } from '../platform.js';
@@ -34,6 +35,7 @@ import {
 } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
+import { MenuSurface } from '../ui/MenuSurface.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
@@ -491,7 +493,7 @@ function FilePreviewBody(props: {
         ) : !items ? (
           <p role="status">{props.zh ? '正在读取文件…' : 'Loading file…'}</p>
         ) : simpleImage && current?.url ? (
-          <PreviewImage url={current.url} name={current.name} zh={props.zh} compact onError={() => setError(props.zh ? '图片已损坏或无法解码，请重试。' : 'The image could not be decoded. Please retry.')} />
+          <PreviewImage url={current.url} name={current.name} previewId={current.id} zh={props.zh} compact onError={() => setError(props.zh ? '图片已损坏或无法解码，请重试。' : 'The image could not be decoded. Please retry.')} />
         ) : (
           <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
             {(images ? items : current ? [current] : []).map((item, index) => (
@@ -525,7 +527,23 @@ function FilePreviewBody(props: {
 }
 
 /** 可复用的透明背景图片视图，支持原尺寸与放大检查小图标。 */
-export function PreviewImage(props: { url: string; name: string; zh: boolean; onError?: () => void; /** 单图弹窗将尺寸和缩放收在底部一行。 */ compact?: boolean }) {
+export function PreviewImage(props: {
+  url: string;
+  name: string;
+  zh: boolean;
+  onError?: () => void;
+  /** 文件令牌用于另存原文件、打开和定位；截图没有本地文件身份。 */ previewId?: string;
+  /** 会话资源按操作申请短期文件授权，复用其已有释放流程。 */ onFileAction?: (action: 'export' | 'open' | 'reveal') => Promise<void>;
+  /** 单图弹窗将尺寸和缩放收在底部一行。 */ compact?: boolean;
+}) {
+  /** 菜单和图片转换使用预览所属窗口，不向主窗口转移焦点。 */
+  const ownerDocument = useWindowDocument();
+  /** 图片所在弹层决定菜单的挂载位置。 */
+  const imageRef = useRef<HTMLImageElement>(null);
+  /** 右键或键盘菜单的窗口内坐标。 */
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  /** 图片操作失败在当前预览内显示。 */
+  const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** 图片原始尺寸和放大模式下保留画布内的位置。 */
   const imageScroll = useReadingScroll('image');
   /** 零代表适应窗口，正值代表原尺寸倍率。 */
@@ -537,7 +555,45 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
   useEffect(() => {
     setFailed(false);
     setDimensions('');
+    setMenu(null);
+    setError('');
   }, [props.url]);
+  /** 有文件身份时保留原格式导出，截图按当前像素复制或另存为 PNG。 */
+  async function action(value: 'copy' | 'export' | 'open' | 'reveal') {
+    setMenu(null);
+    setError('');
+    try {
+      if (!window.zeus) throw new Error(props.zh ? '当前环境不支持图片操作。' : 'Image actions are unavailable in this environment.');
+      if (value === 'open' || value === 'reveal' || (value === 'export' && (props.previewId || props.onFileAction))) {
+        if (props.onFileAction) return await props.onFileAction(value);
+        if (!props.previewId) throw new Error(props.zh ? '图片没有本地文件。' : 'This image has no local file.');
+        await window.zeus.actOnFilePreview(props.previewId, value);
+        return;
+      }
+      /** 重新读取已授权图片，避免直接绘制跨源图片导致画布不可导出。 */
+      const response = await fetch(props.url);
+      if (!response.ok) throw new Error(props.zh ? '图片读取失败，请重试。' : 'Could not read the image. Please retry.');
+      /** 按原始像素解码，不把预览缩放倍率写入剪贴板。 */
+      const bitmap = await createImageBitmap(await response.blob());
+      try {
+        /** PNG 同时适用于透明图片、剪贴板与无本地文件的截图。 */
+        const canvas = Object.assign(ownerDocument.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+        /** 只使用二维像素画布，不读取或执行图片中的活动内容。 */
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error(props.zh ? '无法读取图片像素。' : 'Could not read image pixels.');
+        context.drawImage(bitmap, 0, 0);
+        await window.zeus.actOnImagePreview(canvas.toDataURL('image/png'), value, `${props.name.replace(/\.[^./\\]+$/u, '') || 'image'}.png`);
+      } finally {
+        bitmap.close();
+      }
+    } catch (cause) {
+      setError(userFacingErrorCause(cause));
+    }
+  }
+  /** 没有本地文件的截图只提供可执行的复制和另存操作。 */
+  const actions: Array<'copy' | 'export' | 'open' | 'reveal'> = props.previewId || props.onFileAction ? ['copy', 'export', 'open', 'reveal'] : ['copy', 'export'];
+  /** 同一菜单使用简短动词，不重复图片名称。 */
+  const labels = props.zh ? { copy: '复制图片', export: '另存为…', open: '打开文件', reveal: '定位文件' } : { copy: 'Copy image', export: 'Save image as…', open: 'Open file', reveal: 'Reveal file' };
   return (
     <div className={`file-preview-image${props.compact ? ' file-preview-image-compact' : ''}`}>
       <div className="file-preview-toolbar" role="group" aria-label={props.zh ? '图片缩放' : 'Image zoom'}>
@@ -564,11 +620,38 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
         </PreviewIconButton>
         {zoom && !props.compact ? <span>{zoom * 100}%</span> : null}
       </div>
-      <div ref={imageScroll} className="file-preview-checker">
+      {error ? (
+        <p role="alert">
+          <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
+      <div
+        ref={imageScroll}
+        className="file-preview-checker"
+        tabIndex={failed || !dimensions ? undefined : 0}
+        aria-label={props.name}
+        aria-haspopup={failed || !dimensions ? undefined : 'menu'}
+        onContextMenu={(event) => {
+          if (failed || !dimensions) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.focus({ preventScroll: true });
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
+        onKeyDown={(event) => {
+          if (failed || !dimensions || !(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          /** 键盘菜单放在画布左上角，定位继续由共享菜单限制在窗口内。 */
+          const rect = event.currentTarget.getBoundingClientRect();
+          setMenu({ x: rect.left + 16, y: rect.top + 16 });
+        }}
+      >
         {failed ? (
           <p role="alert">{props.zh ? '图片已损坏或无法解码。请使用“打开文件”。' : 'The image could not be decoded. Use Open to view it in a system app.'}</p>
         ) : (
           <img
+            ref={imageRef}
             src={props.url}
             alt={props.name}
             className={zoom ? 'is-actual-size' : ''}
@@ -576,11 +659,24 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
             onLoad={(event) => setDimensions(`${event.currentTarget.naturalWidth} × ${event.currentTarget.naturalHeight}`)}
             onError={() => {
               setFailed(true);
+              setMenu(null);
               props.onError?.();
             }}
           />
         )}
       </div>
+      {menu
+        ? createPortal(
+            <MenuSurface className="zeus-file-copy-menu" aria-label={props.zh ? '图片操作' : 'Image actions'} style={{ left: menu.x, top: menu.y }} onClose={() => setMenu(null)} onContextMenu={(event) => event.preventDefault()}>
+              {actions.map((value) => (
+                <button key={value} type="button" role="menuitem" onClick={() => void action(value)}>
+                  {labels[value]}
+                </button>
+              ))}
+            </MenuSurface>,
+            imageRef.current?.closest('[data-zeus-primitive="modal"]') ?? ownerDocument.body,
+          )
+        : null}
     </div>
   );
 }
@@ -778,7 +874,7 @@ function FilePreviewContent(props: {
             <SpreadsheetPreview key={item.url} url={item.url} name={item.name} readingKey={item.label} zh={props.zh} />
           </Suspense>
         ) : item.kind === 'image' && item.url ? (
-          <PreviewImage url={item.url} name={item.name} zh={props.zh} />
+          <PreviewImage url={item.url} name={item.name} previewId={item.id} zh={props.zh} />
         ) : item.kind === 'pdf' && item.url ? (
           <iframe /* PDF 使用独立协议源隔离；HTML sandbox 会禁用 Chromium 的 PDF 阅读器。 */
             className="file-preview-pdf"
