@@ -107,15 +107,22 @@ export async function resolveTaskClipboardFilePath(filePath: string): Promise<st
   if (process.platform !== 'darwin' || !filePath.startsWith('/.file/id=')) return filePath;
   try {
     /** JSON 保留文件名中的空格、换行和非 ASCII 字符。 */
-    const { stdout } = await execFile('/usr/bin/osascript', [
-      '-l', 'JavaScript', '-e',
-      `function run(argv) {
+    const { stdout } = await execFile(
+      '/usr/bin/osascript',
+      [
+        '-l',
+        'JavaScript',
+        '-e',
+        `function run(argv) {
   ObjC.import('Foundation');
   // 文件引用 URL 必须先转换为路径 URL，不能直接提取原引用的 path。
   const url = $.NSURL.URLWithString(argv[0]).filePathURL;
   return JSON.stringify(url.isNil() ? null : ObjC.unwrap(url.path));
-}`, pathToFileURL(filePath).href,
-    ], { timeout: 1000, maxBuffer: 64 * 1024 });
+}`,
+        pathToFileURL(filePath).href,
+      ],
+      { timeout: 1000, maxBuffer: 64 * 1024 },
+    );
     /** 后续文件读取仍负责存在性、类型及授权边界校验。 */
     const resolvedPath: unknown = JSON.parse(stdout);
     if (typeof resolvedPath === 'string' && isAbsolute(resolvedPath) && !resolvedPath.includes('\0')) return resolvedPath;
