@@ -203,7 +203,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate))
           await verifyWindowsReleaseSignature(prepared.artifactPath, options.currentExecutablePath, { allowUnsignedInstaller: !update.automaticInstallEnabled });
         await options.openDownloadedArtifact(prepared.artifactPath);
-        return { accepted: true, update, reason: '已请求系统打开安装包，请结束工作并退出 Zeus 后手动替换应用。' };
+        return { accepted: true, update, reason: '已请求系统打开安装包，请按提示完成手动安装。' };
       }),
     install: () =>
       exclusive(async () => {
@@ -310,8 +310,14 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
   if (process.platform !== 'win32' && update.executionHostProtocolVersion !== executionHostProtocolVersion) return 'protocol';
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
   if (process.platform === 'win32') {
-    await access(dirname(options.currentExecutablePath), fsConstants.W_OK);
-    // 未签名旧版即使发现已签名新版，也必须由用户手动安装，不能在下载后才被自动安装门禁拦截。
+    try {
+      await access(dirname(options.currentExecutablePath), fsConstants.W_OK);
+    } catch (error) {
+      // 安装目录不可写时交给用户手动安装；其他磁盘错误保留原始失败。
+      if (isNodeError(error, 'EACCES') || isNodeError(error, 'EPERM') || isNodeError(error, 'EROFS')) return 'location';
+      throw error;
+    }
+    // 当前应用未签名时只允许用户打开安装包，不进入自动安装交接。
     if (!(options.testMode && options.allowUntrustedTestUpdate) && !(await readWindowsReleaseSignature(options.currentExecutablePath)).valid) return 'signature';
     return null;
   }
