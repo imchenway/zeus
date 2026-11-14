@@ -11,6 +11,7 @@ import {
   isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
   readTaskClipboardFileReferencesFromClipboard,
+  resolveTaskClipboardFilePath,
   safelyReadTaskClipboardImageAttachment,
   type NativeTaskClipboardReader,
   type TaskClipboardAttachmentPayload,
@@ -97,14 +98,17 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       /** 同一来源在一批内只导入一次。 */
       const seen = new Set<string>();
       /** 原生文件图标不能代替 Windows 文件；多项输入不合并成一张位图。 */
-      const fallbackImage = mode === 'copy' && process.platform !== 'win32' && source === 'paste' && paths.length === 1 && inferTaskClipboardAttachmentMimeType(paths[0] ?? '').startsWith('image/') ? (clipboardImage ?? null) : null;
+      const fallbackImage = mode === 'copy' && process.platform !== 'win32' && source === 'paste' && paths.length === 1 ? (clipboardImage ?? null) : null;
       for (const [index, path] of paths.entries()) {
         if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) throw new Error('附件路径无效。');
         /** 来源打开失败可以使用同次图片快照；副本写入开始后禁止换源。 */
         let persistenceStarted = false;
+        /** 回退按解析后的文件类型判断，macOS 文件 ID 本身没有扩展名。 */
+        let sourcePath = path;
         try {
+          sourcePath = await resolveTaskClipboardFilePath(path);
           /** 解析符号链接后按用户选定的真实文件读取。 */
-          const canonicalPath = await realpath(path);
+          const canonicalPath = await realpath(sourcePath);
           if (seen.has(canonicalPath)) continue;
           seen.add(canonicalPath);
           /** 目录只允许显式引用，不会随普通拖放隐式复制。 */
@@ -133,7 +137,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
           batchBytes += saved.size;
           resources.push({ name: basename(canonicalPath), mime, size: saved.size, kind: isSupportedImageInputMimeType(mime) ? 'image' : 'file', source, localPath: saved.path });
         } catch (error) {
-          if (!persistenceStarted && fallbackImage && isUnreadableSourceError(error)) return this.materialize([{ ...fallbackImage, source }], command);
+          if (!persistenceStarted && fallbackImage && inferTaskClipboardAttachmentMimeType(sourcePath).startsWith('image/') && isUnreadableSourceError(error)) return this.materialize([{ ...fallbackImage, source }], command);
           throw new Error(`附件无法保存：${userFacingErrorCause(error).message}`, { cause: error });
         }
       }
