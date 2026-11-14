@@ -223,7 +223,8 @@ export interface SessionWorkspaceActions {
     input: SessionWorkspaceStartInput,
   ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartFailure>;
-  onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
+  /** 普通读取复用进行中的目录请求；登录或配置变更后强制读取新目录。 */
+  onLoadCapabilities?: (projectId: string, force?: boolean) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: import('../features/codex/codexApiClient.js').CodexApiClient['loadSkills'];
   onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
   /** 解释失败原因后可直接打开对应的现有设置页。 */
@@ -492,10 +493,10 @@ export function preloadCodexConversationCapabilities(client: SessionControllerCl
   return promise;
 }
 
-/** 登录或重新连接后必须发起新读取，旧请求不能覆盖更新后的缓存。 */
-function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string, force = false): Promise<CodexConversationCapabilities | null> {
+/** 共用进行中的目录读取；登录后可强制刷新，旧请求不能覆盖更新后的缓存。 */
+export function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string, force = false): Promise<CodexConversationCapabilities> {
   const load = client.loadCodexConversationCapabilities;
-  if (!load) return Promise.resolve(null);
+  if (!load) return Promise.reject(new Error('模型选项读取不可用。'));
   const entry = conversationCapabilitiesEntry(client, projectId);
   if (entry.promise && !force) return entry.promise;
   const promise = load(projectId)
@@ -700,6 +701,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         ? undefined
         : props.creationStatus;
   const connectedActions = useMemo(() => createConnectedSessionActions({ controller, onChooseAttachments: props.onChooseAttachments }), [controller, props.onChooseAttachments]);
+  /** 同一客户端的读取回调保持稳定，避免会话状态变化触发额外目录请求。 */
+  const loadConversationCapabilities = useCallback((projectId: string, force = false) => refreshCodexConversationCapabilities(props.client, projectId, force), [props.client]);
   const workspaceActions = useMemo<SessionWorkspaceActions>(() => {
     const projectId = props.conversation.projectId;
     const conversationId = props.conversation.id;
@@ -842,7 +845,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onOpenTaskDetail: props.onOpenTaskDetail,
       onTaskManagementStatusChange: props.onTaskManagementStatusChange,
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
-      onLoadCapabilities: props.client.loadCodexConversationCapabilities,
+      onLoadCapabilities: props.client.loadCodexConversationCapabilities ? loadConversationCapabilities : undefined,
       onLoadSkills: props.onLoadSkills,
       onLoadDigitalEmployees: props.onLoadDigitalEmployees,
       onOpenAiSettings: props.onOpenAiSettings,
@@ -855,6 +858,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     controllerActionsAvailable,
     controllerInteractive,
     historySnapshotOnly,
+    loadConversationCapabilities,
     props.client,
     props.conversation.id,
     props.conversation.projectId,
@@ -3712,7 +3716,7 @@ export function NewConversationComposer(props: {
   /** 订阅登录完成后重读能力，保留输入、附件和模型偏好。 */
   const capabilitiesRevision = useCodexCapabilitiesRevision();
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(props.capabilities ?? null);
-  const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(props.capabilities?.projectId !== props.owner?.projectId || !props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
   /** 当前模型的上下文容量以 Token 为单位。 */
@@ -3901,18 +3905,22 @@ export function NewConversationComposer(props: {
 
   useEffect(() => {
     const projectId = props.owner?.projectId;
-    if (!projectId) return;
-    if (props.capabilities?.projectId === projectId && capabilitiesRevision === 0) {
+    if (projectId && props.capabilities?.projectId === projectId) {
       setCapabilities(props.capabilities);
       recoverDraftOperation('model_capabilities');
       setCapabilitiesLoading(false);
-      return;
     }
-    setCapabilities(null);
+  }, [props.capabilities, props.owner?.projectId, recoverDraftOperation]);
+
+  useEffect(() => {
+    const projectId = props.owner?.projectId;
+    if (!projectId) return;
+    /** 后台刷新保留同项目目录，切换项目时不沿用其他项目的能力。 */
+    setCapabilities((current) => (current?.projectId === projectId ? current : null));
     setCapabilitiesLoading(true);
     let active = true;
     void props
-      .onLoadCapabilities?.(projectId)
+      .onLoadCapabilities?.(projectId, capabilitiesRevision > 0)
       .then((snapshot) => {
         if (active && snapshot) {
           setCapabilities(snapshot);
@@ -3928,10 +3936,12 @@ export function NewConversationComposer(props: {
     return () => {
       active = false;
     };
-  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, systemScope, recoverDraftOperation]);
+  }, [props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, systemScope, recoverDraftOperation]);
 
   /** 模型目录只应用于其所属项目，不用旧项目目录覆盖新选择。 */
   const activeCapabilities = capabilities?.projectId === props.owner?.projectId ? capabilities : null;
+  /** 已有目录足以选择和提交；后台刷新不再阻塞输入框，服务端仍校验实际授权。 */
+  const modelCapabilitiesPending = capabilitiesLoading && !activeCapabilities;
   const modelPresentation = useMemo(
     () => presentModelOptions(activeCapabilities?.models ?? [], selectedModelId || activeCapabilities?.preferredModel || '', props.language, { preserveMissingSelection: Boolean(selectedModelId) }),
     [activeCapabilities, props.language, selectedModelId],
@@ -4001,7 +4011,7 @@ export function NewConversationComposer(props: {
       !props.owner ||
       submitting ||
       executionContextBusy ||
-      capabilitiesLoading ||
+      modelCapabilitiesPending ||
       runtimeProjectId !== props.owner.projectId ||
       (!selectedModel && !needsModelSetup) ||
       (selectedModel && !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) ||
@@ -4021,7 +4031,7 @@ export function NewConversationComposer(props: {
         signal: request.signal,
         onComplete: async (reference) => {
           /** 读取最新目录；失败保留引导和全部草稿内容。 */
-          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId);
+          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
           if (request.signal.aborted) return;
           /** 订阅登录优先选用可用的订阅模型，自定义接入遵循用户明确选择。 */
           const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
@@ -4170,7 +4180,7 @@ export function NewConversationComposer(props: {
       className="session-composer-shell session-new-conversation-composer"
       aria-label={copy.newInput}
       data-input-suggestion={suggestion.text || suggestion.completion || suggestion.completionPending || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
-      aria-busy={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || undefined}
+      aria-busy={submitting || executionContextBusy || modelCapabilitiesPending || inputResources.processing || undefined}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
       onDragEnter={inputResources.handleDragEnter}
@@ -4432,7 +4442,7 @@ export function NewConversationComposer(props: {
                 disabled={
                   submitting ||
                   executionContextBusy ||
-                  capabilitiesLoading ||
+                  modelCapabilitiesPending ||
                   inputResources.processing ||
                   !props.owner ||
                   runtimeProjectId !== props.owner.projectId ||

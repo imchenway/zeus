@@ -3,7 +3,7 @@ import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../u
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
-import { ConnectedSessionWorkspace, SessionWorkspace, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
+import { ConnectedSessionWorkspace, SessionWorkspace, readCachedCodexConversationCapabilities, refreshCodexConversationCapabilities, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
@@ -225,6 +225,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   } = state;
   // 返回新会话只重新聚焦输入框；未发送草稿随工作区保留，由发送成功负责清理。
   const [newConversationDrafts] = useState<NewConversationDraftStore>(() => new Map());
+  /** 新建会话与项目预读共用目录请求，回调保持稳定以免输入时反复触发加载。 */
+  const loadNewConversationCapabilities = useCallback(
+    (projectId: string, force = false) => {
+      return props.nativeConversationClient ? refreshCodexConversationCapabilities(props.nativeConversationClient, projectId, force) : Promise.reject(new Error('模型选项读取不可用。'));
+    },
+    [props.nativeConversationClient],
+  );
   const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
     const {
       onConfirmRuntimeOperation,
@@ -1902,6 +1909,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         historyOnly={Boolean(selectedNativeConversation && selectedNativeConversationPresentation === 'history')}
         task={nativeSessionTask}
         owner={nativeSessionOwner}
+        capabilities={props.nativeConversationClient && nativeSessionOwner ? readCachedCodexConversationCapabilities(props.nativeConversationClient, nativeSessionOwner.projectId) : null}
         projects={snapshot.projects}
         tasks={currentProjectTasks.map((task) => createSessionWorkspaceTask(task, appShellSettings, appShellSettings.appLanguage))}
         choices={nativeSessionChoices}
@@ -1928,7 +1936,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation: startProjectConversation,
           onOpenTaskDetail,
           onTaskManagementStatusChange: (taskId, status) => updateTaskManagementStatus(taskId, status),
-          onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
+          onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities ? loadNewConversationCapabilities : undefined,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
           onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
           onOpenAiSettings: (section) => {
