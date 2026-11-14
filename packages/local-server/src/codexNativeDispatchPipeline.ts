@@ -1,4 +1,6 @@
 import { type CodexCollaborationMode, type CodexDynamicToolSpec, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
+import { performance } from 'node:perf_hooks';
+import type { ConversationDispatchPerformanceSample } from './performanceObservability.js';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { ensureInitialCodexGoal } from './codexGoalApplication.js';
 import type {
@@ -148,13 +150,24 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     return state.type === 'ready' ? state.generationId : null;
   };
 
+  /** 按提交身份采样实际等待；失败也保留阶段耗时，不把阶段结束当作执行成功。 */
+  async function measureDispatchPhase<T>(conversationId: string, submissionId: string, phase: ConversationDispatchPerformanceSample['phase'], operation: () => Promise<T>): Promise<T> {
+    const startedAt = now();
+    const startedAtMs = performance.now();
+    try {
+      return await operation();
+    } finally {
+      options.recordDispatchPerformance?.({ conversationId, submissionId, phase, startedAt, completedAt: now(), durationMs: performance.now() - startedAtMs });
+    }
+  }
+
   /** 在持久队列中公开 Plugin 检查阶段；结束、取消或失败后的终态不能被清理动作覆盖。 */
-  async function runPluginDispatchCheck<T>(conversationId: string, submissionId: string, operation: () => Promise<T>): Promise<T> {
+  async function runPluginDispatchCheck<T>(conversationId: string, submissionId: string, phase: 'plugin_prepare' | 'user_prompt_hook', operation: () => Promise<T>): Promise<T> {
     options.submissions.updateStatus(submissionId, 'dispatching', { pausedReason: 'plugin_hook', preserveError: true, preserveSubmissionOutcome: true, updatedAt: now() });
     await persist();
     options.broadcast('conversation.queue.changed', { conversationId, submissionId });
     try {
-      return await operation();
+      return await measureDispatchPhase(conversationId, submissionId, phase, operation);
     } finally {
       const current = options.submissions.getById(submissionId);
       if (current?.status === 'dispatching' && current.pausedReason === 'plugin_hook') {
@@ -213,10 +226,12 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     serviceTierFallbackAttempted = false,
     turnStartRetryAttempted = false,
   ): Promise<NativeAcceptedOperation> {
-    let conversation = options.conversations.getById(conversationInput.id);
+    /** 异步阶段始终沿用同一会话身份，不依赖恢复过程重赋值的记录对象。 */
+    const conversationId = conversationInput.id;
+    let conversation = options.conversations.getById(conversationId);
     if (!conversation) throw coordinatorError('ZEUS_NATIVE_CONVERSATION_NOT_FOUND', 'Native conversation was not found.');
     try {
-      await ensureConversationExecutionContext(conversation.id, 'dispatch', segmentLifecycle?.requiresNewSegment === true);
+      await measureDispatchPhase(conversationId, submission.id, 'execution_context', () => ensureConversationExecutionContext(conversationId, 'dispatch', segmentLifecycle?.requiresNewSegment === true));
       assertSubmissionDispatchable(submission.id);
       const recoveryState = runStates.get(conversation.id) ?? inferRunState(conversation);
       if (!segmentLifecycle?.requiresNewSegment && recoveryState.type === 'paused' && recoveryState.reason === 'provider_stop_pending') {
@@ -302,7 +317,9 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
       commandProviderGenerationId = providerThreadId ? options.manager.generationForThread(providerThreadId) : readyGenerationId();
       if (!providerThreadId && !commandProviderGenerationId) {
-        commandProviderGenerationId = (await options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) })).generationId;
+        commandProviderGenerationId = (
+          await measureDispatchPhase(conversation.id, submission.id, 'runtime_ready', () => options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) }))
+        ).generationId;
       }
       if (!providerThreadId) {
         options.preflightCodexModelBudget({
@@ -315,7 +332,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       /** 会话变量后续可能绑定新线程；Plugin 检查始终使用本次派发的稳定产品会话身份。 */
       const pluginConversationId = conversation.id;
       const pluginPreparation = plugins
-        ? await runPluginDispatchCheck(pluginConversationId, submission.id, () =>
+        ? await runPluginDispatchCheck(pluginConversationId, submission.id, 'plugin_prepare', () =>
             plugins.prepare({
               conversationId: pluginConversationId,
               projectId: context.projectId,
@@ -353,37 +370,39 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           dynamicTools,
         };
         markDispatchRpcStarted(lease, submission.id);
-        const thread = await providerCommands.executeSession({
-          operation: 'thread_start',
-          commandKey: submission.id,
-          scope: { kind: 'submission', id: submission.id },
-          idempotencyKey: `thread-start:${submission.id}`,
-          issuedAt: submission.createdAt,
-          resourceId: submission.id,
-          requestIdentity: {
-            conversationId: conversation.id,
-            model: context.model,
-            modelSourceId: context.modelSourceId,
-            contextCapacityTokens: context.contextCapacityTokens ?? null,
-            serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : null,
-            cwd: context.projectLocalPath,
-            sandbox: profile.sandbox,
-            approvalPolicy: profile.approvalPolicy,
-            approvalsReviewer: profile.approvalsReviewer,
-            ephemeral: context.ephemeral === true,
-            developerInstructionsSha256: requestHash(developerInstructions),
-            dynamicToolsSha256: requestHash(dynamicTools),
-          },
-          providerGenerationId: commandProviderGenerationId,
-          invoke: (traceIdentity) => {
-            assertSubmissionDispatchable(submission.id);
-            return options.manager.startThread({ ...threadRequest, traceIdentity });
-          },
-          recoverAccepted: (nativeSessionId) => options.manager.readThread({ threadId: nativeSessionId }),
-          isExplicitRejection: isRuntimeRejected,
-          nativeSessionId: (acceptedThread) => acceptedThread.id,
-          acceptedProviderGenerationId: (acceptedThread) => options.manager.generationForThread(acceptedThread.id),
-        });
+        const thread = await measureDispatchPhase(conversation.id, submission.id, 'thread_start', () =>
+          providerCommands.executeSession({
+            operation: 'thread_start',
+            commandKey: submission.id,
+            scope: { kind: 'submission', id: submission.id },
+            idempotencyKey: `thread-start:${submission.id}`,
+            issuedAt: submission.createdAt,
+            resourceId: submission.id,
+            requestIdentity: {
+              conversationId,
+              model: context.model,
+              modelSourceId: context.modelSourceId,
+              contextCapacityTokens: context.contextCapacityTokens ?? null,
+              serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : null,
+              cwd: context.projectLocalPath,
+              sandbox: profile.sandbox,
+              approvalPolicy: profile.approvalPolicy,
+              approvalsReviewer: profile.approvalsReviewer,
+              ephemeral: context.ephemeral === true,
+              developerInstructionsSha256: requestHash(developerInstructions),
+              dynamicToolsSha256: requestHash(dynamicTools),
+            },
+            providerGenerationId: commandProviderGenerationId,
+            invoke: (traceIdentity) => {
+              assertSubmissionDispatchable(submission.id);
+              return options.manager.startThread({ ...threadRequest, traceIdentity });
+            },
+            recoverAccepted: (nativeSessionId) => options.manager.readThread({ threadId: nativeSessionId }),
+            isExplicitRejection: isRuntimeRejected,
+            nativeSessionId: (acceptedThread) => acceptedThread.id,
+            acceptedProviderGenerationId: (acceptedThread) => options.manager.generationForThread(acceptedThread.id),
+          }),
+        );
         providerThreadId = thread.id;
         threadStartedForSubmission = true;
         providerThreadAuthority.markSubscribed(thread.id);
@@ -444,7 +463,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       /** Skill 直接使用提交时解析的当前路径，文件后续修改或删除按实际状态生效。 */
       const providerInput = submissionProviderInput(submission, context);
       const pluginPromptContext = plugins
-        ? await runPluginDispatchCheck(pluginConversationId, submission.id, () =>
+        ? await runPluginDispatchCheck(pluginConversationId, submission.id, 'user_prompt_hook', () =>
             plugins.beforeUserPrompt({
               conversationId: pluginConversationId,
               prompt: providerInput,
@@ -477,36 +496,38 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         { adapter: 'codex_app_server', method: 'turn/start', protocol: 'openai_responses' },
         serializedAt,
       );
-      const preparedContext = await prepareCodexDispatchContext({
-        manager: options.manager,
-        providerCommands,
-        compileDispatchContext: options.compileDispatchContext,
-        plugins: options.plugins,
-        segmentLifecycle,
-        conversation: { id: conversation.id, projectId: context.projectId },
-        submission: { id: submission.id, createdAt: submission.createdAt },
-        providerGenerationId: commandProviderGenerationId,
-        providerInput,
-        providerBootstrapUtf8Bytes,
-        threadStartedForSubmission,
-        context: {
-          projectLocalPath: context.projectLocalPath,
-          taskId: context.taskId,
-          model: context.model,
-          modelSourceId: context.modelSourceId,
-          effort: wireEffort,
-          serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : undefined,
-          permissionMode: context.permissionMode,
-          allowCodeChanges: context.allowCodeChanges,
-          additionalContext: context.additionalContext,
-        },
-        pluginPromptContext,
-        beforePortableProviderWrite: () => {
-          lease.contentWriteStarted = true;
-          markDispatchRpcStarted(lease, submission.id);
-        },
-        now,
-      });
+      const preparedContext = await measureDispatchPhase(conversation.id, submission.id, 'context_compile', () =>
+        prepareCodexDispatchContext({
+          manager: options.manager,
+          providerCommands,
+          compileDispatchContext: options.compileDispatchContext,
+          plugins: options.plugins,
+          segmentLifecycle,
+          conversation: { id: conversationId, projectId: context.projectId },
+          submission: { id: submission.id, createdAt: submission.createdAt },
+          providerGenerationId: commandProviderGenerationId,
+          providerInput,
+          providerBootstrapUtf8Bytes,
+          threadStartedForSubmission,
+          context: {
+            projectLocalPath: context.projectLocalPath,
+            taskId: context.taskId,
+            model: context.model,
+            modelSourceId: context.modelSourceId,
+            effort: wireEffort,
+            serviceTier: Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? context.serviceTier : undefined,
+            permissionMode: context.permissionMode,
+            allowCodeChanges: context.allowCodeChanges,
+            additionalContext: context.additionalContext,
+          },
+          pluginPromptContext,
+          beforePortableProviderWrite: () => {
+            lease.contentWriteStarted = true;
+            markDispatchRpcStarted(lease, submission.id);
+          },
+          now,
+        }),
+      );
       assertSubmissionDispatchable(submission.id);
       const compiledDispatchContext = preparedContext.compiled;
       const pluginCompactContext = preparedContext.pluginCompactContext;
@@ -577,31 +598,35 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       markDispatchRpcStarted(lease, submission.id);
       /** 第一条 Provider 写入既可能是线程设置，也可能是轮次启动，两者共用真实写出回执。 */
       const requestWritten = segmentLifecycle ? () => segmentLifecycle.markProviderWriteStarted() : undefined;
-      await options.manager.setThreadCollaborationMode({
-        threadId: providerThreadId,
-        cwd: context.projectLocalPath,
-        collaborationMode,
-        traceIdentity: commandTraceIdentity,
-        ...(requestWritten ? { requestWritten } : {}),
-      });
+      await measureDispatchPhase(conversation.id, submission.id, 'provider_settings', () =>
+        options.manager.setThreadCollaborationMode({
+          threadId: providerThreadId,
+          cwd: context.projectLocalPath,
+          collaborationMode,
+          traceIdentity: commandTraceIdentity,
+          ...(requestWritten ? { requestWritten } : {}),
+        }),
+      );
       assertSubmissionDispatchable(submission.id);
-      const turn = await options.manager.startTurn({
-        threadId: providerThreadId,
-        traceIdentity: commandTraceIdentity,
-        clientUserMessageId: submission.clientMessageId,
-        input: providerInput,
-        ...(additionalContext ? { additionalContext } : {}),
-        ...(requestWritten ? { requestWritten } : {}),
-        model: context.model,
-        ...(wireEffort ? { effort: wireEffort } : {}),
-        ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
-        summary: 'auto',
-        collaborationMode,
-        cwd: context.projectLocalPath,
-        approvalPolicy: profile.approvalPolicy,
-        approvalsReviewer: profile.approvalsReviewer,
-        sandboxPolicy: profile.sandbox,
-      });
+      const turn = await measureDispatchPhase(conversation.id, submission.id, 'turn_start', () =>
+        options.manager.startTurn({
+          threadId: providerThreadId,
+          traceIdentity: commandTraceIdentity,
+          clientUserMessageId: submission.clientMessageId,
+          input: providerInput,
+          ...(additionalContext ? { additionalContext } : {}),
+          ...(requestWritten ? { requestWritten } : {}),
+          model: context.model,
+          ...(wireEffort ? { effort: wireEffort } : {}),
+          ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
+          summary: 'auto',
+          collaborationMode,
+          cwd: context.projectLocalPath,
+          approvalPolicy: profile.approvalPolicy,
+          approvalsReviewer: profile.approvalsReviewer,
+          sandboxPolicy: profile.sandbox,
+        }),
+      );
       volatileSubmissionText.delete(submission.id);
       const timestamp = now();
       const acceptedTurnId = segmentLifecycle?.acceptSynchronously({

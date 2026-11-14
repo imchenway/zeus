@@ -6,6 +6,16 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 const defaultSampleCapacity = 4_096;
 
+/** 派发阶段只保存稳定身份、墙钟时间和耗时毫秒，不保存消息或 Hook 内容。 */
+export interface ConversationDispatchPerformanceSample {
+  conversationId: string;
+  submissionId: string;
+  phase: 'execution_context' | 'runtime_ready' | 'plugin_prepare' | 'thread_start' | 'user_prompt_hook' | 'context_compile' | 'provider_settings' | 'turn_start' | 'first_text';
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+}
+
 interface ActiveRequestTrace {
   traceId: string;
   startedAt: number;
@@ -34,6 +44,8 @@ export interface LocalApiPerformanceSummary {
     responseBytes: { p50: number | null; p95: number | null; p99: number | null; max: number | null };
   }>;
   recent: LocalApiPerformanceSample[];
+  /** 与持久提交身份关联的有界派发耗时记录。 */
+  conversationDispatch: ConversationDispatchPerformanceSample[];
   coreRuntime: {
     processUptimeSeconds: number;
     eventLoopUtilization: number;
@@ -52,6 +64,8 @@ export class LocalApiPerformanceCollector {
   private readonly active = new WeakMap<FastifyRequest, ActiveRequestTrace>();
   private readonly activeTraceIds = new Set<string>();
   private readonly samples: LocalApiPerformanceSample[] = [];
+  /** 与 API 采样共用容量上限，诊断数据不进入业务账本。 */
+  private readonly dispatchSamples: ConversationDispatchPerformanceSample[] = [];
   private readonly eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
   /** 细粒度采样只在明确请求的有界诊断窗口内启用。 */
   private delayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -116,6 +130,13 @@ export class LocalApiPerformanceCollector {
     if (this.samples.length > this.capacity) this.samples.splice(0, this.samples.length - this.capacity);
   }
 
+  /** 同一提交只记录最早的正文首响；后续模型请求不重置发送到首响的口径。 */
+  recordConversationDispatch(sample: ConversationDispatchPerformanceSample): void {
+    if (sample.phase === 'first_text' && this.dispatchSamples.some((entry) => entry.phase === 'first_text' && entry.submissionId === sample.submissionId)) return;
+    this.dispatchSamples.push({ ...sample, durationMs: roundMetric(Math.max(0, sample.durationMs)) });
+    if (this.dispatchSamples.length > this.capacity) this.dispatchSamples.splice(0, this.dispatchSamples.length - this.capacity);
+  }
+
   snapshot(options: { route?: string; recentLimit?: number } = {}): LocalApiPerformanceSummary {
     const filtered = options.route ? this.samples.filter((sample) => sample.route === options.route) : [...this.samples];
     const grouped = new Map<string, LocalApiPerformanceSample[]>();
@@ -144,6 +165,7 @@ export class LocalApiPerformanceCollector {
       generatedAt: new Date().toISOString(),
       operations,
       recent: recentLimit === 0 ? [] : filtered.slice(-recentLimit).reverse(),
+      conversationDispatch: recentLimit === 0 ? [] : this.dispatchSamples.slice(-recentLimit).reverse(),
       coreRuntime: this.coreRuntimeSnapshot(),
     };
   }

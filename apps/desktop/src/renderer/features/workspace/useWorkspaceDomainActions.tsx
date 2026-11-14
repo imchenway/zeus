@@ -1,4 +1,5 @@
 import { transitionConversation } from '../../session/conversationTransition.js';
+import { beginConversationNavigationTrace } from '../../performanceTraceContext.js';
 import { markSideQuestionConversationArchived } from '../../session/useSessionContextWorkspace.js';
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
@@ -217,6 +218,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setNativeConversationChoicesByProject,
     setNativeConversationChoicesByTask,
     setNativeConversationRuntimeStates,
+    setNativeConversationStartState,
     setNativeConversationStatusSyncState,
     setNativeLegacyConversationDetails,
     setNativeLegacyMessageError,
@@ -2016,7 +2018,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         input,
         envelopeManager: nativeConversationStartEnvelopeManager,
         dispatch: (taskId, request) => client.startNativeConversation(taskId, request),
-        onAccepted: async (choice) => {
+        onAccepted: async (choice, displayState) => {
+          setNativeConversationStartState(displayState);
           reconcileNativeConversationProjectionStates([choice]);
           await adoptConversationBrowser(input, choice);
           // durable acceptance 到达后必须立即离开创建表单；历史摘要刷新只是 best-effort，
@@ -2039,6 +2042,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           });
           setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
           if (activeProjectIdRef.current !== input.task.projectId || selectionRevision !== nativeConversationSelectionRevision.current) return;
+          beginConversationNavigationTrace(choice.projectId, choice.id);
           setSelectedNativeConversationId(choice.id);
           setSelectedNativeConversationPresentation('interactive');
           setConversationDraftOpen(false);
@@ -2091,7 +2095,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         input,
         envelopeManager: projectConversationStartEnvelopeManager,
         dispatch: (acceptedProjectId, request) => client.startProjectConversation(acceptedProjectId, request),
-        onAccepted: async (choice) => {
+        onAccepted: async (choice, displayState) => {
+          setNativeConversationStartState(displayState);
           reconcileNativeConversationProjectionStates([choice]);
           await adoptConversationBrowser(input, choice);
           acceptedTaskId = choice.taskId;
@@ -2109,6 +2114,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
           // 迟到回执继续更新目录，但不覆盖用户之后选择的项目、会话或新草稿。
           if (activeProjectIdRef.current !== projectId || selectionRevision !== nativeConversationSelectionRevision.current) return;
+          beginConversationNavigationTrace(choice.projectId, choice.id);
           setTaskDetail(undefined);
           setSelectedNativeConversationId(choice.id);
           setSelectedNativeConversationPresentation('interactive');

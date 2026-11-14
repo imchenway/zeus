@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { watch, type FSWatcher } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
@@ -68,6 +69,8 @@ export interface PluginActivationState {
 }
 
 export interface ZeusPluginService {
+  /** 释放原生 Plugin 静态目录的文件监听和内存副本。 */
+  close(): void;
   list(input?: { projectId?: string | null }): Promise<ZeusPluginDescriptor[]>;
   listSkills(input?: { projectId?: string | null }): Promise<ZeusPluginSkillDescriptor[]>;
   install(input: { scope: PluginScope; projectId?: string | null; source: ZeusPluginInstallSource }): Promise<ZeusPluginDescriptor>;
@@ -116,9 +119,67 @@ export function createZeusPluginService(options: {
   const runtimeRoot = requireAbsolutePath(options.runtimeRoot, 'Plugin 临时目录');
   const codexHome = options.codexHome ? requireAbsolutePath(options.codexHome, 'Codex Home') : null;
   const now = options.now ?? (() => new Date());
+  /** 只缓存原生目录冲突索引；Zeus 启停、权限、信任和修订仍逐次读取。 */
+  let legacyNames: Set<string> | null = null;
+  /** 文件变更水位防止迟到扫描覆盖已失效的索引。 */
+  let legacyNamesRevision = 0;
+  /** 同一目录水位的并发扫描共用一次磁盘读取。 */
+  let legacyNamesPending: { revision: number; promise: Promise<Set<string>> } | null = null;
+  /** 目录监听属于当前服务实例，关闭后不再建立监听。 */
+  let legacyNamesWatcher: FSWatcher | null = null;
+  /** 关闭后拒绝新的静态发现，迟到结果也不能恢复监听。 */
+  let closed = false;
+
+  /** 失效后下一次读取重新发现目录；目录替换时同时重新绑定监听。 */
+  function invalidateLegacyNames(rebind: boolean): void {
+    legacyNamesRevision += 1;
+    legacyNames = null;
+    if (rebind) {
+      legacyNamesWatcher?.close();
+      legacyNamesWatcher = null;
+    }
+  }
+
+  /** 监听可用时复用静态索引；缺目录或监听故障时保持逐次读取。 */
+  async function readProviderLegacyNames(): Promise<Set<string>> {
+    if (closed) throw new ZeusPluginServiceError('ZEUS_PLUGIN_SERVICE_CLOSED', 'Plugin 服务已关闭。', 409);
+    if (!codexHome) return new Set();
+    if (!legacyNamesWatcher) {
+      try {
+        const watcher = watch(join(codexHome, 'plugins'), { recursive: true, persistent: false }, (event) => {
+          if (legacyNamesWatcher === watcher) invalidateLegacyNames(event === 'rename');
+        });
+        legacyNamesWatcher = watcher;
+        watcher.on('error', () => {
+          if (legacyNamesWatcher === watcher) invalidateLegacyNames(true);
+        });
+      } catch {
+        // 无监听就不保留扫描结果，避免缺失或不可监听目录形成永久旧缓存。
+      }
+    }
+    if (legacyNames && legacyNamesWatcher) return legacyNames;
+    if (legacyNamesPending?.revision === legacyNamesRevision) return legacyNamesPending.promise;
+    const revision = legacyNamesRevision;
+    const promise = discoverProviderLegacyNames(codexHome).then((names) => {
+      if (!closed && legacyNamesWatcher && revision === legacyNamesRevision) legacyNames = names;
+      return names;
+    });
+    legacyNamesPending = { revision, promise };
+    try {
+      return await promise;
+    } finally {
+      if (legacyNamesPending?.promise === promise) legacyNamesPending = null;
+    }
+  }
+
+  /** Core 关闭时停止目录监听，迟到的扫描不能重新填充缓存。 */
+  function close(): void {
+    closed = true;
+    invalidateLegacyNames(true);
+  }
 
   async function list(input: { projectId?: string | null } = {}): Promise<ZeusPluginDescriptor[]> {
-    const legacyNames = await discoverProviderLegacyNames(codexHome);
+    const legacyNames = await readProviderLegacyNames();
     return options.repository.list({ projectId: input.projectId }).map((plugin) => toDescriptor(plugin, legacyNames.has(plugin.name)));
   }
 
@@ -202,7 +263,7 @@ export function createZeusPluginService(options: {
         createdBundlePath = finalPath;
       }
 
-      const providerLegacyConflict = (await discoverProviderLegacyNames(codexHome)).has(stagedInspection.name);
+      const providerLegacyConflict = (await readProviderLegacyNames()).has(stagedInspection.name);
       // 内容未变化且缓存检查通过时沿用现有修订及启停、信任状态，避免重复登记相同内容摘要。
       if (input.updatePluginId && requireRevision(requirePlugin(input.updatePluginId).activeRevisionId).contentSha256 === stagedInspection.contentSha256) {
         createdBundlePath = null;
@@ -263,7 +324,7 @@ export function createZeusPluginService(options: {
 
   async function setEnabled(input: { pluginId: string; enabled: boolean; expectedRevision?: number }): Promise<ZeusPluginDescriptor> {
     const plugin = requirePlugin(input.pluginId);
-    const legacyConflict = (await discoverProviderLegacyNames(codexHome)).has(plugin.name);
+    const legacyConflict = (await readProviderLegacyNames()).has(plugin.name);
     if (input.enabled && legacyConflict) {
       throw new ZeusPluginServiceError('ZEUS_PLUGIN_PROVIDER_LEGACY_CONFLICT', `Provider 已原生安装同名 Plugin “${plugin.name}”；Zeus 不会启用第二份并造成重复执行。`, 409);
     }
@@ -484,7 +545,7 @@ export function createZeusPluginService(options: {
 
   /** 当前态解析只返回本次调用所需数据，不再写入会话快照表。 */
   async function resolveCurrentActivations(input: { projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationState[]> {
-    const legacyNames = await discoverProviderLegacyNames(codexHome);
+    const legacyNames = await readProviderLegacyNames();
     const explicitReferences = normalizeExplicitReferences(input.explicitReferences ?? []);
     let enabled = options.repository.list({ projectId: input.projectId }).filter((plugin) => plugin.enabled && !legacyNames.has(plugin.name));
     const duplicateNames = duplicateValues(enabled.map((plugin) => plugin.name));
@@ -611,6 +672,7 @@ export function createZeusPluginService(options: {
   }
 
   return {
+    close,
     list,
     listSkills,
     install,

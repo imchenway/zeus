@@ -1,4 +1,5 @@
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
+import type { ConversationDispatchPerformanceSample } from './performanceObservability.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { ConversationSourceContextReader } from './conversationSourceContext.js';
 import type { UserFacingErrorCause } from '@zeus/shared';
@@ -64,6 +65,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   toolResults: ManagedConversationToolResultStore;
   eventFlow: ConversationEventFlowControl;
   broadcast: (type: string, payload: Record<string, unknown>) => void;
+  /** 本地派发诊断只记录阶段和耗时，不影响提交接纳与恢复。 */
+  recordDispatchPerformance?: (sample: ConversationDispatchPerformanceSample) => void;
   now: () => string;
   browserAutomation?: BrowserAutomationPort;
   /** 当前任务的本地编排工具。 */

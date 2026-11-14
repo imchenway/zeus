@@ -3,9 +3,19 @@ import type { ZeusClientPerformanceSpan } from './apiClient.js';
 import { completeConversationNavigationTrace, readyConversationNavigationTrace } from './performanceTraceContext.js';
 
 const rendererPerformanceCapacity = 2_048;
+/** 首发提交到持久接纳的 Performance Timeline 名称，不含正文。 */
+const conversationAcceptanceMeasureName = 'zeus.renderer.conversation-submit-to-acceptance';
 
 export type RendererPerformanceSample =
   | ({ kind: 'api' } & ZeusClientPerformanceSpan)
+  | {
+      kind: 'conversation_acceptance';
+      conversationId: string;
+      clientUserMessageId: string;
+      startTimeMs: number;
+      durationMs: number;
+      completedAt: string;
+    }
   | {
       kind: 'react_commit';
       componentId: string;
@@ -83,6 +93,26 @@ export class RendererPerformanceCollector {
     if (typeof PerformanceObserver !== 'function') return;
     this.observeEntryType('longtask', 'long_task');
     this.observeEntryType('paint', 'paint');
+    if (PerformanceObserver.supportedEntryTypes.includes('measure')) {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.name !== conversationAcceptanceMeasureName) continue;
+          const detail: unknown = (entry as PerformanceMeasure).detail;
+          if (!detail || typeof detail !== 'object' || !('conversationId' in detail) || !('clientUserMessageId' in detail)) continue;
+          if (typeof detail.conversationId !== 'string' || typeof detail.clientUserMessageId !== 'string') continue;
+          this.append({
+            kind: 'conversation_acceptance',
+            conversationId: detail.conversationId,
+            clientUserMessageId: detail.clientUserMessageId,
+            startTimeMs: entry.startTime,
+            durationMs: roundMetric(entry.duration),
+            completedAt: new Date().toISOString(),
+          });
+        }
+      });
+      observer.observe({ type: 'measure' });
+      this.observers.push(observer);
+    }
   }
 
   recordFirstContentFrame(startedAtMs: number): void {
@@ -161,6 +191,12 @@ export class RendererPerformanceCollector {
       });
     });
   }
+}
+
+/** 持久接纳和首帧分别计时，避免把 UI 导航或模型等待混成 HTTP 耗时。 */
+export function recordConversationAcceptancePerformance(conversationId: string, clientUserMessageId: string, startedAtMs: number): void {
+  performance.clearMeasures(conversationAcceptanceMeasureName);
+  recordPerformanceMeasure(conversationAcceptanceMeasureName, startedAtMs, performance.now() - startedAtMs, { conversationId, clientUserMessageId });
 }
 
 function recordPerformanceMeasure(name: string, start: number, duration: number, detail: unknown): void {

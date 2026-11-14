@@ -1,4 +1,5 @@
 import { Button } from '../ui/Button.js';
+import { recordConversationAcceptancePerformance } from '../rendererPerformanceObservability.js';
 import { FileSelectionQuestionContext, sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
 import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
@@ -1205,18 +1206,20 @@ export async function startNativeConversationWithDurableAcceptance<T>(options: {
   input: SessionWorkspaceStartInput;
   envelopeManager: NativeConversationStartEnvelopeManager;
   dispatch: (taskId: string, request: StartNativeConversationRequest) => Promise<NativeConversationStartDispatchResult>;
-  onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
+  onAccepted: (choice: NativeConversationChoice, displayState: NativeSessionState) => void | Promise<void>;
   refresh: (taskId: string) => Promise<T>;
 }): Promise<{ choice: NativeConversationChoice; request: StartNativeConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
+  const startedAtMs = performance.now();
   const request = options.envelopeManager.prepare(options.input);
   const { acceptance, operationIdentity } = await options.dispatch(options.input.task.id, request);
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Native conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = nativeConversationChoiceFromAcceptance(acceptance, options.input.task);
+  recordConversationAcceptancePerformance(choice.id, request.clientUserMessageId, startedAtMs);
   // 仅迁移本次提交的草稿；侧栏追问等无草稿入口不能接走主输入区错误。
   if (options.input.browserDraft) bindDraftSystemMessages(options.input.task.projectId, options.input.browserDraft.conversationId, choice.id);
   // acceptance 导航属于 durable 边界，必须先于摘要刷新发生。
-  await options.onAccepted(choice);
+  await options.onAccepted(choice, acceptedConversationStartDisplay(choice, request, acceptance));
   try {
     return { choice, request, acceptance, refreshResult: await options.refresh(options.input.task.id), refreshError: null };
   } catch (refreshError) {
@@ -1323,24 +1326,74 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   input: ProjectSessionWorkspaceStartInput;
   envelopeManager: ProjectConversationStartEnvelopeManager;
   dispatch: (projectId: string, request: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
-  onAccepted: (choice: NativeConversationChoice) => void | Promise<void>;
+  onAccepted: (choice: NativeConversationChoice, displayState: NativeSessionState) => void | Promise<void>;
   refresh: (projectId: string) => Promise<T>;
 }): Promise<{ choice: NativeConversationChoice; request: StartProjectConversationRequest; acceptance: NativeOperationAcceptance; refreshResult: T | null; refreshError: unknown | null }> {
+  const startedAtMs = performance.now();
   const request = options.envelopeManager.prepare(options.input);
   const { acceptance, operationIdentity } = await options.dispatch(options.input.owner.projectId, request);
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
+  recordConversationAcceptancePerformance(choice.id, request.clientUserMessageId, startedAtMs);
   // 自动创建任务不改变源草稿身份，无草稿入口不迁移其他新会话的错误。
   if (options.input.browserDraft) bindDraftSystemMessages(options.input.owner.projectId, options.input.browserDraft.conversationId, choice.id);
   // 继承目录时不把尚未加载的工作树事实猜成项目直连。
   if (!request.inheritConversationId || request.workspaceMode) choice.workspaceMode ??= request.workspaceMode ?? 'direct';
-  await options.onAccepted(choice);
+  await options.onAccepted(choice, acceptedConversationStartDisplay(choice, request, acceptance));
   try {
     return { choice, request, acceptance, refreshResult: await options.refresh(options.input.owner.projectId), refreshError: null };
   } catch (refreshError) {
     return { choice, request, acceptance, refreshResult: null, refreshError };
   }
+}
+
+/** 接纳回执只生成已知消息的显示副本，权威快照和权限仍由控制器重新读取。 */
+function acceptedConversationStartDisplay(
+  choice: NativeConversationChoice,
+  request: Pick<StartProjectConversationRequest, 'clientUserMessageId'> &
+    Partial<Pick<StartProjectConversationRequest, 'content' | 'displayText' | 'attachments' | 'browserComments' | 'conversationContext' | 'model' | 'effort' | 'serviceTier'>>,
+  acceptance: NativeOperationAcceptance,
+): NativeSessionState {
+  /** 未知模型不借用默认配置，等待正式快照补齐。 */
+  const model = request.model ?? choice.providerModel;
+  const base: NativeSessionState = {
+    ...createInitialSessionState(),
+    projectId: choice.projectId,
+    conversationId: choice.id,
+    providerThreadId: choice.providerThreadId ?? null,
+    conversationState: 'starting_turn',
+    queue: acceptance.queue ?? null,
+    providerSettings: model
+      ? {
+          model,
+          ...(request.effort ? { effort: request.effort } : {}),
+          ...(Object.prototype.hasOwnProperty.call(request, 'serviceTier') ? { serviceTier: request.serviceTier } : {}),
+        }
+      : null,
+  };
+  const started = sessionReducer(base, {
+    type: 'send_started',
+    clientUserMessageId: request.clientUserMessageId,
+    durableClientUserMessageId: request.clientUserMessageId,
+    draft: (request.displayText ?? request.content) || stringField(acceptance.submission?.content) || '',
+    attachments: request.attachments ?? [],
+    submittedAttachments: request.attachments ?? [],
+    browserSubmission: null,
+    browserComments: request.browserComments ?? [],
+    contextDraft: request.conversationContext ?? base.contextDraft,
+    delivery: 'queue',
+    previousConversationState: base.conversationState,
+    startedAt: stringField(acceptance.submission?.createdAt) ?? choice.createdAt,
+  });
+  return sessionReducer(started, {
+    type: 'send_accepted',
+    clientUserMessageId: request.clientUserMessageId,
+    status: stringField(acceptance.submission?.status) ?? 'queued',
+    submissionId: acceptance.submission?.id,
+    providerTurnId: stringField(acceptance.submission?.providerTurnId) ?? undefined,
+    messageCreatedAt: stringField(acceptance.submission?.createdAt) ?? choice.createdAt,
+  });
 }
 
 function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStartInput): Omit<StartProjectConversationRequest, 'idempotencyKey' | 'clientUserMessageId'> {
