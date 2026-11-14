@@ -42,7 +42,7 @@ import { reportApplicationError, VisibleApplicationError } from '../ui/Applicati
 import { isImageResource } from './ConversationResources.js';
 import { ConversationImageResourcesContext, hasMissingMarkdownImages } from './ConversationMarkdown.js';
 import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
-import { selectPendingExecutionMessage } from './sessionSelectors.js';
+import { selectHasActiveProviderTurn, selectPendingExecutionMessage } from './sessionSelectors.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 import { ReadingStateScope, useReadingSnapshot, useReadingState } from '../ui/readingState.js';
@@ -2556,7 +2556,7 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
   // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
   if (state.queue?.state.type === 'paused' || state.queue?.submissions.some((submission) => submission.internalOperation && submission.pausedReason === 'outcome_unknown')) return null;
   if (state.providerReconnectAttempt > 0 && state.providerReconnectTurnId && !state.terminalTurnIds[state.providerReconnectTurnId]) return 'reconnecting';
-  /** 初次连接尚未失败时显示执行；明确断线后才切换为连接提示。 */
+  /** 本地消息仅提供连接反馈，执行状态需要已经开始的 Provider 轮次。 */
   const pendingMessage = selectPendingExecutionMessage(state);
   if (state.transportState === 'failed') return null;
   if (state.transportState === 'reconnecting' && pendingMessage && pendingMessage.status !== 'unconfirmed') return 'reconnecting';
@@ -2573,10 +2573,7 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
     (!state.queue.waitReason || state.queue.waitReason === 'dispatch_pending' || state.queue.waitReason === 'execution_context_preparing' || state.queue.waitReason === 'conversation_restoring')
   )
     return 'starting';
-  if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) {
-    // 发送结果核对进度在原消息下显示，同一请求不能同时显示执行与连接。
-    return pendingMessage && pendingMessage.status !== 'unconfirmed' ? 'executing' : null;
-  }
+  if (!selectHasActiveProviderTurn(state)) return null;
   // 切回会话需要重新订阅和读取权威状态，只有明确的重连状态才说明连接中断。
   if (state.transportState === 'reconnecting') return 'reconnecting';
   if (state.transportState !== 'ready') {
@@ -2600,7 +2597,7 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>>; reconnectAttempt: number; reconnectAttempts: number; summaryText?: string }): ReactNode {
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
-    starting: ['正在执行', 'Executing'],
+    starting: ['正在准备', 'Preparing'],
     checking_plugin: ['正在等待 Plugin Hook 检查', 'Waiting for Plugin Hook checks'],
     executing: ['正在执行', 'Executing'],
     // 缓存态只展示已有摘要，缺少摘要时不会进入此状态。

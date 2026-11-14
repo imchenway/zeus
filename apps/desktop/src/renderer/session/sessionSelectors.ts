@@ -2,6 +2,16 @@ import { classifyAssistantMessage } from '@zeus/shared';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import { isSubmissionWaitingInQueue } from './conversationQueuePresentation.js';
 
+/** 执行提示和停止按钮只认已经开始且尚未终结的 Provider 轮次。 */
+export function selectHasActiveProviderTurn(state: NativeSessionState): boolean {
+  return Boolean(
+    state.activeTurnId &&
+    state.startedTurnId === state.activeTurnId &&
+    !state.terminalTurnIds[state.activeTurnId] &&
+    ['active_prework', 'active_final_answer', 'waiting_approval', 'waiting_user_input', 'interrupt_confirm', 'interrupting'].includes(state.conversationState),
+  );
+}
+
 /** 自动建议只接受已经完整交付的助手正文，过程、问题和工具输出不算回复。 */
 export function isInputSuggestionReply(item: NativeSessionItemBuffer): boolean {
   /** 各 Provider 的正文类型沿用现有会话显示语义。 */

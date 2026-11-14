@@ -2499,7 +2499,16 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
     const detail = sanitizeRendererRuntimeLogDetail(message);
-    console.error(`Renderer operation failed: ${detail}`);
+    /** 送达迁移沿用现有日志通道，但不能计为运行错误。 */
+    let eventName = 'renderer_runtime_error';
+    try {
+      const diagnostic: unknown = JSON.parse(detail);
+      if (diagnostic && typeof diagnostic === 'object' && 'kind' in diagnostic && diagnostic.kind === 'conversation_delivery') eventName = 'conversation_delivery';
+    } catch {
+      // 普通错误仍按原有文本格式记录。
+    }
+    if (eventName === 'conversation_delivery') console.info(`Renderer delivery: ${detail}`);
+    else console.error(`Renderer operation failed: ${detail}`);
     if (readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return;
     const logDirectory = activeZeusDataLayout().executionHost;
     void mkdir(logDirectory, { recursive: true })
@@ -2508,7 +2517,7 @@ function setupIpc(): void {
           join(logDirectory, 'host.log'),
           `${JSON.stringify({
             timestamp: new Date().toISOString(),
-            event: 'renderer_runtime_error',
+            event: eventName,
             pid: process.pid,
             detail,
           })}\n`,

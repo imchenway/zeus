@@ -39,7 +39,7 @@ import { StructuredComposerInput, type StructuredComposerSelection } from './Str
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
 import { InputSuggestionButton } from './InputSuggestionControl.js';
-import { selectPendingExecutionMessage } from './sessionSelectors.js';
+import { selectHasActiveProviderTurn } from './sessionSelectors.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -182,12 +182,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const selectedCapacity = props.runtimeSettings?.contextCapacityTokens !== undefined ? props.runtimeSettings.contextCapacityTokens : (props.state.snapshot?.contextCapacityTokens ?? null);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
-  /** 本地发送立即切换主按钮；停止操作仍须取得真实轮次身份后才能启用。 */
-  const active =
-    props.state.conversationState === 'active_prework' ||
-    props.state.conversationState === 'active_final_answer' ||
-    props.state.conversationState === 'starting_turn' ||
-    (props.state.transportState !== 'failed' && Boolean(selectPendingExecutionMessage(props.state)));
+  /** 本地送达等待不显示停止按钮，实际运行由 Provider 轮次接管。 */
+  const active = selectHasActiveProviderTurn(props.state);
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const inputWritable = writable && props.inputBlocked !== true;
