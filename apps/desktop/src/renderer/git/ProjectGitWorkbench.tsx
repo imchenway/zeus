@@ -32,7 +32,7 @@ import { repositoryColor } from './repositoryColor.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
@@ -174,6 +174,21 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     return items.map((repository) => ({ ...repository, snapshot: { ...repository.snapshot, fileStatuses: visibleRepositoryFiles(repository, items) } }));
   }, [snapshot]);
   const selectedRepository = repositories.find((repository) => repository.id === selectedRepositoryId) ?? repositories[0] ?? null;
+  /** 工作区可见时准备全项目交付窗口，与提交按钮和未提交更改行共用同一范围。 */
+  const preloadCommit = useCallback(() => {
+    const root = workbenchRef.current;
+    if (!root || root.closest('[hidden], [inert]') || !root.getClientRects().length) return;
+    void window.zeus?.openTaskGitDeliveryWindow({ projectId: props.project.id, preload: true }).catch(() => undefined);
+  }, [props.project.id]);
+  useEffect(() => {
+    if (!repositories.length) return;
+    const idle = window.requestIdleCallback(preloadCommit, { timeout: 500 });
+    window.addEventListener('focus', preloadCommit);
+    return () => {
+      window.cancelIdleCallback(idle);
+      window.removeEventListener('focus', preloadCommit);
+    };
+  }, [repositories.length, preloadCommit]);
   useEffect(() => {
     if (!props.updateRequest || handledUpdateRequest.current === props.updateRequest || loadState === 'loading') return;
     handledUpdateRequest.current = props.updateRequest;
@@ -768,6 +783,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           aria-label={toolbarLabel(zh ? `提交 · ${changedCount} 个待提交文件` : `Commit · ${changedCount} pending files`, 1)}
           data-icon-tooltip={toolbarLabel(zh ? `提交 · ${repositories.length} 个仓库 · ${changedCount} 个待提交文件` : `Commit · ${repositories.length} repositories · ${changedCount} pending files`, 1)}
           disabled={!selectedRepository || busy !== null}
+          onPointerEnter={preloadCommit}
+          onFocus={preloadCommit}
           onClick={openCommit}
         >
           <GitCommit aria-hidden="true" />
@@ -1067,6 +1084,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               onSelectRepository={setSelectedRepositoryId}
               onSelectCommit={selectCommit}
               onOpenChanges={openCommit}
+              onPreloadChanges={preloadCommit}
               onSelectFile={setSelectedFilePath}
               busy={busy}
               onExecute={execute}
@@ -1198,6 +1216,8 @@ function GitLogSurface(props: {
   onSelectRepository: (repositoryId: string) => void;
   onSelectCommit: (repository: ProjectGitRepositoryWorkbenchItem, commitHash: string) => void;
   onOpenChanges: () => void;
+  /** 靠近未提交更改入口时复用同一个后台窗口。 */
+  onPreloadChanges: () => void;
   onSelectFile: (path: string) => void;
   busy: BusyState;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
@@ -1274,7 +1294,7 @@ function GitLogSurface(props: {
           <span>{props.zh ? '日期' : 'Date'}</span>
         </header>
         {props.selectedRepository && props.selectedRepository.snapshot.fileStatuses.length > 0 ? (
-          <button type="button" className="project-git-commit-row git-working-copy-row" onClick={props.onOpenChanges}>
+          <button type="button" className="project-git-commit-row git-working-copy-row" onPointerEnter={props.onPreloadChanges} onFocus={props.onPreloadChanges} onClick={props.onOpenChanges}>
             <span className="project-git-commit-subject">
               <strong>{props.zh ? '未提交的更改' : 'Uncommitted changes'}</strong>
               <small>{props.selectedRepository.snapshot.fileStatuses.length}</small>

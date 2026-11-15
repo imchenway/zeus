@@ -51,7 +51,7 @@ import {
   getProjectGitRepositorySnapshot,
   getProjectGitHistory,
   getTaskBranchFileDiff,
-  getTaskBranchComparison,
+  getTaskBranchDiffRange,
   getGitFilePreviewSources,
   getTaskWorkspaceFileDiff,
   type GitDiffSummary,
@@ -2897,7 +2897,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const workspace = resolved.workspace;
         const root = input.scope === 'committed' ? workspace.repositoryPath || resolved.project.localPath : workspace.worktreePath;
         if (!root) throw new Error('任务工作区已不可用。');
-        const comparison = input.scope === 'committed' ? await getTaskBranchComparison(root, workspace.sourceBranch, workspace.branchName, workspace.sourceHeadSha) : null;
+        const comparison = input.scope === 'committed' ? await getTaskBranchDiffRange(root, workspace.sourceBranch, workspace.branchName, workspace.sourceHeadSha) : null;
         intent = {
           sides: (await getGitFilePreviewSources(root, { path: input.path, ...(comparison ? { revisions: [comparison.mergeBaseSha, comparison.taskHeadSha] } : {}) })).map((side) => ({
             ...side,

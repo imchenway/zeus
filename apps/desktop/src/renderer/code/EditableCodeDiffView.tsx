@@ -1,11 +1,12 @@
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Compartment, EditorState, StateEffect, StateField, RangeSet, Text, type Extension } from '@codemirror/state';
 import { historyField } from '@codemirror/commands';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, gutterLineClass, type DecorationSet } from '@codemirror/view';
 import { getChunks, MergeView, unifiedMergeView, uncollapseUnchanged, Chunk } from '@codemirror/merge';
 import { detectSourceLanguage } from '@zeus/shared';
-import { CodeEditor } from './CodeEditor.js';
+import { CodeEditor, codeEditorTheme } from './CodeEditor.js';
+import { readLoadedSourceLanguage } from './sourceLanguageRegistry.js';
 import { FilePreviewDataContext } from './FilePreview.js';
 import { DiffReviewToolbar } from './DiffReviewToolbar.js';
 import { DiffConnectorLayer } from './DiffConnectorLayer.js';
@@ -300,7 +301,8 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     return { left: make('left'), right: make('right') };
   }, [zh, Boolean(props.renderLineNumber), portals, updates]);
 
-  useEffect(() => {
+  // 比较两端在同一绘制前准备好，避免先显示空白再挂载 MergeView。
+  useLayoutEffect(() => {
     if (single || unified || !host.current) {
       return;
     }
@@ -309,8 +311,17 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     const reusable = saved?.doc.toString() === latest.current.preview.editing!.content;
     const merge = new MergeView({
       parent: host.current,
-      a: { doc: before },
-      b: { doc: latest.current.preview.editing!.content, selection: reusable ? saved.selection : undefined, extensions: reusable && saved.field(historyField, false) ? historyField.init(() => saved.field(historyField)) : [] },
+      // 首次测量就使用共享字体和已预读语言，不能先用 MergeView 默认样式再覆盖。
+      a: { doc: before, extensions: [codeEditorTheme, readLoadedSourceLanguage(detectSourceLanguage(latest.current.props.file.oldPath))?.extension ?? []] },
+      b: {
+        doc: latest.current.preview.editing!.content,
+        selection: reusable ? saved.selection : undefined,
+        extensions: [
+          codeEditorTheme,
+          readLoadedSourceLanguage(detectSourceLanguage(latest.current.props.file.newPath))?.extension ?? [],
+          reusable && saved.field(historyField, false) ? historyField.init(() => saved.field(historyField)) : [],
+        ],
+      },
       revertControls: 'a-to-b',
       renderRevertControl: () => {
         const button = document.createElement('button');

@@ -1,4 +1,4 @@
-import { discoverGitRepositories, getGitRepositoryContext, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
+import { discoverGitRepositories, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
 import type { GitEnvironmentSummary } from '@zeus/shared';
 import type { ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
 import { execFile } from 'node:child_process';
@@ -94,12 +94,15 @@ export async function resolveConversationGitWorkspace(
       members.map(async (member) => {
         /** 新增仓库也必须是会话真实目录中的独立 Git 根。 */
         const source = sources.find((entry) => entry.relativePath === member.relativePath);
-        const [workspace, memberPath] = await Promise.all([getGitRepositoryContext(member.localPath), realpath(member.localPath)]);
+        /** 仓库发现已核对 Git 根、分支和工作树，当前请求复用同一份身份。 */
+        const workspace = member.context;
+        const memberPath = await realpath(member.localPath);
         const child = relative(cwd, memberPath);
         if (isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`) || !workspace.isRepository || (await realpath(workspace.topLevel)) !== memberPath) throw unavailable();
         if (source) {
           /** 原项目成员仍须匹配相对布局、工作树登记和公共 Git 身份，不能被新增仓库替换。 */
-          const repository = await getGitRepositoryContext(source.localPath);
+          /** 原项目的登记列表也来自本轮发现，不重复启动整组 Git 查询。 */
+          const repository = source.context;
           const registeredPaths = await Promise.all(repository.worktrees.filter((entry) => !entry.bare && !entry.prunable).map((entry) => realpath(entry.path).catch(() => null)));
           if (!registeredPaths.includes(memberPath) || memberPath === (await realpath(source.localPath))) throw unavailable();
           const [projectGit, workspaceGit] = await Promise.all([commonGitDirectory(source.localPath), commonGitDirectory(memberPath)]);

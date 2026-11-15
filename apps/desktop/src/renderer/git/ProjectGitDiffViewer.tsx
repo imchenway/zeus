@@ -9,6 +9,8 @@ import type { FileStatus } from '../code/fileStatus.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { DashboardClient, GitDiffHunk, GitDiffSummary, GitFileDiff } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { ResourceLoading } from '../ui/ResourceLoading.js';
+import type { PreparedFilePreview } from '../code/preparedFilePreview.js';
 /** 与会话和交付共用按可视区域渲染的差异视图。 */
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
@@ -23,6 +25,8 @@ interface SideBySideDiffProps {
   previewRequest?: FilePreviewRequest;
   /** 外部快照刷新时释放旧内容。 */
   revision?: string | number;
+  /** 文件树已准备好同一业务范围的授权全文。 */
+  preparedPreview?: PreparedFilePreview;
   /** 保存当前版本后刷新所属文件清单。 */
   onSaved?: () => void | Promise<void>;
   diff: GitDiffSummary | null;
@@ -214,8 +218,6 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
       return { file: null, error: error instanceof Error ? error.message : '文件读取失败。' };
     }
   }, [file, props.items]);
-  /** 只有取得完整文本时，归属才绑定到同一对前后版本。 */
-  const blame = useMemo(() => (props.items ? { left: props.items[0]?.blame ?? [], right: props.items[1]?.blame ?? [] } : undefined), [props.items]);
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
@@ -261,8 +263,6 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         ) : null}
         {continuous?.error ? (
           <p role="alert">{props.zh ? continuous.error : 'The complete file could not be matched to this diff. Refresh the file and try again.'}</p>
-        ) : props.previewRequest && !props.items ? (
-          <p role="status">{props.zh ? '正在读取完整文件…' : 'Loading complete file…'}</p>
         ) : (
           <>
             {!props.previewRequest ? <p role="status">{props.zh ? '此快照仅包含差异片段。' : 'This snapshot contains changed sections only.'}</p> : null}
@@ -292,14 +292,14 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
               </div>
             ) : null}
             {visibleFile.hunks.length === 0 ? <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p> : null}
-            <Suspense fallback={null}>
+            <Suspense fallback={<ResourceLoading label={props.zh ? '正在读取差异…' : 'Loading diff…'} />}>
               <CodeDiffView
                 file={file}
+                completeFile={continuous?.file ?? null}
                 unified={unified}
                 revertDisabled={props.hunkActionsDisabled || Boolean(props.previewRequest && !continuous?.file)}
                 resizable
                 omitHunkHeaders={Boolean(continuous?.file)}
-                blame={blame}
                 blameLocale={props.zh ? 'zh-CN' : 'en-US'}
                 revealLine={revealLine}
                 label={props.zh ? '文件差异' : 'File diff'}
@@ -331,6 +331,8 @@ export function SideBySideDiff(props: SideBySideDiffProps) {
     <FilePreview
       request={props.previewRequest}
       revision={props.revision ?? props.diff?.diffText}
+      preparedPreview={props.preparedPreview}
+      waitForContent
       onSaved={props.onSaved}
       zh={props.zh}
       fileStatus={props.fileStatus ?? props.diff?.fileDiffs[0]?.changeType}

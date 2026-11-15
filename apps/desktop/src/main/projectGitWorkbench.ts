@@ -84,7 +84,7 @@ export class ProjectGitWorkbenchService {
       refreshedAt: new Date().toISOString(),
       repositories: await mapWithConcurrency(repositories, async (repository) => {
         /** 导航元数据与工作区状态互不依赖，在既有并发上限内一起读取。 */
-        const [navigation, snapshot] = await Promise.all([loadNavigationMetadata(repository.localPath), getProjectGitRepositorySnapshot(repository.localPath, includePatches)]);
+        const [navigation, snapshot] = await Promise.all([loadNavigationMetadata(repository.localPath), getProjectGitRepositorySnapshot(repository.localPath, includePatches, repository.context)]);
         return { ...navigation, id: projectGitRepositoryId(project.id, repository.relativePath), name: repository.name, relativePath: repository.relativePath, snapshot };
       }),
     };

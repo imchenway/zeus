@@ -5,7 +5,7 @@ import { defaultPushTarget } from './GitRepositoryControls.js';
 import type { PushSelection, OperationTone } from './gitWorkbenchTypes.js';
 import { GitDeliveryRunControl, type GitDeliveryClient } from './GitDeliveryRunControl.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { ZeusApiError } from '../apiClient.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
@@ -15,6 +15,7 @@ import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/Ap
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
 import { notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import { useGitDeliveryRefresh } from './useGitDeliveryRefresh.js';
+import { readCachedGitDiff, useGitDiffReadAhead, usePreparedGitDiffSelection, type GitDiffRead, type GitDiffReadTarget } from './gitDiffReadAhead.js';
 import {
   DeliveryFeedbackNotice,
   DeliveryRepositoryFileTree,
@@ -282,30 +283,70 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const diffKey = JSON.stringify([props.project.id, focus.repositoryId, focus.path, scope, snapshot?.refreshedAt]);
   /** 已提交文件使用固定起点，工作区比较包括暂存与未暂存变化。 */
   const diffBase = scope === 'working' ? 'HEAD' : committedBase(focusedRepository);
+  /** 刷新保留同一文件的可读内容，文件切换时不能显示上一文件。 */
+  const diffIdentity = JSON.stringify([props.project.id, focus.repositoryId, focus.path, scope, diffBase]);
   /** 结果绑定请求身份，切换文件的首帧即显示局部加载。 */
-  const [fileDiff, setFileDiff] = useState<{ key: string; diff: GitDiffSummary | null } | null>(null);
+  const [fileDiff, setFileDiff] = useState<{ key: string; identity: string; diff: GitDiffSummary | null } | null>(null);
+  /** 同一快照复用最多四十八个单文件结果和在途读取；刷新或换范围时释放。 */
+  const fileDiffReads = useMemo(() => new Map<string, GitDiffRead>(), [props.client, props.project.id, snapshot?.refreshedAt]);
+  /** 点击、悬停与空闲预读共用同一文件身份及比较基线。 */
+  const fileDiffTarget = useCallback(
+    (repositoryId: string, path: string): GitDiffReadTarget | null => {
+      const base = scope === 'working' ? 'HEAD' : snapshot?.repositories.find((repository) => repository.id === repositoryId)?.snapshot.sourceHeadSha;
+      if (!base || !path) return null;
+      return {
+        key: JSON.stringify([props.project.id, repositoryId, path, scope, snapshot?.refreshedAt]),
+        previewRequest: {
+          kind: 'project-git',
+          projectId: props.project.id,
+          repositoryId,
+          path,
+          ...(scope === 'committed' ? { comparisonRef: base, comparisonMode: 'current' } : {}),
+        },
+        load: () => props.client.loadProjectGitComparisonDiff(props.project.id, repositoryId, base, scope === 'working' ? 'working-tree' : 'current', path),
+      };
+    },
+    [props.client, props.project.id, scope, snapshot],
+  );
+  /** 当前仓库附近三十二项保持可读，后台逐个处理，不并发扫描整个项目。 */
+  const readAheadTargets = useMemo(() => {
+    const group = groups.find((group) => group.workspace.id === focus.repositoryId) ?? groups[0];
+    if (!group) return [];
+    const start = Math.max(0, group.files.findIndex((file) => file.path === focus.path) - 2);
+    return group.files.slice(start, start + 32).flatMap((file) => {
+      const target = fileDiffTarget(group.workspace.id, file.path);
+      return target ? [target] : [];
+    });
+  }, [groups, focus.repositoryId, focus.path, fileDiffTarget]);
+  useGitDiffReadAhead(fileDiffReads, readAheadTargets, open && busyAction === null);
+  /** 文件树的高亮与实际差异同时提交，后台准备期间保留当前文件。 */
+  const selectPreparedFile = usePreparedGitDiffSelection(fileDiffReads, fileDiffTarget, (repositoryId, path) => setFocus({ repositoryId, path }), setError, open && busyAction === null);
   useEffect(() => {
     if (!open || !focus.repositoryId || !focus.path || !diffBase) return;
     /** 清理后忽略旧文件和旧快照的结果。 */
     let cancelled = false;
-    void props.client
-      .loadProjectGitComparisonDiff(props.project.id, focus.repositoryId, diffBase, scope === 'working' ? 'working-tree' : 'current', focus.path)
+    /** 切回已读文件立即显示同一快照，快速往返也不重复启动 Git。 */
+    const target = fileDiffTarget(focus.repositoryId, focus.path);
+    if (!target) return;
+    /** 回执只写入它所属的快照和文件。 */
+    const requested = readCachedGitDiff(fileDiffReads, target);
+    void requested.read
       .then((diff) => {
-        if (!cancelled) setFileDiff({ key: diffKey, diff });
+        if (!cancelled) setFileDiff({ key: diffKey, identity: diffIdentity, diff });
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
-        setFileDiff({ key: diffKey, diff: null });
+        setFileDiff((current) => (current?.identity === diffIdentity ? current : { key: diffKey, identity: diffIdentity, diff: null }));
         setError(reason);
       });
     return () => {
       cancelled = true;
     };
-  }, [open, props.client, props.project.id, focus.repositoryId, focus.path, scope, diffBase, diffKey]);
+  }, [open, props.client, props.project.id, focus.repositoryId, focus.path, scope, diffBase, diffKey, diffIdentity, fileDiffReads, fileDiffTarget]);
   /** 只有当前请求的结果可进入差异组件。 */
-  const diff = fileDiff?.key === diffKey ? fileDiff.diff : null;
+  const diff = fileDiffReads.get(diffKey)?.result ?? (fileDiff?.identity === diffIdentity ? fileDiff.diff : null);
   /** 读取失败结束局部加载，并使用页面现有错误和重试入口。 */
-  const diffLoading = Boolean(focus.path && diffBase && fileDiff?.key !== diffKey);
+  const diffLoading = Boolean(focus.path && diffBase && !diff && fileDiff?.key !== diffKey);
   /** 合入与推送仅使用勾选仓库。 */
   const selected = snapshot?.repositories.filter((repository) => selectedIds.includes(repository.id)) ?? [];
   /** 冲突仓库不能提交，其余仓库仍可交付。 */
@@ -535,6 +576,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           <InitialLoadState zh={zh} error={error} onRetry={error ? () => void refresh() : undefined} />
         ) : (
           <GitDeliveryWorkspace
+            contentReady={Boolean(snapshot)}
             zh={zh}
             busy={Boolean(busyAction)}
             fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
@@ -543,6 +585,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             diffLoading={diffLoading}
             diff={diff}
             revision={snapshot.refreshedAt}
+            preparedPreview={fileDiffReads.get(diffKey)?.preview}
             onFileSaved={() => refresh()}
             previewRequest={
               focusedRepository
@@ -588,7 +631,11 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 zh={zh}
                 disabled={Boolean(busyAction)}
                 onScopeChange={setScope}
-                onSelectFile={(repositoryId, path) => setFocus({ repositoryId, path })}
+                onSelectFile={selectPreparedFile}
+                onPreloadFile={(repositoryId, path) => {
+                  const target = fileDiffTarget(repositoryId, path);
+                  if (target) void readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
+                }}
                 onToggleWorkspace={(id, checked) => toggleRepositories([id], checked)}
                 onToggleBranch={toggleRepositories}
                 onToggleFiles={toggleFiles}

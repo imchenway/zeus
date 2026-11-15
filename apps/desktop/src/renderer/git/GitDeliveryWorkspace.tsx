@@ -9,6 +9,8 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
+import { beginGitDiffSelection, useGitDeliveryWindowFrame } from './gitDeliveryPerformance.js';
+import type { PreparedFilePreview } from '../code/preparedFilePreview.js';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
@@ -152,6 +154,8 @@ export function DeliveryRepositoryFileTree(props: {
   disabled: boolean;
   onScopeChange: (scope: DiffScope) => void;
   onSelectFile: (workspaceId: string, path: string) => void;
+  /** 悬停与键盘聚焦提前准备同一文件，不改变选择。 */
+  onPreloadFile?: (workspaceId: string, path: string) => void;
   onToggleWorkspace: (workspaceId: string, selected: boolean) => void;
   onToggleBranch: (workspaceIds: string[], selected: boolean) => void;
   /** 目录批量选择与单文件选择共用状态入口。 */
@@ -290,6 +294,7 @@ export function DeliveryRepositoryFileTree(props: {
                         zh={props.zh}
                         onToggle={(paths, selected) => props.onToggleFiles(workspaceId, paths, selected)}
                         onSelect={(path) => props.onSelectFile(workspaceId, path)}
+                        onPreload={(path) => props.onPreloadFile?.(workspaceId, path)}
                         onOpen={(path) => props.onOpenFile(workspaceId, path)}
                       />
                     ) : !(group.loadState ?? props.detailStates[workspaceId]) ? (
@@ -381,6 +386,8 @@ function DeliveryDirectoryFiles(props: {
   onToggle: (paths: string[], selected: boolean) => void;
   /** 单击更新下方差异。 */
   onSelect: (path: string) => void;
+  /** 鼠标或键盘进入文件行时提前准备正文差异。 */
+  onPreload?: (path: string) => void;
   /** 双击打开独立窗口。 */
   onOpen: (path: string) => void;
   /** 点击节点决定上下文动作范围。 */
@@ -484,7 +491,12 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                   data-icon-tooltip={name}
                   aria-label={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
                   aria-pressed={props.selectedFile === path}
-                  onClick={() => props.onSelect(path)}
+                  onClick={() => {
+                    if (props.selectedFile !== path) beginGitDiffSelection(path);
+                    props.onSelect(path);
+                  }}
+                  onPointerEnter={() => props.onPreload?.(path)}
+                  onFocus={() => props.onPreload?.(path)}
                   onDoubleClick={() => props.onOpen(path)}
                   disabled={props.disabled}
                 >
@@ -637,6 +649,8 @@ export function repositoryLabel(workspace: Pick<TaskWorkspaceIndexSnapshot, 'rep
 
 /** 普通目录和任务工作树共用同一文件审查、操作区及差异布局。 */
 export function GitDeliveryWorkspace(props: {
+  /** 至少一个仓库已有真实文件状态，加载占位不算首个可读帧。 */
+  contentReady: boolean;
   zh: boolean;
   fileBrowser: ReactNode;
   actions: ReactNode;
@@ -647,12 +661,15 @@ export function GitDeliveryWorkspace(props: {
   diffLoading: boolean;
   diff: TaskGitDiffSummary | null;
   revision: string | number;
+  /** 与补丁同时准备的授权全文，不重复读取或变更文件权限。 */
+  preparedPreview?: PreparedFilePreview;
   /** Diff 保存后复用业务页的快照刷新，保持文件树和数量一致。 */
   onFileSaved?: () => void | Promise<void>;
   previewRequest?: ComponentProps<typeof SideBySideDiff>['previewRequest'];
   onShowCommitted?: () => void;
   busy: boolean;
 }) {
+  useGitDeliveryWindowFrame(props.contentReady);
   return (
     <div className="task-git-delivery-content">
       <div className="task-git-review-layout task-git-delivery-layout">
@@ -680,7 +697,17 @@ export function GitDeliveryWorkspace(props: {
               {props.zh ? '正在读取差异…' : 'Loading diff…'}
             </p>
           ) : (
-            <SideBySideDiff fileStatus={props.fileStatus} previewRequest={props.previewRequest} revision={props.revision} onSaved={props.onFileSaved} diff={props.diff} zh={props.zh} title={props.diffTitle} fill />
+            <SideBySideDiff
+              fileStatus={props.fileStatus}
+              previewRequest={props.previewRequest}
+              revision={props.revision}
+              preparedPreview={props.preparedPreview}
+              onSaved={props.onFileSaved}
+              diff={props.diff}
+              zh={props.zh}
+              title={props.diffTitle}
+              fill
+            />
           )}
         </main>
       </div>
