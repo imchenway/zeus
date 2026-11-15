@@ -2466,6 +2466,19 @@ export class ConversationSubmissionRepository {
     return row ? mapConversationSubmissionRow(row) : undefined;
   }
 
+  /** 目录只投影经同项目、同任务核验的来源身份，不加载引用正文。 */
+  getSourceConversationId(conversationId: string): string | null {
+    return this.db.get<{ source_id: string }>(
+      `SELECT source.id AS source_id FROM conversation_submissions submission
+       JOIN conversations owner ON owner.id = submission.conversation_id
+       JOIN conversations source ON source.id = json_extract(submission.input_json, '$.conversationContext.sourceConversation.id')
+       WHERE submission.conversation_id = ? AND source.id <> owner.id
+         AND source.project_id = owner.project_id AND source.task_id IS owner.task_id
+       ORDER BY submission.created_at, submission.id LIMIT 1`,
+      [conversationId],
+    )?.source_id ?? null;
+  }
+
   /** 只读取最早提交的创建操作身份，避免会话列表加载提示词和附件正文。 */
   getEarliestOperationIdentityByConversation(conversationId: string): string | null {
     return this.db.get<{ idempotency_key: string }>(`SELECT idempotency_key FROM conversation_submissions WHERE conversation_id = ? ORDER BY created_at, id LIMIT 1`, [conversationId])?.idempotency_key ?? null;

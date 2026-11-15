@@ -131,7 +131,7 @@ import type { ConversationModelSetupContext } from '../settings/useModelSetup.js
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';
-import { replaceArchivedSideQuestion, useSessionContextWorkspace, type SessionContextWorkspace } from './useSessionContextWorkspace.js';
+import { createSideQuestionState, replaceArchivedSideQuestion, restoreSideQuestionWorkspace, useSessionContextWorkspace, type SessionContextWorkspace } from './useSessionContextWorkspace.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -877,6 +877,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   ]);
   /** 只复用持久首发与回执转换，不执行全局会话导航。 */
   async function startSideQuestion(input: SideQuestionStartInput, onAccepted: (choice: NativeConversationChoice) => void): Promise<void> {
+    /** 首发回执立即保留主会话归属，正式目录随后从持久来源记录投影同一身份。 */
+    const accept = (choice: NativeConversationChoice): void => onAccepted({ ...choice, sourceConversationId: props.conversation.id });
     /** 侧栏草稿与主输入框有不同的持久信封空间。 */
     const prefix = `zeus.side-question:${props.conversation.id}:${input.id}:`;
     /** 已有首发管理器负责冻结请求及清理成功回执。 */
@@ -900,7 +902,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         input: { ...common, mode: 'create', task: props.task },
         envelopeManager: createNativeConversationStartEnvelopeManager({ storage, createId: () => crypto.randomUUID() }),
         dispatch: props.client.startNativeConversation,
-        onAccepted,
+        onAccepted: accept,
         refresh: async () => undefined,
       });
     } else {
@@ -909,7 +911,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         input: { ...common, owner: props.owner },
         envelopeManager: createProjectConversationStartEnvelopeManager({ storage, createId: () => crypto.randomUUID() }),
         dispatch: props.client.startProjectConversation,
-        onAccepted,
+        onAccepted: accept,
         refresh: async () => undefined,
       });
     }
@@ -2086,6 +2088,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     sideQuestionState,
     setSideQuestionState,
   } = useSessionContextWorkspace(props.conversation?.projectId, navigationId);
+  useEffect(() => {
+    if (!props.renderSideQuestion || !props.conversation || sideQuestionState) return;
+    /** 完整目录保留侧栏身份；新窗口也能恢复已有主子会话，而非新建同名会话。 */
+    const conversation = props.choices?.find((choice) => choice.sourceConversationId === props.conversation?.id && !choice.archived);
+    if (conversation) restoreSideQuestionWorkspace({ ...props.conversation, navigationId }, conversation);
+  }, [props.renderSideQuestion, props.conversation, props.choices, navigationId, sideQuestionState]);
   /** 关闭上下文工作区失败时保留当前工作面，并在本会话内说明原因。 */
   const [contextWorkspaceError, setContextWorkspaceError] = useState<unknown>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
@@ -2786,7 +2794,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     /** 独立评论身份支持重复引用同一位置。 */
     const annotation = { id: crypto.randomUUID(), anchor: { ...anchor, sourceConversationId: props.conversation?.id } };
     setSideQuestionState((current) => ({
-      ...(current ?? { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null }),
+      ...(current ?? createSideQuestionState()),
       ...(sendImmediately ? { pendingExplanations: [...(current?.pendingExplanations ?? []), annotation] } : { annotations: [...(current?.annotations ?? []), annotation] }),
     }));
     setContextFullWidth(false);
@@ -2799,7 +2807,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     /** 每次引用单独标识，重复选择同一片段也不会覆盖草稿。 */
     const reference: ConversationCodeComment = { id: crypto.randomUUID(), body: '', position };
     setSideQuestionState((current) => ({
-      ...(current ?? { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null }),
+      ...(current ?? createSideQuestionState()),
       ...(sendImmediately ? { pendingExplanations: [...(current?.pendingExplanations ?? []), reference] } : { codeComments: [...(current?.codeComments ?? []), reference] }),
     }));
     setContextFullWidth(false);
@@ -3106,6 +3114,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   onLoadCapabilities={actions.onLoadCapabilities}
                   onLoadSkills={actions.onLoadSkills}
                   onOpenGitDelivery={actions.onOpenTaskGitDelivery}
+                  sideQuestionOpen={contextWorkspace.kind === 'question' && !projectTools.open}
+                  onToggleSideQuestion={
+                    props.renderSideQuestion
+                      ? (trigger) => {
+                          contextReturnFocusRef.current = trigger;
+                          if (contextWorkspace.kind === 'question' && !projectTools.open) {
+                            void closeContextWorkspace();
+                            return;
+                          }
+                          setSideQuestionState((current) => current ?? createSideQuestionState());
+                          setContextFullWidth(false);
+                          setContextWorkspace({ kind: 'question' });
+                        }
+                      : undefined
+                  }
                   browserOpen={browserOpen}
                   onToggleBrowser={(trigger) => {
                     contextReturnFocusRef.current = trigger;

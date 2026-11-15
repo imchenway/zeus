@@ -23,10 +23,10 @@ export class ConversationSourceContextReader {
 
   /** 从经过结构校验的引用核实来源，并附上引用附近的有界原文。 */
   enrich(context: Record<string, unknown> | undefined, owner: { id: string; projectId: string; taskId: string | null }, inheritedSourceId?: string): Record<string, unknown> | undefined {
-    if (!context) return context;
+    if (!context && !inheritedSourceId) return context;
     /** 字段结构已由公开命令入口校验；来源快照始终由此处重新生成。 */
-    const draft = context as unknown as ConversationContextDraft;
-    if (!draft.responseAnnotations.length) return context;
+    const draft = (context ?? { responseAnnotations: [], codeComments: [] }) as unknown as ConversationContextDraft;
+    if (!draft.responseAnnotations.length && !inheritedSourceId) return context;
     /** 目录继承身份与引用身份必须指向同一个来源。 */
     const sourceIds = new Set([inheritedSourceId, ...draft.responseAnnotations.map((entry) => entry.anchor.sourceConversationId)].filter((id): id is string => Boolean(id)));
     if (!sourceIds.size) return context;
@@ -66,7 +66,7 @@ export class ConversationSourceContextReader {
       return { itemId: item.id, turnId: item.turnId, excerpt, truncated: start > 0 || start + length < text.length };
     });
     /** 补充原文后仍遵守公开上下文的总字节上限。 */
-    const enriched = { ...context, sourceConversation: { id: source.id, title: source.title, references } };
+    const enriched = { ...draft, sourceConversation: { id: source.id, title: source.title, references } };
     if (Buffer.byteLength(JSON.stringify(enriched), 'utf8') > 1_000_000) throw coordinatorError('ZEUS_INVALID_CONVERSATION_CONTEXT', '来源原文与评论合计不能超过 1 MB。');
     return enriched;
   }
@@ -93,7 +93,7 @@ export class ConversationSourceContextReader {
     /** 正文句柄由已有历史查询生成，并继续绑定来源会话身份。 */
     const page = args.handle
       ? this.snapshots.readContentPage({ conversationId: source.id, handle: args.handle as string, offset: args.offset as number | undefined, byteLimit: sourcePageByteLimit, dialogueOnly: true })
-      : args.scope === 'history'
+      : args.scope === 'history' || (!args.itemId && metadata.references.length === 0)
         ? this.snapshots.listModelHistoryPage({ conversationId: source.id, cursor: args.cursor as string | undefined, dialogueOnly: true, direction: 'tail', entryLimit: 8, byteLimit: sourcePageByteLimit })
         : this.snapshots.listTurnModelHistoryPage({
             conversationId: source.id,

@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { fileIconForKind, fileIconKindForName } from '../code/FileTypeIcon.js';
@@ -59,6 +60,10 @@ interface SessionQuickActionsCardProps {
   browserOpen: boolean;
   /** 入口只切换显示，浏览器标签与关闭流程仍由会话管理。 */
   onToggleBrowser: (trigger: HTMLButtonElement) => void;
+  /** 当前主会话的侧栏是否正在显示。 */
+  sideQuestionOpen?: boolean;
+  /** 可提问的主会话提供同一打开、恢复和收起入口。 */
+  onToggleSideQuestion?: (trigger: HTMLButtonElement) => void;
   /** 会话终端继续使用原有会话身份和显示状态。 */
   terminalOpen: boolean;
   /** 缺少终端能力时不显示入口，不创建项目级替代终端。 */
@@ -480,6 +485,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                         <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
                       </span>
                       <ArrowSquareOut aria-hidden="true" weight="regular" />
+                    </button>
+                  ) : null}
+
+                  {props.onToggleSideQuestion ? (
+                    <button type="button" className="session-quick-actions-row" aria-label={zh ? '侧边栏会话' : 'Sidebar conversation'} aria-pressed={props.sideQuestionOpen ?? false} onClick={(event) => toggleTool(event.currentTarget, props.onToggleSideQuestion)}>
+                      <ChatCircle aria-hidden="true" weight="regular" />
+                      <span className="session-quick-actions-copy"><strong>{zh ? '侧边栏会话' : 'Sidebar conversation'}</strong></span>
                     </button>
                   ) : null}
 
