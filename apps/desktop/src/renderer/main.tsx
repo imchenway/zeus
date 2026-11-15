@@ -387,20 +387,22 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
   /** 子树筛选来自原生窗口校验后的相对路径。 */
   const pathPrefix = parameters.get('pathPrefix') ?? undefined;
   if (taskId ? projectId || conversationId || repositoryId || pathPrefix : !projectId || (conversationId && repositoryId) || (pathPrefix && !repositoryId)) throw new Error('代码交付窗口范围无效。');
-  /** 元数据与设置并行读取，完整交付页只创建一次。 */
-  const [{ TaskGitDeliveryWindow }, task, conversation, snapshot, appShellSettings, currentContext] = await Promise.all([
+  /** 任务身份只读取一次，项目元数据不依赖全量工作台。 */
+  const taskRecord = taskId ? client.tasks.loadTask(taskId) : Promise.resolve(null);
+  /** 当前交付对象与设置并行读取，避免全量项目和任务阻塞首屏。 */
+  const [{ TaskGitDeliveryWindow }, task, conversation, project, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
-    taskId ? client.tasks.loadTask(taskId) : Promise.resolve(null),
+    taskRecord,
     projectId && conversationId ? client.loadNativeConversationChoice(projectId, conversationId) : Promise.resolve(null),
-    client.loadDashboard(),
-    client.settings.loadAppShellSettings(),
+    projectId ? client.projects.loadProject(projectId) : taskRecord.then((record) => (record ? client.projects.loadProject(record.projectId) : null)),
+    window.zeus?.getStartupSettings?.().then((settings) => settings ?? client.settings.loadAppShellSettings()) ?? client.settings.loadAppShellSettings(),
     window.zeus?.getTaskGitDeliveryCurrentContext?.() ?? Promise.resolve({ taskId: null, workspaceId: null }),
   ]);
   /** 所有窗口使用同一 React 根及启动错误边界。 */
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   /** 不接受从其他项目借用的会话或缺失记录。 */
-  const project = snapshot.projects.find((item) => item.id === (task?.projectId ?? projectId));
+  if (project && project.id !== (task?.projectId ?? projectId)) throw new Error('代码交付项目归属无效，请从当前项目重新打开。');
   if (!task && !project) throw new Error('代码交付项目不存在，请从当前项目重新打开。');
   // 自动创建任务的会话仍使用自有目录；已绑定任务工作区或环境的会话须走任务交付入口。
   if (conversationId && (!conversation || conversation.projectId !== project?.id || conversation.id !== conversationId || conversation.workspaceId || conversation.environmentId))

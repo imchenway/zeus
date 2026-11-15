@@ -132,12 +132,17 @@ declare global {
       }>;
       /** 任务、普通会话与项目提交按钮共用同一原生窗口入口。 */
       openTaskGitDeliveryWindow: (
-        input:
+        input: (
           | { taskId: string; workspaceId?: string | null; projectId?: never; conversationId?: never; repositoryId?: never; pathPrefix?: never }
           | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId?: never; pathPrefix?: never }
           | { taskId?: never; workspaceId?: never; projectId: string; conversationId: string; repositoryId?: never; pathPrefix?: never }
-          | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string },
-      ) => Promise<{ opened: true; reused: boolean; taskId?: string; projectId?: string; conversationId?: string }>;
+          | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string }
+        ) & { /** 只准备当前范围，不显示窗口。 */ preload?: boolean },
+      ) => Promise<{ opened: boolean; reused: boolean; taskId?: string; projectId?: string; conversationId?: string }>;
+      /** 真实绘制帧只上报类型与耗时，不传文件正文。 */
+      reportGitDeliveryFrame: (input: { kind: 'window' | 'diff'; durationMs?: number }) => void;
+      /** 原生展示预热窗口后请求一次实际绘制回执。 */
+      onGitDeliveryFrameRequested: (listener: () => void) => () => void;
       /** 所有范围都关闭当前真实交付窗口。 */
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId?: string; projectId?: string; conversationId?: string }>;
       getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;

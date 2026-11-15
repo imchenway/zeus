@@ -11,16 +11,28 @@ export interface LoadedSourceLanguage {
 
 /** 相同语言复用加载，失败时允许后续重新尝试。 */
 const languagePromises = new Map<SourceLanguageId, Promise<LoadedSourceLanguage>>();
+/** 已完成的语言可在编辑器首帧同步安装，避免先绘制纯文本再着色。 */
+const loadedLanguages = new Map<SourceLanguageId, LoadedSourceLanguage>();
+
+/** 只读取已有解析器，不发起模块加载。 */
+export function readLoadedSourceLanguage(language: string | null | undefined): LoadedSourceLanguage | null {
+  return isSourceLanguageId(language) ? (loadedLanguages.get(language) ?? null) : null;
+}
 
 /** 编辑器和静态预览共用同一个语言实例，并只在真正打开对应文件时加载解析器。 */
 export function loadSourceLanguage(language: string | null | undefined): Promise<LoadedSourceLanguage | null> {
   if (!isSourceLanguageId(language)) return Promise.resolve(null);
   const cached = languagePromises.get(language);
   if (cached) return cached;
-  const request = loadKnownSourceLanguage(language).catch((reason) => {
-    languagePromises.delete(language);
-    throw reason;
-  });
+  const request = loadKnownSourceLanguage(language)
+    .then((loaded) => {
+      loadedLanguages.set(language, loaded);
+      return loaded;
+    })
+    .catch((reason) => {
+      languagePromises.delete(language);
+      throw reason;
+    });
   languagePromises.set(language, request);
   return request;
 }

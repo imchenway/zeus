@@ -3,7 +3,7 @@ import { IconTooltip } from '../ui/IconTooltip.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -177,6 +177,23 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
   /** 进度沿用点击交付时的真实范围，冲突会话继续指向来源交付。 */
   const deliveryTarget = conversationGitDeliveryTarget({ ...props.conversation, taskId }, props.conversation.workspaceId ?? workspace?.id ?? null);
+  /** 稳定身份避免流式消息更新重复预热同一交付窗口。 */
+  const deliveryTargetKey = JSON.stringify(deliveryTarget);
+  /** 返回主窗口或靠近入口时补齐预热；失败仍由真实打开报告。 */
+  const preloadDelivery = useCallback(() => {
+    if (props.suppressed || !canOpenDelivery) return;
+    void window.zeus?.openTaskGitDeliveryWindow({ ...JSON.parse(deliveryTargetKey), preload: true }).catch(() => undefined);
+  }, [props.suppressed, canOpenDelivery, deliveryTargetKey]);
+  useEffect(() => {
+    if (props.suppressed || !canOpenDelivery || !window.zeus?.openTaskGitDeliveryWindow) return;
+    /** 首屏渲染后只准备当前会话，真实点击仍负责显示和报告失败。 */
+    const idle = window.requestIdleCallback(preloadDelivery, { timeout: 500 });
+    window.addEventListener('focus', preloadDelivery);
+    return () => {
+      window.cancelIdleCallback(idle);
+      window.removeEventListener('focus', preloadDelivery);
+    };
+  }, [props.suppressed, canOpenDelivery, preloadDelivery]);
   /** 项目级单步交付没有组合运行，不读取其他会话的组合进度。 */
   const deliveryScopeId = deliveryTarget.taskId ?? deliveryTarget.conversationId ?? null;
   /** 只在卡片可见时订阅交付事件，不增加 Git 文件变化订阅。 */
@@ -489,9 +506,17 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   ) : null}
 
                   {props.onToggleSideQuestion ? (
-                    <button type="button" className="session-quick-actions-row" aria-label={zh ? '侧边栏会话' : 'Sidebar conversation'} aria-pressed={props.sideQuestionOpen ?? false} onClick={(event) => toggleTool(event.currentTarget, props.onToggleSideQuestion)}>
+                    <button
+                      type="button"
+                      className="session-quick-actions-row"
+                      aria-label={zh ? '侧边栏会话' : 'Sidebar conversation'}
+                      aria-pressed={props.sideQuestionOpen ?? false}
+                      onClick={(event) => toggleTool(event.currentTarget, props.onToggleSideQuestion)}
+                    >
                       <ChatCircle aria-hidden="true" weight="regular" />
-                      <span className="session-quick-actions-copy"><strong>{zh ? '侧边栏会话' : 'Sidebar conversation'}</strong></span>
+                      <span className="session-quick-actions-copy">
+                        <strong>{zh ? '侧边栏会话' : 'Sidebar conversation'}</strong>
+                      </span>
                     </button>
                   ) : null}
 
@@ -543,6 +568,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       aria-busy={openingDelivery?.conversationId === props.conversation.id || undefined}
                       data-icon-tooltip={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
                       onClick={openDelivery}
+                      onPointerEnter={preloadDelivery}
+                      onFocus={preloadDelivery}
                     >
                       <GithubLogo aria-hidden="true" weight="regular" />
                       <span className="session-quick-actions-copy">

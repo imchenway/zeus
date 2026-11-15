@@ -12,6 +12,7 @@ import { CodeEditor } from './CodeEditor.js';
 import { CommentWidget } from './SourceCodePreview.js';
 import './codeDiffView.css';
 import { FilePreviewDataContext } from './FilePreview.js';
+import { useGitDiffContentFrame } from '../git/gitDeliveryPerformance.js';
 import { fullFileDiff, normalizedFileLine, refreshedFileDiff } from './fullFileDiff.js';
 import { useGitBlame } from './useGitBlame.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
@@ -68,6 +69,8 @@ interface AnnotationPair {
 export interface CodeDiffViewProps {
   /** 已解析的补丁，只在文件内容变化时转换一次。 */
   file: TaskGitFileDiff;
+  /** 父级已核对的完整差异；undefined 才由当前视图核对一次。 */
+  completeFile?: TaskGitFileDiff | null;
   /** 统一视图按行底色区分增删，保留两侧原始行号。 */
   unified?: boolean;
   /** 新增或删除文件只挂载实际存在的一侧，保留原始行号和评论身份。 */
@@ -98,6 +101,10 @@ export interface CodeDiffViewProps {
 
 /** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
 export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
+  useGitDiffContentFrame(
+    props.file.newPath || props.file.oldPath,
+    props.file.hunks.some((hunk) => hunk.lines.length > 0),
+  );
   /** 当前工作区有完整两端时使用真实正文编辑；只读证据继续使用原有差异投影。 */
   const preview = useContext(FilePreviewDataContext);
   const editable = preview?.editing?.writable && preview.items?.length === 2 && preview.items.every((item) => item.missing || (item.kind === 'text' && !item.truncated));
@@ -108,8 +115,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
 const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffViewProps) {
   /** 所有差异入口共享已有文件读取，版本切换不会重新授权。 */
   const preview = useContext(FilePreviewDataContext);
-  /** 本页恢复后的补丁绑定新正文，避免等待外部工作区列表刷新。 */
-  const original = useMemo(() => refreshedFileDiff(props.file, preview?.items ?? null, preview?.reverted), [props.file, preview?.items, preview?.reverted]);
+  /** 父级已重建并核对正文时直接复用；其他入口仍自行绑定恢复后的新正文。 */
+  const original = useMemo(() => (props.completeFile !== undefined ? props.file : refreshedFileDiff(props.file, preview?.items ?? null, preview?.reverted)), [props.completeFile, props.file, preview?.items, preview?.reverted]);
   /** 确认操作绑定当时的两端令牌，预览变化后不再执行旧坐标。 */
   const [pending, setPending] = useState<{ range: FilePreviewChangeRange; items: unknown } | null>(null);
   /** 同一预览只允许一个在途恢复请求。 */
@@ -119,7 +126,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
   /** 关闭确认后回到触发箭头；恢复后箭头消失则回到当前代码栏。 */
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   /** 校验完整两端一次，范围切换只改变显示行。 */
-  const complete = useMemo(() => (preview?.items ? fullFileDiff(original, preview.items) : null), [original, preview?.items]);
+  const complete = useMemo(() => (props.completeFile !== undefined ? props.completeFile : preview?.items ? fullFileDiff(original, preview.items) : null), [props.completeFile, original, preview?.items]);
   /** 没有外层预览的快照也复用布局操作，但不能假装有全文。 */
   const [localUnified, setLocalUnified] = useState(Boolean(props.unified));
   /** 局部展开只作用于当前文件，不影响全局显示范围。 */

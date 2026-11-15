@@ -43,6 +43,7 @@ import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
 import { useFilePreviewDraft } from './useFilePreviewDraft.js';
 import { useGitBlame } from './useGitBlame.js';
+import type { PreparedFilePreview } from './preparedFilePreview.js';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
 export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
@@ -215,6 +216,10 @@ export function FilePreview(props: {
   fileStatus?: string;
   /** 外部已知的修订用于显式刷新当前文件。 */
   revision?: string | number;
+  /** 交付页的补丁与授权全文共用一次读取。 */
+  preparedPreview?: PreparedFilePreview;
+  /** 在已知全文类型后只挂载一次差异编辑器。 */
+  waitForContent?: boolean;
   /** 文件保存成功后由所属页面刷新文件列表与统计。 */
   onSaved?: () => void | Promise<void>;
   /** 会话评论使用的稳定文件路径，附件缺省使用预览名称。 */
@@ -232,6 +237,8 @@ export function FilePreview(props: {
         key={`${identity}:${JSON.stringify(props.location)}`}
         identity={identity}
         revision={props.revision}
+        preparedPreview={props.preparedPreview}
+        waitForContent={props.waitForContent}
         location={props.location}
         zh={props.zh}
         actions={props.actions}
@@ -253,6 +260,10 @@ function FilePreviewBody(props: {
   identity: string;
   /** 同一文件的外部修订只触发后台读取。 */
   revision?: string | number;
+  /** 同一文件预读所得的正文与授权生命周期。 */
+  preparedPreview?: PreparedFilePreview;
+  /** 避免只读补丁随后被整棵可编辑视图替换。 */
+  waitForContent?: boolean;
   zh: boolean;
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
@@ -266,7 +277,7 @@ function FilePreviewBody(props: {
   /** 系统标题栏使用当前文件名，嵌入式预览不改主工作区标题。 */
   const ownerDocument = useWindowDocument();
   /** 同一文件后台读取时保留内容，文件身份变化由外层重新挂载。 */
-  const [items, setItems] = useState<FilePreviewItem[] | null>(null);
+  const [items, setItems] = useState<FilePreviewItem[] | null>(() => props.preparedPreview?.items ?? null);
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** 用户主动刷新次数。 */
@@ -287,6 +298,10 @@ function FilePreviewBody(props: {
   const readRevision = useRef(0);
   /** 接纳后即登记令牌，关闭发生在 React 提交前也能完整释放。 */
   const ownedIds = useRef(new Set<string>());
+  /** 可见版本持有独立引用，后台淘汰不会撤销正在使用的授权。 */
+  const ownedPreparedReads = useRef(new Map<FilePreviewItem[], () => void>());
+  /** 有补丁的预览先绘制差异，完整正文不能抢占其可读首帧。 */
+  const hasDiff = Boolean(props.children);
   useEffect(() => {
     const revision = ++readRevision.current;
     /** 卸载后拒绝迟到结果。 */
@@ -298,36 +313,63 @@ function FilePreviewBody(props: {
       setError(props.zh ? '当前环境没有文件预览服务。' : 'File preview service is unavailable.');
       return;
     }
-    void bridge
-      .loadFilePreview({ ...(JSON.parse(props.identity) as FilePreviewRequest), textEncoding: textEncoding || undefined })
-      .then((result) => {
-        const ids = result.map((item) => item.id).filter(Boolean);
-        if (active && revision === readRevision.current) {
-          for (const id of ids) ownedIds.current.add(id);
-          setItems(result);
-          // 后台与主动刷新都以新正文重建补丁，避免把不同读取批次拼在一起。
-          setReverted(true);
-        } else void bridge.releaseFilePreview(ids).catch(() => undefined);
-      })
-      .catch((cause: unknown) => {
-        if (active && revision === readRevision.current) setError(userFacingErrorCause(cause));
-      });
+    /** 主动刷新与编码切换重新授权；正常切换复用同一快照的预读。 */
+    const prepared = attempt === 0 && !textEncoding ? props.preparedPreview : undefined;
+    /** 在读取完成前也持有引用，关闭或换文件后的迟到回执会归还。 */
+    const releasePrepared = prepared?.retain();
+    /** 无补丁的图片或正文立即读取，有补丁时等其完成一次浏览器绘制。 */
+    const load = () => {
+      void (prepared?.read ?? bridge.loadFilePreview({ ...(JSON.parse(props.identity) as FilePreviewRequest), textEncoding: textEncoding || undefined }))
+        .then((result) => {
+          const ids = result.map((item) => item.id).filter(Boolean);
+          if (active && revision === readRevision.current) {
+            if (releasePrepared) {
+              if (ownedPreparedReads.current.has(result)) releasePrepared();
+              else ownedPreparedReads.current.set(result, releasePrepared);
+            } else for (const id of ids) ownedIds.current.add(id);
+            setItems(result);
+            // 后台与主动刷新都以新正文重建补丁，避免把不同读取批次拼在一起。
+            if (!prepared) setReverted(true);
+          } else if (releasePrepared) releasePrepared();
+          else void bridge.releaseFilePreview(ids).catch(() => undefined);
+        })
+        .catch((cause: unknown) => {
+          releasePrepared?.();
+          if (active && revision === readRevision.current) setError(userFacingErrorCause(cause));
+        });
+    };
+    /** 两帧间隔保证补丁至少绘制一次，关闭时取消尚未开始的全文读取。 */
+    let firstFrame = 0;
+    let secondFrame = 0;
+    if (hasDiff && !props.waitForContent && !prepared) firstFrame = requestAnimationFrame(() => (secondFrame = requestAnimationFrame(load)));
+    else load();
     return () => {
       active = false;
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
     };
-  }, [props.identity, props.revision, props.zh, attempt, textEncoding]);
+  }, [props.identity, props.revision, props.zh, attempt, textEncoding, hasDiff, props.preparedPreview, props.waitForContent]);
   // 内容替换完成或关闭后再释放上一版令牌，后台读取失败仍保留可用预览。
   useEffect(() => {
     const ids = items?.map((item) => item.id).filter(Boolean) ?? [];
+    /** 缓存授权归还引用，本地新读和保存回执直接归还令牌。 */
+    const shared = items && items === props.preparedPreview?.items;
     return () => {
+      const releasePrepared = items ? ownedPreparedReads.current.get(items) : undefined;
+      if (releasePrepared) {
+        ownedPreparedReads.current.delete(items!);
+        releasePrepared();
+        return;
+      }
+      if (shared) return;
       for (const id of ids) ownedIds.current.delete(id);
       if (ids.length) void window.zeus?.releaseFilePreview(ids).catch(() => undefined);
     };
   }, [items]);
   /** 文字默认差异；有媒体时优先展示实际内容。 */
   const textOnly = items?.some((item) => item.kind === 'text') && items.every((item) => item.kind === 'text' || item.kind === 'unavailable');
-  /** 按文件类型和用户选择确定当前视图。 */
-  const showDiff = Boolean(props.children) && (mode === 'diff' || (mode === 'auto' && textOnly));
+  /** 正文未返回时先显示已有补丁；识别媒体后仍自动使用真实媒体预览。 */
+  const showDiff = Boolean(props.children) && (!props.waitForContent || items || error) && (mode === 'diff' || (mode === 'auto' && (!items || textOnly)));
   /** 图片两端使用并排展示。 */
   const images = items && items.length === 2 && items.some((item) => item.kind === 'image') && items.every((item) => item.kind === 'image' || item.kind === 'unavailable');
   /** 当前可用版本侧。 */
@@ -346,6 +388,8 @@ function FilePreviewBody(props: {
       active.current = false;
       void window.zeus?.releaseFilePreview([...ownedIds.current]).catch(() => undefined);
       ownedIds.current.clear();
+      for (const release of ownedPreparedReads.current.values()) release();
+      ownedPreparedReads.current.clear();
     };
   }, []);
   /** 保存与恢复回执统一接管授权，关闭后的迟到结果立即释放。 */

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useReadingScroll, useReadingSnapshot } from '../ui/readingState.js';
 import { basicSetup } from 'codemirror';
 import { defaultKeymap, historyField, indentWithTab } from '@codemirror/commands';
@@ -7,7 +7,7 @@ import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers }
 import { syntaxHighlighting } from '@codemirror/language';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
-import { loadSourceLanguage } from './sourceLanguageRegistry.js';
+import { loadSourceLanguage, readLoadedSourceLanguage } from './sourceLanguageRegistry.js';
 import { editorTooltips } from './editorTooltips.js';
 import { markdownListKeymap } from './markdownListKeymap.js';
 import { blameDecorations, type BlameSource } from './blameDecorations.js';
@@ -71,6 +71,17 @@ export interface CodeEditorProps {
   onView?(view: EditorView | null): void;
 }
 
+/** 普通源码与 MergeView 初次创建时共用字体、行高和选择样式。 */
+export const codeEditorTheme = EditorView.theme({
+  '&': { height: '100%', minHeight: '0', backgroundColor: 'var(--zeus-code-editor-bg, var(--zeus-product-panel))' },
+  '.cm-scroller': { overflow: 'auto', fontFamily: "'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace", fontSize: '12px', lineHeight: '20px' },
+  '.cm-content': { caretColor: 'var(--zeus-control-accent)', paddingBlock: '10px 32px' },
+  '.cm-gutters': { backgroundColor: 'var(--zeus-code-editor-gutter, var(--zeus-product-panel-muted))', border: '0', color: 'var(--zeus-product-muted)' },
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--zeus-code-editor-active-line)' },
+  '.cm-selectionBackground, ::selection': { backgroundColor: 'var(--zeus-code-editor-selection, color-mix(in srgb, var(--zeus-brand-primary, #6152d9) 25%, transparent)) !important' },
+  '&.cm-focused': { outline: 'none' },
+});
+
 /** 编辑器实例独立于 React 输入更新，语言异步加载期间先显示纯文本。 */
 export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   /** 源码与 Diff 的左右视图使用稳定路径，行号跳转不重建编辑器。 */
@@ -121,7 +132,8 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   /** 源码、只读预览和差异共用行号菜单。 */
   const reading = useCodeReadingOptions(hostRef, props.blameLines, props.locale, props.externalView);
 
-  useEffect(() => {
+  // 编辑器在浏览器绘制前完成挂载，文件切换不绘制空容器。
+  useLayoutEffect(() => {
     if (props.externalView) hostRef.current = props.externalView.dom.parentElement as HTMLDivElement | null;
     if (!hostRef.current) return;
     contentRef.current = callbacksRef.current.content;
@@ -136,11 +148,11 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
         callbacksRef.current.onChange || callbacksRef.current.onDocumentChange ? basicSetup : [lineNumbers(), drawSelection(), highlightSpecialChars(), keymap.of(defaultKeymap)],
         restoreHistory && retained.field(historyField, false) ? historyField.init(() => retained.field(historyField)) : [],
         editorTooltips,
-        languageSlot.of([]),
+        languageSlot.of([callbacksRef.current.language === 'markdown' ? markdownListKeymap : [], readLoadedSourceLanguage(callbacksRef.current.language)?.extension ?? []]),
         accessSlot.of([]),
         decorationSlot.of(callbacksRef.current.extensions ?? []),
         blameSlot.of([]),
-        readingSlot.of([]),
+        readingSlot.of(reading.extension),
         syntaxHighlighting(classHighlighter),
         keymap.of([
           indentWithTab,
@@ -187,15 +199,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
             callbacksRef.current.onCursorChange?.(line.number, head - line.from + 1);
           }
         }),
-        EditorView.theme({
-          '&': { height: '100%', minHeight: '0', backgroundColor: 'var(--zeus-code-editor-bg, var(--zeus-product-panel))' },
-          '.cm-scroller': { overflow: 'auto', fontFamily: "'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace", fontSize: '12px', lineHeight: '20px' },
-          '.cm-content': { caretColor: 'var(--zeus-control-accent)', paddingBlock: '10px 32px' },
-          '.cm-gutters': { backgroundColor: 'var(--zeus-code-editor-gutter, var(--zeus-product-panel-muted))', border: '0', color: 'var(--zeus-product-muted)' },
-          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--zeus-code-editor-active-line)' },
-          '.cm-selectionBackground, ::selection': { backgroundColor: 'var(--zeus-code-editor-selection, color-mix(in srgb, var(--zeus-brand-primary, #6152d9) 25%, transparent)) !important' },
-          '&.cm-focused': { outline: 'none' },
-        }),
+        codeEditorTheme,
       ],
     };
     /** 外部视图保留 MergeView 的增量差异与撤销状态，只追加共享源码能力。 */
@@ -214,16 +218,16 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     };
   }, [props.path, props.externalView, languageSlot, accessSlot, decorationSlot, blameSlot, readingSlot, readingScroll]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
   }, [props.path, props.externalView, reading.extension, readingSlot]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     /** 文件切换后丢弃旧语言加载结果；失败保留可用的纯文本。 */
     let cancelled = false;
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: languageSlot.reconfigure([]) });
+    view.dispatch({ effects: languageSlot.reconfigure([props.language === 'markdown' ? markdownListKeymap : [], readLoadedSourceLanguage(props.language)?.extension ?? []]) });
     void loadSourceLanguage(props.language)
       .then((loaded) => {
         // 统一规则先于 Markdown 自带键位处理字母列表，其他代码语言沿用自己的缩进。
@@ -237,17 +241,18 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     };
   }, [props.language, props.path, props.externalView, languageSlot]);
 
-  useEffect(() => {
+  // 只读仍允许选择和复制，沿用共享样式已有的正文选择标记。
+  useLayoutEffect(() => {
     viewRef.current?.dispatch({
       effects: accessSlot.reconfigure([
         EditorState.readOnly.of(props.readOnly),
         EditorView.editable.of(!props.readOnly),
-        EditorView.contentAttributes.of({ tabindex: '0', 'aria-label': props.label ?? props.path, 'aria-readonly': String(props.readOnly) }),
+        EditorView.contentAttributes.of({ tabindex: '0', 'data-zeus-selectable': 'text', 'aria-label': props.label ?? props.path, 'aria-readonly': String(props.readOnly) }),
       ]),
     });
   }, [props.readOnly, props.label, props.path, props.externalView, accessSlot]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     /** 编辑器刚发出的内容无需再转换或替换，保留输入法、选择与撤销记录。 */
     const view = viewRef.current;
     if (!view) return;

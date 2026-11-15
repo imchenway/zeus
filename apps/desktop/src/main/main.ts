@@ -139,6 +139,12 @@ let menuBarUsageCostDetailPayload: MenuBarUsageCostDetailPayload | undefined;
 let menuBarUsageCostDetailHideTimer: ReturnType<typeof setTimeout> | undefined;
 /** 任务与会话交付复用同一种原生窗口，分别按真实范围定位已有实例。 */
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
+/** 只保留当前会话一个尚未显示的预热窗口，切换范围时释放旧预热。 */
+let preloadedTaskGitDeliveryWindow: { window: BrowserWindow; reveal: () => void } | undefined;
+/** 迟到的预热请求不能替换用户后来打开或准备的范围。 */
+let taskGitDeliveryPreloadGeneration = 0;
+/** 真实打开请求到首个可读帧的起点；预热不产生打开耗时样本。 */
+const taskGitDeliveryFirstFrames = new Map<number, { startedAt: number; mode: 'cold' | 'preloaded' | 'reused' }>();
 const projectGitDiffWindows = new Set<BrowserWindow>();
 /** 推送差异只保存窗口私有展示快照，不把文件路径当作读取授权。 */
 const projectGitDiffSnapshots = new Map<number, { filePath: string; diff: GitDiffSummary }>();
@@ -1144,12 +1150,14 @@ function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): Electron.Rec
   };
 }
 
+/** 显示交付窗口，并在后台打开模式下也请求实际绘制回执。 */
 function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
   app.focus({ steal: true });
+  window.webContents.send('zeus:task-git-delivery:request-frame');
 }
 
 /** 未指定任务工作区时，自动创建任务沿用持久来源会话的目录和窗口身份。 */
@@ -1184,7 +1192,7 @@ async function resolveTaskGitDeliveryTarget(taskId: string): Promise<GitDelivery
 }
 
 /** 所有代码交付按钮共用窗口创建、尺寸记忆、安全配置及实例复用。 */
-async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliveryWindowTarget): Promise<GitDeliveryWindowTarget & { opened: true; reused: boolean }> {
+async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliveryWindowTarget, preload = false, requestedAt = performance.now()): Promise<GitDeliveryWindowTarget & { opened: boolean; reused: boolean }> {
   /** 按真实交付范围隔离身份，同一范围重复点击唤回原窗口。 */
   const key = JSON.stringify(
     target.taskId
@@ -1198,9 +1206,20 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
   /** 查找已经加载或正在加载的窗口，避免重复创建。 */
   const existing = taskGitDeliveryWindows.get(key);
   if (existing && !existing.isDestroyed()) {
-    revealTaskGitDeliveryWindow(existing);
-    return { ...target, opened: true, reused: true };
+    if (!preload) {
+      const prepared = preloadedTaskGitDeliveryWindow;
+      taskGitDeliveryFirstFrames.set(existing.id, { startedAt: requestedAt, mode: prepared?.window === existing ? 'preloaded' : 'reused' });
+      if (prepared?.window === existing) {
+        preloadedTaskGitDeliveryWindow = undefined;
+        prepared.reveal();
+      } else revealTaskGitDeliveryWindow(existing);
+    }
+    return { ...target, opened: existing.isVisible(), reused: true };
   }
+
+  /** 尚未展示的窗口没有用户草稿；已打开窗口继续沿用原有关闭流程。 */
+  if (preloadedTaskGitDeliveryWindow && !preloadedTaskGitDeliveryWindow.window.isDestroyed()) preloadedTaskGitDeliveryWindow.window.destroy();
+  preloadedTaskGitDeliveryWindow = undefined;
 
   /** 新建窗口前核对资源，已有窗口仍可唤回并保存工作。 */
   const rendererUrl = rendererEntryUrl(
@@ -1240,8 +1259,18 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
     },
   });
   taskGitDeliveryWindows.set(key, window);
+  if (!preload) taskGitDeliveryFirstFrames.set(window.id, { startedAt: requestedAt, mode: 'cold' });
+  if (preload)
+    preloadedTaskGitDeliveryWindow = {
+      window,
+      reveal: () => {
+        reveal(() => revealTaskGitDeliveryWindow(window));
+      },
+    };
   taskGitDeliveryTargetByWindowId.set(window.id, target);
   window.on('closed', () => {
+    taskGitDeliveryFirstFrames.delete(window.id);
+    if (preloadedTaskGitDeliveryWindow?.window === window) preloadedTaskGitDeliveryWindow = undefined;
     taskGitDeliveryTargetByWindowId.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
     if (taskGitDeliveryWindows.get(key) === window) taskGitDeliveryWindows.delete(key);
@@ -1250,17 +1279,18 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
     if (isMainFrame && errorCode !== -3) console.warn(`Zeus 代码交付窗口加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
   });
   window.once('ready-to-show', () => {
-    reveal(() => revealTaskGitDeliveryWindow(window));
+    // 预热不显示、不抢焦点；用户已经点击时仍完成原生展示流程。
+    if (!preload || preloadedTaskGitDeliveryWindow?.window !== window) reveal(() => revealTaskGitDeliveryWindow(window));
     window.webContents.send('zeus:task-git-delivery:current-context', currentTaskGitDeliveryContext);
   });
   configureWindowSecurity(window, rendererUrl);
   try {
     await window.loadURL(rendererUrl);
   } catch (error) {
-    window.destroy();
+    if (!window.isDestroyed()) window.destroy();
     throw error;
   }
-  return { ...target, opened: true, reused: false };
+  return { ...target, opened: window.isVisible(), reused: false };
 }
 
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
@@ -1916,7 +1946,17 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('代码交付窗口请求来自不受信任的主窗口。');
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('代码交付窗口请求无效。');
     /** 任务、会话、项目及单仓使用同一入口，身份不能混用。 */
-    const candidate = input as { taskId?: unknown; workspaceId?: unknown; projectId?: unknown; conversationId?: unknown; repositoryId?: unknown; pathPrefix?: unknown };
+    const candidate = input as { taskId?: unknown; workspaceId?: unknown; projectId?: unknown; conversationId?: unknown; repositoryId?: unknown; pathPrefix?: unknown; preload?: unknown };
+    if (candidate.preload !== undefined && typeof candidate.preload !== 'boolean') throw new TypeError('代码交付预热参数无效。');
+    /** 预热沿用打开窗口的身份校验，但不改变当前任务定位。 */
+    const preload = candidate.preload === true;
+    /** 打开耗时包含归属校验和窗口准备，不只统计显示调用。 */
+    const requestedAt = performance.now();
+    /** 先固定请求顺序，再读取异步归属记录。 */
+    const generation = ++taskGitDeliveryPreloadGeneration;
+    /** 真正打开始终执行；过期的后台准备只丢弃结果。 */
+    const open = (target: GitDeliveryWindowTarget) =>
+      preload && generation !== taskGitDeliveryPreloadGeneration ? Promise.resolve({ ...target, opened: false, reused: false }) : openTaskGitDeliveryWindow(requestingWindow, target, preload, requestedAt);
     if (candidate.repositoryId !== undefined) {
       if (
         candidate.taskId !== undefined ||
@@ -1939,7 +1979,7 @@ function setupIpc(): void {
         throw new TypeError('代码交付目录范围无效。');
       /** 真实仓库必须归属当前项目，路径筛选不扩大仓库权限。 */
       await requireProjectGitWorkbench(event, false, candidate.projectId).validateDeliveryScope(candidate.projectId, candidate.repositoryId);
-      return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId, repositoryId: candidate.repositoryId, ...(typeof candidate.pathPrefix === 'string' ? { pathPrefix: candidate.pathPrefix } : {}) });
+      return open({ projectId: candidate.projectId, repositoryId: candidate.repositoryId, ...(typeof candidate.pathPrefix === 'string' ? { pathPrefix: candidate.pathPrefix } : {}) });
     }
     if (candidate.pathPrefix !== undefined) throw new TypeError('目录筛选必须绑定仓库。');
     if (candidate.taskId === undefined) {
@@ -1947,19 +1987,32 @@ function setupIpc(): void {
       if (candidate.conversationId === undefined) {
         /** 项目范围由主进程重新发现，Renderer 不能传入任意本机目录。 */
         await requireProjectGitWorkbench(event, false, candidate.projectId).validateDeliveryScope(candidate.projectId);
-        return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId });
+        return open({ projectId: candidate.projectId });
       }
       if (typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('代码交付会话身份无效。');
-      return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId, conversationId: candidate.conversationId });
+      return open({ projectId: candidate.projectId, conversationId: candidate.conversationId });
     }
     if (typeof candidate.taskId !== 'string' || !candidate.taskId.trim() || candidate.projectId !== undefined || candidate.conversationId !== undefined) throw new TypeError('代码交付任务身份无效。');
     if (candidate.workspaceId !== undefined && candidate.workspaceId !== null && (typeof candidate.workspaceId !== 'string' || !candidate.workspaceId.trim())) throw new TypeError('代码交付工作区身份无效。');
-    if (typeof candidate.workspaceId === 'string') {
+    if (!preload && typeof candidate.workspaceId === 'string') {
       const context = { taskId: candidate.taskId, workspaceId: candidate.workspaceId };
       mainWindowTaskGitContexts.set(requestingWindow.id, context);
       broadcastTaskGitDeliveryCurrentContext(context);
     }
-    return openTaskGitDeliveryWindow(requestingWindow, typeof candidate.workspaceId === 'string' ? { taskId: candidate.taskId } : await resolveTaskGitDeliveryTarget(candidate.taskId));
+    return open(typeof candidate.workspaceId === 'string' ? { taskId: candidate.taskId } : await resolveTaskGitDeliveryTarget(candidate.taskId));
+  });
+  /** 受信任页面只上报实际绘制帧，毫秒值写入现有诊断日志。 */
+  ipcMain.on('zeus:task-git-delivery:frame', (event, input: { kind?: unknown; durationMs?: unknown }) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed() || event.senderFrame !== event.sender.mainFrame || (!windows.has(window) && !taskGitDeliveryTargetByWindowId.has(window.id) && !projectGitDiffWindows.has(window)) || !input) return;
+    if (input.kind === 'window') {
+      const pending = taskGitDeliveryFirstFrames.get(window.id);
+      if (!pending || !window.isVisible()) return;
+      taskGitDeliveryFirstFrames.delete(window.id);
+      traceApplicationStartup('git_delivery_window_first_frame', JSON.stringify({ durationMs: Math.round((performance.now() - pending.startedAt) * 100) / 100, mode: pending.mode }), window.id);
+    } else if (input.kind === 'diff' && typeof input.durationMs === 'number' && Number.isFinite(input.durationMs) && input.durationMs >= 0 && input.durationMs <= 600_000) {
+      traceApplicationStartup('git_diff_click_to_content', JSON.stringify({ durationMs: Math.round(input.durationMs * 100) / 100 }), window.id);
+    }
   });
   /** 仅主窗口或当前任务的交付窗口可以打开任务文件差异。 */
   ipcMain.handle('zeus:task-git-diff:open', async (event, input: unknown) => {

@@ -376,16 +376,7 @@ export function registerFilePreview(services: {
                 : item.mime === 'image/icns' && item.byteLength > filePreviewLimits.image
                   ? '图标超过 16 MiB 页内预览上限，请用系统应用打开。'
                   : '请用系统应用打开此格式。';
-          // Git 差异沿用随正文读取的归属；普通文件仍通过版本令牌按需读取。
-          if (source.git && (source.blob || source.git.baseRef !== undefined) && item.content !== undefined && !item.truncated) {
-            try {
-              /** 使用已授权原文件保留 BOM 和换行，其他编码不冒充 UTF-8 工作区归属。 */
-              if (item.encoding !== 'utf-8' && !source.git.ref) throw new Error('此编码的工作区文本暂不提供逐行提交归属。');
-              item.blame = (await getFilePreviewBlame(source.git, previewPath)).lines;
-            } catch (error) {
-              item.blameError = error instanceof Error ? error.message : '读取提交归属失败。';
-            }
-          }
+          // 提交归属由现有版本令牌接口另读，正文返回不等待 Git 历史遍历。
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
           if (source.edit && item.kind === 'text') {
             try {
@@ -610,15 +601,17 @@ export function registerFilePreview(services: {
     /** 查不到授权、截断文本和未记录 Git 身份的快照都不能借用其他版本。 */
     const grant = grants.get(id);
     if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
-    if (!grant.source.git || grant.item.truncated || grant.item.encoding !== 'utf-8') return null;
+    if (!grant.source.git || grant.item.truncated || (grant.item.encoding !== 'utf-8' && !grant.source.git.ref)) return null;
     /** 读取前后均验证预览文件身份，防止磁盘变更导致归属错行。 */
     const path = await currentPath(grant);
-    // 已随正文读取的归属绑定同一授权文件，复用结果避免重复启动 Git。
+    // 同一授权版本复用已完成的归属读取，避免重复启动 Git。
     if (grant.item.blame !== undefined) return { path: grant.source.git.path, lines: grant.item.blame };
     if (grant.item.blameError) throw new Error(grant.item.blameError);
     /** 复用 Git Core 的跨平台进程管理。 */
     const result = await getFilePreviewBlame(grant.source.git, path);
     await currentPath(grant);
+    // 校验后缓存到同一授权版本，布局切换不重复读取历史。
+    grant.item.blame = result.lines;
     return result;
   });
 
