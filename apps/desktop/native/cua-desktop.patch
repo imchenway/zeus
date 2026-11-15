@@ -1569,7 +1569,7 @@ diff --git a/crates/platform-macos/src/input/user_guard.rs b/crates/platform-mac
 new file mode 100644
 --- /dev/null
 +++ b/crates/platform-macos/src/input/user_guard.rs
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,394 @@
 +//! Zeus 私有 worker 的只读用户输入监听及协作取消，不生成全局输入。
 +
 +use std::collections::{HashMap, HashSet};
@@ -1583,8 +1583,20 @@ new file mode 100644
 +const USER_CONTROL: &str = "ZEUS_COMPUTER_USER_CONTROL";
 +/// 屏幕布局变化后必须重新观察的原因。
 +const DISPLAY_CHANGED: &str = "ZEUS_COMPUTER_DISPLAY_CHANGED";
-+/// 系统共享入口停止或撤销采集时的暂停原因。
++/// 用户通过系统共享入口明确停止时的暂停原因。
 +const SHARING_STOPPED: &str = "ZEUS_COMPUTER_SHARING_STOPPED";
++/// 用户拒绝系统捕获权限时禁止自动恢复。
++const PERMISSION_REQUIRED: &str = "ZEUS_COMPUTER_PERMISSION_REQUIRED";
++/// 捕获故障使旧观察失效，重新观察可以恢复，不代表用户撤销控制。
++const CAPTURE_UNAVAILABLE: &str = "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE";
++
++/// 暂停原因与系统诊断一起保留，避免把所有捕获故障解释为用户停止。
++struct Pause {
++    /// 宿主识别的固定错误码。
++    reason: &'static str,
++    /// 当前故障的原始诊断或用户接管说明。
++    detail: String,
++}
 +/// 本轮原生调用的取消信号，仅在下一次私有请求开始时重置。
 +static CANCELLED: AtomicBool = AtomicBool::new(false);
 +/// 原生输入监听是否实际建立且具有辅助功能授权。
@@ -1594,7 +1606,7 @@ new file mode 100644
 +/// 生命周期会话与其成功观察的精确窗口。
 +static WINDOWS: OnceLock<Mutex<HashMap<String, HashSet<(i32, u32)>>>> = OnceLock::new();
 +/// 用户让权和屏幕失效按应用记录，保护同一应用共享的菜单及键盘焦点。
-+static PAUSED: OnceLock<Mutex<HashMap<i32, &'static str>>> = OnceLock::new();
++static PAUSED: OnceLock<Mutex<HashMap<i32, Pause>>> = OnceLock::new();
 +/// 实体拖动的起始应用，穿过其他窗口时不会改认输入归属。
 +static USER_DRAG: Mutex<Option<i32>> = Mutex::new(None);
 +
@@ -1604,7 +1616,7 @@ new file mode 100644
 +}
 +
 +/// 取得应用暂停原因。
-+fn paused() -> &'static Mutex<HashMap<i32, &'static str>> {
++fn paused() -> &'static Mutex<HashMap<i32, Pause>> {
 +    PAUSED.get_or_init(|| Mutex::new(HashMap::new()))
 +}
 +
@@ -1663,7 +1675,7 @@ new file mode 100644
 +    CANCELLED.store(false, Ordering::Release);
 +}
 +
-+/// 成功观察后登记窗口；新观察仅解除显示器失效，不解除用户接管。
++/// 新观察可解除捕获故障和显示器失效，不能解除用户接管或主动停止。
 +pub fn observe_window(session: &str, pid: i32, window_id: u32) -> anyhow::Result<()> {
 +    windows()
 +        .lock()
@@ -1672,7 +1684,10 @@ new file mode 100644
 +        .or_default()
 +        .insert((pid, window_id));
 +    let mut reasons = paused().lock().unwrap();
-+    if reasons.get(&pid) == Some(&DISPLAY_CHANGED) {
++    if reasons
++        .get(&pid)
++        .is_some_and(|pause| matches!(pause.reason, DISPLAY_CHANGED | CAPTURE_UNAVAILABLE))
++    {
 +        reasons.remove(&pid);
 +    }
 +    drop(reasons);
@@ -1682,11 +1697,16 @@ new file mode 100644
 +        }
 +        return Err(error);
 +    }
++    // 各命名会话在自己的新观察成功后恢复光标，不替其他会话恢复旧控制。
++    crate::cursor::overlay::send_command(
++        session.to_owned(),
++        cursor_overlay::OverlayCommand::SetEnabled(true),
++    );
 +    Ok(())
 +}
 +
-+/// 立即撤销整个应用，系统停止和实体用户操作使用同一输入边界。
-+fn pause_application(pid: i32, reason: &'static str) {
++/// 立即撤销整个应用的旧观察，并将固定原因和诊断一起通知宿主。
++fn pause_application(pid: i32, reason: &'static str, detail: &str) {
 +    let sessions = windows()
 +        .lock()
 +        .unwrap()
@@ -1694,8 +1714,26 @@ new file mode 100644
 +        .filter(|(_, entries)| entries.iter().any(|(target, _)| *target == pid))
 +        .map(|(session, _)| session.clone())
 +        .collect::<Vec<_>>();
-+    if sessions.is_empty() || paused().lock().unwrap().insert(pid, reason) == Some(reason) {
-+        return;
++    {
++        let mut reasons = paused().lock().unwrap();
++        if sessions.is_empty()
++            || reasons.get(&pid).is_some_and(|pause| {
++                pause.reason == reason
++                    || matches!(
++                        pause.reason,
++                        USER_CONTROL | SHARING_STOPPED | PERMISSION_REQUIRED
++                    )
++            })
++        {
++            return;
++        }
++        reasons.insert(
++            pid,
++            Pause {
++                reason,
++                detail: detail.chars().take(1_000).collect(),
++            },
++        );
 +    }
 +    for session in sessions {
 +        crate::cursor::overlay::send_command(
@@ -1706,7 +1744,14 @@ new file mode 100644
 +    crate::window_sharing::stop_application(pid);
 +    // 固定前缀只传受控身份与原因，通过私有进程 stderr 即时通知宿主。
 +    if let Some(token) = event_token() {
-+        eprintln!("_ZEUS_COMPUTER_EVENT_ {{\"token\":\"{}\",\"workerPid\":{},\"pid\":{},\"reason\":\"{}\",\"otherKeyboardEvents\":{}}}", token, std::process::id(), pid, reason, OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire));
++        eprintln!(
++            "_ZEUS_COMPUTER_EVENT_ {}",
++            serde_json::json!({
++                "token": token, "workerPid": std::process::id(), "pid": pid,
++                "reason": reason, "detail": detail.chars().take(1_000).collect::<String>(),
++                "otherKeyboardEvents": OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire)
++            })
++        );
 +    }
 +}
 +
@@ -1720,13 +1765,28 @@ new file mode 100644
 +
 +/// 系统窗口共享停止后不能自动重开，必须结束旧会话并接受新指令。
 +pub fn sharing_stopped(pid: i32) {
-+    pause_application(pid, SHARING_STOPPED);
++    pause_application(
++        pid,
++        SHARING_STOPPED,
++        "用户已从系统停止窗口共享；收到新指令后调用 get_window_state 重新观察。",
++    );
++}
++
++/// 捕获故障立即停止后台输入，保留系统错误并允许下一次新观察重建捕获。
++pub fn capture_failed(pid: i32, detail: &str) {
++    pause_application(pid, CAPTURE_UNAVAILABLE, detail);
++}
++
++/// 系统明确拒绝捕获授权时保持停止，并保留原始权限错误。
++pub fn permission_required(pid: i32, detail: &str) {
++    pause_application(pid, PERMISSION_REQUIRED, detail);
 +}
 +
 +/// 为窗口观察附加真实监听与让权状态，不改变截图或控件身份。
 +pub fn state(pid: i32) -> serde_json::Value {
-+    let reason = paused().lock().unwrap().get(&pid).copied();
-+    serde_json::json!({ "monitoring": MONITOR_READY.load(Ordering::Acquire), "events_ready": event_token().is_some(), "paused": reason.is_some(), "reason": reason, "other_keyboard_events": OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire) })
++    let reasons = paused().lock().unwrap();
++    let pause = reasons.get(&pid);
++    serde_json::json!({ "monitoring": MONITOR_READY.load(Ordering::Acquire), "events_ready": event_token().is_some(), "paused": pause.is_some(), "reason": pause.map(|pause| pause.reason), "detail": pause.map(|pause| pause.detail.as_str()), "other_keyboard_events": OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire) })
 +}
 +
 +/// 输入前检查取消和用户优先；既有按键、按钮的抬起不经过本闸门。
@@ -1734,8 +1794,8 @@ new file mode 100644
 +    if CANCELLED.load(Ordering::Acquire) {
 +        anyhow::bail!("ZEUS_COMPUTER_STOPPED: 当前后台动作已取消，结果需要重新观察。");
 +    }
-+    if let Some(reason) = paused().lock().unwrap().get(&pid).copied() {
-+        anyhow::bail!("{reason}: 用户已接管或显示器布局已变化，停止后台输入并重新观察。");
++    if let Some(pause) = paused().lock().unwrap().get(&pid) {
++        anyhow::bail!("{}: {}", pause.reason, pause.detail);
 +    }
 +    if !MONITOR_READY.load(Ordering::Acquire) {
 +        anyhow::bail!("ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE: 用户操作监听不可用，未投递后台输入，请检查辅助功能授权。");
@@ -1766,7 +1826,10 @@ new file mode 100644
 +        .collect::<HashSet<_>>();
 +    let mut reasons = paused().lock().unwrap();
 +    for pid in pids {
-+        reasons.entry(pid).or_insert(DISPLAY_CHANGED);
++        reasons.entry(pid).or_insert_with(|| Pause {
++            reason: DISPLAY_CHANGED,
++            detail: "显示器布局已变化，请调用 get_window_state 重新观察。".to_owned(),
++        });
 +    }
 +}
 +
@@ -1844,7 +1907,11 @@ new file mode 100644
 +            .values()
 +            .any(|entries| entries.iter().any(|(target, _)| *target == pid));
 +        if controlled {
-+            pause_application(pid, USER_CONTROL);
++            pause_application(
++                pid,
++                USER_CONTROL,
++                "用户已接管应用；收到新指令后调用 get_window_state 重新观察。",
++            );
 +        } else if matches!(kind, 10 | 11 | 12) {
 +            OTHER_KEYBOARD_EVENTS.fetch_add(1, Ordering::AcqRel);
 +        }
@@ -1886,8 +1953,8 @@ new file mode 100644
 +/// 用户主动进入应用时，禁止焦点保护把用户切回之前的应用。
 +pub fn user_has_control(pid: i32) -> bool {
 +    matches!(
-+        paused().lock().unwrap().get(&pid),
-+        Some(&USER_CONTROL) | Some(&SHARING_STOPPED)
++        paused().lock().unwrap().get(&pid).map(|pause| pause.reason),
++        Some(USER_CONTROL | SHARING_STOPPED | PERMISSION_REQUIRED)
 +    )
 +}
 +
@@ -1901,7 +1968,7 @@ diff --git a/crates/platform-macos/src/window_sharing.rs b/crates/platform-macos
 new file mode 100644
 --- /dev/null
 +++ b/crates/platform-macos/src/window_sharing.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,657 @@
 +//! Zeus 的真实单窗口共享、有限帧缓存及系统停止生命周期。
 +
 +use image::ImageEncoder;
@@ -1971,9 +2038,32 @@ new file mode 100644
 +struct ShareDelegate(std::sync::Weak<WindowShare>);
 +
 +impl SCStreamDelegateTrait for ShareDelegate {
-+    /// 已关闭目标的来源丢失只结束该窗口，用户停止和权限错误仍撤销应用输入。
++    /// 已关闭目标只结束该窗口；用户停止或拒绝授权时禁止自动恢复。
 +    fn did_stop_with_error(&self, error: screencapturekit::error::SCError) {
 +        if let Some(share) = self.0.upgrade() {
++            // 明确的用户停止和权限拒绝优先于之前的 inactive 或捕获故障通知。
++            if matches!(
++                error.stream_error_code(),
++                Some(
++                    screencapturekit::error::SCStreamErrorCode::UserStopped
++                        | screencapturekit::error::SCStreamErrorCode::UserDeclined
++                )
++            ) {
++                share.stopped.store(true, Ordering::Release);
++                share.active.store(false, Ordering::Release);
++                share.ready.notify_all();
++                if error.stream_error_code()
++                    == Some(screencapturekit::error::SCStreamErrorCode::UserDeclined)
++                {
++                    crate::input::user_guard::permission_required(
++                        share.pid,
++                        &format!("ScreenCaptureKit: {error}"),
++                    );
++                } else {
++                    crate::input::user_guard::sharing_stopped(share.pid);
++                }
++                return;
++            }
 +            if !share.stopped.swap(true, Ordering::AcqRel) {
 +                share.active.store(false, Ordering::Release);
 +                share.ready.notify_all();
@@ -1984,13 +2074,16 @@ new file mode 100644
 +                if closed_source {
 +                    retire_closed_window(&share);
 +                } else {
-+                    crate::input::user_guard::sharing_stopped(share.pid);
++                    crate::input::user_guard::capture_failed(
++                        share.pid,
++                        &format!("ScreenCaptureKit: {error}"),
++                    );
 +                }
 +            }
 +        }
 +    }
 +
-+    /// 已关闭的窗口单独收尾；窗口仍存在或身份未知时继续停止整个应用。
++    /// inactive 表示共享来源退出，不等同于用户主动停止；未知窗口状态要求新观察。
 +    fn stream_did_become_inactive(&self) {
 +        if let Some(share) = self.0.upgrade() {
 +            if !share.stopped.swap(true, Ordering::AcqRel) {
@@ -1999,7 +2092,7 @@ new file mode 100644
 +                if crate::windows::is_window_confirmed_closed(share.window_id) {
 +                    retire_closed_window(&share);
 +                } else {
-+                    crate::input::user_guard::sharing_stopped(share.pid);
++                    crate::input::user_guard::capture_failed(share.pid, "ScreenCaptureKit streamDidBecomeInactive: 共享来源已退出，尚未确认窗口关闭，请重新观察。");
 +                }
 +            }
 +        }
@@ -2215,10 +2308,11 @@ new file mode 100644
 +    crate::input::user_guard::check_pid(pid)?;
 +    let key = (pid, window_id);
 +    let existing = shares().lock().unwrap().get(&key).cloned();
-+    if let Some(share) = existing {
++    // 已停止的故障流由清理线程释放；输入闸门已排除用户主动停止，才能新建流。
++    if let Some(share) = existing.filter(|share| !share.stopped.load(Ordering::Acquire)) {
 +        anyhow::ensure!(
 +            share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire),
-+            "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止，需要新指令。"
++            "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口捕获尚未就绪，请重新观察。"
 +        );
 +        refresh_share(&share)?;
 +        share.sessions.lock().unwrap().insert(session.to_owned());
@@ -2314,7 +2408,7 @@ new file mode 100644
 +    crate::input::user_guard::check_pid(share.pid)?;
 +    anyhow::ensure!(
 +        !share.stopped.load(Ordering::Acquire),
-+        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止。"
++        "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口共享已停止。"
 +    );
 +    let stream = owned_stream
 +        .as_ref()
@@ -2335,7 +2429,7 @@ new file mode 100644
 +    let mut owned_stream = share.stream.lock().unwrap();
 +    anyhow::ensure!(
 +        !share.stopped.load(Ordering::Acquire),
-+        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在启动前已停止。"
++        "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口共享在启动前已停止。"
 +    );
 +    let (filter, config, geometry) = share_configuration(share)?;
 +    let mut stream =
@@ -2393,7 +2487,7 @@ new file mode 100644
 +    crate::input::user_guard::check_pid(share.pid)?;
 +    anyhow::ensure!(
 +        !share.stopped.load(Ordering::Acquire),
-+        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在启动期间已停止。"
++        "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口共享在启动期间已停止。"
 +    );
 +    anyhow::ensure!(
 +        current_geometry(share)? == geometry,
@@ -2422,7 +2516,7 @@ new file mode 100644
 +            crate::input::user_guard::check_pid(share.pid)?;
 +            anyhow::ensure!(
 +                share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire),
-+                "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止。"
++                "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口共享已停止。"
 +            );
 +            if frame.verified_at.is_some_and(|time| time >= requested_at) {
 +                if let Some(sample) = frame.sample.clone() {
@@ -2509,7 +2603,7 @@ new file mode 100644
 +    crate::input::user_guard::check_pid(share.pid)?;
 +    anyhow::ensure!(
 +        !share.stopped.load(Ordering::Acquire),
-+        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在编码期间停止。"
++        "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 窗口共享在编码期间停止。"
 +    );
 +    *share.captured_at.lock().unwrap() = Some(captured_at.round() as u64);
 +    Ok(png)
