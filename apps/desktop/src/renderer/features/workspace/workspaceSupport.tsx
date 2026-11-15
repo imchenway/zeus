@@ -2345,18 +2345,26 @@ export function TaskTableLayoutDecisionDialog(props: { open: boolean; title: str
   return surface;
 }
 
-export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string; archiveConversation?: boolean } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
+/** 单任务、整批任务和会话归档共用清理风险说明，并明确本次操作范围。 */
+export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string; /** 本批需要变更的任务数，单任务和会话归档不提供。 */ taskCount?: number; archiveConversation?: boolean } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
   if (!props.confirmation) return null;
   const zh = props.language === 'zh-CN';
   /** 单会话归档不改变整个任务的状态或其他会话。 */
   const archiving = props.confirmation.archiveConversation === true;
+  /** 批量确认先于任何任务修改，数量仅包含实际需要变更的任务。 */
+  const taskCount = props.confirmation.taskCount;
+  /** 标题区分会话归档、批量状态变更和单任务状态变更。 */
   const title = archiving
     ? zh
       ? '清理工作树并归档会话？'
       : 'Clean up worktrees and archive this conversation?'
-    : zh
-      ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？`
-      : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
+    : taskCount !== undefined
+      ? zh
+        ? `将 ${taskCount} 个任务标记为“${props.confirmation.statusLabel}”？`
+        : `Mark ${taskCount} tasks “${props.confirmation.statusLabel}”?`
+      : zh
+        ? `清理工作现场并标记为“${props.confirmation.statusLabel}”？`
+        : `Clean up the workspace and mark it “${props.confirmation.statusLabel}”?`;
   return (
     <ModalPortal
       rootClassName="task-terminal-cleanup-dialog-portal"
@@ -2378,9 +2386,13 @@ export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: 
                 ? zh
                   ? '会话工作树包含未提交内容、合入现场或活动进程。继续后，Zeus 会：'
                   : 'The conversation worktrees contain local changes, integration work or active processes. If you continue, Zeus will:'
-                : zh
-                  ? '这个任务还有未提交内容或活动会话。继续后，Zeus 会：'
-                  : 'This task still has local changes or active sessions. If you continue, Zeus will:'}
+                : taskCount !== undefined
+                  ? zh
+                    ? `继续后，Zeus 会对这 ${taskCount} 个任务执行以下操作：`
+                    : `If you continue, Zeus will do the following for these ${taskCount} tasks:`
+                  : zh
+                    ? '这个任务还有未提交内容或活动会话。继续后，Zeus 会：'
+                    : 'This task still has local changes or active sessions. If you continue, Zeus will:'}
             </p>
           </span>
         </header>
@@ -2401,7 +2413,7 @@ export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: 
         </p>
         <footer>
           <Button variant="secondary" onClick={props.onCancel}>
-            {zh ? '先保留现场' : 'Keep workspace'}
+            {taskCount !== undefined ? (zh ? '取消整批操作' : 'Cancel batch') : zh ? '先保留现场' : 'Keep workspace'}
           </Button>
           <Button variant="danger" onClick={props.onConfirm}>
             {archiving ? (zh ? '清理并归档' : 'Clean up and archive') : zh ? `清理并标记为“${props.confirmation.statusLabel}”` : `Clean up and mark “${props.confirmation.statusLabel}”`}

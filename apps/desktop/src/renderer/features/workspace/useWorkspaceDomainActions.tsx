@@ -2290,8 +2290,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  function requestTaskTerminalCleanupConfirmation(statusLabel: string): Promise<boolean> {
-    return new Promise((resolve) => setTaskTerminalCleanupConfirmation({ statusLabel, resolve }));
+  /** 复用清理确认框；批量操作携带本批待变更任务数。 */
+  function requestTaskTerminalCleanupConfirmation(statusLabel: string, taskCount?: number): Promise<boolean> {
+    return new Promise((resolve) => setTaskTerminalCleanupConfirmation({ statusLabel, taskCount, resolve }));
   }
 
   function resolveTaskTerminalCleanupConfirmation(confirmed: boolean): void {
@@ -2302,7 +2303,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 状态加载反馈覆盖排队、终态确认与保存刷新，并在所有退出路径释放。 */
-  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string } = {}): Promise<TaskEditResult | undefined> {
+  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string; /** 本次批量操作已经取得清理确认。 */ confirmWorktreeCleanup?: boolean } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     // 前一次写入未结束时，改回原状态也必须排队，不能当作无变化丢弃。
     if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !options.reopenConversationId && !taskMutationQueuesRef.current.has(taskId))) return;
@@ -2327,9 +2328,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       try {
         let nextSnapshot: WorkspaceSnapshot;
         try {
-          nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, undefined, options.reopenConversationId);
+          nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, options.confirmWorktreeCleanup, options.reopenConversationId);
         } catch (error) {
-          if (!(terminalStatus && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
+          if (!(terminalStatus && options.confirmWorktreeCleanup !== true && error instanceof ZeusApiError && error.error === 'ZEUS_TASK_WORKTREE_CLEANUP_CONFIRMATION_REQUIRED')) throw error;
           const confirmed = await requestTaskTerminalCleanupConfirmation(statusLabel);
           if (!confirmed) {
             clearOptimisticTerminalStatus();

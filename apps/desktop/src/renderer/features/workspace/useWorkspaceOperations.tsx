@@ -357,6 +357,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     return `${successCount} processed, ${skippedCount} skipped, ${failedCount} failed.`;
   }
 
+  /** 终态变更先确认整批清理，再逐项保存；取消时不修改任何任务。 */
   async function runBulkTaskStatusChange(targetStatus: TaskManagementStatus, taskIds: string[]): Promise<void> {
     const requestedTaskIdSet = new Set(taskIds);
     const requestedTasks = visibleTasks.filter((task) => requestedTaskIdSet.has(task.id));
@@ -368,12 +369,19 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       setTaskBulkActionStatus({ kind: 'done', message: formatTaskBulkActionResult(0, skippedCount, 0) });
       return;
     }
+    /** 清理授权只用于本次选中且需要变更的终态任务。 */
+    const confirmWorktreeCleanup = targetStatus === activeTaskManagementStatusConfig.roles.completedStatusId || targetStatus === activeTaskManagementStatusConfig.roles.cancelledStatusId;
+    if (confirmWorktreeCleanup) {
+      /** 使用配置中的状态名称，确认数量不包含已经处于目标状态的任务。 */
+      const statusLabel = formatConfiguredTaskManagementStatus(targetStatus, activeTaskManagementStatusConfig, appShellSettings.appLanguage);
+      if (!(await requestTaskTerminalCleanupConfirmation(statusLabel, eligibleTasks.length))) return;
+    }
     setActionState('updating-task');
     setTaskBulkActionStatus({ kind: 'running', message: formatTaskBulkActionResult(0, skippedCount, 0) });
     try {
       for (const task of eligibleTasks) {
         try {
-          const result = await updateTaskManagementStatus(task.id, targetStatus, { expectedUpdatedAt: task.updatedAt ?? '' });
+          const result = await updateTaskManagementStatus(task.id, targetStatus, { expectedUpdatedAt: task.updatedAt ?? '', confirmWorktreeCleanup });
           if (!result || result.kind !== 'updated') {
             skippedCount += 1;
             continue;
