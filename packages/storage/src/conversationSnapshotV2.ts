@@ -97,8 +97,14 @@ function conversationNavigationPlacement(row: ConversationNavigationPlacementRow
 // 继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
 // 旧任务历史只保存纯文字时，按同会话的发送身份补回展示快照；不读取或暴露执行配置。
 // 首屏、历史分页和完整正文共用此投影，保证预览长度与内容句柄一致。
+// 展示短文案必须先替换 text，再截断 JSON；否则首屏会读到执行原文，全文到达后才切换摘要。
 const modelHistoryVisibleContentSql = `COALESCE(
   (SELECT json_patch(conversation_model_history.content_json, json_object(
+     'text', COALESCE(
+       NULLIF(json_extract(conversation_model_history.content_json, '$.displayText'), ''),
+       NULLIF(json_extract(submission.input_json, '$.displayText'), ''),
+       NULLIF(json_extract(submission.input_json, '$.taskPushLayout.displayText'), ''),
+       json_extract(conversation_model_history.content_json, '$.text')),
      'taskPushLayout', json_extract(submission.input_json, '$.taskPushLayout'),
      'attachments', COALESCE(json_extract(conversation_model_history.content_json, '$.attachments'), json_extract(submission.input_json, '$.attachments'), json('[]'))
    ))
@@ -112,6 +118,10 @@ const modelHistoryVisibleContentSql = `COALESCE(
      AND json_valid(submission.input_json)
      AND json_type(submission.input_json, '$.taskPushLayout') = 'object'),
   CASE
+  WHEN conversation_model_history.role = 'user'
+   AND json_valid(content_json)
+   AND COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), NULLIF(json_extract(content_json, '$.taskPushLayout.displayText'), '')) IS NOT NULL
+    THEN json_set(content_json, '$.text', COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), NULLIF(json_extract(content_json, '$.taskPushLayout.displayText'), '')))
   WHEN conversation_model_history.role = 'user'
    AND json_valid(content_json)
    AND (

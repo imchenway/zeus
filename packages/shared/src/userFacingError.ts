@@ -763,7 +763,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   ],
   [
     ['httpConnectionFailed', 'responseStreamConnectionFailed'],
-    ['与 AI 服务的连接未能建立，无法读取回复。请检查该服务的连接设置。', 'A connection to the AI service could not be established. Check the service’s connection settings.', 'settings'],
+    ['未能连接 AI 服务。请检查网络和连接设置后重试。', 'Could not connect to the AI service. Check the network and connection settings, then retry.', 'model_settings'],
   ],
   [['responseStreamDisconnected'], ['AI 服务在回复结束前断开了连接，因此没有收到完整回复。', 'The AI service disconnected before finishing its response, so the reply is incomplete.']],
   [['responseTooManyFailedAttempts'], ['AI 服务连续多次未能完成响应，当前请求已经停止。请稍后再继续。', 'The AI service failed to complete the response repeatedly, so this request has stopped. Try again later.']],

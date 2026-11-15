@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type {
   AutomationDefinitionSnapshot,
   AutomationRevisionRecord,
@@ -51,6 +53,23 @@ export interface AutomationScheduler {
 const interactionConversationStages = new Set(['waiting_user', 'waiting_approval', 'paused', 'archived']);
 /** 删除规则只取消尚未接纳的目标，已接纳工作仍按原引用结算。 */
 const deletedTargetReason = 'ZEUS_AUTOMATION_DELETED: 自动化已删除，未接纳的目标已取消。';
+/** 读取系统原生电源状态，不改变休眠设置或唤醒显示器。 */
+const readSystemPowerState = promisify(execFile);
+
+/** macOS 维护唤醒和睡眠切换期间保留原队列，避免短暂联网耗尽 Provider 重试。 */
+async function systemReadyForAutomationDispatch(): Promise<boolean> {
+  if (process.platform !== 'darwin') return true;
+  try {
+    /** pmset 的能力行区分正常唤醒与仅提供 CPU、网络的 DarkWake。 */
+    const { stdout } = await readSystemPowerState('/usr/bin/pmset', ['-g', 'systemstate'], { timeout: 2_000, maxBuffer: 16_384 });
+    /** 仅在系统明确报告过渡状态或缺少正常唤醒能力时延后；未知输出不改变既有行为。 */
+    const capabilities = /^Current System Capabilities are:([^\r\n]*)/mu.exec(stdout)?.[1];
+    return !/^(?:Current Power State|Desired State):\s*[0-3]\s*$/mu.test(stdout) && (capabilities === undefined || /\bGraphics\b/u.test(capabilities));
+  } catch (error) {
+    console.warn('Zeus 自动化未能读取 macOS 电源状态，沿用现有派发流程。', error);
+    return true;
+  }
+}
 
 export function createAutomationScheduler(options: AutomationSchedulerOptions): AutomationScheduler {
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -74,7 +93,10 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     options.runs.cancelDeletedQueuedRuns();
     reconcileRunning();
     /** 未完成逐目标派发的原运行优先恢复，不能让排队运行越过它。 */
-    for (const candidate of [...options.runs.listInFlight().filter((run) => run.status === 'dispatching'), ...options.runs.listDispatchable(8)]) await dispatch(candidate);
+    for (const candidate of [...options.runs.listInFlight().filter((run) => run.status === 'dispatching'), ...options.runs.listDispatchable(8)]) {
+      if (!(await systemReadyForAutomationDispatch())) break;
+      await dispatch(candidate);
+    }
     await options.save();
     options.synchronizeNotifications?.();
   }

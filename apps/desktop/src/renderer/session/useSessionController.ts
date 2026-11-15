@@ -3833,6 +3833,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     retryPendingSend,
     /** 用户点击重试后，沿用已有耐久发送链路继续最新失败请求。 */
     async retryFailedTurn(providerTurnId) {
+      /** 历史浏览按需订阅实时事件，续接前先接入，保留后续回复与重连进度。 */
+      await ensureRealtimeConnection();
       /** 先取得权威终态；旧失败卡片不能在其他轮次运行时重新派发。 */
       await applyAuthoritativeSnapshot(await loadConversationForHydration());
       /** 只续跑最新的明确失败，不自动重放未知送达或已完成的请求。 */
