@@ -5,7 +5,8 @@ import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ConversationControllerRetentionContext } from './ConversationWorkspaceCache.js';
 import { mergeBrowserSubmissions, serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, durableUserMessageIdentity, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
 import {
@@ -4094,19 +4095,29 @@ export interface UseSessionControllerResult {
  * 组件边界通过 useSessionControllerSelector 订阅所需 slice。
  */
 export function useSessionControllerInstance(options: CreateSessionControllerOptions): SessionController {
+  /** 只将主页面的真实会话交给页面缓存，子会话关闭时仍立即释放。 */
+  const retention = useContext(ConversationControllerRetentionContext);
+  /** 导航别名和子会话身份不能冒用主页面的控制器所有权。 */
+  const retainedOwner = retention?.conversationId === options.conversationId ? retention : null;
   /** 页面恢复时使用最新显示缓存，普通更新只改变初始输入，不重建活动控制器。 */
   const latest = useRef(options);
   latest.current = options;
   /** 身份决定控制器边界；初始数据与读取策略在创建或恢复时采样，不重建活动控制器。 */
   const lifecycle = useMemo(
-    () => ({ controller: createSessionController(options), disposed: false }),
-    [options.client, options.projectId, options.conversationId, options.enabled, options.storage, options.createId],
+    () => ({ controller: createSessionController(options), disposed: false, registered: false, shown: false }),
+    [options.client, options.projectId, options.conversationId, options.enabled, options.storage, options.createId, retainedOwner],
   );
   /** Activity 恢复后在绘制前交接新控制器，原有正文和输入 DOM 保持不变。 */
   const [, refreshController] = useState(0);
   useLayoutEffect(() => {
     // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。
-    if (options.enabled === false) return;
+    if (options.enabled === false) {
+      for (const prior of retainedOwner?.controllers ?? []) prior.dispose();
+      retainedOwner?.controllers.clear();
+      return;
+    }
+    // StrictMode 的真正清理也会释放所有者；不能重新启动已被释放的实例。
+    if (retainedOwner && lifecycle.registered && !retainedOwner.controllers.has(lifecycle.controller)) lifecycle.disposed = true;
     if (lifecycle.disposed) {
       /** 隐藏前已加载的历史与本地显示身份不能丢失。 */
       const retained = lifecycle.controller.getState();
@@ -4121,14 +4132,30 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
     }
     /** 清理始终释放本次实际启动的实例，不会误关恢复后的连接。 */
     const controller = lifecycle.controller;
+    if (retainedOwner) {
+      for (const prior of retainedOwner.controllers) if (prior !== controller) { prior.dispose(); retainedOwner.controllers.delete(prior); }
+      retainedOwner.controllers.add(controller);
+      lifecycle.registered = true;
+    }
     void controller.start().catch(() => undefined);
     return () => {
-      lifecycle.disposed = true;
-      controller.dispose();
+      if (!retainedOwner) {
+        lifecycle.disposed = true;
+        controller.dispose();
+      }
     };
-  }, [lifecycle, options.enabled]);
+  }, [lifecycle, options.enabled, retainedOwner]);
   /** 当前 render 使用已交接的控制器，选择器会重新订阅其持久状态。 */
   const controller = lifecycle.controller;
+  useEffect(() => {
+    if (!retainedOwner || options.enabled === false) return;
+    if (!lifecycle.shown) { lifecycle.shown = true; return; }
+    /** 先显示已保留界面，跨过一次绘制后再核对断线期间的权威状态。 */
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => { void controller.reconnect().catch(() => undefined); });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [controller, lifecycle, retainedOwner, options.enabled]);
   useEffect(() => {
     if (options.enabled === false) return;
     // 浏览器订阅属于可选宿主能力；桥接对象存在时也可能没有此接口。

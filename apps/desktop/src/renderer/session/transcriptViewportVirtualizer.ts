@@ -517,7 +517,8 @@ export function useTranscriptViewportVirtualizer(input: {
             return;
           }
           bindingsRef.current.set(rowKey, binding);
-          measureElement(element);
+          // 恢复已有行时先复用有效测量，尺寸观察会在实际高度变化后更新；不逐行强制布局。
+          if (cacheRef.current.peek(rowKey) === undefined || (layoutSignatureRef.current && conversationMeasurementCache(scopeRef.current).signatures.get(rowKey) !== layoutSignatureRef.current(rowKey))) measureElement(element);
           rowObserverRef.current?.observe(element);
         },
       };

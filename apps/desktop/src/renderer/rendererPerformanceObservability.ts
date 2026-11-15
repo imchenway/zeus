@@ -1,6 +1,6 @@
 import type { ProfilerOnRenderCallback } from 'react';
 import type { ZeusClientPerformanceSpan } from './apiClient.js';
-import { completeConversationNavigationTrace, readyConversationNavigationTrace } from './performanceTraceContext.js';
+import { completeConversationNavigationTrace, conversationContentReadyEvent, readyConversationNavigationTrace } from './performanceTraceContext.js';
 
 const rendererPerformanceCapacity = 2_048;
 /** 首发提交到持久接纳的 Performance Timeline 名称，不含正文。 */
@@ -90,6 +90,11 @@ export class RendererPerformanceCollector {
   };
 
   install(): void {
+    // 正文在正式构建同样会通知就绪；Profiler 只作为开发期的提交诊断。
+    window.addEventListener(conversationContentReadyEvent, () => {
+      const navigation = readyConversationNavigationTrace();
+      if (navigation && this.pendingConversationFrameTraceId !== navigation.traceId) this.scheduleConversationFirstFrame(navigation.traceId);
+    });
     if (typeof PerformanceObserver !== 'function') return;
     this.observeEntryType('longtask', 'long_task');
     this.observeEntryType('paint', 'paint');
@@ -170,12 +175,13 @@ export class RendererPerformanceCollector {
   }
 
   private scheduleConversationFirstFrame(traceId: string): void {
+    if (document.visibilityState !== 'visible') return;
     this.pendingConversationFrameTraceId = traceId;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (this.pendingConversationFrameTraceId === traceId) this.pendingConversationFrameTraceId = null;
         const navigation = completeConversationNavigationTrace(traceId);
-        if (!navigation) return;
+        if (!navigation || document.visibilityState !== 'visible') return;
         const completedAtMs = performance.now();
         const sample: RendererPerformanceSample = {
           kind: 'conversation_first_frame',
