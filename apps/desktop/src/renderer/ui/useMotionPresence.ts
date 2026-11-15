@@ -10,8 +10,6 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
   const [retained, setRetained] = useState(open);
   /** 高度过渡可被连续开合从当前位置接管。 */
   const revealAnimation = useRef<Animation | null>(null);
-  /** React 提交也立即核对高度，后台视图不依赖被暂停的尺寸观察回调。 */
-  const resizeContent = useRef<(() => void) | null>(null);
   useLayoutEffect(() => () => revealAnimation.current?.cancel(), []);
   useLayoutEffect(() => {
     if (animateHeight) {
@@ -24,17 +22,17 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
       let targetHeight = Number.parseFloat(element.style.blockSize);
       if (open) setRetained(true);
       /** 内容增减只改变高度，不反复淡入已经显示的正文。 */
-      const resize = (): void => {
+      const resize = (measuredHeight?: number): void => {
         /** 完整自然高度就是终点，结束时不会从一屏高度跳到整段高度。 */
-        const to = open ? content.getBoundingClientRect().height : 0;
+        const to = open ? (measuredHeight ?? content.getBoundingClientRect().height) : 0;
         if (to === targetHeight) {
           if (!open && !revealAnimation.current) setRetained(false);
           return;
         }
-        /** 快速反向或迟到内容都从动画当前位置继续。 */
-        const from = element.getBoundingClientRect().height;
         /** 无旧高度表示首次挂载，虚拟列表恢复不重复播放入场。 */
         const initial = !Number.isFinite(targetHeight);
+        /** 只有正在播放的动画需要读取当前位置，其余情况复用上次真实高度。 */
+        const from = initial ? to : revealAnimation.current ? element.getBoundingClientRect().height : targetHeight;
         targetHeight = to;
         revealAnimation.current?.cancel();
         revealAnimation.current = null;
@@ -62,13 +60,12 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
             /* 连续开合或卸载取消旧动画属于正常路径。 */
           });
       };
-      resizeContent.current = resize;
-      resize();
+      // 已保留页面恢复时复用高度，避免每个展开区重新强制排版；真实变化由尺寸观察接管。
+      if (!Number.isFinite(targetHeight) || !open) resize();
       /** 观察自然内容而非动画外壳，异步加载也在绘制前接入高度过渡。 */
-      const observer = new ResizeObserver(resize);
+      const observer = new ResizeObserver((entries) => resize(entries[0]?.borderBoxSize[0]?.blockSize));
       observer.observe(content);
       return () => {
-        resizeContent.current = null;
         observer.disconnect();
       };
     }
@@ -91,6 +88,5 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
       cancelled = true;
     };
   }, [open, animateHeight]);
-  useLayoutEffect(() => resizeContent.current?.());
   return { ref, contentRef, present: open || retained };
 }

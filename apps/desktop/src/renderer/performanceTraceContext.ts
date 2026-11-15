@@ -1,4 +1,6 @@
 const navigationTraceLifetimeMs = 60_000;
+/** 正文完成布局的通知，正式构建不依赖 React 开发期 Profiler 回调。 */
+export const conversationContentReadyEvent = 'zeus:conversation-content-ready';
 
 export interface ConversationNavigationTrace {
   traceId: string;
@@ -48,7 +50,9 @@ export function markConversationNavigationSnapshotSettled(traceId: string, reque
 export function markConversationNavigationRenderReady(projectId: string, conversationId: string): void {
   expireStaleTrace();
   if (activeConversationNavigation?.snapshotPathname !== conversationSnapshotPathname(projectId, conversationId)) return;
+  if (activeConversationNavigation.renderReady) return;
   activeConversationNavigation = { ...activeConversationNavigation, renderReady: true };
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(conversationContentReadyEvent));
 }
 
 /** 缓存首帧不依赖后台快照结束，计时覆盖用户真正等待正文的时间。 */

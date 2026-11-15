@@ -1,0 +1,89 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>ZEUS-1066 会话切换验收</title><div id="root"></div>
+<script type="module">
+import React, {useState, Profiler} from 'react';
+import {createRoot} from 'react-dom/client';
+import {ConnectedSessionWorkspace} from '/src/renderer/session/SessionWorkspace.tsx';
+import {Collapsible} from '/src/renderer/ui/Collapsible.tsx';
+import {ConversationWorkspaceCache} from '/src/renderer/session/ConversationWorkspaceCache.tsx';
+import {createHydratedSessionState} from '/src/renderer/session/sessionReducer.ts';
+import {transitionConversation} from '/src/renderer/session/conversationTransition.ts';
+import {beginConversationNavigationTrace} from '/src/renderer/performanceTraceContext.ts';
+import {RendererPerformanceCollector} from '/src/renderer/rendererPerformanceObservability.ts';
+import '/src/renderer/styles.css';
+import '/src/renderer/session/session.css';
+import '/src/renderer/agentdesk-theme.css';
+import '/src/renderer/ui/primitives.css';
+/** 验收只使用隔离内存数据，不调用模型或连接用户项目。 */
+const projectId = 'acceptance-1066';
+/** 每个会话有 18 轮中文、表格和代码块，覆盖保留较长历史的页面。 */
+function fixture(id, count=18) {
+ const now = '2026-11-15T04:00:00.000Z';
+ const queue = {throughEventSeq:100,state:{type:'idle'},submissions:[]};
+ const turns = [], items = [];
+ for(let i=0;i<count;i++) {
+  const turnId = `${id}-turn-${i}`;
+  turns.push({id:turnId,providerTurnId:turnId,submissionId:null,status:'completed',startedAt:now,completedAt:now,createdAt:now,updatedAt:now});
+  for(const role of ['user','assistant']) {
+   const itemId = `${turnId}-${role}`;
+   const text = role==='user' ? `会话 ${id} 第 ${i+1} 轮：请说明会话切换和后台准备。` : `## 会话 ${id} · 第 ${i+1} 轮\n\n` + Array.from({length:7},(_,n)=>`### 分析 ${n+1}\n\n会话 ${id} 的正文应在切换后保持可读，阅读位置与输入草稿应保留。后台状态刷新不能重新隐藏已显示内容。\n\n|项目|当前状态|处理方式|\n|---|---|---|\n|正文|已准备|直接显示|\n|后台|更新中|保持阅读位置|\n\n\`\`\`ts\nconst selected = '${id}';\nshowConversation(selected);\n\`\`\`\n`).join('') + `\n**会话 ${id} 正文末尾标记**`;
+   const order = items.length+1;
+   items.push({id:itemId,providerItemId:itemId,text,phase:role==='user'?'input':'final_answer',startedAt:now,completedAt:now,threadId:`thread-${id}`,turnId,type:role==='user'?'userMessage':'agentMessage',status:'completed',payload:{text,role},createdAt:now,updatedAt:now,transcript:{placement:{entryId:itemId,order,orderEpoch:1,placementRevision:order,turnId,openingInputId:`${turnId}-user`,displayStageId:null},sources:[{domain:'provider_item',scope:turnId,sourceId:itemId,facet:'body',revision:order,contentRevision:order}]}});
+  }
+ }
+ return {conversationSchemaGeneration:'2026-08-16-unified-conversation-segments',syncStreamGeneration:'zeus-conversation-sync-v2',throughEventSeq:100,productConversation:{},openSegment:null,segments:[],composerPreset:{},executionQueue:queue,process:[],usage:{},contextState:{},persistentWarnings:[],configurationEvidence:[],id,projectId,taskId:null,sessionId:null,title:`会话 ${id}`,summary:null,status:'completed',stage:'completed',stageUpdatedAt:now,transportKind:'codex_native',providerId:'codex',providerThreadId:`thread-${id}`,providerModel:'acceptance',providerState:'idle',provider:{id:'codex',threadId:`thread-${id}`,model:'acceptance',state:'idle'},createdAt:now,updatedAt:now,archived:false,hasUnreadAttention:false,attentionKind:null,attentionRevision:1,attentionTurnId:null,attentionUpdatedAt:null,pendingRequestKind:null,messages:[],turns,items,submissions:[],queue,requests:[],planImplementationRequests:[],permissionMode:'workspace-write',collaborationMode:'default'};
+}
+/** 页面状态来自真实 reducer，不另造正文渲染逻辑。 */
+const snapshots = Object.fromEntries(['A','B','C'].map(id=>[id,fixture(id)]));
+/** 缓存与真实工作区一样在 React 页面外持有。 */
+const states = Object.fromEntries(Object.entries(snapshots).map(([id,s])=>[id,createHydratedSessionState(s)]));
+/** 记录控制器恢复时的请求；慢读取用于验证缓存显示不依赖接口结束。 */
+const calls = [];
+/** 未结束的读取必须响应真实 AbortSignal，离开页面后不会遗留运行。 */
+function slowRead(project,id,options={}) {
+ const call={id,at:performance.now(),aborted:false}; calls.push(call);
+ return new Promise((resolve,reject)=>{
+  const abort=()=>{call.aborted=true;call.abortReason=String(options.signal?.reason?.message??options.signal?.reason);reject(new DOMException('Acceptance request cancelled','AbortError'));};
+  if(options.signal?.aborted) abort(); else options.signal?.addEventListener('abort',abort,{once:true});
+ });
+}
+/** 只提供只读生命周期接口，任何发送操作都不存在。 */
+const client = {
+ loadConversationNavigation:async(project,id)=>({conversationId:id,throughEventSeq:100,entries:[],processGroups:[]}),
+ loadNativeConversationReadableSnapshot:slowRead,
+ loadNativeConversationChoice:async(project,id)=>snapshots[id],
+ loadNativeConversationQueueV2:async(project,id)=>snapshots[id].queue,
+ loadNativePendingRequests:async()=>({requests:[],planImplementationRequests:[]}),
+ loadNativeGoal:async()=>({goal:null,timeline:[],capability:{supported:false,enabled:false,stage:null,reason:'acceptance'}}),
+};
+/** 复用产品首帧采样器，记录点击至正文显示后的绘制时间。 */
+const collector = new RendererPerformanceCollector(); collector.install();
+/** 每次导航额外检查实际 DOM 身份及同步可见性。 */
+const checks = [], nodes = new Map();
+/** 外部浏览器验收只读取这个对象，不改写产品控制器。 */
+window.acceptance = {snapshots,states,calls,checks,verifyDisplay:id=>{
+ const node=document.querySelector(`[data-case="${id}"] .session-transcript`),check=checks.at(-1);
+ if(check?.id!==id)throw Error('验收目标身份不匹配');
+ check.sameNode=!!nodes.get(id)&&nodes.get(id)===node;
+ check.visibleAfterFrame=!!node?.getClientRects().length&&getComputedStyle(node).opacity!=='0';
+ if(node)nodes.set(id,node);
+ return {sameNode:check.sameNode,visibleAfterFrame:check.visibleAfterFrame};
+},report:()=>({performance:collector.snapshot(),checks,calls,errors:window.acceptanceErrors??[]})};
+window.addEventListener('error',e=>(window.acceptanceErrors??=[]).push(e.message));
+window.addEventListener('unhandledrejection',e=>(window.acceptanceErrors??=[]).push(String(e.reason)));
+/** 使用真实切换函数、页面缓存、控制器、正文和输入组件。 */
+function Acceptance() {
+ const [selected,setSelected] = useState('A');
+ const [cases,setCases] = useState(['A','B','C']);
+ const [detailsOpen,setDetailsOpen]=useState(false),[detailsHeight,setDetailsHeight]=useState(80);
+ window.acceptance.addCase=id=>{if(!snapshots[id]){snapshots[id]=fixture(id,1);states[id]=createHydratedSessionState(snapshots[id]);setCases(old=>[...old,id]);}};
+ const choose = id => {
+  const old = nodes.get(id); const start=performance.now();
+  beginConversationNavigationTrace(projectId,id);
+  transitionConversation(()=>{setSelected(id);return true;});
+  checks.push({id,warm:!!old,startedAt:start,syncMs:performance.now()-start});
+ };
+ const content=React.createElement('div',{'data-case':selected,className:'acceptance-case'},React.createElement(ConnectedSessionWorkspace,{key:selected,client,conversation:snapshots[selected],owner:{kind:'project',projectId,projectName:'会话性能验收'},language:'zh-CN',historyOnly:false,initialCachedState:states[selected],choices:Object.values(snapshots),onStateChange:(id,state)=>states[id]=state}));
+ return React.createElement('main',{className:'acceptance-root session-codex-parity-v1 theme-light'},React.createElement('nav',{},React.createElement('strong',{},'会话切换验收'),React.createElement('p',{},'真实组件 · 隔离数据 · 慢读取'),...cases.map(id=>React.createElement('button',{key:id,'data-select':id,onClick:()=>choose(id)},`会话 ${id}`)),React.createElement('button',{'data-details-toggle':true,onClick:()=>setDetailsOpen(value=>!value)},'展开／收起验收'),React.createElement(Collapsible,{open:detailsOpen,id:'acceptance-details',animateHeight:true},React.createElement('div',{style:{height:detailsHeight}},'尺寸变化验收')),React.createElement('button',{'data-details-grow':true,onClick:()=>setDetailsHeight(160)},'增高验收')),React.createElement(ConversationWorkspaceCache,{conversationKey:selected,conversationId:selected},content));
+}
+createRoot(document.getElementById('root')).render(React.createElement(Profiler,{id:'acceptance',onRender:collector.onReactRender},React.createElement(Acceptance)));
+</script><style>html,body,#root{margin:0;height:100%;overflow:hidden}.acceptance-root{width:100vw!important;height:100vh!important;display:grid;grid-template-columns:180px minmax(0,1fr);height:100vh}.acceptance-root>nav{grid-column:1;grid-row:1;background:#f4f4f7;padding:20px;display:flex;gap:12px;flex-direction:column;overflow:auto}.acceptance-root>nav p{font-size:12px}.acceptance-root>nav button{padding:12px}.acceptance-case{grid-column:2;grid-row:1;min-height:0;display:flex;flex-direction:column;height:100%}.acceptance-case>.session-workspace-root{flex:1;min-height:0}</style></html>
