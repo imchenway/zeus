@@ -9,7 +9,7 @@ import type { ToolResult } from '@trycua/cua-driver';
 import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
-import { ComputerDriverProxy, type ComputerDriver } from './computerDriverProxy.js';
+import { ComputerDriverProxy, type ComputerDriver, type ComputerControlEvent } from './computerDriverProxy.js';
 import { computerSdkUrl, computerNativePath } from './computerSdk.js';
 import { runWindowsRuntimeHelper, type WindowsRuntimeIdentity } from '@zeus/ai-runtime';
 import { projectComputerToolResult } from './computerToolResult.js';
@@ -59,8 +59,8 @@ interface ComputerControlOwner {
   controlledPid: number | null;
   /** 用户接管后，本轮禁止再次投递输入。 */
   paused: boolean;
-  /** 暂停来源保持真实，让系统共享停止与实体接管可区分。 */
-  pauseReason: 'ZEUS_COMPUTER_USER_CONTROL' | 'ZEUS_COMPUTER_SHARING_STOPPED' | null;
+  /** 应用失效来源保持真实，区分捕获故障、系统停止与实体接管。 */
+  pauseReason: ComputerControlEvent['reason'] | null;
 }
 
 /** CUA 单次调用的宿主上限，不能被模型参数延长。 */
@@ -297,13 +297,15 @@ export class ComputerHost implements BrowserAutomationPort {
       /** 在原生调用前拒绝会借用用户焦点的输入路线。 */
       const argumentsValue = this.prepareArguments(input, owner);
       if (owner?.paused) throw computerError(owner.pauseReason ?? 'ZEUS_COMPUTER_USER_CONTROL', owner.preview?.detail ?? '本轮控制已暂停。继续时需要新指令和新观察。');
+      /** 只有显式的新观察才开始恢复捕获故障，旧动作继续保持失效。 */
+      if (owner && input.tool === 'get_window_state' && owner.pauseReason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE') owner.pauseReason = null;
       if (owner)
         this.patchPreview(owner, {
           state: owner.paused ? 'paused' : input.tool === 'get_window_state' ? 'observing' : 'working',
           action: input.tool,
           pid: typeof argumentsValue.pid === 'number' ? argumentsValue.pid : (owner.preview?.pid ?? null),
           windowId: typeof argumentsValue.window_id === 'number' ? argumentsValue.window_id : (owner.preview?.windowId ?? null),
-          detail: owner.paused ? (owner.preview?.detail ?? null) : null,
+          detail: owner.paused || owner.pauseReason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE' ? (owner.preview?.detail ?? null) : null,
         });
       if (input.tool === 'get_window_state' && owner) {
         const key = computerWindowKey(argumentsValue);
@@ -368,25 +370,28 @@ export class ComputerHost implements BrowserAutomationPort {
       this.updatePreview(owner, input, result);
       if (result.isError && owner) {
         owner.windows.clear();
-        this.patchPreview(owner, { state: owner.paused ? 'paused' : 'error', needsObservation: true, detail: owner.paused ? (owner.preview?.detail ?? null) : (result.structuredJson ?? result.rawJson).slice(0, 1000) });
+        this.patchPreview(owner, { state: owner.paused ? 'paused' : 'error', needsObservation: true, detail: owner.pauseReason ? (owner.preview?.detail ?? null) : (result.structuredJson ?? result.rawJson).slice(0, 1000) });
       }
       return projectComputerToolResult(result);
     } catch (error) {
+      /** 原生故障可能先经事件通道取消调用，不能再用普通取消错误覆盖系统诊断。 */
+      const detail = owner?.pauseReason && owner.preview?.detail ? `${owner.pauseReason}: ${owner.preview.detail}` : computerErrorMessage(error);
       if (owner) {
-        const detail = computerErrorMessage(error);
         if (detail.includes('ZEUS_COMPUTER_USER_CONTROL')) this.pauseApplication(owner.preview?.pid ?? null);
         else if (detail.includes('ZEUS_COMPUTER_SHARING_STOPPED')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_SHARING_STOPPED');
+        else if (detail.includes('ZEUS_COMPUTER_PERMISSION_REQUIRED')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_PERMISSION_REQUIRED', detail);
+        else if (detail.includes('ZEUS_COMPUTER_CAPTURE_UNAVAILABLE')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE', detail);
         if (dispatched && mutatingTools.has(input.tool)) owner.windows.clear();
-        this.patchPreview(owner, { state: owner.paused ? 'paused' : 'error', needsObservation: true, detail: owner.paused ? (owner.preview?.detail ?? detail.slice(0, 1000)) : detail.slice(0, 1000) });
+        this.patchPreview(owner, { state: owner.paused ? 'paused' : 'error', needsObservation: true, detail: owner.pauseReason ? (owner.preview?.detail ?? detail.slice(0, 1000)) : detail.slice(0, 1000) });
       }
       if (computerWorkerFailed(error, this.driver)) await this.recoverWorker();
-      this.settings = { ...this.settings, serviceState: this.driver ? 'ready' : this.settings.serviceState, detail: computerErrorMessage(error).slice(0, 1000) };
+      this.settings = { ...this.settings, serviceState: this.driver ? 'ready' : this.settings.serviceState, detail: detail.slice(0, 1000) };
       /** 动作异常代表结果未知，明确阻止模型盲目重放。 */
       const uncertainty =
         dispatched && mutatingTools.has(input.tool) && !(isRecord(error) && isRecord(error.inner) && (error.inner.completion === 0 || (typeof error.inner.reason === 'string' && error.inner.reason.startsWith('input_not_started:'))))
           ? ' 动作可能未执行、已执行或仅部分执行；不得自动重试，请先重新观察目标窗口。'
           : '';
-      return computerText(`${computerErrorMessage(error)}${uncertainty}`.slice(0, 2000), false);
+      return computerText(`${detail}${uncertainty}`.slice(0, 2000), false);
     } finally {
       if (reservation?.fresh && owner && !owner.windows.has(reservation.key) && this.windowOwners.get(reservation.key) === owner.id) this.windowOwners.delete(reservation.key);
     }
@@ -568,8 +573,15 @@ export class ComputerHost implements BrowserAutomationPort {
       imageId: changedImage ? randomUUID() : (owner.preview?.imageId ?? null),
       capturedAt: image ? (captureDate && Number.isFinite(captureDate.getTime()) ? captureDate.toISOString() : null) : (owner.preview?.capturedAt ?? null),
     });
-    if (isRecord(structured) && isRecord(structured.zeus_control) && structured.zeus_control.paused === true)
-      this.pauseApplication(owner.preview?.pid ?? null, structured.zeus_control.reason === 'ZEUS_COMPUTER_SHARING_STOPPED' ? 'ZEUS_COMPUTER_SHARING_STOPPED' : 'ZEUS_COMPUTER_USER_CONTROL');
+    if (isRecord(structured) && isRecord(structured.zeus_control) && structured.zeus_control.paused === true) {
+      /** 捕获故障允许重新观察，不得当作用户主动让权。 */
+      const { reason, detail } = structured.zeus_control;
+      this.pauseApplication(
+        owner.preview?.pid ?? null,
+        reason === 'ZEUS_COMPUTER_SHARING_STOPPED' || reason === 'ZEUS_COMPUTER_PERMISSION_REQUIRED' || reason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE' ? reason : 'ZEUS_COMPUTER_USER_CONTROL',
+        typeof detail === 'string' ? detail : undefined,
+      );
+    }
   }
 
   /** 合并预览并只广播轻量变化通知，不向每个窗口重复投递图片。 */
@@ -607,22 +619,31 @@ export class ComputerHost implements BrowserAutomationPort {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:computer:preview-changed', conversationId);
   }
 
-  /** 同一应用共享输入焦点，用户接管后撤销该应用所有轮次的旧观察。 */
-  private pauseApplication(pid: number | null, reason: 'ZEUS_COMPUTER_USER_CONTROL' | 'ZEUS_COMPUTER_SHARING_STOPPED' = 'ZEUS_COMPUTER_USER_CONTROL'): void {
+  /** 撤销应用的全部旧观察；捕获故障可重观察，用户让权则暂停当前轮次。 */
+  private pauseApplication(pid: number | null, reason: ComputerControlEvent['reason'] = 'ZEUS_COMPUTER_USER_CONTROL', detail?: string): void {
     if (pid === null) return;
     for (const owner of [...this.owners.values()]) {
       if (![...owner.windows].some((key) => key.startsWith(`${pid}:`)) && owner.preview?.pid !== pid) continue;
-      if (owner.paused) continue;
-      owner.paused = true;
+      if (owner.paused || owner.pauseReason === reason) continue;
+      /** 系统捕获失败不代表用户撤销授权，只允许后续新观察恢复输入资格。 */
+      const recoverable = reason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE';
+      owner.paused = !recoverable;
       owner.pauseReason = reason;
       for (const controller of owner.controllers) controller.abort();
       for (const [windowKey, identity] of this.windowOwners) if (identity === owner.id) this.windowOwners.delete(windowKey);
       owner.windows.clear();
       this.patchPreview(owner, {
-        state: 'paused',
+        state: recoverable ? 'error' : 'paused',
         needsObservation: true,
-        detail: reason === 'ZEUS_COMPUTER_SHARING_STOPPED' ? '系统窗口共享已停止，后台输入已暂停。继续时需要新指令和新观察。' : '你已接管受控应用，后台输入已暂停。继续时需要新指令和新观察。',
+        detail: recoverable
+          ? `${detail?.slice(0, 1000) ?? '窗口捕获暂不可用。'} 请调用 get_window_state 重新观察；本次动作不会自动重放。`
+          : reason === 'ZEUS_COMPUTER_PERMISSION_REQUIRED'
+            ? `${detail?.slice(0, 1000) ?? '系统未授权窗口捕获。'} 请恢复屏幕录制权限，并发送新指令。`
+            : reason === 'ZEUS_COMPUTER_SHARING_STOPPED'
+              ? '系统窗口共享已停止，后台输入已暂停。收到新指令后调用 get_window_state 重新观察。'
+              : '你已接管受控应用，后台输入已暂停。继续时需要新指令和新观察。',
       });
+      if (recoverable) continue;
       /** 保留真实暂停预览，同时释放原生命名会话；新指令才能重新获得控制。 */
       const driver = owner.sessionDriver;
       owner.sessionDriver = null;
@@ -749,7 +770,7 @@ export class ComputerHost implements BrowserAutomationPort {
               }),
               (event) => {
                 /** 已核对的原生身份与当前实例同时匹配，旧进程通知不能撤销新控制。 */
-                if (this.driver === driver && this.workerPid === event.workerPid) this.pauseApplication(event.pid, event.reason);
+                if (this.driver === driver && this.workerPid === event.workerPid) this.pauseApplication(event.pid, event.reason, event.detail);
               },
             )
           : cua.CuaDriver.createConfigured(configuredDriver);
@@ -1079,7 +1100,18 @@ function computerWorkerFailed(error: unknown, driver: DestroyableCuaDriver | nul
   /** worker 也封装执行前的明确拒绝，不能因此重启其他应用的控制。 */
   /** 原生明确拒绝的原因在回调前收敛为字符串。 */
   const reason = isRecord(error.inner) && typeof error.inner.reason === 'string' ? error.inner.reason : '';
-  if (['ZEUS_COMPUTER_USER_CONTROL', 'ZEUS_COMPUTER_SHARING_STOPPED', 'ZEUS_COMPUTER_DISPLAY_CHANGED', 'ZEUS_COMPUTER_STOPPED', 'ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE'].some((code) => reason.includes(code))) return false;
+  if (
+    [
+      'ZEUS_COMPUTER_USER_CONTROL',
+      'ZEUS_COMPUTER_SHARING_STOPPED',
+      'ZEUS_COMPUTER_PERMISSION_REQUIRED',
+      'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE',
+      'ZEUS_COMPUTER_DISPLAY_CHANGED',
+      'ZEUS_COMPUTER_STOPPED',
+      'ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE',
+    ].some((code) => reason.includes(code))
+  )
+    return false;
   return ['Worker', 'Transport', 'Protocol', 'Shutdown'].includes(String(error.tag));
 }
 

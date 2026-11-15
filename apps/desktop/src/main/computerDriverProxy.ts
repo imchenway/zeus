@@ -14,7 +14,9 @@ export type ComputerControlEvent = {
   /** 实际停止共享或被用户接管的应用身份。 */
   pid: number;
   /** 仅允许原生输入闸门已处理的暂停原因。 */
-  reason: 'ZEUS_COMPUTER_USER_CONTROL' | 'ZEUS_COMPUTER_SHARING_STOPPED';
+  reason: 'ZEUS_COMPUTER_USER_CONTROL' | 'ZEUS_COMPUTER_SHARING_STOPPED' | 'ZEUS_COMPUTER_PERMISSION_REQUIRED' | 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE';
+  /** 原生错误诊断，长度受限且不携带截图或输入。 */
+  detail?: string;
   /** 只统计其他应用键盘事件，用于实机验收；不包含键盘内容。 */
   otherKeyboardEvents: number;
 };
@@ -109,11 +111,19 @@ export class ComputerDriverProxy implements ComputerDriver {
         const event: unknown = JSON.parse(line.slice('_ZEUS_COMPUTER_EVENT_ '.length));
         if (!event || typeof event !== 'object') continue;
         /** 白名单投影后再交给宿主，不能附带其他控制字段。 */
-        const { workerPid, pid, reason, token, otherKeyboardEvents } = event as Record<string, unknown>;
+        const { workerPid, pid, reason, detail, token, otherKeyboardEvents } = event as Record<string, unknown>;
         if (!this.eventToken || typeof token !== 'string' || !/^[a-f0-9]{64}$/u.test(token) || !timingSafeEqual(this.eventToken, Buffer.from(token, 'hex'))) continue;
-        if (!Number.isSafeInteger(workerPid) || (workerPid as number) <= 0 || !Number.isSafeInteger(pid) || (pid as number) <= 0 || (reason !== 'ZEUS_COMPUTER_USER_CONTROL' && reason !== 'ZEUS_COMPUTER_SHARING_STOPPED')) continue;
+        if (
+          !Number.isSafeInteger(workerPid) ||
+          (workerPid as number) <= 0 ||
+          !Number.isSafeInteger(pid) ||
+          (pid as number) <= 0 ||
+          (reason !== 'ZEUS_COMPUTER_USER_CONTROL' && reason !== 'ZEUS_COMPUTER_SHARING_STOPPED' && reason !== 'ZEUS_COMPUTER_PERMISSION_REQUIRED' && reason !== 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE')
+        )
+          continue;
+        if (detail !== undefined && typeof detail !== 'string') continue;
         if (!Number.isSafeInteger(otherKeyboardEvents) || (otherKeyboardEvents as number) < 0) continue;
-        this.latestControlEvent = { workerPid: workerPid as number, pid: pid as number, reason, otherKeyboardEvents: otherKeyboardEvents as number };
+        this.latestControlEvent = { workerPid: workerPid as number, pid: pid as number, reason, detail: detail?.slice(0, 1000), otherKeyboardEvents: otherKeyboardEvents as number };
         this.onControlEvent?.(this.latestControlEvent);
       } catch {
         /* 非本协议日志或不完整 JSON 不产生产品状态。 */

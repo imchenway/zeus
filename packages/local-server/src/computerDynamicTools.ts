@@ -76,7 +76,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'get_window_state',
           description:
-            'Observe one exact window before every action. Returns structured elements, snapshot_id, capture_id, metadata, and an optional screenshot. Prefer element_token; pixel coordinates are local to the screenshot. A new snapshot invalidates prior tokens and indices. query filters the collected tree, not the walk: if truncated, increase the budget named by truncation_reason instead of repeating the same partial observation. Use include_screenshot=false for semantic refreshes and verify_state for bounded waiting. A zeus_control pause means the user owns this application: stop and require a new instruction and observation.',
+            'Observe one exact window before every action. Returns structured elements, snapshot_id, capture_id, metadata, and an optional screenshot. Prefer element_token; pixel coordinates are local to the screenshot. A new snapshot invalidates prior tokens and indices. query filters the collected tree, not the walk: if truncated, increase the budget named by truncation_reason instead of repeating the same partial observation. Use include_screenshot=false for semantic refreshes and verify_state for bounded waiting. USER_CONTROL or SHARING_STOPPED requires a new user instruction and observation. PERMISSION_REQUIRED requires restoring system permission and a new user instruction. CAPTURE_UNAVAILABLE permits a fresh get_window_state to rebuild capture; never replay an uncertain action. Window capture starts through this tool; do not ask the user to find a re-share control.',
           inputSchema: objectSchema(
             {
               ...exactWindowProperties,
