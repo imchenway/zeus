@@ -266,7 +266,7 @@ internal sealed class WindowsUpdateProgress : Form
         "download" => english ? "Download Update" : "下载更新",
         "check" => english ? "Check for Updates" : "重新检查更新",
         "open_download_page" => english ? "Download New Version" : "下载新版",
-        "open_installer" => english ? "Open Installer" : "打开安装包",
+        "open_installer" => english ? "Show Installer in Folder" : "定位安装包",
         "restart" => english ? "Restart Now" : "立即重启",
         "retry" => english ? "Try Again" : "重试",
         "reconnect" => english ? "Reconnect" : "重新连接",

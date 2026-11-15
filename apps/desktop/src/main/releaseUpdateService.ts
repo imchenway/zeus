@@ -10,7 +10,7 @@ import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-s
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { isTrustedReleaseResponseUrl, readReleaseUpdateStatus, releaseArtifactDownloadUrls } from '@zeus/local-server/release-core';
-import { installWindowsRelease, openWindowsRecoveryInstaller, readWindowsReleaseSignature, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
+import { installWindowsRelease, openWindowsRecoveryInstaller, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
@@ -76,7 +76,7 @@ export interface CreateReleaseUpdateServiceOptions {
   allowUntrustedTestUpdate: boolean;
   /** 隔离验收的清单地址仍经过共享来源校验，正式应用使用官方地址。 */
   releaseUpdateManifestUrl?: string;
-  /** 只打开本服务校验过的安装包，由用户通过系统界面手动安装。 */
+  /** macOS 打开已校验的 DMG；Windows 无法原位升级时定位安装包，退出后仍可从文件管理器启动。 */
   openDownloadedArtifact: (path: string) => Promise<void>;
   /** Windows 退出失败时必须等待 cancel 的持久撤销回执，再接受后续退出。 */
   onInstallReady: (activate: () => void | Promise<void>, cancel?: () => Promise<void>) => Promise<boolean>;
@@ -183,6 +183,9 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           testMode: options.testMode && options.allowUntrustedTestUpdate,
           onProgress,
         });
+        // Windows 只有通过既有签名策略的包才能进入“等待重启”，未签名包仍要求明确交互安装。
+        if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate))
+          await verifyWindowsReleaseSignature(artifactPath, options.currentExecutablePath, { allowUnsignedInstaller: !update.automaticInstallEnabled });
         prepared = { update, artifactPath };
         return {
           accepted: true,
@@ -199,11 +202,13 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
         if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        // 旧窗口或调用方仍可能发送“打开安装包”；支持原位升级时同样先接管安装再退出。
+        if (process.platform === 'win32' && !(await manualInstallReason(update, options))) return requestWindowsInstall(update, prepared.artifactPath);
         // Windows 自动安装开关直接来自清单 signed；手动打开仍拒绝坏签名和签名信任降级。
         if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate))
           await verifyWindowsReleaseSignature(prepared.artifactPath, options.currentExecutablePath, { allowUnsignedInstaller: !update.automaticInstallEnabled });
         await options.openDownloadedArtifact(prepared.artifactPath);
-        return { accepted: true, update, reason: '已请求系统打开安装包，请按提示完成手动安装。' };
+        return { accepted: true, update, reason: process.platform === 'win32' ? '已请求在文件管理器中显示安装包；退出 Zeus 后仍可运行安装器。' : '已请求系统打开安装包，请按提示完成手动安装。' };
       }),
     install: () =>
       exclusive(async () => {
@@ -229,8 +234,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         // 安装前重新核对缓存，避免下载后被替换的包进入挂载与复制流程。
         if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
         if (process.platform === 'win32') {
-          const accepted = await installWindowsRelease(options, prepared.artifactPath, update);
-          return { accepted: true, restartAccepted: accepted, update, reason: accepted ? '安装器已就绪，Zeus 将完整退出后安装更新。' : '更新已保留，等待确认重启。' };
+          return requestWindowsInstall(update, prepared.artifactPath);
         }
         const transactionId = randomUUID();
         const staged = await stageUpdateApp({
@@ -274,6 +278,13 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
       }),
   };
 
+  /** Windows 的安装与旧“打开安装包”入口共用就绪、取消和安全退出交接。 */
+  async function requestWindowsInstall(update: DesktopReleaseUpdateStatus, artifactPath: string): Promise<DesktopReleaseUpdateOperation> {
+    /** 只有安装器已持有旧进程句柄并确认就绪，Main 才能继续完整退出。 */
+    const accepted = await installWindowsRelease(options, artifactPath, update);
+    return { accepted: true, restartAccepted: accepted, update, reason: accepted ? '安装器已就绪，Zeus 将完整退出后安装更新。' : '更新已保留，等待确认重启。' };
+  }
+
   /** 取消重启后可以选择更新的发布包，但已经启动的安装交接不能被替换。 */
   async function discardOutdatedHandoff(update: DesktopReleaseUpdateStatus): Promise<void> {
     if (!preparedInstallerHandoff || (preparedInstallerHandoff.updateVersion === update.latestVersion && preparedInstallerHandoff.artifactSha256 === update.artifact?.sha256)) return;
@@ -305,10 +316,9 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
   }
 }
 
-/** 仅将明确不具备自动安装条件的情况引导到手动下载，磁盘读取异常继续报错。 */
+/** Windows 的签名策略决定静默或交互安装；只有无法原位升级的位置才需要外部手动安装。 */
 async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): Promise<ReleaseManualInstallReason | null> {
   if (process.platform !== 'win32' && update.executionHostProtocolVersion !== executionHostProtocolVersion) return 'protocol';
-  if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
   if (process.platform === 'win32') {
     try {
       await access(dirname(options.currentExecutablePath), fsConstants.W_OK);
@@ -317,10 +327,9 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
       if (isNodeError(error, 'EACCES') || isNodeError(error, 'EPERM') || isNodeError(error, 'EROFS')) return 'location';
       throw error;
     }
-    // 当前应用未签名时只允许用户打开安装包，不进入自动安装交接。
-    if (!(options.testMode && options.allowUntrustedTestUpdate) && !(await readWindowsReleaseSignature(options.currentExecutablePath)).valid) return 'signature';
     return null;
   }
+  if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
   const appPath = resolve(options.currentAppPath);
   const appStat = await lstat(appPath);
   if (!options.isPackaged || !appStat.isDirectory() || appStat.isSymbolicLink() || appPath.startsWith('/Volumes/') || appPath.includes('/AppTranslocation/')) return 'location';
@@ -413,12 +422,12 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
   trustedReleaseDownloadUrl(update.artifact.downloadUrl, options.testMode && options.allowUntrustedTestUpdate, update.latestVersion, update.artifact.fileName);
 }
 
-/** 自动替换应用始终保留正式签名、公证和执行宿主协议门禁。 */
+/** macOS 自动替换保留签名、公证与协议门禁；Windows 在独立安装器准备时核验签名并选择安装方式。 */
 function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): void {
   assertDownloadAllowed(update, options);
   if (process.platform !== 'win32' && update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
-  if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
-    throw new Error(process.platform === 'win32' ? '更新包未通过 Windows 正式签名门禁。' : '更新包未同时通过签名、公证和协议兼容门禁。');
+  if (process.platform !== 'win32' && !update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
+    throw new Error('更新包未同时通过签名、公证和协议兼容门禁。');
   }
 }
 

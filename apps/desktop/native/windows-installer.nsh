@@ -13,9 +13,12 @@ Var ZeusResult
 Var ZeusTransaction
 ; 已打开的旧主进程句柄，不通过 PID 轮询猜测进程是否更换。
 Var ZeusMainHandle
+; 当前事务的最后回执，退出回调不能把已安装或已取消覆盖为失败。
+Var ZeusStatus
 
 ; 只写固定状态和已经由应用生成的事务身份，不把用户文本拼接进 JSON。
 !macro ZeusWriteStatus STATUS
+  StrCpy $ZeusStatus "${STATUS}"
   ${If} $ZeusResult != ""
     FileOpen $R8 "$ZeusResult.partial" w
     FileWrite $R8 '{$\"transactionId$\":$\"$ZeusTransaction$\",$\"status$\":$\"${STATUS}$\"}'
@@ -52,6 +55,25 @@ Var ZeusMainHandle
 
 ; 安装专用钩子不进入独立卸载器的编译单元。
 !ifndef BUILD_UNINSTALLER
+; 交互安装被用户中止时也留下终态，不能让下一次升级永远等待旧 ready 回执。
+Function .onUserAbort
+  ${If} $ZeusStatus != "installed"
+    !insertmacro ZeusWriteStatus "cancelled"
+  ${EndIf}
+FunctionEnd
+
+; 安装失败回执独立于 Zeus 主窗口，主程序退出后仍能记录确定结果。
+Function .onInstFailed
+  !insertmacro ZeusWriteStatus "failed"
+FunctionEnd
+
+; 已经接管却未执行到安装完成的退出不能保留 ready，成功和显式取消保持原结果。
+Function .onGUIEnd
+  ${If} $ZeusStatus == "ready"
+    !insertmacro ZeusWriteStatus "failed"
+  ${EndIf}
+FunctionEnd
+
 ; 显式升级先核验旧主进程所在路径，再等待完整退出且退出码为零。
 !macro customInit
   ; 产品安装门禁为 Windows 10 22H2 的 19045；Windows 11 的具体兼容构建仍由实机验收确认。

@@ -329,11 +329,16 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
   async function openDownloadedUpdate(): Promise<void> {
     await checkAndPrepareUpdate(false);
     try {
+      // 安装条件已恢复时，旧窗口的“打开安装包”动作也进入同一次安全重启安装。
+      if (process.platform === 'win32' && phase === 'ready' && prepared?.method === 'direct') {
+        await installPreparedUpdate();
+        return;
+      }
       if (phase !== 'downloaded' || prepared?.method !== 'direct') {
         await showCurrent();
         return;
       }
-      /** 只请求系统打开安装包，不触发自动安装交接或 Homebrew。 */
+      /** macOS 打开 DMG；Windows 无法原位升级时定位文件，避免退出后丢失安装入口。 */
       const result = await options.direct.openDownloaded();
       if (!result.accepted) {
         prepared = null;
@@ -529,7 +534,7 @@ function indicatorForReady(language: 'zh-CN' | 'en-US', update: DesktopReleaseUp
   };
 }
 
-/** 下载和安装分开表达，未满足自动安装条件时不承诺重启后自动替换。 */
+/** 外部手动安装保留平台操作差异，不能把无法原位升级的位置标成可重启安装。 */
 function manualCopy(language: 'zh-CN' | 'en-US', update: DesktopReleaseUpdateStatus, downloaded: boolean): NativeUpdateProgressState {
   const zh = language === 'zh-CN';
   /** Windows 使用安装器，不显示 macOS 的拖拽替换提示。 */
@@ -540,8 +545,8 @@ function manualCopy(language: 'zh-CN' | 'en-US', update: DesktopReleaseUpdateSta
       title: zh ? '安装包已下载' : 'Installer Downloaded',
       detail: windows
         ? zh
-          ? `Zeus ${update.latestVersion} 已下载并通过校验。点击“打开安装包”，按提示完成安装。`
-          : `Zeus ${update.latestVersion} is downloaded and verified. Choose Open Installer and follow the installation steps.`
+          ? `Zeus ${update.latestVersion} 已下载并通过校验。当前安装目录不可写，请点击“定位安装包”，再退出 Zeus，从文件管理器运行安装器。`
+          : `Zeus ${update.latestVersion} is downloaded and verified. The current install directory is not writable. Choose Show Installer in Folder, quit Zeus, then run the installer from File Explorer.`
         : zh
           ? `Zeus ${update.latestVersion} 已下载并通过校验。打开安装包后，请结束工作并退出 Zeus，将新版拖入“应用程序”完成替换。`
           : `Zeus ${update.latestVersion} is downloaded and verified. Open the installer, finish your work and quit Zeus, then drag the new app into Applications.`,

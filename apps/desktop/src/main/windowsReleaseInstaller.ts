@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, open, readFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, open, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { ensurePrivatePathSync, readPrivateFileSync, publishFileSync, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import type { CreateReleaseUpdateServiceOptions, DesktopReleaseUpdateStatus } from './releaseUpdateService.js';
@@ -35,8 +35,10 @@ interface WindowsInstallTransaction {
   previousVersion: string;
   /** 安装器写入状态的固定文件。 */
   resultPath: string;
-  /** 当前旧版签名有效的安装包摘要。 */
-  recoverySha256: string;
+  /** 本次校验过的旧版安装包摘要；交互安装缺少旧包时为 null，不提供恢复。 */
+  recoverySha256: string | null;
+  /** 用户明确发起的交互安装保留安装器界面；缺省沿用受信任包的静默安装。 */
+  interactive?: boolean;
 }
 
 /** 使用固定原生助手异步读取签名，证书校验期间保持桌面消息循环可响应。 */
@@ -49,27 +51,39 @@ function isUnsignedWindowsRelease(signature: WindowsReleaseSignature): boolean {
   return signature.valid === false && signature.status === unsignedWindowsSignatureStatus && signature.productName === 'Zeus';
 }
 
-/** 自动安装与恢复要求同一受信任发行者；手动入口只为真实未签名的当前应用开放例外。 */
-export async function verifyWindowsReleaseSignature(installerPath: string, executablePath: string, manual?: { allowUnsignedInstaller: boolean }): Promise<void> {
+/** 核验发行者并返回所需安装方式；真正未签名的当前应用只能通过显式交互安装升级。 */
+export async function verifyWindowsReleaseSignature(installerPath: string, executablePath: string, manual?: { allowUnsignedInstaller: boolean }): Promise<'automatic' | 'interactive'> {
   /** 两份文件独立校验；有效签名仍须有明确发行者身份。 */
   const [installer, application] = await Promise.all([readWindowsReleaseSignature(installerPath), readWindowsReleaseSignature(executablePath)]);
   if (installer.valid === true && installer.status === 0 && typeof installer.subject === 'string' && installer.subject.trim()) {
-    if (application.valid === true && application.status === 0 && installer.subject === application.subject) return;
-    // 未签名旧版只能由用户手动升级到有效签名的 Zeus，不能进入自动安装或恢复。
-    if (manual && isUnsignedWindowsRelease(application) && installer.productName === 'Zeus') return;
+    if (application.valid === true && application.status === 0 && installer.subject === application.subject) return 'automatic';
+    // 未签名旧版升级到有效签名的 Zeus 仍保留交互界面，不能静默安装。
+    if (manual && isUnsignedWindowsRelease(application) && installer.productName === 'Zeus') return 'interactive';
   }
-  // Windows 清单未声明签名时，已核对来源和摘要的双方未签名产物可交给用户手动安装。
-  if (manual?.allowUnsignedInstaller && isUnsignedWindowsRelease(application) && isUnsignedWindowsRelease(installer)) return;
+  // 明确允许未签名交互安装时，双方必须都是真正未签名的 Zeus，不能放行坏签名。
+  if (manual?.allowUnsignedInstaller && isUnsignedWindowsRelease(application) && isUnsignedWindowsRelease(installer)) return 'interactive';
   throw new Error('更新包签名无效或发行者与当前应用不同。');
 }
 
 /** 在应用安装目录外启动 NSIS；安装器持有旧主进程句柄并等待正常退出。 */
 export async function installWindowsRelease(options: CreateReleaseUpdateServiceOptions, installerPath: string, update: DesktopReleaseUpdateStatus): Promise<boolean> {
-  if (!(options.testMode && options.allowUntrustedTestUpdate)) await verifyWindowsReleaseSignature(installerPath, options.currentExecutablePath);
-  /** 只复制 NSIS 已记录且签名通过的上一安装器，不自行拼接注册表安装目录。 */
-  const cachedPath = (await readFile(join(dirname(options.currentExecutablePath), 'resources/installer-cache-path.txt'), 'utf16le')).replace(/^\uFEFF/u, '').trim();
-  if (!cachedPath) throw new Error('当前安装缺少恢复安装器，请先手动重新安装正式 Windows 包。');
-  if (!(options.testMode && options.allowUntrustedTestUpdate)) await verifyWindowsReleaseSignature(cachedPath, options.currentExecutablePath);
+  /** 只有隔离验收明确启用的更新可以跳过正式签名策略。 */
+  const untrustedTestUpdate = options.testMode && options.allowUntrustedTestUpdate;
+  /** 当前应用与新安装包的真实签名状态决定是否必须保留交互界面。 */
+  const signatureMode = untrustedTestUpdate ? 'automatic' : await verifyWindowsReleaseSignature(installerPath, options.currentExecutablePath, { allowUnsignedInstaller: !update.automaticInstallEnabled });
+  /** 发布清单没有启用自动安装时，即使文件已签名也不能静默安装。 */
+  const interactive = !untrustedTestUpdate && (!update.automaticInstallEnabled || signatureMode === 'interactive');
+  /** 恢复包只能来自 NSIS 记录；旧手动安装缺少缓存时仍允许显式交互升级。 */
+  let cachedPath: string | null = null;
+  try {
+    cachedPath = (await readFile(join(dirname(options.currentExecutablePath), 'resources/installer-cache-path.txt'), 'utf16le')).replace(/^\uFEFF/u, '').trim() || null;
+    if (cachedPath) await access(cachedPath);
+    if (cachedPath && !untrustedTestUpdate) await verifyWindowsReleaseSignature(cachedPath, options.currentExecutablePath, interactive ? { allowUnsignedInstaller: true } : undefined);
+  } catch (error) {
+    if (!interactive || !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    cachedPath = null;
+  }
+  if (!cachedPath && !interactive) throw new Error('当前安装缺少恢复安装器，请先手动重新安装正式 Windows 包。');
   /** 恢复包放在持久数据根，卸载程序不会删除此目录。 */
   const directory = releaseUpdateDirectory(options.userDataPath);
   await mkdir(directory, { recursive: true });
@@ -88,18 +102,24 @@ export async function installWindowsRelease(options: CreateReleaseUpdateServiceO
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
-  /** 先复制到临时文件再发布恢复包，避免复制中断损坏已有恢复入口。 */
-  const recoveryPath = join(directory, 'windows-recovery.exe');
-  await copyFile(cachedPath, `${recoveryPath}.partial`);
-  ensurePrivatePathSync(`${recoveryPath}.partial`, 'file');
-  publishFileSync(`${recoveryPath}.partial`, recoveryPath, { replace: true });
+  /** 只有实际校验并保留的旧安装包才提供恢复摘要，缺少恢复包不能借用之前的缓存。 */
+  let recoverySha256: string | null = null;
+  if (cachedPath) {
+    /** 先复制到临时文件再发布恢复包，避免复制中断损坏已有恢复入口。 */
+    const recoveryPath = join(directory, 'windows-recovery.exe');
+    await copyFile(cachedPath, `${recoveryPath}.partial`);
+    ensurePrivatePathSync(`${recoveryPath}.partial`, 'file');
+    publishFileSync(`${recoveryPath}.partial`, recoveryPath, { replace: true });
+    recoverySha256 = await hashWindowsInstaller(recoveryPath);
+  }
   /** 摘要与上版恢复包绑定，后续打开前再次验证。 */
   const transaction: WindowsInstallTransaction = {
     transactionId: randomUUID(),
     expectedVersion: update.latestVersion,
     previousVersion: options.currentAppVersion,
     resultPath: '',
-    recoverySha256: await hashWindowsInstaller(recoveryPath),
+    recoverySha256,
+    interactive,
   };
   transaction.resultPath = join(directory, `installer-${transaction.transactionId}.json`);
   await persistWindowsInstallRecord(pendingPath, JSON.stringify(transaction));
@@ -144,8 +164,15 @@ async function launchWindowsInstaller(options: CreateReleaseUpdateServiceOptions
       /** NSIS 使用独立 exe，不能以待替换的 Zeus.exe 运行 JS 助手。 */
       const child = spawn(
         installerPath,
-        ['/S', '--force-run', `/ZEUS-PID=${process.pid}`, `/ZEUS-TRANSACTION=${transaction.transactionId}`, `/ZEUS-RESULT=${transaction.resultPath}`, `/ZEUS-TARGET=${resolve(options.currentExecutablePath)}`],
-        { detached: true, stdio: 'ignore', windowsHide: true },
+        [
+          ...(transaction.interactive ? [] : ['/S']),
+          '--force-run',
+          `/ZEUS-PID=${process.pid}`,
+          `/ZEUS-TRANSACTION=${transaction.transactionId}`,
+          `/ZEUS-RESULT=${transaction.resultPath}`,
+          `/ZEUS-TARGET=${resolve(options.currentExecutablePath)}`,
+        ],
+        { detached: true, stdio: 'ignore', windowsHide: !transaction.interactive },
       );
       installer = child;
       installerExit = new Promise<void>((resolveExit) => {
@@ -175,6 +202,7 @@ async function launchWindowsInstaller(options: CreateReleaseUpdateServiceOptions
           if (result.transactionId !== transaction.transactionId) throw new Error('Windows 安装器事务身份不匹配。');
           if (result.status === 'ready') return;
           if (result.status === 'failed') throw new Error('Windows 安装器未能安全准备升级。');
+          if (result.status === 'cancelled') throw new Error('Windows 安装已取消，Zeus 将保持运行。');
         } catch (error) {
           if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
         }
@@ -212,9 +240,10 @@ export async function openWindowsRecoveryInstaller(options: CreateReleaseUpdateS
   /** 恢复路径由数据布局确定，不能接受渲染层传入任意可执行文件。 */
   const directory = releaseUpdateDirectory(options.userDataPath);
   const transaction = readWindowsInstallTransaction(join(directory, 'windows-install-pending.json'));
+  if (!transaction.recoverySha256) throw new Error('本次交互更新没有保留可验证的旧版安装包，请从官方发布页下载所需版本。');
   const recoveryPath = join(directory, 'windows-recovery.exe');
   if ((await hashWindowsInstaller(recoveryPath)) !== transaction.recoverySha256) throw new Error('恢复安装器摘要已变化。');
-  await verifyWindowsReleaseSignature(recoveryPath, options.currentExecutablePath);
+  await verifyWindowsReleaseSignature(recoveryPath, options.currentExecutablePath, transaction.interactive ? { allowUnsignedInstaller: true } : undefined);
   /** 显式恢复先撤销旧事务；仍在等待的旧安装器必须退出，不能在未来退出时执行旧更新。 */
   await persistWindowsInstallRecord(`${transaction.resultPath}.cancel`, transaction.transactionId);
   /** 恢复同样生成新事务，避免复用已经完成或取消的安装器。 */
@@ -252,8 +281,8 @@ function readWindowsInstallTransaction(path: string): WindowsInstallTransaction 
     !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(value.expectedVersion) ||
     typeof value.previousVersion !== 'string' ||
     !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(value.previousVersion) ||
-    typeof value.recoverySha256 !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(value.recoverySha256) ||
+    (value.interactive !== undefined && typeof value.interactive !== 'boolean') ||
+    (value.recoverySha256 === null ? value.interactive !== true : typeof value.recoverySha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.recoverySha256)) ||
     value.resultPath !== join(dirname(path), `installer-${value.transactionId}.json`)
   )
     throw new Error('Windows 更新事务记录无效，不能继续安装。');
