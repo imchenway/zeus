@@ -4,8 +4,8 @@ import { openRegularFileNoFollow, publishFile, windowsSecurityRequestAsync } fro
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-/** 显示缓存可随时重建，旧的整文件格式不再读取。 */
-const cacheSchema = 'zeus-session-display-cache';
+/** 只接纳已分离执行原文的显示缓存，旧缓存可从权威数据重建。 */
+const cacheSchema = 'zeus-session-visible-content-cache';
 /** 单会话、总量与有效期共同约束磁盘使用。 */
 const cacheLimits = { entryBytes: 8 * 1024 * 1024, totalBytes: 32 * 1024 * 1024, entries: 32, ageMs: 14 * 24 * 60 * 60 * 1000 };
 /** 会话身份仅用作哈希输入，不能控制文件路径。 */

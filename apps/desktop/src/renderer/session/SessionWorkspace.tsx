@@ -770,6 +770,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                       setContinuedHistoryConversationId(conversationId);
                       return connectedActions.onSubmit?.(delivery, settings);
                     },
+                    /** 显式恢复历史失败轮次时，沿用继续输入的控制器与实时连接。 */
+                    onRetryFailedTurn: async (providerTurnId: string) => {
+                      await connectedActions.onRetryFailedTurn?.(providerTurnId);
+                      setContinuedHistoryConversationId(conversationId);
+                    },
                     onChooseAttachments: connectedActions.onChooseAttachments,
                     onAddAttachments: connectedActions.onAddAttachments,
                     onRemoveAttachment: connectedActions.onRemoveAttachment,
@@ -3301,7 +3306,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                     onOpenAiSettings={actions.onOpenAiSettings}
                     onReconnect={transcriptInteractionsEnabled ? actions.onReconnect : undefined}
-                    onRetryFailedTurn={transcriptInteractionsEnabled ? actions.onRetryFailedTurn : undefined}
+                    onRetryFailedTurn={transcriptInteractionsEnabled || historyComposerWritable ? actions.onRetryFailedTurn : undefined}
                     onReconnectCodex={transcriptInteractionsEnabled ? actions.onReconnectCodex : undefined}
                     onInterrupt={!props.historyOnly && actions.onInterrupt ? actions.onInterrupt : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}

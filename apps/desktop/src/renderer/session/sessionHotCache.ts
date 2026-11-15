@@ -11,8 +11,8 @@ export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
 export const sessionHotCacheEntryByteLimit = 8 * 1024 * 1024;
 /** 磁盘显示缓存允许保留的最大会话数。 */
 export const sessionViewCacheMaximumEntries = 32;
-/** 磁盘显示缓存的结构代次。 */
-export const sessionViewCacheSchemaGeneration = 'zeus-session-display-cache';
+/** 仅恢复在截断前已经采用用户展示正文的缓存，旧执行正文缓存由权威快照重建。 */
+export const sessionViewCacheSchemaGeneration = 'zeus-session-visible-content-cache';
 /** 磁盘显示缓存的最长保留时间。 */
 export const sessionViewCacheMaximumAgeMs = 14 * 24 * 60 * 60 * 1000;
 
