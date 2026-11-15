@@ -4285,8 +4285,12 @@ async function initializeApplication(): Promise<void> {
             testMode: isTestDistribution(),
             allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
             releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
-            /** 保留 macOS 下载安全检查；打开磁盘映像交给系统，不执行自动替换。 */
+            /** Windows 权限受限时先定位文件，退出 Zeus 后用户仍能找到安装器；macOS 保留 DMG 安全检查。 */
             openDownloadedArtifact: async (path) => {
+              if (process.platform === 'win32') {
+                shell.showItemInFolder(path);
+                return;
+              }
               if (process.platform === 'darwin') await execFile(nativeUpdateProgressHelperPath(), ['--quarantine-download', path], { timeout: 10_000 });
               /** 系统返回空字符串才表示已接受打开请求。 */
               const error = await shell.openPath(path);
