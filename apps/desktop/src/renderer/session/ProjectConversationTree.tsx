@@ -545,6 +545,8 @@ function flattenProjectConversations(project: ProjectConversationGroup, normaliz
     ...(project.conversations ?? []).map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) })),
     ...project.tasks.flatMap((task) => task.conversations.map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language) }))),
   ]
+    // 保留侧栏会话的运行和未读入口，用明确身份区分同名主会话。
+    .map((entry) => entry.conversation.sourceConversationId ? { ...entry, displayTitle: `${language === 'zh-CN' ? '侧栏' : 'Sidebar'} · ${entry.displayTitle}` } : entry)
     .filter((entry) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery))
     .sort((left, right) => compareConversationWorkStartedDesc(left.conversation, right.conversation));
 }

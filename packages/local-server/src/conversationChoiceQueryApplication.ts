@@ -38,7 +38,7 @@ interface ConversationChoiceQueryPorts {
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
   conversations: Pick<ConversationRepository, 'getById' | 'getDeliveryConflictOrigin' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt' | 'workStartedAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
-  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation'>;
+  submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation' | 'getSourceConversationId'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
   workspaces: Pick<TaskWorkspaceRepository, 'listByProject' | 'getById'>;
   codexNativeEnabled: boolean;
@@ -272,6 +272,7 @@ export class ConversationChoiceQueryApplication {
     const deliveryOrigin = this.ports.conversations.getDeliveryConflictOrigin(conversation.id);
     return {
       id: conversation.id,
+      sourceConversationId: this.ports.submissions.getSourceConversationId(conversation.id),
       workspaceMode,
       executionPath,
       /** 列表与创建回执共用持久创建身份，使提前到达的真实会话归入同一次推送。 */

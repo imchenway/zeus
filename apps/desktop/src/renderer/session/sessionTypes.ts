@@ -939,6 +939,8 @@ export interface NativeConversationMessage {
 }
 
 export interface NativeConversationChoice {
+  /** 侧栏所属主会话的稳定身份，由服务端从已核验的来源关系投影。 */
+  sourceConversationId?: string | null;
   /** 自动冲突会话所属的原交付会话；普通会话为空。 */
   deliverySourceConversationId?: string | null;
   /** 上下文窗口容量；空值使用默认。 */

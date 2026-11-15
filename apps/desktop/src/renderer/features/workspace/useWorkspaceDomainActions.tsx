@@ -1,6 +1,6 @@
 import { transitionConversation } from '../../session/conversationTransition.js';
 import { beginConversationNavigationTrace } from '../../performanceTraceContext.js';
-import { markSideQuestionConversationArchived } from '../../session/useSessionContextWorkspace.js';
+import { markSideQuestionConversationArchived, restoreSideQuestionWorkspace } from '../../session/useSessionContextWorkspace.js';
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
@@ -1742,6 +1742,20 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive'): Promise<void> {
     /** 此次导航在开始读取前冻结其先后顺序。 */
     const selectionRevision = ++nativeConversationSelectionRevision.current;
+    /** 子会话入口恢复所属主页面，不能把右侧会话误当成新的主页面。 */
+    let sideQuestion: NativeConversationChoice | undefined;
+    if (conversation.sourceConversationId && !conversation.archived) {
+      /** 父会话即使未进入当前筛选结果，也按稳定身份读取，不能用标题猜测。 */
+      const source = state.nativeConversationChoices.find((choice) => choice.id === conversation.sourceConversationId && choice.projectId === conversation.projectId)
+        ?? await props.nativeConversationClient?.loadNativeConversationChoice(conversation.projectId, conversation.sourceConversationId);
+      if (selectionRevision !== nativeConversationSelectionRevision.current) return;
+      if (!source || source.id === conversation.id || source.projectId !== conversation.projectId || source.taskId !== conversation.taskId) throw new Error('侧边栏会话的来源无法读取。');
+      /** 已归档的父会话不恢复交互侧栏，子会话仍可独立阅读。 */
+      if (!source.archived) {
+        sideQuestion = conversation;
+        conversation = source;
+      }
+    }
     /** 自动化会话可能早于项目和任务目录到达，先并行补读其真实归属。 */
     const [targetProject, task] = await Promise.all([
       snapshot.projects.find((candidate) => candidate.id === conversation.projectId) ?? props.onLoadProject?.(conversation.projectId) ?? props.commandClient?.loadProject(conversation.projectId),
@@ -1756,6 +1770,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     /** 原生快照回调可能晚于下一次点击，必须再次核对选择代次。 */
     const applySelection = (): boolean => {
       if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
+      /** 点击原入口沿用本地展开状态；点击子会话则明确展开其所属双栏。 */
+      const child = sideQuestion ?? state.nativeConversationChoices.find((choice) => choice.sourceConversationId === conversation.id && !choice.archived);
+      if (child) restoreSideQuestionWorkspace({ ...conversation, navigationId }, child, Boolean(sideQuestion));
+      /** 抽屉等待的身份与实际展示的主会话一致，避免子会话入口一直停留在加载态。 */
+      if (sideQuestion && navigation === 'preserve') setSessionDrawerTarget((current) => current?.conversationId === sideQuestion.id ? { ...current, conversationId: conversation.id, navigationId } : current);
       /** 查看无项目会话也只读取已存在的托管工作区，不创建替代项目。 */
       setSnapshot((current) => (current.projects.some((project) => project.id === targetProject.id) ? current : { ...current, projects: [...current.projects, targetProject] }));
       activeProjectIdRef.current = targetProject.id;

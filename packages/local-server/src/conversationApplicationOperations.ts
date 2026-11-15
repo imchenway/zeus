@@ -3854,7 +3854,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const conversationContext = conversationSources.enrich(
           normalizeNativeConversationContext(body.conversationContext) ?? undefined,
           { id: reservation.conversationId, projectId: project.id, taskId: task.id },
-          typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : undefined,
+          !body.source && typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : undefined,
         );
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
         const canonicalAttachmentInput = body.attachments === undefined && !explicitContent && !browserComments.length ? normalizeTaskPushAttachments(task, project.localPath) : null;
