@@ -57,8 +57,10 @@ Var ZeusStatus
 
 ; 安装专用钩子不进入独立卸载器的编译单元。
 !ifndef BUILD_UNINSTALLER
+; Modern UI 生成 .onUserAbort，并通过扩展入口调用取消回执函数。
+!define MUI_CUSTOMFUNCTION_ABORT ZeusOnUserAbort
 ; 交互安装被用户中止时也留下终态，不能让下一次升级永远等待旧 ready 回执。
-Function .onUserAbort
+Function ZeusOnUserAbort
   ${If} $ZeusStatus != "installed"
     !insertmacro ZeusWriteStatus "cancelled"
   ${EndIf}
