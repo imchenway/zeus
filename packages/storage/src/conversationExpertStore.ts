@@ -479,6 +479,7 @@ export class ConversationExpertRepository {
     });
   }
 
+  /** 专家重试复用原轮次，同时使未被用户取消的旧自动建议失效。 */
   retryExecution(executionId: string, updatedAt: string, queued = false): ConversationExpertExecutionRecord {
     return this.db.transaction(() => {
       const execution = this.getExecution(executionId);
@@ -509,6 +510,14 @@ export class ConversationExpertRepository {
             SET status = ?, started_at = ?, completed_at = NULL, error_json = NULL, updated_at = ?
           WHERE client_submission_id = ? AND provider_turn_id IS NULL`,
         [queued ? 'queued' : 'running', queued ? null : updatedAt, updatedAt, execution.submissionId],
+      );
+      // 保留任务行接收迟到的用户取消；清除领取身份，旧生成回执不能覆盖新回复。
+      this.db.execute(
+        `UPDATE input_suggestion_jobs
+            SET state = 'pending', attempt_count = 0, attempt_id = NULL, result_json = NULL, next_attempt_at = ?, updated_at = ?
+          WHERE turn_id IN (SELECT id FROM conversation_turns WHERE client_submission_id = ? AND provider_turn_id IS NULL)
+            AND state <> 'cancelled'`,
+        [updatedAt, updatedAt, execution.submissionId],
       );
       this.db.execute(`UPDATE conversations SET stage = 'running', stage_updated_at = ?, updated_at = ? WHERE id = ?`, [updatedAt, updatedAt, execution.conversationId]);
       const retried = this.getExecution(executionId)!;

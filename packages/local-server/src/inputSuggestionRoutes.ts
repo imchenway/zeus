@@ -512,7 +512,9 @@ export function registerInputSuggestionRoutes(options: {
       }
       const conversationId = event.payload.conversationId;
       if (typeof conversationId !== 'string') return;
-      if (event.type === 'conversation.turn.completed' && event.payload.status === 'completed' && event.payload.inputSuggestionEligible === true && !event.payload.internalOperation) automatic?.ensure(conversationId);
+      // 专家重试先进入 queued；只刷新状态，不把回复流的每次增量变成刷新请求。
+      if (event.type === 'conversation.expert.execution.changed' && (event.payload.execution as { status?: unknown } | undefined)?.status === 'queued') automatic?.ensure(conversationId);
+      else if (event.type === 'conversation.turn.completed' && event.payload.status === 'completed' && event.payload.inputSuggestionEligible === true && !event.payload.internalOperation) automatic?.ensure(conversationId);
       else if (['conversation.submission.accepted', 'conversation.submission.steered'].includes(event.type) && options.hasPendingSubmission(conversationId)) automatic?.dismiss(conversationId);
       else if (event.type.startsWith('conversation.item.') && event.payload.itemType === 'userMessage' && options.jobs!.latestTurn(conversationId)?.status !== 'completed') automatic?.dismiss(conversationId);
     });

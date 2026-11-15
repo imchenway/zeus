@@ -11,7 +11,7 @@ export const inputSuggestionUserTurnSql = `(client_submission_id IS NOT NULL OR 
     AND user_history.turn_id = conversation_turns.id AND user_history.role = 'user'
 ))`;
 
-/** 每行表示一个已完成回复的自动建议任务，身份与归属由原轮次提供。 */
+/** 每行表示一个用户回复轮次的自动建议任务，身份与归属由原轮次提供。 */
 export interface InputSuggestionJob {
   /** 原轮次主键，同时是任务的唯一身份。 */
   turnId: string;
@@ -138,16 +138,21 @@ export class InputSuggestionJobRepository {
     return row ? this.map(row) : null;
   }
 
-  /** 当前会话只读取最新用户轮次的候选，绝不回退到旧要求。 */
+  /** 只读取最新且已完成的用户轮次，重试期间不展示旧候选。 */
   current(conversationId: string): InputSuggestionJob | null {
     const turn = this.latestTurn(conversationId);
-    return turn ? this.get(turn.id) : null;
+    return turn?.status === 'completed' ? this.get(turn.id) : null;
   }
 
-  /** 串行宿主内通过耐久事务领取，随机身份隔离迟到回执。 */
+  /** 原轮次完成后才通过耐久事务领取，随机身份隔离迟到回执。 */
   claim(now: string, activeTurnIds: readonly string[]): InputSuggestionJob | null {
     const exclusion = activeTurnIds.length ? `AND turn_id NOT IN (${activeTurnIds.map(() => '?').join(',')})` : '';
-    const row = this.db.get<{ turn_id: string }>(`SELECT turn_id FROM input_suggestion_jobs WHERE state='pending' AND next_attempt_at<=? ${exclusion} ORDER BY next_attempt_at, turn_id LIMIT 1`, [now, ...activeTurnIds]);
+    const row = this.db.get<{ turn_id: string }>(
+      `SELECT turn_id FROM input_suggestion_jobs WHERE state='pending' AND next_attempt_at<=? ${exclusion}
+        AND EXISTS (SELECT 1 FROM conversation_turns WHERE id=input_suggestion_jobs.turn_id AND status='completed')
+      ORDER BY next_attempt_at, turn_id LIMIT 1`,
+      [now, ...activeTurnIds],
+    );
     if (!row) return null;
     return this.db.commitCriticalFactSync(() => {
       const attemptId = randomUUID();

@@ -149,9 +149,10 @@ export function createAutomaticInputSuggestions(options: {
       timer.unref();
       kick();
     },
-    /** 真实完成与当前会话恢复共用幂等入队。 */
+    /** 完成与重试状态共用幂等入队，并通知窗口重读持久结果。 */
     ensure(conversationId: string): void {
       ensure(conversationId);
+      notify(conversationId);
       kick();
     },
     /** 新要求与用户取消都持久化，后台恢复不会复活旧候选。 */
