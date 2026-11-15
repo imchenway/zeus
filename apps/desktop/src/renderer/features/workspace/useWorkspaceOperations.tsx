@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent 
 import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, readCachedCodexConversationCapabilities, refreshCodexConversationCapabilities, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
+import { ConversationWorkspaceCache } from '../../session/ConversationWorkspaceCache.js';
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
@@ -1726,9 +1727,15 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     /** 原会话阅读与输入保持同一控制器，不因后台团队状态重读重新创建。 */
     const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
+    /** 保留正文与团队进展的共同外壳，跨项目切换不改变已有页面在树中的位置。 */
+    const retainWorkspace = (content: ReactNode): ReactNode => (
+      <ConversationWorkspaceCache conversationKey={selectedNativeConversation?.transportKind === 'codex_native' ? `${selectedNativeConversation.projectId}:${selectedTaskModelPushOperation?.navigationId ?? selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : undefined}>
+        {content}
+      </ConversationWorkspaceCache>
+    );
     /** 完整页和任务内嵌页共用准确会话关联，不能由外层任务另取一份旧运行。 */
-    if (embeddedInTask || !nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
-    return (
+    if (embeddedInTask || !nativeSessionTask || !selectedNativeConversation || !props.commandClient) return retainWorkspace(workspace);
+    return retainWorkspace(
       <div className="task-conversation-with-team-progress">
         <TaskDigitalTeamProgress
           key={`${nativeSessionTask.id}:${selectedNativeConversation.id}`}

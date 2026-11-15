@@ -44,16 +44,17 @@ export function markConversationNavigationSnapshotSettled(traceId: string, reque
   activeConversationNavigation = { ...activeConversationNavigation, snapshotSettled: true, snapshotSucceeded: succeeded };
 }
 
-/** 水合完成后才允许下一次 React commit 被记作该会话的首帧。 */
+/** 正文完成首次布局或保留界面重新显示后，允许记录当前会话的首帧。 */
 export function markConversationNavigationRenderReady(projectId: string, conversationId: string): void {
   expireStaleTrace();
   if (activeConversationNavigation?.snapshotPathname !== conversationSnapshotPathname(projectId, conversationId)) return;
   activeConversationNavigation = { ...activeConversationNavigation, renderReady: true };
 }
 
+/** 缓存首帧不依赖后台快照结束，计时覆盖用户真正等待正文的时间。 */
 export function readyConversationNavigationTrace(): ConversationNavigationTrace | null {
   expireStaleTrace();
-  return activeConversationNavigation?.snapshotSettled && activeConversationNavigation.renderReady ? publicTrace(activeConversationNavigation) : null;
+  return activeConversationNavigation?.renderReady ? publicTrace(activeConversationNavigation) : null;
 }
 
 export function completeConversationNavigationTrace(traceId: string): ConversationNavigationTrace | null {

@@ -553,14 +553,15 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const capabilitiesRevision = useCodexCapabilitiesRevision();
   const controllerEnabled = props.controllerEnabled !== false;
   const [continuedHistoryConversationId, setContinuedHistoryConversationId] = useState<string | null>(null);
-  const historySnapshotOnly = Boolean(props.historyOnly && continuedHistoryConversationId !== props.conversation.id);
-  /** 只决定首次读取策略；续聊由原控制器按需连接，不能重建并清空已显示正文。 */
-  const initialRealtimePolicy = useMemo(() => (props.historyOnly ? 'lazy' : 'auto'), [props.conversation.projectId, props.conversation.id]);
+  /** 已归档或只读会话不能沿用隐藏前的续聊状态开放交互。 */
+  const historySnapshotOnly = Boolean(props.historyOnly && (continuedHistoryConversationId !== props.conversation.id || props.conversation.archived || props.conversation.readOnly));
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
-  const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
-  const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
-  /** 只冻结首次选中的目录事实，后续目录刷新不重建会话控制器。 */
-  const initialConversation = useMemo(() => props.conversation, [props.conversation.id, props.conversation.projectId]);
+  // 缓存作为恢复时的输入；普通缓存更新不改变控制器身份，隐藏页面恢复时可取得后台较新的正文。
+  const initialCachedState = props.initialCachedState;
+  /** 初始乐观消息只在控制器创建或恢复时采样，不能反复接入旧首发状态。 */
+  const initialOptimisticState = props.initialOptimisticState;
+  /** 恢复时使用当前目录事实，普通目录刷新不重建正在工作的控制器。 */
+  const initialConversation = props.conversation;
   const controller = useSessionControllerInstance({
     client: props.client,
     projectId: props.conversation.projectId,
@@ -569,7 +570,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialOptimisticState,
     initialConversation,
     enabled: controllerEnabled,
-    realtimePolicy: initialRealtimePolicy,
+    realtimePolicy: historySnapshotOnly ? 'lazy' : 'auto',
   });
   useEffect(() => {
     if (!controllerEnabled || !props.pendingResponseAnnotations?.length) return;

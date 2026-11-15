@@ -1,4 +1,5 @@
 import { redactUserFacingErrorDetails } from '@zeus/shared';
+import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 import type { ConversationSystemMessage, ConversationSystemMessageInput, ConversationTranscriptEnvelope } from '@zeus/shared';
 import { systemMessageScope, useConversationSystemMessages, recordSystemMessage, recoverSystemMessage, setSystemMessageAnchor } from './conversationSystemMessages.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
@@ -351,7 +352,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
-  /** 首次虚拟行测量和贴底收敛后才展示正文，后续更新不重复隐藏已读内容。 */
+  /** 首次布局恢复阅读位置后即显示正文，后续行高变化沿用有界贴底校准。 */
   const [historyPositioned, setHistoryPositioned] = useState(false);
   /** 本地首发一旦已显示，后续历史接管也不能重新播放整段淡入。 */
   const initialLocalSubmissionRef = useRef(false);
@@ -432,6 +433,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   if (!historyPositioned && hasLocalSubmission) initialLocalSubmissionRef.current = true;
   /** 本地首帧直接可见；定位完成后保持可见，不随服务端身份接管重新隐藏。 */
   const historyReady = historyPositioned || hasLocalSubmission;
+  /** 首帧计时以真实正文就绪为准，保留界面恢复时也记录，不等待后台快照请求。 */
+  useLayoutEffect(() => {
+    if (historyReady && historyHydrated && props.state.projectId && props.state.conversationId) markConversationNavigationRenderReady(props.state.projectId, props.state.conversationId);
+  }, [historyReady, historyHydrated, props.state.projectId, props.state.conversationId]);
   /** 最新轮次取实时状态，不能等待旧首屏快照刷新后才开放重试。 */
   const latestTurn = useMemo(
     () =>
@@ -1141,7 +1146,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       const effect = scrollController.onExplicitLatestRequest();
       if (effect.type === 'scroll_to_bottom') positionLatest(container);
     }
-    // 首次显示沿用定位循环的完成条件，避免暴露行高测量期间的中间位置。
+    // 已恢复缓存的锚点或完成首次贴底，直接接管首帧，不再隐藏正文等待后续定位帧。
+    setHistoryPositioned(true);
     maintainLatestPosition();
     setReturnToLatestVisible(Boolean(restore));
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });

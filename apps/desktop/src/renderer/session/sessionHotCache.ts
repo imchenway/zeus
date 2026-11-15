@@ -53,8 +53,11 @@ export function rememberSessionHotState(cache: SessionHotCache, conversationId: 
   if (!state.snapshot || state.conversationId !== conversationId || state.snapshot.id !== conversationId) return false;
   const estimatedBytes = estimateSessionHotStateBytes(state);
   const entryByteLimit = options.entryByteLimit ?? sessionHotCacheEntryByteLimit;
-  cache.delete(conversationId);
-  if (!Number.isFinite(estimatedBytes) || estimatedBytes > entryByteLimit) return false;
+  if (!Number.isFinite(estimatedBytes) || estimatedBytes > entryByteLimit) {
+    cache.delete(conversationId);
+    return false;
+  }
+  // 后台刷新和延迟持久化不改变访问顺序；前台访问由 refreshSessionHotState 更新最近使用身份。
   cache.set(conversationId, { state, estimatedBytes, cachedAt: options.cachedAt ?? Date.now() });
 
   const ordinaryLimit = options.ordinaryLimit ?? ordinarySessionHotCacheLimit;
