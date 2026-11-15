@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -16,7 +16,7 @@ import {
   verifyReadOnlyValidationDescriptor,
   type ZeusDataLayout,
 } from '@zeus/local-server';
-import { type ReadOnlyValidationDescriptor, readOnlyValidationIdentity, type ReadOnlyValidationIdentity, sameReadOnlyValidationIdentity } from '@zeus/shared';
+import { type ReadOnlyValidationDescriptor, readOnlyValidationIdentity, type ReadOnlyValidationIdentity, redactUserFacingErrorDetails, sameReadOnlyValidationIdentity } from '@zeus/shared';
 import { startDesktopBrowserAutomationBridge } from './browserAutomationBridge.js';
 import { createExecutionHostStopActiveCommandRequest } from './executionHostStopCommand.js';
 import { createReadOnlyValidationCodexManager } from './readOnlyValidationCodexManager.js';
@@ -1093,6 +1093,24 @@ function sameExecutionHostLaunchIdentity(current: ExecutionHostRendezvous, expec
   );
 }
 
+/** 只读取本次启动的 stderr 尾部，并在进入界面错误详情前移除凭据、个人路径和堆栈。 */
+function executionHostChildExitError(descriptor: number, code: number | null, signal: NodeJS.Signals | null): Error {
+  const summary = `Zeus Core 在发布控制面前退出（code=${String(code)}, signal=${String(signal)}）。`;
+  try {
+    /** 启动诊断最多读取 16 KiB，避免异常输出阻塞 Main 或占用无界内存。 */
+    const maximumBytes = 16 * 1024;
+    const size = fstatSync(descriptor).size;
+    const bytes = Buffer.alloc(Math.min(size, maximumBytes));
+    const length = readSync(descriptor, bytes, 0, bytes.length, Math.max(0, size - maximumBytes));
+    const detail = redactUserFacingErrorDetails(bytes.toString('utf8', 0, length));
+    return new Error(detail ? `${summary}\n${detail}` : summary);
+  } catch {
+    // 诊断文件不可读时仍保留实际退出结果，不把日志错误替换为启动原因。
+    return new Error(summary);
+  }
+}
+
+/** 复用已核验的唯一 Core；新启动的失败原因经 Main 脱敏后返回现有错误详情。 */
 async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOptions): Promise<ExecutionHostConnection> {
   const dataLayout = assertReadOnlyValidationDesktopOptions(options) ?? options.dataLayout ?? createZeusDataLayout(options.userDataPath);
   const expectedValidationIdentity = options.readOnlyValidation ? readOnlyValidationIdentity(options.readOnlyValidation) : undefined;
@@ -1156,45 +1174,55 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     ...(options.readOnlyValidation ? {} : { CODEX_HOME: options.codexHome ?? dataLayout.codexHome }),
     ...(!options.readOnlyValidation && options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
   };
-  const child =
-    process.platform === 'win32'
-      ? spawnDetachedWindowsRuntime(process.execPath, [entryPath], { cwd: options.projectRoot, env: executionEnvironment, generation: requestedInstanceId })
-      : spawn(process.execPath, [entryPath], { detached: true, stdio: 'ignore', env: executionEnvironment });
-  let childFailure: Error | null = null;
-  child.once('error', (error) => {
-    childFailure = error;
-  });
-  child.once('exit', (code, signal) => {
-    childFailure ??= new Error(`Zeus Core 在发布控制面前退出（code=${String(code)}, signal=${String(signal)}）。`);
-    // 控制面发布后的退出也要留证，不能只有下一次心跳失败而没有退出身份。
-    void appendFile(join(dataLayout.executionHost, 'host.log'), `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'execution_host.process_exited', mainPid: process.pid, executionHostPid: child.pid, code, signal })}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    }).catch(() => undefined);
-  });
-  child.unref();
-  const launched = await waitForExecutionHostReady({
-    userDataPath: options.userDataPath,
-    initialOwnerPid: child.pid ?? null,
-    allowOwnerExit: false,
-    expectedDataRootIdentity: options.dataRootIdentity,
-    expectedValidationIdentity,
-    childFailure: () => childFailure,
-  });
-  if (launched) {
-    /** Windows spawn 返回 Job helper，清理授权绑定其仍持有的真实 Core，而非把 helper PID 当作 Core。 */
-    const owned = process.platform === 'win32' ? inspectWindowsRuntimeIdentity(requestedInstanceId, child.pid) : undefined;
-    const spawnedHostPid = process.platform === 'win32' ? (owned?.state === 'verified' ? (owned.childIdentity?.pid ?? null) : null) : (child.pid ?? null);
-    const cleanupCapability = createExecutionHostLaunchCleanupCapability({
-      userDataPath: options.userDataPath,
-      dataRootIdentity: options.dataRootIdentity,
-      requestedGenerationId: requestedInstanceId,
-      spawnedPid: spawnedHostPid,
-      rendezvous: launched,
+  // bootstrap 已验证宿主目录私有权限；每轮独占文件防止并发启动混入其他 Core 的报错。
+  // 继承文件句柄让 Core 在 Main 退出后继续运行，不把后台宿主绑定到 Main 的管道寿命。
+  const diagnosticPath = join(dataLayout.executionHost, `host-startup-${requestedInstanceId}.log`);
+  const diagnosticDescriptor = openSync(diagnosticPath, 'ax+', 0o600);
+  let diagnosticOpen = true;
+  try {
+    const child =
+      process.platform === 'win32'
+        ? spawnDetachedWindowsRuntime(process.execPath, [entryPath], { cwd: options.projectRoot, env: executionEnvironment, generation: requestedInstanceId, stderr: diagnosticDescriptor })
+        : spawn(process.execPath, [entryPath], { detached: true, stdio: ['ignore', 'ignore', diagnosticDescriptor], env: executionEnvironment });
+    let childFailure: Error | null = null;
+    child.once('error', (error) => {
+      childFailure = error;
     });
-    return cleanupCapability ? { rendezvous: launched, launchedByThisInvocation: true, cleanupCapability } : existingExecutionHostConnection(launched);
+    child.once('exit', (code, signal) => {
+      childFailure ??= diagnosticOpen ? executionHostChildExitError(diagnosticDescriptor, code, signal) : new Error(`Zeus Core 已退出（code=${String(code)}, signal=${String(signal)}）。`);
+      // 控制面发布后的退出也要留证，不能只有下一次心跳失败而没有退出身份。
+      void appendFile(join(dataLayout.executionHost, 'host.log'), `${JSON.stringify({ timestamp: new Date().toISOString(), event: 'execution_host.process_exited', mainPid: process.pid, executionHostPid: child.pid, code, signal })}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      }).catch(() => undefined);
+    });
+    child.unref();
+    const launched = await waitForExecutionHostReady({
+      userDataPath: options.userDataPath,
+      initialOwnerPid: child.pid ?? null,
+      allowOwnerExit: false,
+      expectedDataRootIdentity: options.dataRootIdentity,
+      expectedValidationIdentity,
+      childFailure: () => childFailure,
+    });
+    if (launched) {
+      /** Windows spawn 返回 Job helper，清理授权绑定其仍持有的真实 Core，而非把 helper PID 当作 Core。 */
+      const owned = process.platform === 'win32' ? inspectWindowsRuntimeIdentity(requestedInstanceId, child.pid) : undefined;
+      const spawnedHostPid = process.platform === 'win32' ? (owned?.state === 'verified' ? (owned.childIdentity?.pid ?? null) : null) : (child.pid ?? null);
+      const cleanupCapability = createExecutionHostLaunchCleanupCapability({
+        userDataPath: options.userDataPath,
+        dataRootIdentity: options.dataRootIdentity,
+        requestedGenerationId: requestedInstanceId,
+        spawnedPid: spawnedHostPid,
+        rendezvous: launched,
+      });
+      return cleanupCapability ? { rendezvous: launched, launchedByThisInvocation: true, cleanupCapability } : existingExecutionHostConnection(launched);
+    }
+    throw new Error('Zeus Core 未发布可连接控制面。');
+  } finally {
+    diagnosticOpen = false;
+    closeSync(diagnosticDescriptor);
   }
-  throw new Error('Zeus Core 未发布可连接控制面。');
 }
 
 /**

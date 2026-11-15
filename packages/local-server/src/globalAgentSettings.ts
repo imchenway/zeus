@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import type { GlobalAgentSettingsMetadata, GlobalAgentSettingsSnapshot, SaveGlobalAgentSettingsInput } from '@zeus/shared';
 import type { FastifyInstance } from 'fastify';
 import { SettingsCommandApplication, SettingsCommandApplicationError, SettingsExternalOperationRejectedError, settingsCommandHttpError, settingsCommandTypes } from './settingsCommandApplication.js';
+import { ensureGlobalAgentRules } from './taskAttachmentLifecycle.js';
 
 /** 正文限制为 1 MiB，请求预算另计 JSON 转义和命令封装。 */
 const maximumAgentsBytes = 1024 * 1024;
@@ -19,8 +20,11 @@ export class GlobalAgentSettings {
   /** 写入顺序，失败不会堵塞后续保存。 */
   private saveQueue: Promise<unknown> = Promise.resolve();
 
-  /** 目录规范化不产生文件系统写入。 */
-  constructor(directory: string) {
+  /** Codex Home 由服务端登记，Windows 保存规则时同步其普通文件投影。 */
+  constructor(
+    directory: string,
+    private readonly codexHome?: string,
+  ) {
     this.directory = resolve(directory);
     this.path = join(this.directory, 'AGENTS.md');
   }
@@ -71,6 +75,8 @@ export class GlobalAgentSettings {
   private async write(input: SaveGlobalAgentSettingsInput): Promise<GlobalAgentSettingsMetadata> {
     /** 临时文件与目标同目录，替换不会暴露半份正文。 */
     const temporaryPath = join(this.directory, `.AGENTS.md.${randomUUID()}.tmp`);
+    /** 真源发布后发生的投影错误不能再声称原文件未写入。 */
+    let sourcePublished = false;
     try {
       await this.checkRevision(input.baseRevision);
       await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -85,8 +91,13 @@ export class GlobalAgentSettings {
       // ponytail: 外部编辑器不共享队列；替换前再次核对，跨进程强互斥需共同文件锁协议。
       await this.checkRevision(input.baseRevision);
       await rename(temporaryPath, this.path);
+      sourcePublished = true;
+      if (process.platform === 'win32' && this.codexHome) {
+        ensureGlobalAgentRules({ agentRulesDirectory: this.directory, codexHome: this.codexHome, baseRevision: input.baseRevision });
+      }
       return { path: this.path, exists: true, revision: createHash('sha256').update(input.content, 'utf8').digest('hex') };
     } catch (error) {
+      if (sourcePublished) throw new Error('全局规则已保存，但 Codex 规则投影更新未完成；请重新读取规则后重试。', { cause: error });
       // 替换前失败证明目标未写入，不将安全重试误标为结果未知。
       throw new SettingsExternalOperationRejectedError(error instanceof Error ? error.message : 'AGENTS.md 保存失败，原文件未改动。');
     } finally {
@@ -124,6 +135,8 @@ export function registerGlobalAgentSettingsRoutes(options: {
   server: FastifyInstance;
   /** 全局规则真源目录；不可用时不回退到其他用户配置。 */
   agentRulesDirectory?: string;
+  /** Codex 读取全局规则的固定目录，不接收客户端路径。 */
+  codexHome?: string;
   /** 现有设置命令通道。 */
   commands: SettingsCommandApplication;
   /** 统一脱敏入口。 */
@@ -132,7 +145,7 @@ export function registerGlobalAgentSettingsRoutes(options: {
   recordSaved(metadata: GlobalAgentSettingsMetadata): void;
 }): void {
   /** 单个服务实例负责该目标的写入顺序。 */
-  const file = options.agentRulesDirectory ? new GlobalAgentSettings(options.agentRulesDirectory) : null;
+  const file = options.agentRulesDirectory ? new GlobalAgentSettings(options.agentRulesDirectory, options.codexHome) : null;
   options.server.get('/api/settings/agents', async (_request, reply) => {
     if (!file) return reply.code(503).send({ error: 'ZEUS_AGENTS_SETTINGS_UNAVAILABLE', message: '当前 Zeus 全局规则目录不可用。' });
     try {

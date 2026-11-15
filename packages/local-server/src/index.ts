@@ -1457,7 +1457,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       legacyPiAgentDirectory: piAgentDirectory,
     });
     if (globalAgentRules.conflictBackupPath) {
-      server.log.warn({ sourcePath: globalAgentRules.sourcePath, backupPath: globalAgentRules.conflictBackupPath }, 'Codex 侧 AGENTS.md 与全局规则真源内容不一致，已备份并收敛为指向真源的链接');
+      server.log.warn({ sourcePath: globalAgentRules.sourcePath, backupPath: globalAgentRules.conflictBackupPath }, 'Codex 侧 AGENTS.md 与全局规则真源内容不一致，已备份并更新规则投影');
     }
   }
   /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */

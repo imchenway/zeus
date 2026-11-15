@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative } from 'node:path';
 import { isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
 import { SettingRepository, type ZeusDatabase } from '@zeus/storage';
+import { publishFileSync } from '@zeus/storage/platform-security';
 
 export function migrateRuntimeDirectory(legacyPath: string, targetPath: string): string {
   if (!existsSync(targetPath) && existsSync(legacyPath)) {
@@ -23,8 +24,8 @@ export interface GlobalAgentRulesProvision {
   sourcePath: string;
   /** 是否从旧 Codex 目录一次性搬迁得到。 */
   migratedFromCodexHome: boolean;
-  /** Codex 侧投影链接的处理结果。 */
-  codexProjection: 'linked' | 'unchanged' | 'replaced_equal_file' | 'conflict_backed_up' | 'skipped';
+  /** Codex 侧规则投影的处理结果；Windows 普通文件不要求符号链接权限。 */
+  codexProjection: 'linked' | 'copied' | 'unchanged' | 'replaced_equal_file' | 'conflict_backed_up' | 'skipped';
   /** 内容冲突时保留的备份路径。 */
   conflictBackupPath: string | null;
   /** Pi 侧旧投影链接的处理结果；Pi 运行内核不再从该目录读取全局规则。 */
@@ -35,9 +36,15 @@ export interface GlobalAgentRulesProvision {
  * 保障全局规则真源存在，并把只读投影布置给按文件读取的运行内核。
  *
  * 真源唯一：Zeus 数据布局里的 agentRules 目录。Codex App Server 只认 CODEX_HOME/AGENTS.md，
- * 因此用符号链接投影；内容冲突时保留备份、绝不静默覆盖用户文本。重复启动无副作用。
+ * Windows 使用随保存更新的普通文件投影，其他平台使用相对符号链接；冲突内容先备份。
  */
-export function ensureGlobalAgentRules(input: { agentRulesDirectory: string; codexHome?: string; legacyPiAgentDirectory?: string }): GlobalAgentRulesProvision {
+export function ensureGlobalAgentRules(input: {
+  agentRulesDirectory: string;
+  codexHome?: string;
+  legacyPiAgentDirectory?: string;
+  /** 保存前真源摘要，用于识别可直接更新的旧投影；独立修改过的内容仍须备份。 */
+  baseRevision?: string | null;
+}): GlobalAgentRulesProvision {
   /** 真源目录由 Zeus 拥有，缺失时按 0o700 建立。 */
   mkdirSync(input.agentRulesDirectory, { recursive: true, mode: 0o700 });
   const sourcePath = join(input.agentRulesDirectory, globalAgentRulesFileName);
@@ -58,27 +65,30 @@ export function ensureGlobalAgentRules(input: { agentRulesDirectory: string; cod
   if (projectionPath) {
     const kind = nodeKind(projectionPath);
     if (kind === 'missing') {
-      linkProjection(projectionPath, sourcePath);
-      provision.codexProjection = 'linked';
+      provision.codexProjection = writeAgentRulesProjection(projectionPath, sourcePath);
     } else if (kind === 'symlink') {
       const expected = relative(dirname(projectionPath), sourcePath);
-      if (readlinkSync(projectionPath) === expected) provision.codexProjection = 'unchanged';
+      if (process.platform !== 'win32' && readlinkSync(projectionPath) === expected) provision.codexProjection = 'unchanged';
       else {
-        rmSync(projectionPath, { force: true });
-        linkProjection(projectionPath, sourcePath);
-        provision.codexProjection = 'linked';
+        provision.codexProjection = writeAgentRulesProjection(projectionPath, sourcePath, true);
       }
     } else if (kind === 'file' && existsSync(sourcePath)) {
-      if (readFileSync(projectionPath).equals(readFileSync(sourcePath))) {
-        /** 与真源一致的分叉文件直接收敛为链接，不产生备份。 */
-        rmSync(projectionPath, { force: true });
-        linkProjection(projectionPath, sourcePath);
-        provision.codexProjection = 'replaced_equal_file';
+      const projectedBytes = readFileSync(projectionPath);
+      if (projectedBytes.equals(readFileSync(sourcePath))) {
+        /** Windows 保留一致副本，其他平台将一致文件收敛为链接，不产生备份。 */
+        if (process.platform === 'win32') provision.codexProjection = 'unchanged';
+        else {
+          writeAgentRulesProjection(projectionPath, sourcePath, true);
+          provision.codexProjection = 'replaced_equal_file';
+        }
+      } else if (process.platform === 'win32' && input.baseRevision && createHash('sha256').update(projectedBytes).digest('hex') === input.baseRevision) {
+        // 此副本仍对应保存前真源，直接原子更新，不把正常规则修改误记为内容冲突。
+        provision.codexProjection = writeAgentRulesProjection(projectionPath, sourcePath, true);
       } else {
-        /** 内容不同：保留备份后收敛为链接，禁止静默丢弃用户文本。 */
+        /** 独立修改过的内容先备份，再更新投影，禁止静默丢弃用户文本。 */
         const backupPath = join(codexHome!, `${globalAgentRulesFileName}.pre-link-${timestampSuffix()}`);
         renameSync(projectionPath, backupPath);
-        linkProjection(projectionPath, sourcePath);
+        writeAgentRulesProjection(projectionPath, sourcePath);
         provision.codexProjection = 'conflict_backed_up';
         provision.conflictBackupPath = backupPath;
       }
@@ -94,9 +104,8 @@ export function ensureGlobalAgentRules(input: { agentRulesDirectory: string; cod
       const expected = relative(dirname(legacyPath), sourcePath);
       if (readlinkSync(legacyPath) === expected) provision.legacyPiProjection = 'already_current';
       else {
-        rmSync(legacyPath, { force: true });
-        linkProjection(legacyPath, sourcePath);
-        provision.legacyPiProjection = 'repointed';
+        const projection = writeAgentRulesProjection(legacyPath, sourcePath, true);
+        provision.legacyPiProjection = projection === 'skipped' ? 'left_untouched' : 'repointed';
       }
     } else if (kind === 'file' || kind === 'other') {
       provision.legacyPiProjection = 'left_untouched';
@@ -119,10 +128,25 @@ function migrateLegacyAgentRules(legacyPath: string, sourcePath: string): boolea
   return true;
 }
 
-/** 用相对目标建立投影链接，跟随数据目录整体移动时仍然有效。 */
-function linkProjection(projectionPath: string, sourcePath: string): void {
+/** Windows 原子发布普通文件投影；没有全局规则时不创建文件，也不申请符号链接权限。 */
+function writeAgentRulesProjection(projectionPath: string, sourcePath: string, replace = false): 'linked' | 'copied' | 'skipped' {
   mkdirSync(dirname(projectionPath), { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') {
+    if (!existsSync(sourcePath)) return 'skipped';
+    const temporaryPath = `${projectionPath}.${randomUUID()}.tmp`;
+    try {
+      copyFileSync(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
+      // 旧符号链接不能通过 Windows 安全发布门禁；只移除链接本身，不删除其指向的文件。
+      if (replace && nodeKind(projectionPath) === 'symlink') rmSync(projectionPath, { force: true });
+      publishFileSync(temporaryPath, projectionPath, { replace });
+    } finally {
+      rmSync(temporaryPath, { force: true });
+    }
+    return 'copied';
+  }
+  if (replace) rmSync(projectionPath, { force: true });
   symlinkSync(relative(dirname(projectionPath), sourcePath), projectionPath);
+  return 'linked';
 }
 
 /** 区分缺失、符号链接、普通文件与其他类型；断链仍然算符号链接。 */

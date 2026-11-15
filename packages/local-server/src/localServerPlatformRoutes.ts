@@ -4615,6 +4615,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerGlobalAgentSettingsRoutes({
     server,
     agentRulesDirectory: dataLayout.agentRules,
+    codexHome: options.codexHome ?? dataLayout.codexHome,
     commands: settingsCommands,
     redactSensitiveText,
     recordSaved: (metadata) => appendAuditLog({ actorType: 'local_api', action: 'settings.agents.updated', resourceType: 'settings', resourceId: 'agents', payload: { path: metadata.path, revision: metadata.revision } }),

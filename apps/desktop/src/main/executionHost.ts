@@ -534,6 +534,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 void runExecutionHost().catch(async (error: unknown) => {
+  // Main 在启动前已接管 stderr；bootstrap 校验失败时也能返回具体原因。
+  console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
   if (startupFailureContext) {
     await writeExecutionHostStartupStatus(startupFailureContext.userDataPath, {
       protocolVersion: executionHostProtocolVersion,

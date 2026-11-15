@@ -117,11 +117,11 @@ export function createWindowsNativeRuntimeSpawn(configuration: { helperPath?: st
   };
 }
 
-/** Execution Host 独立于桌面主进程存活，Job 仍由专属 helper 持有并可按 generation 恢复。 */
-export function spawnDetachedWindowsRuntime(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; generation: string }) {
+/** Core 的 Job 由独立 helper 持有，stderr 继承 Main 预先打开的私有文件句柄。 */
+export function spawnDetachedWindowsRuntime(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; generation: string; stderr: number }) {
   /** Bootstrap 已冻结本轮身份，控制通道使用相同 UUID。 */
   const environment = { ...options.env, ZEUS_WINDOWS_RUNTIME_REQUEST: JSON.stringify({ command, args, cwd: options.cwd, generation: options.generation, terminal: false, windowsVerbatimArguments: false }) };
-  return spawn(resolveWindowsRuntimeHelper(), ['serve'], { cwd: options.cwd, env: environment, stdio: 'ignore', detached: true, windowsHide: true });
+  return spawn(resolveWindowsRuntimeHelper(), ['serve'], { cwd: options.cwd, env: environment, stdio: ['ignore', 'ignore', options.stderr], detached: true, windowsHide: true });
 }
 
 /** 原生进程身份由命名管道的内核 server PID 与创建时间共同证明。 */
