@@ -321,8 +321,8 @@ importers:
   packages/shared:
     dependencies:
       markdown-it-ts:
-        specifier: 1.1.2
-        version: 1.1.2
+        specifier: 1.1.3
+        version: 1.1.3
 
   packages/storage:
     dependencies:
@@ -1541,6 +1541,9 @@ packages:
   '@smithy/core@3.35.0':
     resolution: {integrity: sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A==, tarball: https://registry.npmjs.org/@smithy/core/-/core-3.35.0.tgz}
     engines: {node: '>=18.0.0'}
+    deprecated: |-
+      Deprecated due to a bug in custom logger data redaction. Upgrade to the latest version. If you used a custom logger with this
+        version, review your logs and rotate any credentials or other secrets. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==, tarball: https://registry.npmjs.org/@smithy/credential-provider-imds/-/credential-provider-imds-4.5.2.tgz}
@@ -3285,8 +3288,8 @@ packages:
   markdown-it-task-checkbox@1.0.6:
     resolution: {integrity: sha512-7pxkHuvqTOu3iwVGmDPeYjQg+AIS9VQxzyLP9JCg9lBjgPAJXGEkChK6A2iFuj3tS0GV3HG2u5AMNhcQqwxpJw==, tarball: https://registry.npmjs.org/markdown-it-task-checkbox/-/markdown-it-task-checkbox-1.0.6.tgz}
 
-  markdown-it-ts@1.1.2:
-    resolution: {integrity: sha512-17qO3LQLK+JXom5Zt6Z9l7OGWWv9eYquTxdj3xIPGe1OBHdYXrzNYA3xCgCyIj1uItv4jkqbQf6FkaqifKkySw==, tarball: https://registry.npmjs.org/markdown-it-ts/-/markdown-it-ts-1.1.2.tgz}
+  markdown-it-ts@1.1.3:
+    resolution: {integrity: sha512-SbESZWanQt/SLspTRPnzi2mKXatM35KHjkIy9QF0w2LZX8Gxu/37n9jiYccolE2OaMf8ikc0BK7LcFSNY/1GHQ==, tarball: https://registry.npmjs.org/markdown-it-ts/-/markdown-it-ts-1.1.3.tgz}
     engines: {node: '>=20.19'}
 
   marked@16.4.2:
@@ -4312,7 +4315,7 @@ packages:
     resolution: {integrity: sha512-/eCGLb5rxjx5e3mF1A7s+pLlR6CGyqWN91fv1JgER5mVWg1MZmlhBvy9kjcsOdRk8RrIujotWyJamfyrp+WIcA==, tarball: https://registry.npmjs.org/xhr/-/xhr-2.6.0.tgz}
 
   xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:
-    resolution: {integrity: sha512-oLDq3jw7AcLqKWH2AhCpVTZl8mf6X2YReP+Neh0SJUzV/BdZYjth94tG5toiMB1PPrYtxOCfaoUCkvtuH+3AJA==, tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
+    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
     version: 0.20.3
     engines: {node: '>=0.8'}
     hasBin: true
@@ -7862,7 +7865,7 @@ snapshots:
 
   markdown-it-task-checkbox@1.0.6: {}
 
-  markdown-it-ts@1.1.2:
+  markdown-it-ts@1.1.3:
     dependencies:
       entities: 8.1.0
       linkify-it: 6.1.0
@@ -8514,7 +8517,7 @@ snapshots:
       markdown-it-mark: 4.0.0
       markdown-it-sup: 2.0.0
       markdown-it-task-checkbox: 1.0.6
-      markdown-it-ts: 1.1.2
+      markdown-it-ts: 1.1.3
 
   stream-shift@1.0.3: {}
 
