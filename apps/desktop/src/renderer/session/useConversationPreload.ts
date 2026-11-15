@@ -59,7 +59,10 @@ export function useConversationPreload(options: {
       const recency = new Map([...cache.keys()].map((id, index) => [id, index]));
       return [...new Map(latest.current.groups.flatMap((group) => [...(group.conversations ?? []), ...group.tasks.flatMap((task) => task.conversations)]).map((choice) => [choice.id, choice])).values()]
         .filter((choice) => choice.id !== latest.current.selectedConversationId && !choice.archived && choice.transportKind === 'codex_native')
-        .sort((left, right) => Number(right.hasUnreadAttention) - Number(left.hasUnreadAttention) || (recency.get(right.id) ?? -1) - (recency.get(left.id) ?? -1) || (right.activityAt ?? right.updatedAt).localeCompare(left.activityAt ?? left.updatedAt))
+        .sort(
+          (left, right) =>
+            Number(right.hasUnreadAttention) - Number(left.hasUnreadAttention) || (recency.get(right.id) ?? -1) - (recency.get(left.id) ?? -1) || (right.activityAt ?? right.updatedAt).localeCompare(left.activityAt ?? left.updatedAt),
+        )
         .slice(0, ordinarySessionHotCacheLimit - Number(Boolean(latest.current.selectedConversationId)));
     }
 

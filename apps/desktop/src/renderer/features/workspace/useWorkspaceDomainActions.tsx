@@ -1749,8 +1749,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     let sideQuestion: NativeConversationChoice | undefined;
     if (conversation.sourceConversationId && !conversation.archived) {
       /** 父会话即使未进入当前筛选结果，也按稳定身份读取，不能用标题猜测。 */
-      const source = state.nativeConversationChoices.find((choice) => choice.id === conversation.sourceConversationId && choice.projectId === conversation.projectId)
-        ?? await props.nativeConversationClient?.loadNativeConversationChoice(conversation.projectId, conversation.sourceConversationId);
+      const source =
+        state.nativeConversationChoices.find((choice) => choice.id === conversation.sourceConversationId && choice.projectId === conversation.projectId) ??
+        (await props.nativeConversationClient?.loadNativeConversationChoice(conversation.projectId, conversation.sourceConversationId));
       if (selectionRevision !== nativeConversationSelectionRevision.current) return;
       if (!source || source.id === conversation.id || source.projectId !== conversation.projectId || source.taskId !== conversation.taskId) throw new Error('侧边栏会话的来源无法读取。');
       /** 已归档的父会话不恢复交互侧栏，子会话仍可独立阅读。 */
@@ -1777,7 +1778,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const child = sideQuestion ?? state.nativeConversationChoices.find((choice) => choice.sourceConversationId === conversation.id && !choice.archived);
       if (child) restoreSideQuestionWorkspace({ ...conversation, navigationId }, child, Boolean(sideQuestion));
       /** 抽屉等待的身份与实际展示的主会话一致，避免子会话入口一直停留在加载态。 */
-      if (sideQuestion && navigation === 'preserve') setSessionDrawerTarget((current) => current?.conversationId === sideQuestion.id ? { ...current, conversationId: conversation.id, navigationId } : current);
+      if (sideQuestion && navigation === 'preserve') setSessionDrawerTarget((current) => (current?.conversationId === sideQuestion.id ? { ...current, conversationId: conversation.id, navigationId } : current));
       /** 查看无项目会话也只读取已存在的托管工作区，不创建替代项目。 */
       setSnapshot((current) => (current.projects.some((project) => project.id === targetProject.id) ? current : { ...current, projects: [...current.projects, targetProject] }));
       activeProjectIdRef.current = targetProject.id;

@@ -1729,7 +1729,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
     /** 保留正文与团队进展的共同外壳，跨项目切换不改变已有页面在树中的位置。 */
     const retainWorkspace = (content: ReactNode): ReactNode => (
-      <ConversationWorkspaceCache conversationId={selectedNativeConversation?.id} conversationKey={selectedNativeConversation?.transportKind === 'codex_native' ? `${selectedNativeConversation.projectId}:${selectedTaskModelPushOperation?.navigationId ?? selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : undefined}>
+      <ConversationWorkspaceCache
+        conversationId={selectedNativeConversation?.id}
+        conversationKey={
+          selectedNativeConversation?.transportKind === 'codex_native'
+            ? `${selectedNativeConversation.projectId}:${selectedTaskModelPushOperation?.navigationId ?? selectedNativeConversation.navigationId ?? selectedNativeConversation.id}`
+            : undefined
+        }
+      >
         {content}
       </ConversationWorkspaceCache>
     );
@@ -1764,7 +1771,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           }}
         />
         {workspace}
-      </div>
+      </div>,
     );
   }
 

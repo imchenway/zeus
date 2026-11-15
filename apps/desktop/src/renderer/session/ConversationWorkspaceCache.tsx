@@ -8,12 +8,19 @@ export const ConversationControllerRetentionContext = createContext<{ conversati
 /** 控制器的所有者位于 Activity 外部，隐藏只暂停界面副作用，淘汰才释放后台状态。 */
 function RetainedConversationView(props: { conversationId?: string; visible: boolean; children: ReactNode }) {
   /** 真实身份更换时释放旧控制器，稳定导航别名不混用其运行状态。 */
-  const owner = useMemo(() => props.conversationId ? { conversationId: props.conversationId, controllers: new Set<SessionController>() } : null, [props.conversationId]);
-  useEffect(() => () => {
-    for (const controller of owner?.controllers ?? []) controller.dispose();
-    owner?.controllers.clear();
-  }, [owner]);
-  return <ConversationControllerRetentionContext.Provider value={owner}><Activity mode={props.visible ? 'visible' : 'hidden'}>{props.children}</Activity></ConversationControllerRetentionContext.Provider>;
+  const owner = useMemo(() => (props.conversationId ? { conversationId: props.conversationId, controllers: new Set<SessionController>() } : null), [props.conversationId]);
+  useEffect(
+    () => () => {
+      for (const controller of owner?.controllers ?? []) controller.dispose();
+      owner?.controllers.clear();
+    },
+    [owner],
+  );
+  return (
+    <ConversationControllerRetentionContext.Provider value={owner}>
+      <Activity mode={props.visible ? 'visible' : 'hidden'}>{props.children}</Activity>
+    </ConversationControllerRetentionContext.Provider>
+  );
 }
 
 /** 保留最近会话的 DOM 和组件状态；隐藏页面的订阅与焦点副作用由 Activity 清理。 */
@@ -51,7 +58,9 @@ export function ConversationWorkspaceCache(props: {
         </RetainedConversationView>
       ))}
       {!props.conversationKey ? (
-        <Activity key="transient-conversation" mode="visible">{props.children}</Activity>
+        <Activity key="transient-conversation" mode="visible">
+          {props.children}
+        </Activity>
       ) : null}
     </>
   );

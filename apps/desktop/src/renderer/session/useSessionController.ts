@@ -4133,7 +4133,11 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
     /** 清理始终释放本次实际启动的实例，不会误关恢复后的连接。 */
     const controller = lifecycle.controller;
     if (retainedOwner) {
-      for (const prior of retainedOwner.controllers) if (prior !== controller) { prior.dispose(); retainedOwner.controllers.delete(prior); }
+      for (const prior of retainedOwner.controllers)
+        if (prior !== controller) {
+          prior.dispose();
+          retainedOwner.controllers.delete(prior);
+        }
       retainedOwner.controllers.add(controller);
       lifecycle.registered = true;
     }
@@ -4149,10 +4153,15 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
   const controller = lifecycle.controller;
   useEffect(() => {
     if (!retainedOwner || options.enabled === false) return;
-    if (!lifecycle.shown) { lifecycle.shown = true; return; }
+    if (!lifecycle.shown) {
+      lifecycle.shown = true;
+      return;
+    }
     /** 先显示已保留界面，跨过一次绘制后再核对断线期间的权威状态。 */
     let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => { void controller.reconnect().catch(() => undefined); });
+      frame = requestAnimationFrame(() => {
+        void controller.reconnect().catch(() => undefined);
+      });
     });
     return () => cancelAnimationFrame(frame);
   }, [controller, lifecycle, retainedOwner, options.enabled]);
