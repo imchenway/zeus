@@ -2346,7 +2346,12 @@ export function TaskTableLayoutDecisionDialog(props: { open: boolean; title: str
 }
 
 /** 单任务、整批任务和会话归档共用清理风险说明，并明确本次操作范围。 */
-export function TaskTerminalCleanupDialog(props: { confirmation: { statusLabel: string; /** 本批需要变更的任务数，单任务和会话归档不提供。 */ taskCount?: number; archiveConversation?: boolean } | null; language: AppLanguage; onCancel: () => void; onConfirm: () => void }) {
+export function TaskTerminalCleanupDialog(props: {
+  confirmation: { statusLabel: string; /** 本批需要变更的任务数，单任务和会话归档不提供。 */ taskCount?: number; archiveConversation?: boolean } | null;
+  language: AppLanguage;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   if (!props.confirmation) return null;
   const zh = props.language === 'zh-CN';
   /** 单会话归档不改变整个任务的状态或其他会话。 */

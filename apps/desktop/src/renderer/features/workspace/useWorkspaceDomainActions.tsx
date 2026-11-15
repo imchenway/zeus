@@ -2303,7 +2303,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 状态加载反馈覆盖排队、终态确认与保存刷新，并在所有退出路径释放。 */
-  async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string; /** 本次批量操作已经取得清理确认。 */ confirmWorktreeCleanup?: boolean } = {}): Promise<TaskEditResult | undefined> {
+  async function updateTaskManagementStatus(
+    taskId: string,
+    status: TaskManagementStatus,
+    options: { expectedUpdatedAt?: string; reopenConversationId?: string; /** 本次批量操作已经取得清理确认。 */ confirmWorktreeCleanup?: boolean } = {},
+  ): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
     // 前一次写入未结束时，改回原状态也必须排队，不能当作无变化丢弃。
     if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !options.reopenConversationId && !taskMutationQueuesRef.current.has(taskId))) return;
