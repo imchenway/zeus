@@ -175,6 +175,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     nativeConversationChoicesByTaskRef,
     nativeConversationChoices,
     nativeConversationRuntimeStates,
+    observeConversationPreload,
     nativeConversationStartEnvelopeManager,
     nativeLegacyMessages,
     nativeProjectConversationChoiceLoadCoordinator,
@@ -575,6 +576,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
         observeInputSuggestion(event);
+        observeConversationPreload(event);
         // 原生用户发送及旧运行时首条消息刷新完整统计；普通会话状态变化不进入此路径。
         if (props.nativeConversationClient && (event.type === 'conversation.submission.accepted' || event.type === 'runtime.session.created')) {
           void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-refresh', error));
@@ -758,6 +760,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props.onLoadTask,
     props.onSubscribeRealtimeEvents,
     observeInputSuggestion,
+    observeConversationPreload,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
     reloadProjects,

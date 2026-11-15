@@ -10,7 +10,7 @@ import { createNativeConversationStartEnvelopeManager, createProjectConversation
 import { conversationStartClientCommandTypes, forgetConversationStartCommandRequest } from '../conversations/conversationStartCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
-import { useCompletedConversationPreload } from '../../session/useCompletedConversationPreload.js';
+import { useConversationPreload } from '../../session/useConversationPreload.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
@@ -1235,12 +1235,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     },
     [scheduleNativeConversationViewCachePersistence],
   );
-  useCompletedConversationPreload({
+  /** 显示缓存由工作区持有，首屏写入和全局事件均可直接唤醒后台预取。 */
+  const observeConversationPreload = useConversationPreload({
     client: props.nativeConversationClient,
     groups: nativeConversationGroups,
     cache: nativeConversationHotCacheRef.current,
     selectedConversationId: selectedNativeConversation?.id,
-    foregroundReady: !selectedNativeConversation || Boolean(nativeConversationHotCacheRef.current.get(selectedNativeConversation.id)?.state.snapshot),
     onCached: persistPreloadedConversation,
   });
   useEffect(() => {
@@ -1259,7 +1259,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
       // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
       if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
+      /** 首屏缓存从缺失变为可用时直接唤醒后台，不依赖父组件恰好重绘。 */
+      const hadCachedSnapshot = Boolean(nativeConversationHotCacheRef.current.get(conversationId)?.state.snapshot);
       const remembered = refreshSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
+      if (remembered && !hadCachedSnapshot) observeConversationPreload();
       if (state.snapshot) setNativeConversationStartState((current) => (current?.conversationId === conversationId ? null : current));
       // 只有本次进程已经完成权威水合，才把显示缓存推进到磁盘；旧缓存刷新失败不能续期。
       if (remembered && state.transportState === 'ready') {
@@ -1278,7 +1281,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
             },
       );
     },
-    [scheduleNativeConversationViewCachePersistence],
+    [observeConversationPreload, scheduleNativeConversationViewCachePersistence],
   );
 
   useEffect(() => {
@@ -1546,6 +1549,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     nativeConversationChoicesByTaskRef,
     nativeConversationGroups,
     nativeConversationHotCacheRef,
+    observeConversationPreload,
     nativeConversationStartState,
     setNativeConversationStartState,
     nativeConversationRuntimeStates,

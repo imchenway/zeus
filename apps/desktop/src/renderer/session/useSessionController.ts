@@ -5,7 +5,7 @@ import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { mergeBrowserSubmissions, serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, durableUserMessageIdentity, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
 import {
@@ -52,7 +52,6 @@ import {
   type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
-import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
 import { handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -2479,7 +2478,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         // 命中旧缓存也立即接管最新正文与摘要，不等待队列、确认项和目标读取。
         onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
           if (disposed || token !== connectionToken || (state.snapshot && state.snapshot.throughEventSeq > readableSnapshot.throughEventSeq)) return;
-          if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
           await applyAuthoritativeSnapshot(readableSnapshot);
         },
         onGoal: (response) => {
@@ -2492,7 +2490,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const lazySnapshotHydration = options.realtimePolicy === 'lazy' && realtimeMode !== 'required';
       const subscribeRealtime = realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || recoverableSends.some((envelope) => envelope.deliveryState !== 'failed') || deferredSends.length > 0));
       if (!subscribeRealtime) {
-        if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         await applyAuthoritativeSnapshot(snapshot);
         if (disposed || token !== connectionToken) return;
         // 浏览历史只能读取持久事实；首次发送进入 required 水合后才允许恢复发送账本和实时副作用。
@@ -2524,7 +2521,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         throw hydrationOverflowError;
       }
       // Snapshot 已经权威且可独立阅读；实时连接只负责后续增量，不能继续遮住已取得的历史。
-      if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
       // 正文可能已在同一事件水位提前显示，完整快照仍须接管队列与交互状态。
       await applyAuthoritativeSnapshot(snapshot);
       if (disposed || token !== connectionToken || socket !== nextSocket) return;
@@ -2565,7 +2561,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
         socket = null;
         realtimeSubscribed = false;
         failedSocket?.close();
-        if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
         dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
       }
       if (shouldScheduleReconnect) scheduleReconnect(token);
@@ -4097,16 +4092,41 @@ export interface UseSessionControllerResult {
  * 组件边界通过 useSessionControllerSelector 订阅所需 slice。
  */
 export function useSessionControllerInstance(options: CreateSessionControllerOptions): SessionController {
-  const controller = useMemo(
-    () => createSessionController(options),
-    [options.client, options.projectId, options.conversationId, options.enabled, options.realtimePolicy, options.initialCachedState, options.initialOptimisticState, options.initialConversation, options.storage, options.createId],
+  /** 页面恢复时使用最新显示缓存，普通更新只改变初始输入，不重建活动控制器。 */
+  const latest = useRef(options);
+  latest.current = options;
+  /** 身份决定控制器边界；初始数据与读取策略在创建或恢复时采样，不重建活动控制器。 */
+  const lifecycle = useMemo(
+    () => ({ controller: createSessionController(options), disposed: false }),
+    [options.client, options.projectId, options.conversationId, options.enabled, options.storage, options.createId],
   );
-  useEffect(() => {
+  /** Activity 恢复后在绘制前交接新控制器，原有正文和输入 DOM 保持不变。 */
+  const [, refreshController] = useState(0);
+  useLayoutEffect(() => {
     // 尚未启动的控制器没有连接资源可释放；启用时会按新状态构造可工作的实例。
     if (options.enabled === false) return;
+    if (lifecycle.disposed) {
+      /** 隐藏前已加载的历史与本地显示身份不能丢失。 */
+      const retained = lifecycle.controller.getState();
+      /** 后台较新的事件水位优先，较旧缓存不能覆盖保留的正文。 */
+      const cached = latest.current.initialCachedState;
+      lifecycle.controller = createSessionController({
+        ...latest.current,
+        initialCachedState: cached?.snapshot && cached.snapshot.throughEventSeq >= (retained.snapshot?.throughEventSeq ?? 0) ? cached : retained,
+      });
+      lifecycle.disposed = false;
+      refreshController((revision) => revision + 1);
+    }
+    /** 清理始终释放本次实际启动的实例，不会误关恢复后的连接。 */
+    const controller = lifecycle.controller;
     void controller.start().catch(() => undefined);
-    return () => controller.dispose();
-  }, [controller, options.enabled]);
+    return () => {
+      lifecycle.disposed = true;
+      controller.dispose();
+    };
+  }, [lifecycle, options.enabled]);
+  /** 当前 render 使用已交接的控制器，选择器会重新订阅其持久状态。 */
+  const controller = lifecycle.controller;
   useEffect(() => {
     if (options.enabled === false) return;
     // 浏览器订阅属于可选宿主能力；桥接对象存在时也可能没有此接口。

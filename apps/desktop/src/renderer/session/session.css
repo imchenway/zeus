@@ -3088,35 +3088,6 @@
   }
 }
 
-/* 正文和侧边栏不参与会话快照，避免文字加载后再从过渡画面切回。 */
-:root:has(.session-workspace-root[data-session-transition]) {
-  view-transition-name: none;
-}
-/* 独立表面按前后真实尺寸过渡，卡片高度变化不再直接跳到终点。 */
-.session-workspace-root[data-session-transition] .session-thread-header {
-  view-transition-name: session-header;
-}
-.session-workspace-root[data-session-transition] .session-quick-actions-surface[data-presentation='persistent'] {
-  view-transition-name: session-environment;
-}
-::view-transition-group(session-header),
-::view-transition-group(session-environment) {
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.2, 0, 0.2, 1);
-}
-/* 原生快照只提供视觉接管，不遮挡侧边栏的下一次选择。 */
-:root:has(.session-workspace-root[data-session-transition])::view-transition {
-  pointer-events: none;
-}
-/* 卡片尺寸变化时裁切快照，不拉伸文字和图标。 */
-::view-transition-old(session-environment),
-::view-transition-new(session-environment) {
-  height: 100%;
-  object-fit: none;
-  object-position: top left;
-  width: 100%;
-}
-
 /* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
 .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'] {
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
@@ -3130,11 +3101,6 @@
 /* 首次定位完成后直接显示正文，缓存接管不再让整块文字从透明重播。 */
 .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
   opacity: 1;
-}
-
-/* 原生导航快照已呈现标题，不再叠加局部入场动画。 */
-.session-workspace-root .session-thread-header[data-native-arrival='true'] .session-thread-title-copy[data-conversation-transition='true'] {
-  animation: none;
 }
 
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
@@ -3245,19 +3211,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 系统设置在过渡期间变化时，也立即停止当前会话快照动画。 */
-  ::view-transition-group(session-workspace),
-  ::view-transition-group(session-header),
-  ::view-transition-group(session-environment),
-  ::view-transition-old(session-workspace),
-  ::view-transition-new(session-workspace),
-  ::view-transition-old(session-header),
-  ::view-transition-new(session-header),
-  ::view-transition-old(session-environment),
-  ::view-transition-new(session-environment) {
-    animation: none;
-  }
-
   .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
