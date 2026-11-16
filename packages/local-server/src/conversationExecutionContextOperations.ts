@@ -164,7 +164,8 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     return null;
   }
 
-  function resolveNativeConversationExecutionRoot(conversation: ZeusConversationRecord): string | null {
+  /** 明确恢复时可定位已回收的原环境；普通只读操作仍要求原仓库可读。 */
+  function resolveNativeConversationExecutionRoot(conversation: ZeusConversationRecord, restoreWorkspace = false): string | null {
     const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
       const context = parseJsonObject(submission.inputJson).context;
       return isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && Boolean(context.projectLocalPath.trim());
@@ -192,7 +193,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       /** 目录暂时不存在仍保留隔离身份，不能把排队快照冻结到项目主目录。 */
       const task = conversation.taskId ? tasks.getById(conversation.taskId) : undefined;
       if (!project || !task || !workspace || executionMode !== 'worktree') return null;
-      if (conversation.permissionMode === 'read-only') return resolveTaskReadOnlyWorkspacePath(project, task.id, workspace, environment);
+      if (conversation.permissionMode === 'read-only' && !restoreWorkspace) return resolveTaskReadOnlyWorkspacePath(project, task.id, workspace, environment);
       /** 和实际恢复采用同一原路径或确定性重建路径。 */
       const executionRoot = resolve(environment?.rootPath || (!environment ? workspace.worktreePath : null) || buildTaskEnvironmentRootPath(project.localPath, project.slug, task.taskCode, environment?.id ?? workspace.id));
       return executionRoot !== resolve(project.localPath) && isPathInsideRoot(executionRoot, join(dirname(resolve(project.localPath)), '.zeus-worktrees')) ? executionRoot : null;
@@ -242,25 +243,38 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         throw nativeApiError('ZEUS_TASK_REOPEN_REQUIRED', '请先重新打开任务并恢复这条已归档会话。');
       }
     }
-    // 只读核验先于开发环境恢复锁，不能借用其他会话的可写目录或改变交付状态。
-    if (lockConversation.permissionMode === 'read-only' && lockConversation.taskId && lockConversation.workspaceId && !taskConflictExecutionForConversation(lockConversation)) {
+    /** 只读任务仅在明确恢复时允许重建原环境，普通审查仍只读取原仓库。 */
+    const readOnlyTask =
+      lockConversation.permissionMode === 'read-only' && lockConversation.taskId && lockConversation.workspaceId && !taskConflictExecutionForConversation(lockConversation)
+        ? { taskId: lockConversation.taskId, workspaceId: lockConversation.workspaceId }
+        : null;
+    if (readOnlyTask) {
       /** 根据会话持久身份复验原仓库，不借用同任务的其他工作区。 */
       const project = projects.getById(lockConversation.projectId);
       /** 当前会话绑定的仓库记录。 */
-      const workspace = taskWorkspaces.getById(lockConversation.workspaceId);
+      const workspace = taskWorkspaces.getById(readOnlyTask.workspaceId);
       /** 旧会话可以从仓库记录补全环境身份。 */
       const environmentId = lockConversation.environmentId ?? workspace?.environmentId;
       /** 当前会话绑定的执行环境。 */
       const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
-      /** 可读目录必须存在，审查不执行开发环境恢复。 */
-      const cwd = project ? resolveTaskReadOnlyWorkspacePath(project, lockConversation.taskId, workspace, environment) : null;
-      if (!cwd) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '原任务工作目录已回收或不可用，无法进行只读审查。');
-      return { projectLocalPath: cwd, writableRoots: [], executionWorkspaceMode: 'worktree' };
+      /** 已有目录直接读取；明确恢复才可进入原环境的统一重建流程。 */
+      const cwd = project ? resolveTaskReadOnlyWorkspacePath(project, readOnlyTask.taskId, workspace, environment) : null;
+      if (cwd) return { projectLocalPath: cwd, writableRoots: [], executionWorkspaceMode: 'worktree' };
+      /** 缺少物理目录不免除项目、任务、仓库和环境的归属校验。 */
+      const restorable =
+        project &&
+        workspace &&
+        workspace.projectId === project.id &&
+        workspace.taskId === readOnlyTask.taskId &&
+        ['ready', 'merged', 'reclaimed'].includes(workspace.state) &&
+        (!environment || environment.id === workspace.environmentId) &&
+        (!workspace.environmentId || (environment && environment.projectId === project.id && environment.taskId === readOnlyTask.taskId && ['ready', 'reclaimed'].includes(environment.state)));
+      if (input.mode !== 'restore' || !restorable) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '原任务工作目录已回收或不可用，无法进行只读审查。');
     }
     const lockKey = `${lockConversation?.projectId ?? 'conversation'}:${lockConversation?.environmentId ?? lockConversation?.workspaceId ?? input.conversationId}`;
     const existing = taskConversationExecutionContextPromises.get(lockKey);
-    if (existing) return existing;
     const promise = (async () => {
+      if (existing) return existing;
       const conversation = conversations.getById(input.conversationId);
       if (!conversation) return null;
       // 归档是产品会话的继续边界；Provider 内部归档和任务状态不代替这个判断。
@@ -339,7 +353,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       const projectRoot = resolve(project.localPath);
       const worktreeContainerRoot = resolve(join(dirname(projectRoot), '.zeus-worktrees'));
       /** 与入队时冻结的路径一致，旧式单仓会话也优先沿用登记的工作区。 */
-      const environmentRoot = resolveNativeConversationExecutionRoot(conversation);
+      const environmentRoot = resolveNativeConversationExecutionRoot(conversation, input.mode === 'restore');
       if (!environmentRoot || environmentRoot === projectRoot || !isPathInsideRoot(environmentRoot, worktreeContainerRoot)) {
         throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', 'The recorded task workspace path is unsafe; Zeus will not use the project root as a fallback.');
       }
@@ -410,7 +424,10 @@ export function createConversationExecutionContextOperations(dependencies: Conve
 
       const updatedWorkspaces = db.transaction(() => {
         if (environment) taskEnvironments.update(environment.id, { rootPath: environmentRoot, state: 'ready', lastError: null });
-        return prepared.map(({ workspace, prepared: restored }) => taskWorkspaces.update(workspace.id, { worktreePath: restored.worktreePath, headSha: restored.headSha, state: 'ready', lastError: null }));
+        /** 恢复审查目录不撤销仓库已有的合入结果。 */
+        return prepared.map(({ workspace, prepared: restored }) =>
+          taskWorkspaces.update(workspace.id, { worktreePath: restored.worktreePath, headSha: restored.headSha, state: readOnlyTask && workspace.state === 'merged' ? 'merged' : 'ready', lastError: null }),
+        );
       });
       await db.save();
       recordTaskEvent({
@@ -432,7 +449,17 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     })();
     taskConversationExecutionContextPromises.set(lockKey, promise);
     try {
-      return await promise;
+      const context = await promise;
+      if (readOnlyTask) {
+        /** 共享环境准备完成后，按当前会话的精确仓库重新投影只读范围。 */
+        const project = projects.getById(lockConversation.projectId);
+        const workspace = taskWorkspaces.getById(readOnlyTask.workspaceId);
+        const environment = workspace?.environmentId ? taskEnvironments.getById(workspace.environmentId) : undefined;
+        const cwd = project ? resolveTaskReadOnlyWorkspacePath(project, readOnlyTask.taskId, workspace, environment) : null;
+        if (!cwd) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '原任务工作目录无法恢复，无法进行只读审查。');
+        return { projectLocalPath: cwd, writableRoots: [], executionWorkspaceMode: 'worktree' as const };
+      }
+      return context;
     } finally {
       if (taskConversationExecutionContextPromises.get(lockKey) === promise) taskConversationExecutionContextPromises.delete(lockKey);
     }
