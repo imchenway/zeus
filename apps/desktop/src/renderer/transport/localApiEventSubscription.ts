@@ -14,9 +14,23 @@ export function createLocalApiEventSubscription(input: { transport: LocalApiTran
     let connectionGeneration = 0;
     let reconnectAttempt = 0;
     let connectedOnce = false;
+    /** 主动退出期间不建立连接，退出中止后允许恢复订阅。 */
+    let quitting = false;
+
+    /** 使在途回调失效，并释放连接及全部连接计时器。 */
+    const closeConnection = (): void => {
+      connectionGeneration += 1;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (openTimer !== undefined) window.clearTimeout(openTimer);
+      retryTimer = undefined;
+      openTimer = undefined;
+      const currentSocket = socket;
+      socket = null;
+      currentSocket?.close();
+    };
 
     const scheduleReconnect = (): void => {
-      if (!active || retryTimer !== undefined) return;
+      if (!active || quitting || retryTimer !== undefined) return;
       onConnectionState(connectedOnce ? 'reconnecting' : 'connecting');
       const delay = (reconnectAttempt < 5 ? Math.min(250 * 2 ** reconnectAttempt, 4_000) : 30_000) * (0.8 + Math.random() * 0.4);
       reconnectAttempt += 1;
@@ -27,6 +41,7 @@ export function createLocalApiEventSubscription(input: { transport: LocalApiTran
     };
 
     const connect = async (refreshConfig: boolean): Promise<void> => {
+      if (!active || quitting) return;
       const generation = ++connectionGeneration;
       if (refreshConfig && input.refreshConnection) {
         try {
@@ -36,7 +51,7 @@ export function createLocalApiEventSubscription(input: { transport: LocalApiTran
           return;
         }
       }
-      if (!active || generation !== connectionGeneration) return;
+      if (!active || quitting || generation !== connectionGeneration) return;
       try {
         const nextSocket = input.transport.connectEvents<ZeusRealtimeEvent>((event) => {
           if (!active || generation !== connectionGeneration || socket !== nextSocket) return;
@@ -80,27 +95,37 @@ export function createLocalApiEventSubscription(input: { transport: LocalApiTran
 
     /** 网络或窗口恢复时提前结束退避，仅重新建立读取订阅。 */
     const restoreConnection = (): void => {
-      if (!active || retryTimer === undefined) return;
+      if (!active || quitting || retryTimer === undefined) return;
       window.clearTimeout(retryTimer);
       retryTimer = undefined;
       void connect(true);
     };
     window.addEventListener('online', restoreConnection);
     window.addEventListener('focus', restoreConnection);
-    onConnectionState('connecting');
-    void connect(false);
+    /** 桌面退出信号先关闭订阅，避免服务主动断开被识别为连接故障。 */
+    const unsubscribeQuitState = window.zeus?.onQuitStateChanged((state) => {
+      if (!active || quitting === state) return;
+      quitting = state;
+      closeConnection();
+      if (quitting) {
+        onConnectionState('quitting');
+        return;
+      }
+      reconnectAttempt = 0;
+      onConnectionState(connectedOnce ? 'reconnecting' : 'connecting');
+      void connect(true);
+    });
+    if (!quitting) {
+      onConnectionState('connecting');
+      void connect(false);
+    }
 
     return () => {
       active = false;
+      unsubscribeQuitState?.();
       window.removeEventListener('online', restoreConnection);
       window.removeEventListener('focus', restoreConnection);
-      connectionGeneration += 1;
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
-      if (openTimer !== undefined) window.clearTimeout(openTimer);
-      retryTimer = undefined;
-      const currentSocket = socket;
-      socket = null;
-      currentSocket?.close();
+      closeConnection();
     };
   };
 }

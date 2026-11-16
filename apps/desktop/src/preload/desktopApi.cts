@@ -16,6 +16,11 @@ export interface DesktopTransport {
 
 /** 为可信 Zeus 界面创建同一套桌面接口；每个界面上下文只初始化一次。 */
 export function createDesktopApi(transport: DesktopTransport) {
+  /** 缓存本窗口的退出状态，让稍后创建的订阅也能停止重连。 */
+  let quitting = false;
+  transport.subscribe<boolean>('zeus:quit-state-changed', (state) => {
+    quitting = state;
+  });
   /** 主进程命令已支持的授权范围。 */
   type MainCommandScopeKind = 'project' | 'product_conversation' | 'approval' | 'git_repository' | 'artifact' | 'settings' | 'execution_host';
 
@@ -332,6 +337,12 @@ export function createDesktopApi(transport: DesktopTransport) {
     },
     /** 读取当前请求窗口的前后台状态。 */
     getRequestingWindowForeground: () => transport.invoke('zeus:requesting-window-foreground'),
+    /** 订阅并立即提供退出状态，保留窗口后恢复为 false。 */
+    onQuitStateChanged: (listener: (quitting: boolean) => void) => {
+      const unsubscribe = transport.subscribe('zeus:quit-state-changed', listener);
+      listener(quitting);
+      return unsubscribe;
+    },
     /** 订阅当前请求窗口的前后台状态变化。 */
     onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => {
       const handler = (foreground: boolean) => listener(foreground);

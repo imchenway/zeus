@@ -47,4 +47,5 @@ export interface ZeusRealtimeEvent {
   createdAt: string;
 }
 
-export type ZeusRealtimeConnectionState = 'connecting' | 'connected' | 'reconnecting';
+/** quitting 表示主动退出，界面不再显示断线恢复提示。 */
+export type ZeusRealtimeConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'quitting';
