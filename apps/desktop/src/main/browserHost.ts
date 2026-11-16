@@ -33,6 +33,7 @@ import {
 import { googleWorkspaceExportRequest, sanitizeBrowserArtifactName } from './browserArtifactExport.js';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 import type { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
+import { BrowserPasswordStore, browserPasswordOrigin } from './browserPasswords.js';
 
 /** 仅保存长期设置与书签；标签、活动页和分组随本次应用运行结束。 */
 interface PersistedBrowserState {
@@ -43,6 +44,8 @@ interface PersistedBrowserState {
 }
 
 interface LiveBrowserTab {
+  /** 已填密码只用于清理工具返回和网页日志，关闭标签后释放。 */
+  passwordValues?: Set<string>;
   snapshot: ZeusBrowserTabSnapshot;
   view?: WebContentsView;
   ownerWindowId?: number;
@@ -138,6 +141,8 @@ interface ManagedBrowserAuditEntry {
 }
 
 interface CreateBrowserHostOptions {
+  /** 密码库由当前资料根与系统凭据身份共同隔离。 */
+  passwords: BrowserPasswordStore;
   /** 免费服务和已配置模型都通过本机 Core 请求，不把凭据交给网页。 */
   translation?: ReturnType<typeof createBrowserTranslationClient>;
   /** 内置浏览器的授权和登录窗口跟随应用语言。 */
@@ -272,6 +277,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   unregisterWindow(window: BrowserWindow): void {
+    this.options.passwords.cancel(window.id);
     this.windows.delete(window.id);
     const visibleTabId = this.visibleTabByWindow.get(window.id);
     if (visibleTabId) this.detachTab(visibleTabId);
@@ -506,6 +512,78 @@ export class BrowserHost implements BrowserAutomationPort {
       this.requireRendererWindow(event);
       return { ...this.settings };
     });
+    ipcMain.handle('zeus:browser:list-passwords', (event) => {
+      this.requireRendererWindow(event);
+      return this.options.passwords.list();
+    });
+    ipcMain.handle('zeus:browser:prepare-password-import', async (event) => {
+      const window = this.requireRendererWindow(event);
+      this.assertWritableBrowserCapability();
+      const picked = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'Chrome CSV', extensions: ['csv'] }] });
+      if (picked.canceled || !picked.filePaths[0] || window.isDestroyed()) return null;
+      const preview = await this.options.passwords.prepare(window.id, picked.filePaths[0]);
+      if (window.isDestroyed()) {
+        this.options.passwords.cancel(window.id);
+        return null;
+      }
+      return preview;
+    });
+    ipcMain.handle('zeus:browser:cancel-password-import', (event, token: unknown) => {
+      this.options.passwords.cancel(this.requireRendererWindow(event).id, requireNonEmptyString(token, 'token'));
+    });
+    ipcMain.handle('zeus:browser:commit-password-import', (event, request: MainCommandRequest) => {
+      const window = this.requireRendererWindow(event);
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.import_passwords', async (input, command) => {
+        this.assertWritableBrowserCapability();
+        const value = asRecord(input);
+        const choices = asRecord(value.choices);
+        if (Object.values(choices).some((row) => !Number.isSafeInteger(row) || Number(row) < 0)) throw new Error('密码导入选择无效。');
+        return this.options.passwords.commit(window.id, requireNonEmptyString(value.token, 'token'), choices as Record<string, number>, () => command.markWriteStarted());
+      });
+    });
+    ipcMain.handle('zeus:browser:delete-password', (event, request: MainCommandRequest) => {
+      this.requireRendererWindow(event);
+      return this.options.mainCommandLedger().execute(request, 'desktop.browser.delete_password', async (input, command) => {
+        this.assertWritableBrowserCapability();
+        await this.options.passwords.remove(requireNonEmptyString(asRecord(input).id, 'id'), () => command.markWriteStarted());
+        return { deleted: true };
+      });
+    });
+    /** 专属内容脚本使用单独的只读凭据接口，网页及模型工具没有此桥。 */
+    ipcMain.handle('zeus:browser-page:autofill-runtime', async (event, input: unknown) => {
+      const tab = this.requirePageTab(event);
+      this.assertWritableBrowserCapability();
+      if (!this.settings.enabled || event.senderFrame !== event.sender.mainFrame) throw new Error('自动填充请求不属于受信任的顶层文档。');
+      const origin = browserPasswordOrigin(event.sender.getURL());
+      const value = asRecord(input);
+      if (value.action === 'context') return { origin, generation: tab.documentGeneration, language: this.options.language?.() ?? 'zh-CN', tabId: event.sender.id };
+      const request = asRecord(value.request);
+      if (value.generation !== tab.documentGeneration || request.action !== 'credentials' || browserPasswordOrigin(requireNonEmptyString(request.url, 'url')) !== origin) throw new Error('自动填充请求的页面身份已变化。');
+      const generation = tab.documentGeneration;
+      const credentials = await this.options.passwords.credentials(origin);
+      if (event.sender.isDestroyed() || generation !== tab.documentGeneration || browserPasswordOrigin(event.sender.getURL()) !== origin) throw new Error('自动填充请求的页面身份已变化。');
+      return credentials.map((entry) => {
+        (tab.passwordValues ??= new Set()).add(entry.password);
+        return { uuid: entry.id, login: entry.username, password: entry.password, name: entry.username || entry.origin, group: '', stringFields: [], totp: '', expired: 'false', skipAutoSubmit: 'true' };
+      });
+    });
+    ipcMain.handle('zeus:browser-page:show-passwords', async (event, request: MainCommandRequest) => {
+      const tab = this.requirePageTab(event);
+      if (event.senderFrame !== event.sender.mainFrame) return;
+      const window = tab.ownerWindowId ? this.windows.get(tab.ownerWindowId) : undefined;
+      if (!window || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id || !this.settings.enabled) return;
+      if (asRecord(request?.body).generation !== tab.documentGeneration) return;
+      try {
+        if (!(await this.options.passwords.list(browserPasswordOrigin(event.sender.getURL()))).length) return;
+        await this.options.mainCommandLedger().execute(request, 'desktop.browser.autofill', async (_input, command) => {
+          if (asRecord(_input).generation !== tab.documentGeneration) return { completed: false };
+          await this.showPasswordMenu(window, tab, true, () => command.markWriteStarted());
+          return { completed: true };
+        });
+      } catch (error) {
+        this.emitError(tab, error);
+      }
+    });
     ipcMain.handle('zeus:browser:update-settings', async (event, request: MainCommandRequest) => {
       this.requireRendererWindow(event);
       return this.options.mainCommandLedger().execute(request, 'desktop.browser.update_settings', async (input, command) => {
@@ -638,6 +716,22 @@ export class BrowserHost implements BrowserAutomationPort {
     contentItems: BrowserAutomationContentItem[];
     success: boolean;
   }> {
+    try {
+      const result = await this.invokeAutomation(input);
+      return { ...result, contentItems: result.contentItems.map((item) => (item.type === 'inputText' ? { ...item, text: this.redactPasswordText(item.text) } : item)) };
+    } catch (error) {
+      const message = this.redactPasswordText(error instanceof Error ? error.message : String(error), true);
+      if (error instanceof Error && message === error.message) throw error;
+      const detail = error as { code?: string; statusCode?: number; failClosed?: boolean } | null;
+      throw Object.assign(new Error(message), { code: detail?.code, statusCode: detail?.statusCode, failClosed: detail?.failClosed });
+    }
+  }
+
+  /** 所有自动化入口共用返回脱敏，不增加读取已保存密码的模型工具。 */
+  private async invokeAutomation(input: BrowserAutomationToolCall): Promise<{
+    contentItems: BrowserAutomationContentItem[];
+    success: boolean;
+  }> {
     if (input.namespace && input.namespace !== 'zeus_browser') return toolText(`Unsupported automation namespace for BrowserHost: ${input.namespace}`, false);
     if (!this.settings.enabled) return toolText('The Zeus built-in browser is disabled in Settings.', false);
     const args = input.arguments;
@@ -737,6 +831,7 @@ export class BrowserHost implements BrowserAutomationPort {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.options.passwords.dispose();
     if (this.persistenceTimer) clearTimeout(this.persistenceTimer);
     for (const pending of this.pendingApprovals.values()) {
       clearTimeout(pending.timer);
@@ -1061,7 +1156,7 @@ export class BrowserHost implements BrowserAutomationPort {
       }
     });
     view.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-      tab.consoleLogs.push({ level, message: String(message).slice(0, 20_000), line, sourceId: String(sourceId).slice(0, 4_000), createdAt: this.now() });
+      tab.consoleLogs.push({ level, message: this.redactPasswordText(String(message), true).slice(0, 20_000), line, sourceId: this.redactPasswordText(String(sourceId), true).slice(0, 4_000), createdAt: this.now() });
       if (tab.consoleLogs.length > 500) tab.consoleLogs.splice(0, tab.consoleLogs.length - 500);
     });
     view.webContents.on('page-favicon-updated', (_event, favicons) => {
@@ -1103,6 +1198,73 @@ export class BrowserHost implements BrowserAutomationPort {
     return view;
   }
 
+  /** 原生账号菜单覆盖网页，列表及密码都不交给网页脚本。 */
+  private async showPasswordMenu(window: BrowserWindow, tab: LiveBrowserTab, quiet = false, beforeFill?: () => Promise<void>): Promise<void> {
+    this.assertWritableBrowserCapability();
+    const contents = this.ensureView(tab).webContents;
+    let origin: string;
+    try {
+      origin = browserPasswordOrigin(contents.getURL());
+    } catch {
+      if (quiet) return;
+      throw new Error(this.text('当前页面不支持密码填充。', 'Password filling is unavailable on this page.'));
+    }
+    const generation = tab.documentGeneration;
+    const accounts = await this.options.passwords.list(origin);
+    if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    if (!accounts.length && quiet) return;
+    if (accounts.length) {
+      const detected = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `globalThis.zeusAutofill?.probe(${JSON.stringify(origin)}) ?? false` }]);
+      if (!detected) {
+        if (quiet) return;
+        throw new Error(this.text('自动填充尚未就绪，或页面没有可填充的登录框。', 'Autofill is not ready, or no supported sign-in field was found.'));
+      }
+      if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    }
+    const selected = await new Promise<string | null>((resolveSelection) => {
+      const menu = new Menu();
+      for (const account of accounts) menu.append(new MenuItem({ label: (account.username || this.text('无用户名', 'No username')).replace(/&/gu, '&&').slice(0, 240), click: () => resolveSelection(account.id) }));
+      if (!accounts.length) menu.append(new MenuItem({ label: this.text('此站点没有已保存的密码', 'No saved passwords for this site'), enabled: false }));
+      menu.popup({ window, callback: () => resolveSelection(null) });
+    });
+    if (!selected) return;
+    if (contents.isDestroyed() || tab.documentGeneration !== generation || browserPasswordOrigin(contents.getURL()) !== origin || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    await beforeFill?.();
+    if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    let status: unknown;
+    try {
+      status = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `globalThis.zeusAutofill?.fill(${JSON.stringify(origin)},${JSON.stringify(selected)}) ?? 'unavailable'` }], true);
+    } catch {
+      throw new Error(this.text('密码填充失败，请重新聚焦登录框后重试。', 'Password filling failed. Focus the sign-in field and try again.'));
+    }
+    if (status === 'filled') return;
+    if (status === 'unavailable') throw new Error(this.text('自动填充组件尚未就绪，请在页面加载后重试。', 'Autofill is not ready. Try again after the page loads.'));
+    if (status === 'page_changed') throw new Error(this.text('页面已变化，请重新选择账号。', 'The page changed. Select an account again.'));
+    if (status === 'account_missing') throw new Error(this.text('该账号已删除，请重新选择。', 'This account was deleted. Select an account again.'));
+    throw new Error(
+      status === 'multiple_forms' ? this.text('页面有多个登录表单，请先点击要填充的登录框。', 'Focus the sign-in field in the form you want to fill.') : this.text('未找到可填充的登录框。', 'No supported sign-in field was found.'),
+    );
+  }
+
+  /** 已填密码从所有浏览器工具文字结果及网页控制台中移除。 */
+  private redactPasswordText(text: string, includeShortFragments = false): string {
+    const values = [...new Set([...this.tabs.values()].flatMap((tab) => [...(tab.passwordValues ?? [])]))];
+    if (!values.length) return text;
+    /** 先解析 JSON 再替换字符串，避免破坏数字、布尔值或转义字符。 */
+    const scrub = (value: unknown): unknown => {
+      /** 短密码只替换完整工具值，避免把 e1 等定位引用改坏；日志可过滤短片段。 */
+      if (typeof value === 'string') return values.reduce((result, password) => (result === password || password.length >= 4 || includeShortFragments ? result.split(password).join('[redacted]') : result), value);
+      if (Array.isArray(value)) return value.map(scrub);
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, scrub(nested)]));
+      return value;
+    };
+    try {
+      return JSON.stringify(scrub(JSON.parse(text)));
+    } catch {
+      return scrub(text) as string;
+    }
+  }
+
   private async runManualCommand(window: BrowserWindow, conversationId: string, tabId: string, command: ZeusBrowserCommand): Promise<void> {
     if (!this.settings.enabled) throw new Error('The built-in browser is disabled in Settings.');
     const tab = this.requireConversationTab(conversationId, tabId);
@@ -1111,6 +1273,9 @@ export class BrowserHost implements BrowserAutomationPort {
     const view = this.ensureView(tab);
     if (!command || typeof command !== 'object' || typeof command.action !== 'string') throw new TypeError('Browser command is invalid.');
     switch (command.action) {
+      case 'autofill':
+        await this.showPasswordMenu(window, tab);
+        break;
       case 'navigate':
         await loadUserFacingBrowserUrl(view.webContents, normalizeBrowserUrl(command.url));
         break;
@@ -1488,7 +1653,7 @@ export class BrowserHost implements BrowserAutomationPort {
       type: 'error',
       conversationId: tab.snapshot.conversationId,
       tabId: tab.snapshot.id,
-      message: error instanceof Error ? error.message : String(error),
+      message: this.redactPasswordText(error instanceof Error ? error.message : String(error), true),
     });
   }
 
@@ -2721,6 +2886,10 @@ export class BrowserHost implements BrowserAutomationPort {
     if (secure.status !== 'submitted') return toolJson({ status: secure.status, ...(secure.selectedOption ? { selected_option: secure.selectedOption } : {}) });
     if (tab.documentGeneration !== generation || safeOrigin(tab.snapshot.url) !== requestedOrigin) return toolJson({ status: 'page_changed' });
     try {
+      for (const field of fields) {
+        const value = typeof field.id === 'string' ? secure.values[field.id] : undefined;
+        if (secureHtmlInputType(field.type) === 'password' && value) (tab.passwordValues ??= new Set()).add(value);
+      }
       if (secure.selectedOption) {
         const selected = options.find((option) => option.id === secure.selectedOption);
         const selector = this.browserAuthSelector(input, selected?.selector);

@@ -612,6 +612,16 @@ export function createDesktopApi(transport: DesktopTransport) {
     },
     /** 读取内置浏览器设置。 */
     getBrowserSettings: () => transport.invoke('zeus:browser:get-settings'),
+    /** 读取账号元数据，密码不进入 Renderer。 */
+    listBrowserPasswords: () => transport.invoke('zeus:browser:list-passwords'),
+    /** 主进程打开原生选择器并保留 CSV 明文候选。 */
+    prepareBrowserPasswordImport: () => transport.invoke('zeus:browser:prepare-password-import'),
+    /** 取消尚未提交的导入。 */
+    cancelBrowserPasswordImport: (token: string) => transport.invoke('zeus:browser:cancel-password-import', token),
+    /** 账本只记录导入身份与来源行选择，不记录密码。 */
+    commitBrowserPasswordImport: (input: unknown) => invokeMainCommand('zeus:browser:commit-password-import', 'desktop.browser.import_passwords', 'settings', 'browser-passwords', input),
+    /** 删除指定账号密码。 */
+    deleteBrowserPassword: (id: string) => invokeMainCommand('zeus:browser:delete-password', 'desktop.browser.delete_password', 'settings', 'browser-passwords', { id }),
     /** 通过命令账本保存内置浏览器设置。 */
     updateBrowserSettings: (input: unknown) => invokeMainCommand('zeus:browser:update-settings', 'desktop.browser.update_settings', 'settings', 'browser-settings', input),
     /** 通过命令入口清理内置浏览器数据。 */

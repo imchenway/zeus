@@ -17,6 +17,7 @@ import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/c
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TranslateIcon as Translate } from '@phosphor-icons/react/dist/csr/Translate';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { KeyIcon as Key } from '@phosphor-icons/react/dist/csr/Key';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { modelSetupRequestedEvent, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
@@ -623,6 +624,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
             />
           </form>
           <span className="browser-navigation-trailing">
+            <button
+              type="button"
+              className="browser-more-trigger"
+              aria-label={props.language === 'zh-CN' ? '填充已保存的密码' : 'Fill saved password'}
+              data-icon-tooltip={props.language === 'zh-CN' ? '填充已保存的密码' : 'Fill saved password'}
+              aria-haspopup="menu"
+              disabled={activeTab.loading || activeTab.crashed || !/^https?:/u.test(activeTab.url)}
+              onClick={() => void command({ action: 'autofill' })}
+            >
+              <Key aria-hidden="true" />
+            </button>
             <button
               type="button"
               className="browser-more-trigger browser-translate-trigger"
