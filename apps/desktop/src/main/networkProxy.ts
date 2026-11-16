@@ -78,7 +78,13 @@ async function checkNodeConnection(settings: NetworkProxySettings, target: URL):
       const request = transport.request(target, { method: 'HEAD', agent, signal: AbortSignal.timeout(networkRequestTimeoutMs) }, (response) => {
         /** 转发器的建连失败不能算目标可达，407 单独标记代理认证问题。 */
         const latencyMs = elapsedMilliseconds(startedAt);
-        resolve(response.headers[networkProxyFailureHeader] === 'connection' ? { error: 'connection', latencyMs } : response.statusCode === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.statusCode, latencyMs });
+        resolve(
+          response.headers[networkProxyFailureHeader] === 'connection'
+            ? { error: 'connection', latencyMs }
+            : response.statusCode === 407
+              ? { error: 'authentication', statusCode: 407, latencyMs }
+              : { statusCode: response.statusCode, latencyMs },
+        );
         response.destroy();
       });
       request.once('error', (error) => resolve(connectionError(error, startedAt)));

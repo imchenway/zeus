@@ -418,11 +418,7 @@ export function NetworkProxySettingsFields(props: {
             </NativeControlRow>
           </>
         ) : draft.mode === 'default' ? (
-          <p className="settings-field-note">
-            {zh
-              ? '浏览器、模型与后台请求统一跟随系统代理。'
-              : 'Browser, model, and background requests use the system proxy.'}
-          </p>
+          <p className="settings-field-note">{zh ? '浏览器、模型与后台请求统一跟随系统代理。' : 'Browser, model, and background requests use the system proxy.'}</p>
         ) : null}
         {error ? (
           <p id={`${id}-error`} className="settings-field-error" role="alert">
