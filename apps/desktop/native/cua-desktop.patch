@@ -1226,8 +1226,8 @@ index 682a6ff..9259b1d 100644
          pid as i32
      };
  
-+    // 用户主动接管受控应用后，尊重实体操作的焦点选择。
-+    if crate::input::user_guard::user_has_control(activated_pid) {
++    // 用户主动操作受控应用时，尊重实体操作的焦点选择。
++    if crate::input::user_guard::user_selected_focus(activated_pid) {
 +        return;
 +    }
      let restore_pids = dispatcher.snapshot_matches(activated_pid);
@@ -1569,18 +1569,16 @@ diff --git a/crates/platform-macos/src/input/user_guard.rs b/crates/platform-mac
 new file mode 100644
 --- /dev/null
 +++ b/crates/platform-macos/src/input/user_guard.rs
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,385 @@
 +//! Zeus 私有 worker 的只读用户输入监听及协作取消，不生成全局输入。
 +
 +use std::collections::{HashMap, HashSet};
 +use std::ffi::c_void;
-+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 +use std::sync::{Mutex, OnceLock};
 +
-+/// 自身合成事件的标记，避免将后台输入误认成用户接管。
++/// 自身合成事件的标记，避免将后台输入误认成用户实体输入。
 +pub const VIRTUAL_EVENT_COOKIE: i64 = 0x5a455553435541;
-+/// 用户操作受控应用后的明确暂停原因。
-+const USER_CONTROL: &str = "ZEUS_COMPUTER_USER_CONTROL";
 +/// 屏幕布局变化后必须重新观察的原因。
 +const DISPLAY_CHANGED: &str = "ZEUS_COMPUTER_DISPLAY_CHANGED";
 +/// 用户通过系统共享入口明确停止时的暂停原因。
@@ -1594,18 +1592,20 @@ new file mode 100644
 +struct Pause {
 +    /// 宿主识别的固定错误码。
 +    reason: &'static str,
-+    /// 当前故障的原始诊断或用户接管说明。
++    /// 当前共享或捕获故障的原始诊断。
 +    detail: String,
 +}
 +/// 本轮原生调用的取消信号，仅在下一次私有请求开始时重置。
 +static CANCELLED: AtomicBool = AtomicBool::new(false);
++/// 本次原生请求期间用户操作的应用，只用于尊重焦点选择，不暂停控制。
++static USER_INPUT_PID: AtomicI32 = AtomicI32::new(0);
 +/// 原生输入监听是否实际建立且具有辅助功能授权。
 +static MONITOR_READY: AtomicBool = AtomicBool::new(false);
 +/// 只统计其他应用的实体键盘事件数量，验收并行输入时不读取任何文本。
 +static OTHER_KEYBOARD_EVENTS: AtomicU64 = AtomicU64::new(0);
 +/// 生命周期会话与其成功观察的精确窗口。
 +static WINDOWS: OnceLock<Mutex<HashMap<String, HashSet<(i32, u32)>>>> = OnceLock::new();
-+/// 用户让权和屏幕失效按应用记录，保护同一应用共享的菜单及键盘焦点。
++/// 系统共享、权限和屏幕失效按应用记录。
 +static PAUSED: OnceLock<Mutex<HashMap<i32, Pause>>> = OnceLock::new();
 +/// 实体拖动的起始应用，穿过其他窗口时不会改认输入归属。
 +static USER_DRAG: Mutex<Option<i32>> = Mutex::new(None);
@@ -1673,9 +1673,10 @@ new file mode 100644
 +/// 每个串行私有请求开始时建立新的取消边界。
 +pub fn begin_operation() {
 +    CANCELLED.store(false, Ordering::Release);
++    USER_INPUT_PID.store(0, Ordering::Release);
 +}
 +
-+/// 新观察可解除捕获故障和显示器失效，不能解除用户接管或主动停止。
++/// 新观察可解除捕获故障和显示器失效，不能解除主动停止或权限不足。
 +pub fn observe_window(session: &str, pid: i32, window_id: u32) -> anyhow::Result<()> {
 +    windows()
 +        .lock()
@@ -1719,10 +1720,7 @@ new file mode 100644
 +        if sessions.is_empty()
 +            || reasons.get(&pid).is_some_and(|pause| {
 +                pause.reason == reason
-+                    || matches!(
-+                        pause.reason,
-+                        USER_CONTROL | SHARING_STOPPED | PERMISSION_REQUIRED
-+                    )
++                    || matches!(pause.reason, SHARING_STOPPED | PERMISSION_REQUIRED)
 +            })
 +        {
 +            return;
@@ -1755,7 +1753,7 @@ new file mode 100644
 +    }
 +}
 +
-+/// 正常关闭只移除该窗口，不解除已有用户接管或系统停止状态。
++/// 正常关闭只移除该窗口，不解除已有系统停止状态。
 +pub fn forget_closed_window(pid: i32, window_id: u32) {
 +    let mut records = windows().lock().unwrap();
 +    for entries in records.values_mut() {
@@ -1789,16 +1787,13 @@ new file mode 100644
 +    serde_json::json!({ "monitoring": MONITOR_READY.load(Ordering::Acquire), "events_ready": event_token().is_some(), "paused": pause.is_some(), "reason": pause.map(|pause| pause.reason), "detail": pause.map(|pause| pause.detail.as_str()), "other_keyboard_events": OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire) })
 +}
 +
-+/// 输入前检查取消和用户优先；既有按键、按钮的抬起不经过本闸门。
++/// 输入前检查取消和共享状态；既有按键、按钮的抬起不经过本闸门。
 +pub fn check_pid(pid: i32) -> anyhow::Result<()> {
 +    if CANCELLED.load(Ordering::Acquire) {
 +        anyhow::bail!("ZEUS_COMPUTER_STOPPED: 当前后台动作已取消，结果需要重新观察。");
 +    }
 +    if let Some(pause) = paused().lock().unwrap().get(&pid) {
 +        anyhow::bail!("{}: {}", pause.reason, pause.detail);
-+    }
-+    if !MONITOR_READY.load(Ordering::Acquire) {
-+        anyhow::bail!("ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE: 用户操作监听不可用，未投递后台输入，请检查辅助功能授权。");
 +    }
 +    Ok(())
 +}
@@ -1901,24 +1896,19 @@ new file mode 100644
 +        _ => None,
 +    };
 +    if let Some(pid) = pid {
++        USER_INPUT_PID.store(pid, Ordering::Release);
 +        let controlled = windows()
 +            .lock()
 +            .unwrap()
 +            .values()
 +            .any(|entries| entries.iter().any(|(target, _)| *target == pid));
-+        if controlled {
-+            pause_application(
-+                pid,
-+                USER_CONTROL,
-+                "用户已接管应用；收到新指令后调用 get_window_state 重新观察。",
-+            );
-+        } else if matches!(kind, 10 | 11 | 12) {
++        if !controlled && matches!(kind, 10 | 11 | 12) {
 +            OTHER_KEYBOARD_EVENTS.fetch_add(1, Ordering::AcqRel);
 +        }
 +    }
 +}
 +
-+/// 在 AppKit 主线程安装只读全局监听；普通鼠标移动不触发暂停。
++/// 在 AppKit 主线程安装只读全局监听，仅记录焦点选择和无内容的键盘计数。
 +pub unsafe fn install_monitor() {
 +    use objc2::runtime::AnyObject;
 +    use objc2::{class, msg_send};
@@ -1951,11 +1941,12 @@ new file mode 100644
 +}
 +
 +/// 用户主动进入应用时，禁止焦点保护把用户切回之前的应用。
-+pub fn user_has_control(pid: i32) -> bool {
-+    matches!(
-+        paused().lock().unwrap().get(&pid).map(|pause| pause.reason),
-+        Some(USER_CONTROL | SHARING_STOPPED | PERMISSION_REQUIRED)
-+    )
++pub fn user_selected_focus(pid: i32) -> bool {
++    USER_INPUT_PID.load(Ordering::Acquire) == pid
++        || matches!(
++            paused().lock().unwrap().get(&pid).map(|pause| pause.reason),
++            Some(SHARING_STOPPED | PERMISSION_REQUIRED)
++        )
 +}
 +
 +/// 只读原生等待允许被取消，不等待原谓词窗口超时。

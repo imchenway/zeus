@@ -213,13 +213,13 @@ diff --git a/crates/platform-windows/src/zeus_background.rs b/crates/platform-wi
 new file mode 100644
 --- /dev/null
 +++ b/crates/platform-windows/src/zeus_background.rs
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,109 @@
 +//! Zeus 私有 Windows worker 的后台输入边界；不产生实体输入，也不恢复或抢占用户焦点。
-+use serde_json::{json, Value};
-+use std::{collections::HashMap, sync::{atomic::{AtomicBool, Ordering}, mpsc::{sync_channel, SyncSender}, Mutex, OnceLock}, time::{Duration, Instant}};
-+use windows::Win32::{Foundation::{CloseHandle, FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM}, System::{LibraryLoader::GetModuleHandleW, Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION}}, UI::{WindowsAndMessaging::*}};
++use serde_json::Value;
++use std::{collections::HashMap, sync::{Mutex, OnceLock}};
++use windows::Win32::{Foundation::{CloseHandle, FILETIME, HWND}, System::{Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION}}, UI::{WindowsAndMessaging::*}};
 +
-+/// 每个窗口只保存观察身份和暂停状态，不保存任何键盘内容。
++/// 每个窗口只保存已观察的目标身份。
 +struct Observation {
 +    /// 此次绑定的私有会话句柄。
 +    session: String,
@@ -227,18 +227,9 @@ new file mode 100644
 +    pid: u32,
 +    /// 来自真实进程句柄的出生时间，避免 PID 与 HWND 复用。
 +    birth: u64,
-+    /// 用户接管后必须由新会话重新观察。
-+    paused: bool,
 +}
-+/// 窗口记录由输入监听线程和工具执行线程共同访问。
++/// 窗口记录由原生工具执行线程共同访问。
 +static OBSERVATIONS: OnceLock<Mutex<HashMap<usize, Observation>>> = OnceLock::new();
-+/// 两个只读低级输入监听实际安装成功后才开放后台输入。
-+static READY: AtomicBool = AtomicBool::new(false);
-+/// 只安装一次输入监听，不创建任何输入注入线程。
-+static INITIALIZED: OnceLock<()> = OnceLock::new();
-+/// 有界通知队列避免低级输入监听阻塞在 stderr 写入。
-+static EVENTS: OnceLock<SyncSender<u32>> = OnceLock::new();
-+
 +/// 取得受控窗口表。
 +fn observations() -> &'static Mutex<HashMap<usize, Observation>> { OBSERVATIONS.get_or_init(|| Mutex::new(HashMap::new())) }
 +/// 读取窗口当前的真实进程身份。
@@ -255,82 +246,25 @@ new file mode 100644
 +        Ok((pid, ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64))
 +    }
 +}
-+/// 实体输入仅记录应用归属并通知宿主停止当前会话，不读取按键值或文本。
-+fn user_input(hwnd: HWND) {
-+    let mut pid = 0;
-+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
-+    if pid == 0 { return; }
-+    let changed = if let Ok(mut records) = observations().lock() {
-+        let mut changed = false;
-+        for record in records.values_mut().filter(|record| record.pid == pid) { changed |= !record.paused; record.paused = true; }
-+        changed
-+    } else { false };
-+    if changed { if let Some(events) = EVENTS.get() { let _ = events.try_send(pid); } }
-+}
-+/// 键盘监听不拦截、不修改输入；外部软件注入同样视为用户接管。
-+unsafe extern "system" fn keyboard(code: i32, message: WPARAM, data: LPARAM) -> LRESULT {
-+    if code >= 0 { user_input(GetForegroundWindow()); }
-+    CallNextHookEx(None, code, message, data)
-+}
-+/// 只响应按下、滚轮和拖动开始，不把鼠标划过窗口视为接管。
-+unsafe extern "system" fn mouse(code: i32, message: WPARAM, data: LPARAM) -> LRESULT {
-+    if code >= 0 && matches!(message.0 as u32, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
-+        let event = &*(data.0 as *const MSLLHOOKSTRUCT);
-+        user_input(WindowFromPoint(event.pt));
-+    }
-+    CallNextHookEx(None, code, message, data)
-+}
-+/// 回调只处理最小内存状态，消息循环始终保留在专属线程。
-+fn initialize() {
-+    INITIALIZED.get_or_init(|| {
-+        let (sender, receiver) = sync_channel::<u32>(256);
-+        let _ = EVENTS.set(sender);
-+        std::thread::spawn(move || {
-+            for pid in receiver {
-+                if let Ok(token) = std::env::var("ZEUS_CUA_EVENT_TOKEN") {
-+                    if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
-+                        eprintln!("_ZEUS_COMPUTER_EVENT_ {}", json!({"token":token,"workerPid":std::process::id(),"pid":pid,"reason":"ZEUS_COMPUTER_USER_CONTROL","otherKeyboardEvents":0}));
-+                    }
-+                }
-+            }
-+        });
-+        std::thread::spawn(|| unsafe {
-+            // 模块句柄必须有效；第二个监听失败时立即撤销第一个监听。
-+            let module = match GetModuleHandleW(None) { Ok(value) => HINSTANCE(value.0), Err(_) => return };
-+            let Ok(keyboard_hook) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), module, 0) else { return; };
-+            let Ok(mouse_hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse), module, 0) else { let _ = UnhookWindowsHookEx(keyboard_hook); return; };
-+            READY.store(true, Ordering::Release);
-+            let mut message = MSG::default();
-+            while GetMessageW(&mut message, None, 0, 0).0 > 0 { let _ = TranslateMessage(&message); DispatchMessageW(&message); }
-+            READY.store(false, Ordering::Release);
-+            let _ = UnhookWindowsHookEx(keyboard_hook);
-+            let _ = UnhookWindowsHookEx(mouse_hook);
-+        });
-+    });
-+}
 +/// 物理输入、坐标合成和显式前台路径都不能成为后台失败的兜底。
 +pub fn reject_physical_input() -> anyhow::Result<()> { anyhow::bail!("background_unavailable: 此控件需要实体输入或前台焦点；Zeus 未投递输入。") }
 +
-+/// 后台语义动作期间只保存身份与前台窗口，不改变目标可用状态。
++/// 后台语义动作期间保存目标身份，不改变目标可用状态。
 +pub struct ActionGuard {
 +    /// 不跨 await 保存原始指针。
 +    hwnd: usize,
 +    /// 本次操作绑定的真实目标身份。
 +    identity: (u32, u64),
-+    /// 原始用户前台窗口，仅用于检查，不向它发送激活请求。
-+    foreground: usize,
 +}
 +impl ActionGuard {
-+    /// 后台行为如果出现未知焦点变化，返回未知结果并让用户接管，禁止重放。
++    /// 动作完成后确认目标进程身份，拒绝把已关闭或复用的窗口当作成功。
 +    pub fn finish(&self) -> Result<(), String> {
 +        let hwnd = HWND(self.hwnd as *mut _);
 +        if identity(hwnd)? != self.identity { return Err("window_target_mismatch: 目标进程身份已变化。".into()); }
-+        if observations().lock().map_err(|_| "后台控制状态不可用")?.get(&self.hwnd).is_some_and(|record| record.paused) { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已经接管，动作结果需要重新观察。".into()); }
-+        if unsafe { GetForegroundWindow().0 as usize } != self.foreground { user_input(hwnd); return Err("ZEUS_COMPUTER_USER_CONTROL: 前台窗口发生变化，动作结果需要重新观察。".into()); }
 +        Ok(())
 +    }
 +}
-+/// 关闭会话即释放观察与暂停记录；新指令必须创建新会话并重新观察。
++/// 关闭会话即释放该会话的窗口观察记录。
 +pub fn close_session(session: &str) { if let Ok(mut records) = observations().lock() { records.retain(|_, record| record.session != session); } }
 +/// 读取窗口状态与所有变更入口共享同一个原生闸门。
 +pub fn before(name: &str, args: &Value, session: &str) -> Result<Option<ActionGuard>, String> {
@@ -345,10 +279,6 @@ new file mode 100644
 +        if let Ok(mut records) = observations().lock() { records.clear(); }
 +        return Err("ZEUS_COMPUTER_SYSTEM_UNAVAILABLE: 当前桌面不可交互，请恢复后重新观察。".into());
 +    }
-+    initialize();
-+    let deadline = Instant::now() + Duration::from_millis(500);
-+    while !READY.load(Ordering::Acquire) && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(5)); }
-+    if !READY.load(Ordering::Acquire) { return Err("ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE: 无法监听用户接管，未投递后台输入。".into()); }
 +    // 输入工具使用互斥的 target 对象；观察工具使用顶层窗口身份。
 +    let target = args.get("target").filter(|target| target.get("kind").and_then(Value::as_str) == Some("window")).unwrap_or(args);
 +    let pid = target.get("pid").and_then(Value::as_u64).and_then(|value| u32::try_from(value).ok()).ok_or("后台操作必须指定精确 PID。")?;
@@ -358,22 +288,15 @@ new file mode 100644
 +    if actual.0 != pid { return Err("window_target_mismatch: 窗口不属于指定进程。".into()); }
 +    if name == "get_window_state" {
 +        let mut records = observations().lock().map_err(|_| "后台观察状态不可用")?;
-+        if records.get(&window).is_some_and(|record| record.session == session && record.pid == pid && record.birth == actual.1 && record.paused) { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，请在新指令中重新观察。".into()); }
-+        records.insert(window, Observation { session: session.into(), pid, birth: actual.1, paused: false });
++        records.insert(window, Observation { session: session.into(), pid, birth: actual.1 });
 +        return Ok(None);
 +    }
 +    {
 +        let records = observations().lock().map_err(|_| "后台观察状态不可用")?;
 +        let record = records.get(&window).ok_or("先观察此窗口，再执行后台操作。")?;
 +        if record.session != session || record.pid != pid || record.birth != actual.1 { return Err("window_target_mismatch: 观察身份已经过期。".into()); }
-+        if record.paused { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，未投递后台输入。".into()); }
 +    }
 +    if args.get("delivery_mode").and_then(Value::as_str).is_some_and(|value| value != "background") || args.get("scope").and_then(Value::as_str) == Some("desktop") { return Err("background_unavailable: Zeus 只允许后台窗口操作。".into()); }
-+    let foreground = unsafe { GetForegroundWindow() };
-+    // 接管归属按应用判断，前台同一进程的其他窗口也属于用户。
-+    let mut foreground_pid = 0;
-+    unsafe { GetWindowThreadProcessId(foreground, Some(&mut foreground_pid)); }
-+    if foreground_pid == pid { return Err("ZEUS_COMPUTER_USER_CONTROL: 目标应用正由用户前台使用，未投递后台输入。".into()); }
 +    // 官方源码明确这些宿主会自行抢焦点；不得临时禁用用户窗口绕过该行为。
 +    let mut class = [0u16; 256];
 +    let length = unsafe { GetClassNameW(hwnd, &mut class) };
@@ -383,11 +306,11 @@ new file mode 100644
 +        return Err("background_unavailable: 此宿主的原生动作会请求前台焦点；请使用已授权浏览器界面或原生后台接口。".into());
 +    }
 +    // 其他控件继续使用官方后台能力矩阵，实体输入入口已单独封闭。
-+    let guard = ActionGuard { hwnd: window, identity: actual, foreground: foreground.0 as usize };
++    let guard = ActionGuard { hwnd: window, identity: actual };
 +    Ok(Some(guard))
 +}
 +
-+/// 长文本和分步动作在每次投递前重新确认用户未接管，不重放已发送输入。
++/// 长文本和分步动作在每次投递前重新确认窗口身份。
 +pub fn check_window(window: u64) -> anyhow::Result<()> {
 +    let hwnd = HWND(window as *mut _);
 +    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
@@ -395,8 +318,8 @@ new file mode 100644
 +    let actual = identity(root).map_err(anyhow::Error::msg)?;
 +    let records = observations().lock().map_err(|_| anyhow::anyhow!("后台观察状态不可用"))?;
 +    let record = records.get(&(root.0 as usize)).ok_or_else(|| anyhow::anyhow!("window_target_mismatch: 目标观察已经失效。"))?;
-+    if record.paused || record.pid != actual.0 || record.birth != actual.1 || unsafe { GetForegroundWindow() } == root {
-+        anyhow::bail!("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，后续输入未投递。");
++    if record.pid != actual.0 || record.birth != actual.1 {
++        anyhow::bail!("window_target_mismatch: 目标进程身份已变化。");
 +    }
 +    Ok(())
 +}
