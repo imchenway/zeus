@@ -59,9 +59,9 @@ interface ComputerControlOwner {
   sessionDriver: DestroyableCuaDriver | null;
   /** 一个原生命名会话只控制一个应用，切换应用时先释放原目标。 */
   controlledPid: number | null;
-  /** 用户接管后，本轮禁止再次投递输入。 */
+  /** 停止共享或缺少权限后，本轮禁止再次投递输入。 */
   paused: boolean;
-  /** 应用失效来源保持真实，区分捕获故障、系统停止与实体接管。 */
+  /** 应用失效来源保持真实，区分捕获故障、系统停止与权限不足。 */
   pauseReason: ComputerControlEvent['reason'] | null;
 }
 
@@ -358,7 +358,7 @@ export class ComputerHost implements BrowserAutomationPort {
       this.assertControlAllowed(input, generation);
       /** 在原生调用前拒绝会借用用户焦点的输入路线。 */
       const argumentsValue = this.prepareArguments(input, owner);
-      if (owner?.paused) throw computerError(owner.pauseReason ?? 'ZEUS_COMPUTER_USER_CONTROL', owner.preview?.detail ?? '本轮控制已暂停。继续时需要新指令和新观察。');
+      if (owner?.paused) throw computerError(owner.pauseReason ?? 'ZEUS_COMPUTER_STOPPED', owner.preview?.detail ?? '本轮控制已暂停。继续时需要新指令和新观察。');
       /** 只有显式的新观察才开始恢复捕获故障，旧动作继续保持失效。 */
       if (owner && input.tool === 'get_window_state' && owner.pauseReason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE') owner.pauseReason = null;
       if (owner)
@@ -439,8 +439,7 @@ export class ComputerHost implements BrowserAutomationPort {
       /** 原生故障可能先经事件通道取消调用，不能再用普通取消错误覆盖系统诊断。 */
       const detail = owner?.pauseReason && owner.preview?.detail ? `${owner.pauseReason}: ${owner.preview.detail}` : computerErrorMessage(error);
       if (owner) {
-        if (detail.includes('ZEUS_COMPUTER_USER_CONTROL')) this.pauseApplication(owner.preview?.pid ?? null);
-        else if (detail.includes('ZEUS_COMPUTER_SHARING_STOPPED')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_SHARING_STOPPED');
+        if (detail.includes('ZEUS_COMPUTER_SHARING_STOPPED')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_SHARING_STOPPED');
         else if (detail.includes('ZEUS_COMPUTER_PERMISSION_REQUIRED')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_PERMISSION_REQUIRED', detail);
         else if (detail.includes('ZEUS_COMPUTER_CAPTURE_UNAVAILABLE')) this.pauseApplication(owner.preview?.pid ?? null, 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE', detail);
         if (dispatched && mutatingTools.has(input.tool)) owner.windows.clear();
@@ -636,13 +635,11 @@ export class ComputerHost implements BrowserAutomationPort {
       capturedAt: image ? (captureDate && Number.isFinite(captureDate.getTime()) ? captureDate.toISOString() : null) : (owner.preview?.capturedAt ?? null),
     });
     if (isRecord(structured) && isRecord(structured.zeus_control) && structured.zeus_control.paused === true) {
-      /** 捕获故障允许重新观察，不得当作用户主动让权。 */
+      /** 只接受明确的共享、权限和捕获故障，不根据其他状态推断用户撤销控制。 */
       const { reason, detail } = structured.zeus_control;
-      this.pauseApplication(
-        owner.preview?.pid ?? null,
-        reason === 'ZEUS_COMPUTER_SHARING_STOPPED' || reason === 'ZEUS_COMPUTER_PERMISSION_REQUIRED' || reason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE' ? reason : 'ZEUS_COMPUTER_USER_CONTROL',
-        typeof detail === 'string' ? detail : undefined,
-      );
+      if (reason === 'ZEUS_COMPUTER_SHARING_STOPPED' || reason === 'ZEUS_COMPUTER_PERMISSION_REQUIRED' || reason === 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE') {
+        this.pauseApplication(owner.preview?.pid ?? null, reason, typeof detail === 'string' ? detail : undefined);
+      }
     }
   }
 
@@ -681,8 +678,8 @@ export class ComputerHost implements BrowserAutomationPort {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:computer:preview-changed', conversationId);
   }
 
-  /** 撤销应用的全部旧观察；捕获故障可重观察，用户让权则暂停当前轮次。 */
-  private pauseApplication(pid: number | null, reason: ComputerControlEvent['reason'] = 'ZEUS_COMPUTER_USER_CONTROL', detail?: string): void {
+  /** 撤销应用的全部旧观察；捕获故障可重观察，停止共享或权限不足则暂停当前轮次。 */
+  private pauseApplication(pid: number | null, reason: ComputerControlEvent['reason'], detail?: string): void {
     if (pid === null) return;
     for (const owner of [...this.owners.values()]) {
       if (![...owner.windows].some((key) => key.startsWith(`${pid}:`)) && owner.preview?.pid !== pid) continue;
@@ -701,9 +698,7 @@ export class ComputerHost implements BrowserAutomationPort {
           ? `${detail?.slice(0, 1000) ?? '窗口捕获暂不可用。'} 请调用 get_window_state 重新观察；本次动作不会自动重放。`
           : reason === 'ZEUS_COMPUTER_PERMISSION_REQUIRED'
             ? `${detail?.slice(0, 1000) ?? '系统未授权窗口捕获。'} 请恢复屏幕录制权限，并发送新指令。`
-            : reason === 'ZEUS_COMPUTER_SHARING_STOPPED'
-              ? '系统窗口共享已停止，后台输入已暂停。收到新指令后调用 get_window_state 重新观察。'
-              : '你已接管受控应用，后台输入已暂停。继续时需要新指令和新观察。',
+            : '系统窗口共享已停止，后台输入已暂停。收到新指令后调用 get_window_state 重新观察。',
       });
       if (recoverable) continue;
       /** 保留真实暂停预览，同时释放原生命名会话；新指令才能重新获得控制。 */
@@ -1171,13 +1166,11 @@ function computerWorkerFailed(error: unknown, driver: DestroyableCuaDriver | nul
   const reason = isRecord(error.inner) && typeof error.inner.reason === 'string' ? error.inner.reason : '';
   if (
     [
-      'ZEUS_COMPUTER_USER_CONTROL',
       'ZEUS_COMPUTER_SHARING_STOPPED',
       'ZEUS_COMPUTER_PERMISSION_REQUIRED',
       'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE',
       'ZEUS_COMPUTER_DISPLAY_CHANGED',
       'ZEUS_COMPUTER_STOPPED',
-      'ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE',
     ].some((code) => reason.includes(code))
   )
     return false;

@@ -11,10 +11,10 @@ import { runWindowsRuntimeHelper, type WindowsRuntimeIdentity } from '@zeus/ai-r
 export type ComputerControlEvent = {
   /** 原生 worker 的真实进程身份，由宿主再次核对。 */
   workerPid: number;
-  /** 实际停止共享或被用户接管的应用身份。 */
+  /** 实际停止共享或发生捕获故障的应用身份。 */
   pid: number;
   /** 仅允许原生输入闸门已处理的暂停原因。 */
-  reason: 'ZEUS_COMPUTER_USER_CONTROL' | 'ZEUS_COMPUTER_SHARING_STOPPED' | 'ZEUS_COMPUTER_PERMISSION_REQUIRED' | 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE';
+  reason: 'ZEUS_COMPUTER_SHARING_STOPPED' | 'ZEUS_COMPUTER_PERMISSION_REQUIRED' | 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE';
   /** 原生错误诊断，长度受限且不携带截图或输入。 */
   detail?: string;
   /** 只统计其他应用键盘事件，用于实机验收；不包含键盘内容。 */
@@ -118,7 +118,7 @@ export class ComputerDriverProxy implements ComputerDriver {
           (workerPid as number) <= 0 ||
           !Number.isSafeInteger(pid) ||
           (pid as number) <= 0 ||
-          (reason !== 'ZEUS_COMPUTER_USER_CONTROL' && reason !== 'ZEUS_COMPUTER_SHARING_STOPPED' && reason !== 'ZEUS_COMPUTER_PERMISSION_REQUIRED' && reason !== 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE')
+          (reason !== 'ZEUS_COMPUTER_SHARING_STOPPED' && reason !== 'ZEUS_COMPUTER_PERMISSION_REQUIRED' && reason !== 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE')
         )
           continue;
         if (detail !== undefined && typeof detail !== 'string') continue;
