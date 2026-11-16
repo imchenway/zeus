@@ -51,8 +51,8 @@ function emptyNetworkPathChecks(): Record<NetworkProxyCheckTarget, NetworkPathCh
 /** 设置页只显示无凭据代理地址；账号密码在共享校验层已被拒绝。 */
 function describeProxy(settings: NetworkProxySettings | null, zh: boolean): string {
   if (!settings) return zh ? '生效配置读取中' : 'Loading active configuration';
-  if (settings.mode === 'direct') return zh ? '直连' : 'Direct';
-  if (settings.mode === 'default') return zh ? '系统与启动环境' : 'System and launch environment';
+  if (settings.mode === 'direct') return zh ? '强制直连' : 'Force direct connection';
+  if (settings.mode === 'default') return zh ? '跟随系统代理' : 'Use system proxy';
   return settings.url;
 }
 
@@ -312,9 +312,9 @@ export function NetworkProxySettingsFields(props: {
           <div className="network-proxy-modes" role="radiogroup" aria-label={zh ? '网络代理模式' : 'Network proxy mode'}>
             {(
               [
-                { value: 'direct', label: zh ? '不使用代理' : 'No proxy' },
-                { value: 'default', label: zh ? '跟随系统与启动环境' : 'System and launch environment' },
+                { value: 'default', label: zh ? '跟随系统代理' : 'Use system proxy' },
                 { value: 'manual', label: zh ? '手动配置代理' : 'Manual proxy configuration' },
+                { value: 'direct', label: zh ? '强制直连' : 'Force direct connection' },
               ] as const
             ).map((option) => (
               <label key={option.value}>
@@ -420,8 +420,8 @@ export function NetworkProxySettingsFields(props: {
         ) : draft.mode === 'default' ? (
           <p className="settings-field-note">
             {zh
-              ? '内置浏览器使用系统代理；模型进程沿用 Zeus 启动时的环境。外部浏览器和工具自行管理网络设置。'
-              : 'The built-in browser uses system proxy settings; model processes inherit the Zeus launch environment. External browsers and tools manage their own settings.'}
+              ? '浏览器、模型与后台请求统一跟随系统代理。'
+              : 'Browser, model, and background requests use the system proxy.'}
           </p>
         ) : null}
         {error ? (

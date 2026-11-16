@@ -3,7 +3,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { networkProxyRuntimeEnvironment } from '@zeus/local-server';
-import { networkProxyLoopbackBypass, normalizeNetworkProxySettings, type NetworkProxySettings, type NetworkProxyConnectionResult } from '@zeus/shared';
+import { networkProxyFailureHeader, networkProxyLoopbackBypass, normalizeNetworkProxySettings, type NetworkProxySettings, type NetworkProxyConnectionResult } from '@zeus/shared';
 
 /** 单条网络请求的最长等待时间。 */
 const networkRequestTimeoutMs = 10_000;
@@ -69,16 +69,16 @@ async function checkNodeConnection(settings: NetworkProxySettings, target: URL):
   const startedAt = performance.now();
   /** HTTP 与 HTTPS 分别使用原生代理实现。 */
   const transport = target.protocol === 'https:' ? https : http;
-  /** 默认启动环境也可能无效，构造失败必须经过同一错误脱敏。 */
+  /** 系统或手动代理都可能不可用，构造失败必须经过同一错误脱敏。 */
   let agent: http.Agent | undefined;
   try {
-    agent = new transport.Agent({ proxyEnv: networkProxyRuntimeEnvironment(settings), keepAlive: false });
+    agent = new transport.Agent({ proxyEnv: await networkProxyRuntimeEnvironment(settings), keepAlive: false });
     return await new Promise<NetworkProxyConnectionResult>((resolve) => {
       /** 仅请求响应头，不下载目标正文，不跟随跳转。 */
       const request = transport.request(target, { method: 'HEAD', agent, signal: AbortSignal.timeout(networkRequestTimeoutMs) }, (response) => {
-        /** 任何 HTTP 响应都证明网络已到达目标，407 单独标记代理认证问题。 */
+        /** 转发器的建连失败不能算目标可达，407 单独标记代理认证问题。 */
         const latencyMs = elapsedMilliseconds(startedAt);
-        resolve(response.statusCode === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.statusCode, latencyMs });
+        resolve(response.headers[networkProxyFailureHeader] === 'connection' ? { error: 'connection', latencyMs } : response.statusCode === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.statusCode, latencyMs });
         response.destroy();
       });
       request.once('error', (error) => resolve(connectionError(error, startedAt)));

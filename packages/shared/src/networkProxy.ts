@@ -1,4 +1,4 @@
-/** 本机网络代理；默认保留系统和启动环境，修改后完整重启应用生效。 */
+/** 本机网络代理；默认跟随系统代理，手动或强制直连可独立覆盖。 */
 export interface NetworkProxySettings {
   /** 默认、强制直连或手动指定代理。 */
   mode: 'default' | 'direct' | 'manual';
@@ -8,11 +8,14 @@ export interface NetworkProxySettings {
   bypass: string;
 }
 
-/** 旧资料没有代理字段时保持既有网络行为。 */
+/** 没有保存代理选择时默认跟随系统设置。 */
 export const defaultNetworkProxySettings: NetworkProxySettings = { mode: 'default', url: '', bypass: '' };
 
 /** 本地连接不经过代理；Node HTTP 与 fetch 对 IPv6 分别需要裸地址和方括号写法。 */
 export const networkProxyLoopbackBypass = 'localhost,127.0.0.1,::1,[::1]';
+
+/** 本机系统代理未连到目标时的标记，避免把转发器的 502 误报为目标可达。 */
+export const networkProxyFailureHeader = 'x-zeus-system-proxy-error';
 
 /** 表单分别保留文本，允许用户先输入主机再输入端口。 */
 export interface NetworkProxyAddressFields {
