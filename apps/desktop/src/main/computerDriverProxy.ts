@@ -22,7 +22,7 @@ export type ComputerControlEvent = {
 };
 
 /** 只转发宿主实际使用的官方 SDK 方法，禁止开放任意原生调用。 */
-export type ComputerDriver = Pick<CuaDriverLike, 'callTool' | 'metadata' | 'startSession' | 'endSession' | 'listApps' | 'listWindows' | 'getAgentCursorState' | 'shutdown' | 'isAvailable'> & {
+export type ComputerDriver = Pick<CuaDriverLike, 'callTool' | 'metadata' | 'listToolsJson' | 'setAgentCursorEnabled' | 'startSession' | 'endSession' | 'listApps' | 'listWindows' | 'getAgentCursorState' | 'shutdown' | 'isAvailable'> & {
   /** SDK 所在后台进程，用于核对原生 worker 父进程。 */
   readonly workerParentPid?: number;
   /** 停止后释放本任务后台进程。 */
@@ -153,6 +153,14 @@ export class ComputerDriverProxy implements ComputerDriver {
   /** 获取原生 worker 实际身份。 */
   metadata(...args: Parameters<CuaDriverLike['metadata']>): ReturnType<CuaDriverLike['metadata']> {
     return this.request('metadata', [], args[0]?.signal) as ReturnType<CuaDriverLike['metadata']>;
+  }
+  /** 能力目录直接来自当前加载的 CUA，避免维护另一份页面 API。 */
+  listToolsJson(...args: Parameters<CuaDriverLike['listToolsJson']>): ReturnType<CuaDriverLike['listToolsJson']> {
+    return this.request('listToolsJson', [], args[0]?.signal) as ReturnType<CuaDriverLike['listToolsJson']>;
+  }
+  /** 光标显隐使用 CUA 的会话开关，不影响后台页面操作。 */
+  setAgentCursorEnabled(...args: Parameters<CuaDriverLike['setAgentCursorEnabled']>): ReturnType<CuaDriverLike['setAgentCursorEnabled']> {
+    return this.request('setAgentCursorEnabled', args.slice(0, 1), args[1]?.signal) as ReturnType<CuaDriverLike['setAgentCursorEnabled']>;
   }
   /** 创建官方命名会话。 */
   startSession(...args: Parameters<CuaDriverLike['startSession']>): ReturnType<CuaDriverLike['startSession']> {

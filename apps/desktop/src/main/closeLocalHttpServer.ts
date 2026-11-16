@@ -9,7 +9,7 @@ export function closeLocalHttpServer(server: Server | undefined | null): Promise
       if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(error);
       else resolve();
     });
-    // 此处只用于不提供 WebSocket 升级的私有 HTTP 控制通道，不关闭用户的浏览器进程。
+    // 升级连接由各宿主先行收回；此处关闭普通 HTTP 连接，不关闭用户浏览器进程。
     server.closeAllConnections();
   });
 }

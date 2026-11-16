@@ -9,7 +9,7 @@ process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED = 'false';
 /** 官方 SDK 保留全部原生协议、授权边界和响应结构。 */
 let driver: (CuaDriverLike & { uniffiDestroy?: () => void }) | null = null;
 /** 可接受的方法只覆盖宿主的实际调用。 */
-const methods = new Set(['callTool', 'metadata', 'startSession', 'endSession', 'listApps', 'listWindows', 'getAgentCursorState', 'shutdown']);
+const methods = new Set(['callTool', 'metadata', 'listToolsJson', 'setAgentCursorEnabled', 'startSession', 'endSession', 'listApps', 'listWindows', 'getAgentCursorState', 'shutdown']);
 /** 请求内的 AbortController 不跨会话复用。 */
 const controllers = new Map<number, AbortController>();
 /** 生命周期与工具共用原生串行通道，取消后的清理必须排在真实操作完成之后。 */

@@ -4228,6 +4228,10 @@ async function initializeApplication(): Promise<void> {
     });
     browserHost = createBrowserHost({
       passwords: new BrowserPasswordStore(join(dirname(dataLayout.browserState), 'passwords', 'passwords.enc'), createPlatformSecretStore({ service: activeDesktopKeychainService(), dataRootPath: dataLayout.root })),
+      computer: () => {
+        if (!computerHost) throw new Error('CUA 原生宿主尚未就绪。');
+        return computerHost;
+      },
       translation: createBrowserTranslationClient(async () => {
         if (!localServerRuntime) throw new Error('翻译服务尚未就绪。');
         return localServerRuntime.refreshConfig();
@@ -4246,7 +4250,9 @@ async function initializeApplication(): Promise<void> {
     });
     for (const window of windows) browserHost.registerWindow(window);
     browserHost.registerIpc();
+    await browserHost.initializeCua();
     computerHost = createComputerHost({
+      browserEndpoint: () => browserHost?.getCuaEndpoint(),
       statePath: dataLayout.computerState,
       hostBundleId: app.isPackaged ? activeDataRootIdentity().bundleId : 'com.github.Electron',
       mainCommandLedger: activeMainCommandLedger,
