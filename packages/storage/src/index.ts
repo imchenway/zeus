@@ -18,7 +18,7 @@ import { migrateCommandCenterSchema } from './commands.js';
 import { migrateArtifactStoreSchema } from './artifactStore.js';
 import { migrateCommandDeliverySchema } from './commandDeliveryStore.js';
 import { CONVERSATION_HOT_QUERY_INDEX_CHECKSUM_SOURCE, CONVERSATION_HOT_QUERY_INDEX_MIGRATION_ID, conversationHotQueryIndexes } from './conversationHotQueryIndexes.js';
-import { migrateConfirmedUserMessageHistory, migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
+import { migrateAcceptedConversationTurnReferences, migrateConfirmedUserMessageHistory, migrateUnifiedConversationStoreSchema } from './conversationExecutionStore.js';
 import { migrateConversationLegacyCutoverSchema } from './conversationLegacyCutover.js';
 import { migrateCompletedProviderPlansToConversationHistory, migrateConversationProviderItemStoreSchema } from './conversationProviderItemStore.js';
 import { migrateConversationSyncEventStoreSchema, migrateConversationSyncProtocolV2 } from './conversationSyncEventStore.js';
@@ -1071,6 +1071,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCompletedProviderPlansToConversationHistory(zeusDb);
     migrateConfirmedUserMessageHistory(zeusDb);
     migrateConversationTranscriptStoreSchema(zeusDb);
+    migrateAcceptedConversationTurnReferences(zeusDb);
     await initializeConversationTranscriptIndexes(zeusDb, true);
     migrateArtifactStoreSchema(zeusDb);
     migrateTaskWorkCurrentSkillReferences(zeusDb);

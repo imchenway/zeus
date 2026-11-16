@@ -354,7 +354,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         reconnectIdentity: input.idempotencyKey,
         value,
       });
-      return transport.request<NativeOperationAcceptance>(`${conversationPath(projectId, conversationId)}/messages`, jsonRequest('POST', body));
+      return transport.request<NativeOperationAcceptance>(`${conversationPath(projectId, conversationId)}/messages`, { ...jsonRequest('POST', body), waitForLateReceipt: true });
     },
     forgetNativeMessageCommand: (_projectId, conversationId, idempotencyKey) =>
       forgetConversationDispatchCommandRequest({

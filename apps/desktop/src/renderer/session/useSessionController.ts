@@ -57,8 +57,10 @@ import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
 import { handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
-/** 会话事件流按指数退避重试五次，单次等待小于一分钟。 */
+/** 会话前台恢复先退避五次，之后转入低频后台恢复。 */
 export const reconnectBackoffMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+/** 前台恢复预算用尽后只做低频读取，不重放写入，单位毫秒。 */
+const backgroundReconnectDelayMs = 30_000;
 /** 常规只读核对次数；已接收消息阻挡待发队列时继续后台核对，不重放旧消息。 */
 export const pendingSendReconcileAttempts = 5 as const;
 /** 首次后台核对前的等待时间。 */
@@ -795,6 +797,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let disposed = false;
   let startPromise: Promise<void> | null = null;
   let reconnectLoopPromise: Promise<void> | null = null;
+  /** 磁盘显示缓存不能充当恢复事件订阅的权威基线。 */
+  let hasCompleteSnapshot = false;
   let reconnectLoopEpoch = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let resolveReconnectTimer: ((shouldContinue: boolean) => void) | null = null;
@@ -2143,8 +2147,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function scheduleReconnect(token: number): void {
-    if (disposed || token !== connectionToken || reconnectLoopPromise || !stateNeedsRealtime()) {
-      if (!disposed && token === connectionToken && state.snapshot && !stateNeedsRealtime()) {
+    if (disposed || token !== connectionToken || reconnectLoopPromise || !needsConnectionRecovery()) {
+      if (!disposed && token === connectionToken && state.snapshot && !needsConnectionRecovery()) {
         dispatch({ type: 'transport_changed', transportState: 'ready', error: null });
       }
       return;
@@ -2152,25 +2156,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const epoch = ++reconnectLoopEpoch;
     const loop = (async () => {
       let attempt = 0;
-      while (!disposed && epoch === reconnectLoopEpoch && stateNeedsRealtime() && attempt < reconnectBackoffMs.length) {
-        dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: attempt + 1 });
-        const delayMs = reconnectDelayMs(attempt + 1);
+      while (!disposed && epoch === reconnectLoopEpoch && needsConnectionRecovery()) {
+        dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: attempt < reconnectBackoffMs.length ? attempt + 1 : 0, error: null });
+        const delayMs = (attempt < reconnectBackoffMs.length ? reconnectDelayMs(attempt + 1) : backgroundReconnectDelayMs) * (0.8 + Math.random() * 0.4);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
         try {
-          await hydrate(true, 'required');
+          await hydrate(true, stateNeedsRealtime() ? 'required' : 'auto');
           if (!disposed && epoch === reconnectLoopEpoch && state.transportState === 'ready') return;
-        } catch {
-          // 只继续剩余预算；手动重连或销毁会话会取消当前恢复链。
+        } catch (error) {
+          const failure = toSessionError(error, true);
+          if (!failure.retryable || failure.recoveryRequired || (failure.status !== undefined && failure.status >= 400 && failure.status < 500 && ![408, 429].includes(failure.status))) return;
         }
         attempt += 1;
-      }
-      if (!disposed && epoch === reconnectLoopEpoch && attempt === reconnectBackoffMs.length) {
-        dispatch({
-          type: 'transport_changed',
-          transportState: 'failed',
-          reconnectAttempt: attempt,
-          error: { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败。请检查网络后重试。', retryable: true, recoveryRequired: false },
-        });
       }
     })();
     reconnectLoopPromise = loop;
@@ -2302,7 +2299,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const code = toSessionError(error, false).code;
       if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING') throw error;
       if (code === 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED') throw Object.assign(new Error(errorMessage(error)), { code, retryable: false, cause: userFacingErrorCause(error) });
-      throw Object.assign(new Error('会话内容暂时无法刷新'), { code: 'ZEUS_CONVERSATION_READ_FAILED', cause: userFacingErrorCause(error) });
+      const failure = toSessionError(error, true);
+      throw Object.assign(new Error('会话内容暂时无法刷新'), {
+        code: 'ZEUS_CONVERSATION_READ_FAILED',
+        cause: userFacingErrorCause(error),
+        retryable: failure.retryable,
+        recoveryRequired: failure.recoveryRequired,
+        ...(failure.status !== undefined ? { status: failure.status } : {}),
+      });
     }
   }
 
@@ -2407,6 +2411,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
     );
   }
 
+  /** 已选中的历史会话读取失败也需恢复，不能因没有运行轮次而放弃刷新。 */
+  function needsConnectionRecovery(): boolean {
+    return stateNeedsRealtime() || state.transportState === 'failed' || state.transportState === 'reconnecting';
+  }
+
   function releaseIdleRealtimeSubscription(): void {
     if (disposed || !realtimeSubscribed || stateNeedsRealtime()) return;
     cancelReconnectLoop();
@@ -2475,23 +2484,29 @@ export function createSessionController(options: CreateSessionControllerOptions)
       // 这样既不会遗漏快照读取期间发生的事件，也不会从 0 重放整段历史并反复撞上 WebSocket 高水位。
       // 已有权威快照时保持稳定的重连状态，不能在 reconnecting/hydrating 间反复切换并触发整页同步闪烁。
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
-      const progressiveHydration = loadConversationForProgressiveHydration({
-        // 命中旧缓存也立即接管最新正文与摘要，不等待队列、确认项和目标读取。
-        onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
-          if (disposed || token !== connectionToken || (state.snapshot && state.snapshot.throughEventSeq > readableSnapshot.throughEventSeq)) return;
-          await applyAuthoritativeSnapshot(readableSnapshot);
-        },
-        onGoal: (response) => {
-          if (disposed || token !== connectionToken) return;
-          dispatch({ type: 'goal_hydrated', conversationId: options.conversationId, response });
-        },
-      });
+      /** 已核验过的会话优先按连续事件游标续接，缺失基线时由既有补读协议接管。 */
+      const resumeSnapshot = reconnecting && realtimeMode === 'required' && hasCompleteSnapshot && !syncProjectionSuspended ? state.snapshot : null;
+      const progressiveHydration = resumeSnapshot
+        ? Promise.resolve(resumeSnapshot)
+        : loadConversationForProgressiveHydration({
+            // 命中旧缓存也立即接管最新正文与摘要，不等待队列、确认项和目标读取。
+            onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
+              if (disposed || token !== connectionToken || (state.snapshot && state.snapshot.throughEventSeq > readableSnapshot.throughEventSeq)) return;
+              await applyAuthoritativeSnapshot(readableSnapshot);
+              void flushDeferredSends();
+            },
+            onGoal: (response) => {
+              if (disposed || token !== connectionToken) return;
+              dispatch({ type: 'goal_hydrated', conversationId: options.conversationId, response });
+            },
+          });
       const snapshot = await withSessionTimeout(progressiveHydration, conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
       if (disposed || token !== connectionToken) return;
       const lazySnapshotHydration = options.realtimePolicy === 'lazy' && realtimeMode !== 'required';
       const subscribeRealtime = realtimeMode === 'required' || (!lazySnapshotHydration && (snapshotNeedsRealtime(snapshot) || recoverableSends.some((envelope) => envelope.deliveryState !== 'failed') || deferredSends.length > 0));
       if (!subscribeRealtime) {
         await applyAuthoritativeSnapshot(snapshot);
+        hasCompleteSnapshot = true;
         if (disposed || token !== connectionToken) return;
         // 浏览历史只能读取持久事实；首次发送进入 required 水合后才允许恢复发送账本和实时副作用。
         if (!lazySnapshotHydration) await reconcilePersistedAcceptance(snapshot);
@@ -2505,7 +2520,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       const eventOptions = {
         conversationId: options.conversationId,
-        afterSequence: snapshot.throughEventSeq,
+        afterSequence: resumeSnapshot ? Math.max(snapshot.throughEventSeq, lastAppliedSyncEventSequence) : snapshot.throughEventSeq,
         syncStreamGeneration: CONVERSATION_SYNC_STREAM_GENERATION,
         ...(reconnecting && state.lastEventId ? { afterEventId: state.lastEventId } : {}),
       };
@@ -2523,9 +2538,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       // Snapshot 已经权威且可独立阅读；实时连接只负责后续增量，不能继续遮住已取得的历史。
       // 正文可能已在同一事件水位提前显示，完整快照仍须接管队列与交互状态。
-      await applyAuthoritativeSnapshot(snapshot);
+      if (!resumeSnapshot) await applyAuthoritativeSnapshot(snapshot);
+      hasCompleteSnapshot = true;
       if (disposed || token !== connectionToken || socket !== nextSocket) return;
-      await reconcilePersistedAcceptance(snapshot);
+      if (!resumeSnapshot) await reconcilePersistedAcceptance(snapshot);
       if (disposed || token !== connectionToken || socket !== nextSocket) return;
       try {
         await withSessionTimeout(lifecycle.opened, conversationRealtimeOpenTimeoutMs, () => new ConversationRealtimeOpenTimeoutError());
@@ -2553,8 +2569,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
     } catch (error) {
       hydrating = false;
       if (disposed || token !== connectionToken) return;
+      const failure = toSessionError(error, true);
       const shouldScheduleReconnect =
-        error instanceof ConversationRealtimeOpenTimeoutError || error instanceof ConversationHydrationTimeoutError || error instanceof SocketDisconnectedDuringHydrationError || socketLifecycle?.isDisconnected() === true;
+        failure.retryable &&
+        !failure.recoveryRequired &&
+        !(failure.status !== undefined && failure.status >= 400 && failure.status < 500 && ![408, 429].includes(failure.status)) &&
+        (error instanceof ConversationRealtimeOpenTimeoutError ||
+          error instanceof ConversationHydrationTimeoutError ||
+          error instanceof SocketDisconnectedDuringHydrationError ||
+          failure.code === 'ZEUS_CONVERSATION_READ_FAILED' ||
+          socketLifecycle?.isDisconnected() === true);
       if (!disposed && token === connectionToken) {
         socketLifecycle?.markInactive();
         socketLifecycle = null;
@@ -2562,7 +2586,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         socket = null;
         realtimeSubscribed = false;
         failedSocket?.close();
-        dispatch({ type: 'transport_changed', transportState: 'failed', error: toSessionError(error, true) });
+        dispatch({ type: 'transport_changed', transportState: shouldScheduleReconnect && state.snapshot ? 'reconnecting' : 'failed', error: shouldScheduleReconnect && state.snapshot ? null : toSessionError(error, true) });
       }
       if (shouldScheduleReconnect) scheduleReconnect(token);
       throw error;
@@ -2763,8 +2787,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function sendOrDeferEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
     /** 普通连续发送按意图顺序接纳；直接引导不等待普通提交的回执。 */
     const waitingForAcceptance = envelope.delivery === 'queue' && (deferredSends.length > 0 || hasUnresolvedAdmission());
-    /** 连接等待与前序接纳等待分开，已连接的排队消息不能显示为正在重连。 */
-    const waitingForConnection = state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed;
+    /** 普通排队只依赖会话身份；直接引导仍须等实时状态完成核验。 */
+    const waitingForConnection = state.snapshot?.id !== options.conversationId || (envelope.delivery !== 'queue' && (state.transportState !== 'ready' || !realtimeSubscribed));
     if (waitingForAcceptance || waitingForConnection) {
       /** 待发副本已交出 Composer，后续回执不能清空新草稿。 */
       const queuedEnvelope = { ...envelope, composerConsumed: true };
@@ -2795,19 +2819,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       return Promise.resolve();
     }
-    return submitEnvelope(envelope);
+    const submitted = submitEnvelope(envelope);
+    if (!realtimeSubscribed) void ensureRealtimeConnection().catch(() => undefined);
+    return submitted;
   }
 
-  /** 连接就绪后按保存顺序提交待发消息；单条失败不会终止后续消息。 */
+  /** 正文身份已知后按保存顺序接纳待发消息，不等待实时订阅。 */
   async function flushDeferredSends(): Promise<void> {
     // 接纳完成会继续排空；重连、续发和回执回调不能并行取走后续消息。
     if (disposed) return;
-    if (state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation || hasUnresolvedAdmission()) {
+    if (state.snapshot?.id !== options.conversationId || activeOperation || hasUnresolvedAdmission()) {
       if (deferredSends[0]) reportSendState(deferredSends[0].clientUserMessageId, 'waiting');
       return;
     }
-    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && !hasUnresolvedAdmission()) {
+    while (!disposed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && !hasUnresolvedAdmission()) {
       const envelope = deferredSends[0]!;
+      if (envelope.delivery !== 'queue' && (state.transportState !== 'ready' || !realtimeSubscribed)) return;
       deferredSends = deferredSends.slice(1);
       try {
         await submitEnvelope(envelope);
@@ -2839,7 +2866,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId) return submitEnvelope(retry);
     deferredSends = [retry, ...deferredSends.filter((candidate) => candidate.clientUserMessageId !== clientUserMessageId)];
     persistDraft();
-    await ensureRealtimeConnection();
+    void ensureRealtimeConnection().catch(() => undefined);
     void flushDeferredSends();
   }
 
@@ -3513,6 +3540,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
     await loadTurnArtifactsV2('__conversation_resources__', true);
   }
 
+  /** 网络恢复或重新查看窗口时立即续接读取；不重发任何业务操作。 */
+  const restoreConnection = (): void => {
+    const failure = state.error;
+    if (
+      !disposed &&
+      needsConnectionRecovery() &&
+      state.transportState !== 'ready' &&
+      !failure?.recoveryRequired &&
+      failure?.retryable !== false &&
+      !(failure?.status !== undefined && failure.status >= 400 && failure.status < 500 && ![408, 429].includes(failure.status))
+    )
+      void ensureRealtimeConnection().catch(() => undefined);
+  };
+  globalThis.addEventListener?.('online', restoreConnection);
+  globalThis.addEventListener?.('focus', restoreConnection);
+
   const controller: SessionController = {
     start() {
       if (state.transportState === 'ready') return Promise.resolve();
@@ -3548,6 +3591,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      globalThis.removeEventListener?.('online', restoreConnection);
+      globalThis.removeEventListener?.('focus', restoreConnection);
       for (const resolve of sendAcceptanceResolvers.values()) resolve();
       sendAcceptanceResolvers.clear();
       for (const request of resourceRequests) request.abort();
