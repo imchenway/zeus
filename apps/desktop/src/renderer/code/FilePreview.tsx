@@ -38,7 +38,7 @@ import { Button } from '../ui/Button.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { FileTypeIcon } from './FileTypeIcon.js';
+import { FileWorkspaceToolbar } from './FileWorkspaceToolbar.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
 import { useFilePreviewDraft } from './useFilePreviewDraft.js';
@@ -208,6 +208,8 @@ export function FilePreview(props: {
   location?: ConversationFileLocation;
   /** 中英文文案。 */
   zh: boolean;
+  /** 会话顶栏使用本次已读取文件的名称，不额外申请预览。 */
+  renderHeader?: (item: FilePreviewItem | null) => ReactNode;
   /** 文本继续复用原差异与评论界面。 */
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 调用方已有的关闭等操作并入预览工具栏。 */
@@ -241,6 +243,7 @@ export function FilePreview(props: {
         waitForContent={props.waitForContent}
         location={props.location}
         zh={props.zh}
+        renderHeader={props.renderHeader}
         actions={props.actions}
         fileStatus={props.fileStatus}
         commentPath={props.commentPath}
@@ -265,6 +268,8 @@ function FilePreviewBody(props: {
   /** 避免只读补丁随后被整棵可编辑视图替换。 */
   waitForContent?: boolean;
   zh: boolean;
+  /** 文件标签与正文使用同一份已授权预览。 */
+  renderHeader?: (item: FilePreviewItem | null) => ReactNode;
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
   /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
@@ -484,10 +489,9 @@ function FilePreviewBody(props: {
         </PreviewIconButton>
       ) : null}
       {editableItem ? (
-        <Button
-          size="compact"
+        <PreviewIconButton
+          label={editing.dirty ? (props.zh ? '请先保存或放弃 Diff 草稿' : 'Save or discard the diff draft first') : props.zh ? '在源码页编辑工作区文件' : 'Edit workspace file in Source'}
           disabled={editing.dirty || editing.saving}
-          title={editing.dirty ? (props.zh ? '请先保存或放弃 Diff 草稿' : 'Save or discard the diff draft first') : props.zh ? '在源码页编辑工作区文件' : 'Edit workspace file in Source'}
           onClick={() => {
             void window.zeus
               ?.actOnFilePreview(editableItem.id, 'edit')
@@ -496,14 +500,14 @@ function FilePreviewBody(props: {
           }}
         >
           <PencilSimple size={16} aria-hidden="true" />
-          {props.zh ? '编辑' : 'Edit'}
-        </Button>
+        </PreviewIconButton>
       ) : null}
       {props.actions}
     </>
   );
   return (
     <FilePreviewDataContext.Provider value={previewData}>
+      {props.renderHeader?.(current ?? null)}
       <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
         {props.onClose ? (
           <header className="file-preview-dialog-header">
@@ -740,10 +744,12 @@ function FilePreviewContent(props: {
   /** 当前会话全部代码评论。 */ comments?: ConversationCodeComment[];
   /** 缺省表示只读预览，不展示逐行评论入口。 */ onCommentsChange?: (comments: ConversationCodeComment[]) => void;
   /** 编码切换重读已授权文件。 */ onEncodingChange(encoding: FilePreviewTextEncoding | ''): void;
-  /** 单文件操作与文件元信息共用一行。 */ toolbar?: ReactNode;
+  /** 刷新和编辑操作与系统文件操作共用路径栏。 */ toolbar?: ReactNode;
 }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
+  /** 优先展示会话或仓库相对路径，打开操作仍只使用资源令牌。 */
+  const displayPath = props.commentPath ?? ('path' in props.request ? props.request.path : (item.path ?? item.name));
   /** 阅读身份不使用每次读取都会更换的授权令牌。 */
   const readingIdentity = `${JSON.stringify(props.request)}:${item.label}`;
   /** 归属绑定预览版本令牌，不根据显示名称猜测目录。 */
@@ -781,87 +787,35 @@ function FilePreviewContent(props: {
         zh={props.zh}
         toolbar={(reviewActions) => (
           <>
-            <header>
-              <FileTypeIcon name={item.name} size={20} />
-              <div className="file-preview-identity">
-                <strong
-                  tabIndex={0}
-                  data-file-path={item.path ?? ('path' in props.request ? props.request.path : undefined)}
-                  data-file-name={item.name}
-                  data-icon-tooltip={item.kind === 'image' ? undefined : item.name}
-                  data-file-status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}
-                >
-                  {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
-                </strong>
-                <small>
-                  {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
-                </small>
-              </div>
-              {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
-                <label className="file-preview-setting">
-                  <span>{props.zh ? '编码' : 'Encoding'}</span>
-                  <select aria-label={props.zh ? '预览编码' : 'Preview encoding'} value={props.encoding} onChange={(event) => props.onEncodingChange(event.currentTarget.value as FilePreviewTextEncoding | '')}>
-                    <option value="">{props.zh ? '自动识别' : 'Automatic'}</option>
-                    {filePreviewTextEncodings.map((encoding) => (
-                      <option key={encoding} value={encoding}>
-                        {encoding.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {item.content !== undefined && (item.kind === 'text' || source) ? (
-                <label className="file-preview-setting">
-                  <span>{props.zh ? '语言' : 'Language'}</span>
-                  <select
-                    aria-label={props.zh ? '预览高亮语言' : 'Preview syntax language'}
-                    value={language}
-                    onChange={(event) => {
-                      // 阅读模式下选择高亮语言时打开源码，使语言选择立即可见。
-                      setLanguage(event.currentTarget.value);
-                      if (markdown) setSource(true);
-                    }}
-                  >
-                    <option value="text">{props.zh ? '纯文本' : 'Plain text'}</option>
-                    {sourceLanguageOptions.map((language) => (
-                      <option key={language} value={language}>
-                        {language}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {item.id || props.toolbar || reviewActions ? (
-                <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
-                  {reviewActions}
-                  {props.toolbar}
-                  {item.id ? (
-                    <>
-                      {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
-                        <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
-                          {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
-                        </PreviewIconButton>
-                      ) : null}
-                      {/* Quick Look 仅有 macOS 原生入口，其他系统使用相邻的打开文件操作。 */}
-                      {isMacOSPlatform() ? (
-                        <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
-                          <Eye size={18} aria-hidden="true" />
-                        </PreviewIconButton>
-                      ) : null}
-                      <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
-                        <ArrowSquareOut size={18} aria-hidden="true" />
-                      </PreviewIconButton>
-                      <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
-                        <FolderOpen size={18} aria-hidden="true" />
-                      </PreviewIconButton>
-                      <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
-                        <DownloadSimple size={18} aria-hidden="true" />
-                      </PreviewIconButton>
-                    </>
+            <FileWorkspaceToolbar path={displayPath} name={item.name} status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType} zh={props.zh}>
+              {reviewActions}
+              {props.toolbar}
+              {item.id ? (
+                <>
+                  {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
+                    <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
+                      {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
+                    </PreviewIconButton>
                   ) : null}
-                </nav>
+                  {/* Quick Look 仅有 macOS 原生入口，其他系统使用相邻的打开文件操作。 */}
+                  {isMacOSPlatform() ? (
+                    <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+                      <Eye size={18} aria-hidden="true" />
+                    </PreviewIconButton>
+                  ) : null}
+                  <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
+                    <FolderOpen size={18} aria-hidden="true" />
+                  </PreviewIconButton>
+                  <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
+                    <DownloadSimple size={18} aria-hidden="true" />
+                  </PreviewIconButton>
+                  <Button size="compact" aria-label={props.zh ? '打开文件' : 'Open file'} onClick={() => void action('open')}>
+                    <ArrowSquareOut size={18} aria-hidden="true" />
+                    {props.zh ? '打开' : 'Open'}
+                  </Button>
+                </>
               ) : null}
-            </header>
+            </FileWorkspaceToolbar>
             {error ? (
               <p role="alert">
                 <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
@@ -933,6 +887,47 @@ function FilePreviewContent(props: {
           <video controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '视频无法解码，请使用“打开文件”。' : 'Video could not be decoded. Use Open to play it in a system app.')} />
         ) : null}
       </FileReviewContent>
+      <footer className="file-preview-statusbar">
+        <small title={item.mime}>
+          {item.label} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
+        </small>
+        <div className="file-preview-settings">
+          {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
+            <label className="file-preview-setting">
+              <span>{props.zh ? '编码' : 'Encoding'}</span>
+              <select aria-label={props.zh ? '预览编码' : 'Preview encoding'} value={props.encoding} onChange={(event) => props.onEncodingChange(event.currentTarget.value as FilePreviewTextEncoding | '')}>
+                <option value="">{props.zh ? '自动识别' : 'Automatic'}</option>
+                {filePreviewTextEncodings.map((encoding) => (
+                  <option key={encoding} value={encoding}>
+                    {encoding.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {item.content !== undefined && (item.kind === 'text' || source) ? (
+            <label className="file-preview-setting">
+              <span>{props.zh ? '语言' : 'Language'}</span>
+              <select
+                aria-label={props.zh ? '预览高亮语言' : 'Preview syntax language'}
+                value={language}
+                onChange={(event) => {
+                  // 阅读模式下选择高亮语言时打开源码，使语言选择立即可见。
+                  setLanguage(event.currentTarget.value);
+                  if (markdown) setSource(true);
+                }}
+              >
+                <option value="text">{props.zh ? '纯文本' : 'Plain text'}</option>
+                {sourceLanguageOptions.map((language) => (
+                  <option key={language} value={language}>
+                    {language}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+      </footer>
     </article>
   );
 }
