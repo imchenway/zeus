@@ -2386,7 +2386,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         setContextWorkspace({ kind: 'browser' });
       }
     });
-    void bridge.getBrowserSnapshot?.(conversationId)
+    void bridge
+      .getBrowserSnapshot?.(conversationId)
       .then((snapshot) => {
         if (!active || snapshotReceived) return;
         restoreSnapshot(snapshot);

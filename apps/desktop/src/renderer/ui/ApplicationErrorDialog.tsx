@@ -51,7 +51,9 @@ let applicationErrorContext: Record<string, string> = {};
 export function setApplicationErrorContext(context: Record<string, unknown>): () => void {
   const value = faultReportContext(context);
   applicationErrorContext = value;
-  return () => { if (applicationErrorContext === value) applicationErrorContext = {}; };
+  return () => {
+    if (applicationErrorContext === value) applicationErrorContext = {};
+  };
 }
 
 const listeners = new Set<() => void>();
@@ -364,9 +366,23 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                 {detailsOpen ? copy.hideDetails : copy.details}
               </Button>
               {!current.receipt ? (
-                <Button size="regular" busy={current.reporting} onClick={() => void submitCurrentFault(current)}
-                  data-icon-tooltip={current.language === 'zh-CN' ? '发送脱敏错误、环境和运行事件，不含对话正文、源码或截图' : 'Send redacted errors, environment and runtime events; excludes conversations, source and screenshots'}>
-                  {current.reporting ? (current.language === 'zh-CN' ? '上报中…' : 'Reporting…') : current.reportError ? (current.language === 'zh-CN' ? '重试上报' : 'Retry report') : (current.language === 'zh-CN' ? '上报故障' : 'Report issue')}
+                <Button
+                  size="regular"
+                  busy={current.reporting}
+                  onClick={() => void submitCurrentFault(current)}
+                  data-icon-tooltip={current.language === 'zh-CN' ? '发送脱敏错误、环境和运行事件，不含对话正文、源码或截图' : 'Send redacted errors, environment and runtime events; excludes conversations, source and screenshots'}
+                >
+                  {current.reporting
+                    ? current.language === 'zh-CN'
+                      ? '上报中…'
+                      : 'Reporting…'
+                    : current.reportError
+                      ? current.language === 'zh-CN'
+                        ? '重试上报'
+                        : 'Retry report'
+                      : current.language === 'zh-CN'
+                        ? '上报故障'
+                        : 'Report issue'}
                 </Button>
               ) : null}
               {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (

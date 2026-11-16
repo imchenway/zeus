@@ -278,14 +278,17 @@ async function responseError(response: Response, path: string): Promise<ZeusApiE
     operation?: { status?: string };
   } | null;
   const recoveryRequired = payload?.recoveryRequired === true || payload?.error === 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED' || payload?.operation?.status === 'recovery_required';
-  return Object.assign(new ZeusApiError({
-    status: response.status,
-    error: payload?.error,
-    ...(payload?.cause ? { cause: userFacingErrorCause(payload.cause) } : {}),
-    message: payload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
-    recoveryRequired,
-    retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
-  }), { traceId: response.headers.get('x-zeus-trace-id') ?? undefined, operation: path, statusCode: response.status });
+  return Object.assign(
+    new ZeusApiError({
+      status: response.status,
+      error: payload?.error,
+      ...(payload?.cause ? { cause: userFacingErrorCause(payload.cause) } : {}),
+      message: payload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
+      recoveryRequired,
+      retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+    }),
+    { traceId: response.headers.get('x-zeus-trace-id') ?? undefined, operation: path, statusCode: response.status },
+  );
 }
 
 /** 同时支持 HTTP 秒数与日期；无效提示交由会话恢复流程采用默认间隔。 */

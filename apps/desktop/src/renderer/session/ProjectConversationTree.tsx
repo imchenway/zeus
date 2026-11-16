@@ -541,14 +541,12 @@ export function resolveConversationTreeRuntimeState(conversation: NativeConversa
 
 /** 合并项目直属与任务会话，按显示标题搜索，再按最近创建或主动输入时间排序。 */
 function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string, language: 'zh-CN' | 'en-US'): FlattenedConversation[] {
-  return (
-    [
-      ...(project.conversations ?? []).map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) })),
-      ...project.tasks.flatMap((task) => task.conversations.map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language) }))),
-    ]
-      .filter((entry) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery))
-      .sort((left, right) => compareConversationWorkStartedDesc(left.conversation, right.conversation))
-  );
+  return [
+    ...(project.conversations ?? []).map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) })),
+    ...project.tasks.flatMap((task) => task.conversations.map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language) }))),
+  ]
+    .filter((entry) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery))
+    .sort((left, right) => compareConversationWorkStartedDesc(left.conversation, right.conversation));
 }
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */

@@ -3156,7 +3156,13 @@ function setupIpc(): void {
     const owner = BrowserWindow.fromWebContents(event.sender);
     if (!owner || !isTrustedZeusRendererWindow(owner) || event.senderFrame !== event.sender.mainFrame || readOnlyValidationDescriptor) throw new Error('Fault reporting is unavailable in this window');
     const layout = activeZeusDataLayout();
-    return submitFaultReport(input, { directory: join(layout.localLogs, 'fault-reports'), hostLog: join(layout.executionHost, 'host.log'), appVersion: app.getVersion(), ...(app.isPackaged ? { archivePath: app.getAppPath() } : {}), ...(localServerRuntime ? { core: localServerRuntime.config } : {}) });
+    return submitFaultReport(input, {
+      directory: join(layout.localLogs, 'fault-reports'),
+      hostLog: join(layout.executionHost, 'host.log'),
+      appVersion: app.getVersion(),
+      ...(app.isPackaged ? { archivePath: app.getAppPath() } : {}),
+      ...(localServerRuntime ? { core: localServerRuntime.config } : {}),
+    });
   });
   /** 导出失败报告沿用系统保存窗口，不暴露任意本地文件读取。 */
   ipcMain.handle('zeus:export-fault-report', async (event, reportId: unknown) => {

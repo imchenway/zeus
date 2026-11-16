@@ -1164,16 +1164,7 @@ function computerWorkerFailed(error: unknown, driver: DestroyableCuaDriver | nul
   /** worker 也封装执行前的明确拒绝，不能因此重启其他应用的控制。 */
   /** 原生明确拒绝的原因在回调前收敛为字符串。 */
   const reason = isRecord(error.inner) && typeof error.inner.reason === 'string' ? error.inner.reason : '';
-  if (
-    [
-      'ZEUS_COMPUTER_SHARING_STOPPED',
-      'ZEUS_COMPUTER_PERMISSION_REQUIRED',
-      'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE',
-      'ZEUS_COMPUTER_DISPLAY_CHANGED',
-      'ZEUS_COMPUTER_STOPPED',
-    ].some((code) => reason.includes(code))
-  )
-    return false;
+  if (['ZEUS_COMPUTER_SHARING_STOPPED', 'ZEUS_COMPUTER_PERMISSION_REQUIRED', 'ZEUS_COMPUTER_CAPTURE_UNAVAILABLE', 'ZEUS_COMPUTER_DISPLAY_CHANGED', 'ZEUS_COMPUTER_STOPPED'].some((code) => reason.includes(code))) return false;
   return ['Worker', 'Transport', 'Protocol', 'Shutdown'].includes(String(error.tag));
 }
 
