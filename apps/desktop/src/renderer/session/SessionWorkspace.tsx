@@ -3826,8 +3826,10 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  /** 创建回执到达前复用正文投影，原草稿仍保留用于失败恢复。 */
+  /** 创建回执到达前共用发送投影，原草稿只保留用于失败恢复。 */
   const [startingTranscript, setStartingTranscript] = useState<NativeSessionState | null>(null);
+  /** 正文出现首发消息时，输入框同步消费同一发送状态中的正文、附件和网页批注。 */
+  const composerState = startingTranscript ?? { draft: content, attachments, browserSubmission: browserDraft.submission };
   /** 草稿错误与首发消息共用正文组件，未发送时没有用户消息。 */
   const [emptyDraftTranscript] = useState(createInitialSessionState);
   /** 创建方式按项目持久化，发送后清理草稿不会清理偏好。 */
@@ -4054,7 +4056,8 @@ export function NewConversationComposer(props: {
   const needsModelSetup = Boolean(activeCapabilities && !hasAvailableConversationModel(activeCapabilities));
   const goalAvailable = Boolean(selectedModel?.features?.goals.state === 'available' || (!selectedModel?.features && activeCapabilities?.goals?.supported && activeCapabilities?.goals?.enabled));
   const goalInputActive = goalInputOpen && goalAvailable;
-  const goalCount = [...goalObjective.trim()].length;
+  /** 目标已进入首发消息时，输入区按空内容计数，原目标仍可在失败后恢复。 */
+  const goalCount = startingTranscript ? 0 : [...goalObjective.trim()].length;
   const goalObjectiveValid = goalCount > 0 && goalCount <= 4_000;
 
   useEffect(() => {
@@ -4255,7 +4258,16 @@ export function NewConversationComposer(props: {
           recordSystemMessage(systemScope, error, 'conversation_start', '会话已创建，但配置记忆保存失败。');
         }
       }
-      if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') props.drafts?.delete(draftKey);
+      if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') {
+        props.drafts?.delete(draftKey);
+        setContent('');
+        setAttachments([]);
+        /** 原浏览器已迁移到受理会话，后续空草稿使用独立归属。 */
+        setBrowserDraft({ conversationId: `browser-draft-${crypto.randomUUID()}`, submission: null });
+        setGoalInputOpen(false);
+        setGoalObjective('');
+        tokenDraft.current = [];
+      }
       await props.onAccepted?.();
     } catch (error) {
       setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
@@ -4291,13 +4303,15 @@ export function NewConversationComposer(props: {
       onDrop={inputResources.handleDrop}
     >
       <ConversationComposerAttachments
-        attachments={attachments}
+        attachments={composerState.attachments}
         pendingResources={inputResources.pendingResources}
         language={props.language}
         disabled={submitting || inputResources.processing}
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
       />
-      {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
+      {composerState.browserSubmission ? (
+        <BrowserSubmissionAttachment submission={composerState.browserSubmission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} />
+      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
@@ -4322,7 +4336,7 @@ export function NewConversationComposer(props: {
           <div className="session-goal-compose-context">
             <Target aria-hidden="true" weight="regular" />
             <strong>{copy.createGoal}</strong>
-            {content.trim() || attachments.length > 0 ? <small>{copy.normalDraftPreserved}</small> : null}
+            {composerState.draft.trim() || composerState.attachments.length > 0 ? <small>{copy.normalDraftPreserved}</small> : null}
             <span className={goalCount > 4_000 ? 'session-goal-compose-count is-invalid' : 'session-goal-compose-count'}>{goalCount} / 4000</span>
             <button
               type="button"
@@ -4346,7 +4360,7 @@ export function NewConversationComposer(props: {
             aria-keyshortcuts="Enter Shift+Enter Escape"
             autoFocus={props.autoFocus}
             placeholder={copy.goalPlaceholder}
-            value={goalObjective}
+            value={startingTranscript ? '' : goalObjective}
             disabled={submitting || !props.owner}
             onChange={(event) => setGoalObjective(event.currentTarget.value)}
             onCompositionStart={() => setIsComposing(true)}
@@ -4365,10 +4379,14 @@ export function NewConversationComposer(props: {
           />
         ) : (
           <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
-            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={content} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            {props.onGenerateInputSuggestion ? (
+              <InputSuggestionButton suggestion={suggestion} draft={composerState.draft} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} />
+            ) : null}
+            {/* 发送中的空编辑器独立挂载，避免清掉失败恢复所需的结构化引用。 */}
             <StructuredComposerInput
-              tokenDraft={tokenDraft}
-              value={content}
+              key={startingTranscript ? 'sending' : 'draft'}
+              tokenDraft={startingTranscript ? undefined : tokenDraft}
+              value={composerState.draft}
               onValueChange={(value) => {
                 if (value !== content) suggestion.beginEditing();
                 setContent(value);
