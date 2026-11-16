@@ -1929,7 +1929,20 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     /** 独立和自动化员工同样提交冻结权限，不允许 task_push 从任务默认重新扩大能力。 */
     attachDigitalTeamTaskPushPolicy(body, { purpose: 'work', allowCodeChanges: authority.allowCodeChanges === true, allowTests: authority.allowTests === true, allowGitCommit: authority.allowCommit === true });
   }
-  const accepted = await options.executeTaskConversationIdempotent(project, task, body, `task-work-run:${run.id}`);
+  /** 派发前复核任务终态与当前权限，覆盖预检期间发生的任务变化。 */
+  const currentTask = requireRunnableTask(options, run.taskId);
+  /** 只冻结需求字段，历史任务状态与授权不能覆盖当前记录。 */
+  const executionTask: ZeusTaskRecord =
+    isRecord(taskSource) && taskSource.type === 'automation'
+      ? {
+          ...currentTask,
+          title: run.contextManifest.task.title,
+          description: run.contextManifest.task.description,
+          taskType: run.contextManifest.task.taskType as ZeusTaskRecord['taskType'],
+          tags: [...run.contextManifest.task.tags],
+        }
+      : currentTask;
+  const accepted = await options.executeTaskConversationIdempotent(project, executionTask, body, `task-work-run:${run.id}`);
   const response = isRecord(accepted.body) ? accepted.body : {};
   const projection = isRecord(response.conversation) ? response.conversation : {};
   /** 耐久 submission 身份供数字团队绑定准确轮次，普通工作仍可忽略。 */
@@ -2352,7 +2365,9 @@ function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRec
   return { item: activeItem, run: next };
 }
 
+/** 新尝试沿用已接纳的模型和权限，不重新继承员工配置。 */
 function cloneRun(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, previous: TaskWorkRunRecord, entrypointPatch: Record<string, unknown> = {}, context: WorkContextManifestV1 = previous.contextManifest): TaskWorkRunRecord {
+  requireRunnableTask(options, item.taskId);
   /** 再次运行重核员工可用性；经验身份、模型与权限继续使用原冻结值。 */
   const employee = requireEmployeeOrThrow(options, previous.projectId, previous.employeeId);
   if (!employee.enabled) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_UNAVAILABLE', '执行人已停用，请重新指派可用员工。');
@@ -3058,6 +3073,12 @@ function requireTask(options: TaskWorkManagementOptions, taskId: string, reply: 
 function requireTaskOrThrow(options: TaskWorkManagementOptions, taskId: string): ZeusTaskRecord {
   const task = options.tasks.getById(taskId);
   if (!task) throw new TaskWorkStoreError('ZEUS_TASK_NOT_FOUND', '任务不存在。', 404);
+  return task;
+}
+/** 新尝试和派发必须使用未结束的任务，重试不能绕过重新打开流程。 */
+function requireRunnableTask(options: TaskWorkManagementOptions, taskId: string): ZeusTaskRecord {
+  const task = requireTaskOrThrow(options, taskId);
+  if (options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_TERMINAL', '重新打开任务后才能启动或重试工作。');
   return task;
 }
 function requireEmployeeOrThrow(options: TaskWorkManagementOptions, projectId: string, employeeId: string): DigitalEmployeeRecord {
