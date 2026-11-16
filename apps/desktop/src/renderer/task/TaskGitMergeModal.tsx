@@ -1510,12 +1510,13 @@ function toCommittedDeliveryFile(file: TaskBranchFileChange): DeliveryFile {
     status: file.changeType,
     additions: file.additions,
     deletions: file.deletions,
+    isSubmodule: file.isSubmodule,
   };
 }
 
 /** 工作区保留真实状态，区分未跟踪与已暂存新增。 */
 function toWorkingDeliveryFile(file: TaskGitFileStatus): DeliveryFile {
-  return { path: file.path, status: file.category, additions: 0, deletions: 0 };
+  return { path: file.path, status: file.category, additions: 0, deletions: 0, isSubmodule: file.isSubmodule };
 }
 
 /** 仓库列表呈现当前目标的交付状态，远端确认仅使用与该目标对应的证据。 */

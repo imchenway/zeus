@@ -889,7 +889,9 @@ function FilePreviewContent(props: {
       </FileReviewContent>
       <footer className="file-preview-statusbar">
         <small title={item.mime}>
-          {item.label} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
+          {item.label}
+          {item.submodule ? '' : ` · ${item.byteLength.toLocaleString()} B`}
+          {item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
         </small>
         <div className="file-preview-settings">
           {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
@@ -905,7 +907,7 @@ function FilePreviewContent(props: {
               </select>
             </label>
           ) : null}
-          {item.content !== undefined && (item.kind === 'text' || source) ? (
+          {item.content !== undefined && !item.submodule && (item.kind === 'text' || source) ? (
             <label className="file-preview-setting">
               <span>{props.zh ? '语言' : 'Language'}</span>
               <select

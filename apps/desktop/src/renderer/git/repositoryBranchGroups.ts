@@ -31,6 +31,13 @@ export function repositoryLocalBranches(repository: Pick<ProjectGitRepositoryWor
   return !snapshot.detached && !snapshot.headSha && snapshot.branch && !snapshot.localBranches.includes(snapshot.branch) ? [snapshot.branch, ...snapshot.localBranches] : snapshot.localBranches;
 }
 
+/** 父仓库已在签出范围内时，子模块由父仓库同步；单独选择子模块仍可切换其开发分支。 */
+export function branchSwitchRepositories(repositories: readonly ProjectGitRepositoryWorkbenchItem[]): ProjectGitRepositoryWorkbenchItem[] {
+  /** 只排除已登记的子模块，保留目录嵌套的独立仓库。 */
+  const submodulePaths = new Set(repositories.flatMap((repository) => (repository.snapshot.submodules ?? []).map(({ path }) => (repository.relativePath && repository.relativePath !== '.' ? `${repository.relativePath}/${path}` : path))));
+  return repositories.filter((repository) => !submodulePaths.has(repository.relativePath));
+}
+
 /** 多仓动作按顺序执行；失败或冲突后保留已完成结果，不继续处理剩余仓库。 */
 export async function executeRepositoryBatch(repositories: readonly ProjectGitRepositoryWorkbenchItem[], execute: (repository: ProjectGitRepositoryWorkbenchItem) => Promise<ExecutionOutcome>) {
   /** 已成功成员用于准确显示部分完成，不能据此自动反向切换分支。 */

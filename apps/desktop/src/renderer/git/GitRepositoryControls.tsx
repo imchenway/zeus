@@ -1,5 +1,5 @@
 import { useWindowDocument } from '../ui/windowDocument.js';
-import { executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from './repositoryBranchGroups.js';
+import { branchSwitchRepositories, executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from './repositoryBranchGroups.js';
 import './gitWorkspace.css';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import { repositoryColor } from './repositoryColor.js';
@@ -86,7 +86,9 @@ export function BranchSwitcher(props: {
     : props.selectedRepository
       ? [props.selectedRepository]
       : props.repositories.slice(0, 1);
-  const commonLocalBranches = useMemo(() => intersectRepositoryValues(props.repositories, repositoryLocalBranches), [props.repositories]);
+  /** 批量签出按父子关系收敛范围；工作树来源仍保留逐仓选择。 */
+  const branchRepositories = useMemo(() => (props.referenceSelection?.mode === 'source' ? props.repositories : branchSwitchRepositories(props.repositories)), [props.repositories, props.referenceSelection?.mode]);
+  const commonLocalBranches = useMemo(() => intersectRepositoryValues(branchRepositories, repositoryLocalBranches), [branchRepositories]);
   /** 工作树可批量选择共同远程来源；普通签出仍只使用共同本地分支。 */
   const commonBranches = [
     ...commonLocalBranches.map((ref) => ({ ref, kind: 'local' as const })),
@@ -220,16 +222,15 @@ export function BranchSwitcher(props: {
                             props.disabled ||
                             props.busy !== null ||
                             (props.referenceSelection?.mode !== 'source' &&
-                              props.repositories.some((repository) => (repository.snapshot.detached || repository.snapshot.branch !== branch) && repository.snapshot.checkedOutBranches?.includes(branch)))
+                              branchRepositories.some((repository) => (repository.snapshot.detached || repository.snapshot.branch !== branch) && repository.snapshot.checkedOutBranches?.includes(branch)))
                           }
                           onClick={async () => {
                             if (props.referenceSelection) {
                               if (await props.referenceSelection.onSelect(props.repositories, branch, kind)) closeMenus();
                               return;
                             }
-                            await executeRepositoryBatch(
-                              props.repositories.filter((repository) => repository.snapshot.detached || repository.snapshot.branch !== branch),
-                              (repository) => props.onExecute(repository, { type: 'checkout', branchName: branch }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`),
+                            await executeRepositoryBatch(branchRepositories, (repository) =>
+                              props.onExecute(repository, { type: 'checkout', branchName: branch }, props.zh ? `在全部仓库签出“${branch}”` : `Checkout '${branch}' in all repositories`),
                             );
                             setOpen(false);
                           }}

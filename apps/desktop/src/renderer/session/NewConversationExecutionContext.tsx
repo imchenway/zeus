@@ -1,4 +1,4 @@
-import { executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from '../git/repositoryBranchGroups.js';
+import { branchSwitchRepositories, executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from '../git/repositoryBranchGroups.js';
 import { temporaryWorkspaceId, type ConversationWorktreeBranchOptions, type ConversationWorktreeOptions } from '@zeus/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -73,8 +73,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   /** 输入空值表示来源仓库使用不同的新分支名，编辑后统一为输入值。 */
   const commonBranchName = selection && selections.every((entry) => entry?.branchName === selection.branchName) ? selection.branchName : '';
   const snapshot = selectedRepository?.snapshot;
+  /** 直接签出时子模块随父仓库同步，工作树来源继续逐仓配置。 */
+  const branchRepositories = useMemo(() => (props.workspaceMode === 'direct' ? branchSwitchRepositories(scopedRepositories) : scopedRepositories), [props.workspaceMode, scopedRepositories]);
   /** 本地目标分支与 Git 页使用同一交集规则。 */
-  const localBranches = useMemo(() => intersectRepositoryValues(scopedRepositories, repositoryLocalBranches), [scopedRepositories]);
+  const localBranches = useMemo(() => intersectRepositoryValues(branchRepositories, repositoryLocalBranches), [branchRepositories]);
   /** 本地和远端同名引用分开求交集，不混用来源类型。 */
   const sources = useMemo(
     () => [
@@ -213,9 +215,11 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     if (!repositoriesToUpdate.length || !props.onExecuteProjectGit || branchBusyRef.current || refreshing || projectBusy || props.disabled) return false;
     /** 操作开始时固定项目和仓库范围。 */
     const version = loadVersionRef.current;
-    /** 已到目标分支的仓库无需重复检出；本地无 remote 的仓库不参与 fetch。 */
-    const targets = repositoriesToUpdate.filter((repository) =>
-      action.type === 'checkout' || action.type === 'create_branch' ? repository.snapshot.detached || repository.snapshot.branch !== action.branchName : action.type !== 'fetch' || repository.snapshot.remotes.length > 0,
+    /** 签出和新建分支只操作独立范围，避免再次把子模块切到同名旧分支。 */
+    const switchTargets = action.type === 'checkout' || action.type === 'create_branch' ? branchSwitchRepositories(repositoriesToUpdate) : repositoriesToUpdate;
+    /** 重签当前分支也同步子模块；新建已存在的当前分支和无 remote 的 fetch 保持跳过。 */
+    const targets = switchTargets.filter((repository) =>
+      action.type === 'create_branch' ? repository.snapshot.detached || repository.snapshot.branch !== action.branchName : action.type !== 'fetch' || repository.snapshot.remotes.length > 0,
     );
     branchBusyRef.current = true;
     setBranchBusy(true);
@@ -232,8 +236,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           const input = action.type === 'create_branch' ? { ...action, baseRef: repository.snapshot.detached ? undefined : repository.snapshot.branch } : action;
           /** 操作完成后直接采用服务端返回的仓库状态。 */
           const response = await props.onExecuteProjectGit!(props.projectId, repository.id, input);
+          /** 父仓库签出会更新子模块，一起重读相关仓库的分支和提交。 */
+          const refreshed = (action.type === 'checkout' || action.type === 'create_branch') && repository.snapshot.submodules?.some((module) => module.initialized) ? await props.onLoadProjectGit?.(props.projectId) : undefined;
           if (version !== loadVersionRef.current) return null;
-          setWorkbench((current) => replaceRepositorySnapshot(current, repository.id, response));
+          setWorkbench((current) => refreshed ?? replaceRepositorySnapshot(current, repository.id, response));
           return 'completed';
         } catch (reason) {
           failure = reason;

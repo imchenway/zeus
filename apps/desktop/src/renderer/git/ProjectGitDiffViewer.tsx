@@ -173,7 +173,7 @@ export function ProjectGitDiffWindow(props: {
                   const path = file.newPath || file.oldPath;
                   return (
                     <button key={`${file.oldPath}:${file.newPath}`} type="button" data-file-path={path} className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
-                      <FileTypeIcon name={path} />
+                      <FileTypeIcon name={path} kind={file.isSubmodule ? 'submodule' : undefined} />
                       <span data-icon-tooltip={path} data-file-status={fileStatuses[path] ?? file.changeType}>
                         {path}
                       </span>
@@ -203,8 +203,8 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
   const preview = useContext(FilePreviewDataContext);
   const unified = preview?.unified ?? false;
   const original = props.diff?.fileDiffs[0] ?? null;
-  /** 本页恢复后的统计及暂存操作必须绑定新补丁，不能复用旧区块。 */
-  const file = useMemo(() => (original ? refreshedFileDiff(original, preview?.items ?? null, preview?.reverted) : null), [original, preview?.items, preview?.reverted]);
+  /** 子模块以本次读取的版本和脏状态为准；普通文件继续校验原始补丁。 */
+  const file = useMemo(() => (original ? refreshedFileDiff(original, preview?.items ?? null, preview?.reverted || preview?.items?.some((item) => Boolean(item.submodule))) : null), [original, preview?.items, preview?.reverted]);
   /** 片段操作仍使用原始补丁，连续正文不改变暂存范围。 */
   const [hunkIndex, setHunkIndex] = useState(0);
   /** 选择片段时只滚动到原始行，不创建第二个差异编辑器。 */
@@ -248,10 +248,10 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         {!unified ? (
           <div className="project-git-diff-side-head">
             <span tabIndex={0} data-file-path={oldPath} data-icon-tooltip={oldPath}>
-              {oldPath}
+              {props.items?.some((item) => item.submodule) ? props.items[0]?.label : oldPath}
             </span>
             <span tabIndex={0} data-file-path={newPath} data-icon-tooltip={newPath}>
-              {newPath}
+              {props.items?.some((item) => item.submodule) ? props.items[1]?.label : newPath}
             </span>
           </div>
         ) : null}
@@ -266,7 +266,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         ) : (
           <>
             {!props.previewRequest ? <p role="status">{props.zh ? '此快照仅包含差异片段。' : 'This snapshot contains changed sections only.'}</p> : null}
-            {selectedHunk && props.onHunkAction ? (
+            {selectedHunk && props.onHunkAction && !props.items?.some((item) => item.submodule) ? (
               <div className="project-git-diff-hunk-commands">
                 <ZeusSelect
                   ariaLabel={props.zh ? '选择改动片段' : 'Select changed section'}
