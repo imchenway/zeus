@@ -15,8 +15,8 @@ type NetworkSettingsClient = Pick<DashboardClient, 'loadModelConnections' | 'dia
 /** 用用户操作语言概括代理，不把协议、主机和端口藏在内部字段里。 */
 function describeNetworkProxy(settings: NetworkProxySettings | null, zh: boolean): string {
   if (!settings) return zh ? '读取中…' : 'Loading…';
-  if (settings.mode === 'direct') return zh ? '直连，不使用代理' : 'Direct, no proxy';
-  if (settings.mode === 'default') return zh ? '跟随系统与启动环境' : 'System and launch environment';
+  if (settings.mode === 'direct') return zh ? '强制直连' : 'Force direct connection';
+  if (settings.mode === 'default') return zh ? '跟随系统代理' : 'Use system proxy';
   return `${settings.url}${settings.bypass ? (zh ? ` · 绕过 ${settings.bypass}` : ` · bypass ${settings.bypass}`) : ''}`;
 }
 

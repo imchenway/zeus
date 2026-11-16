@@ -102,7 +102,7 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget, type ReserveAutomaticCodexUpdate } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { applyNetworkProxyAtStartup, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { applyNetworkProxyAtStartup, closeNetworkProxyRuntime, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { getFileBlame, type GitDiffSummary, parseGitUnifiedDiff } from '@zeus/git-core';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
@@ -4858,6 +4858,7 @@ app.on(
         },
         45_000,
       );
+      await attemptCleanup('Main 网络代理连接', closeNetworkProxyRuntime);
       if (process.platform === 'darwin' && !readOnlyValidationDescriptor && (mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
         await attemptCleanup('旧 App 备份', async () => {
           await cleanupStaleReleaseBackups(currentAppBundlePath());
@@ -4933,9 +4934,8 @@ async function initializeNetworkProxy(config: { baseUrl: string; apiToken: strin
   if (!response.ok) throw new Error('无法读取当前生效的网络代理配置。');
   /** 只接受与设置保存相同的合法配置。 */
   const settings = normalizeNetworkProxySettings(await response.json());
-  applyNetworkProxyAtStartup(settings);
-  if (settings.mode === 'default') return;
-  /** 默认保留系统设置，直连与手动模式均显式覆盖所有 Zeus 会话。 */
+  await applyNetworkProxyAtStartup(settings);
+  /** 浏览器显式跟随系统，模型和 Main 请求通过统一出口使用同一系统规则。 */
   const proxy = chromiumNetworkProxyConfig(settings);
   await Promise.all([app.setProxy(proxy), session.defaultSession.setProxy(proxy), session.fromPartition(browserPartition).setProxy(proxy)]);
 }

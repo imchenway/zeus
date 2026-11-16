@@ -33,8 +33,8 @@ import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { resolveReleaseUpdateManifestUrl, type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
-import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
-export { applyNetworkProxyAtStartup, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
+import { applyNetworkProxyAtStartup, closeNetworkProxyRuntime } from './networkProxyRuntime.js';
+export { applyNetworkProxyAtStartup, closeNetworkProxyRuntime, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
 export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import {
   cloneTaskManagementStatusConfig,
@@ -1030,7 +1030,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
   /** 固定本次宿主的生效值；后台任务继续运行时，重新开窗也不得提前切换浏览器代理。 */
   const activeNetworkProxy = normalizeNetworkProxySettings(appShellSettings.networkProxy);
-  applyNetworkProxyAtStartup(activeNetworkProxy);
+  await applyNetworkProxyAtStartup(activeNetworkProxy);
+  server.addHook('onClose', closeNetworkProxyRuntime);
   // 只读端点沿用本地 API 的认证；保存仍走既有设置命令，不增加独立写入口。
   server.get('/api/settings/network-proxy', async () => activeNetworkProxy);
   if (newDatabase) {
