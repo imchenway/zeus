@@ -1774,7 +1774,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     /** 原生快照回调可能晚于下一次点击，必须再次核对选择代次。 */
     const applySelection = (): boolean => {
       if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
-      /** 点击原入口沿用本地展开状态；点击子会话则明确展开其所属双栏。 */
+      /** 两种入口都沿用本地展开状态；点击子会话只更新其所属侧边会话。 */
       const child = sideQuestion ?? state.nativeConversationChoices.find((choice) => choice.sourceConversationId === conversation.id && !choice.archived);
       if (child) restoreSideQuestionWorkspace({ ...conversation, navigationId }, child, Boolean(sideQuestion));
       /** 抽屉等待的身份与实际展示的主会话一致，避免子会话入口一直停留在加载态。 */
