@@ -39,7 +39,6 @@ export function ServiceTierToggle(props: {
         type="button"
         className="session-service-tier-toggle"
         data-active={active || undefined}
-        data-unavailable={unsupported && active ? 'true' : undefined}
         aria-label={accessibleLabel}
         aria-pressed={active}
         disabled={props.disabled || (unsupported && !active)}
@@ -49,7 +48,6 @@ export function ServiceTierToggle(props: {
         <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
           <path d="M13.6 2.8 5.2 12.2c-.6.7-.1 1.8.8 1.8h4.2l-1 6.1c-.2 1 .9 1.5 1.6.8l8-9.5c.6-.7.1-1.8-.8-1.8h-4.1l1.3-6c.2-1-.9-1.5-1.6-.8Z" />
         </svg>
-        {unsupported && active ? <span>{props.language === 'zh-CN' ? 'Fast（已记住，当前不可用）' : 'Fast (remembered, currently unavailable)'}</span> : null}
       </button>
     </IconTooltip>
   );

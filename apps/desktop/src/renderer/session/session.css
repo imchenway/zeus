@@ -782,14 +782,6 @@
   font-size: 12px;
 }
 
-.session-codex-parity-v1 .session-service-tier-toggle > span {
-  font-size: 10px;
-  max-inline-size: 13rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .session-codex-parity-v1 .session-queued-thread-actions {
   align-items: center;
   display: inline-flex;
@@ -11585,12 +11577,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 .session-codex-parity-v1 .session-service-tier-toggle[data-active='true'] {
   color: var(--zeus-brand-text);
-}
-
-.session-codex-parity-v1 .session-service-tier-toggle[data-unavailable='true'] {
-  gap: 5px;
-  inline-size: auto;
-  padding-inline: 8px !important;
 }
 
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled):not([aria-disabled='true']) {
