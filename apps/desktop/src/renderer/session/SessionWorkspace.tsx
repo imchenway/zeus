@@ -2360,17 +2360,43 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useEffect(() => {
     const bridge = window.zeus;
     if (!bridge?.onBrowserEvent || !props.conversation) return;
-    return bridge.onBrowserEvent((event) => {
-      const conversationId = props.state?.conversationId ?? props.conversation?.id;
+    /** 浏览器归属沿用真实会话，稳定导航别名不参与宿主请求。 */
+    const conversationId = props.state?.conversationId ?? props.conversation.id;
+    /** 页面隐藏或切换后，不再接入迟到的快照。 */
+    let active = true;
+    /** 实时快照优先于订阅时补读的旧状态。 */
+    let snapshotReceived = false;
+    /** 加载中的网页也会推送快照，打开意图从任一权威快照恢复。 */
+    const restoreSnapshot = (snapshot: ZeusBrowserConversationSnapshot): void => {
+      browserSnapshotRef.current = snapshot;
+      if (snapshot.openRequested && snapshot.tabs.length > 0) {
+        setContextFullWidth(false);
+        setContextWorkspace({ kind: 'browser' });
+      }
+    };
+    /** 先订阅再补读，覆盖缓存页面暂停期间错过的打开事件。 */
+    const unsubscribe = bridge.onBrowserEvent((event) => {
+      if (!active) return;
       if (event.type === 'snapshot' && event.snapshot.conversationId === conversationId) {
         // BrowserHost 先发布标签快照，再请求打开工作面；保留这份权威快照，避免子组件挂载后再等一次 IPC。
-        browserSnapshotRef.current = event.snapshot;
+        snapshotReceived = true;
+        restoreSnapshot(event.snapshot);
       } else if (event.type === 'open_requested' && event.conversationId === conversationId) {
         setContextFullWidth(false);
         setContextWorkspace({ kind: 'browser' });
       }
     });
-  }, [props.conversation, props.state?.conversationId]);
+    void bridge.getBrowserSnapshot?.(conversationId)
+      .then((snapshot) => {
+        if (!active || snapshotReceived) return;
+        restoreSnapshot(snapshot);
+      })
+      .catch((error: unknown) => console.warn('Browser open request could not be restored.', error));
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [props.conversation?.id, props.state?.conversationId, setContextFullWidth, setContextWorkspace]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {

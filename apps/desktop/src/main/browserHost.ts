@@ -227,6 +227,8 @@ export class BrowserHost implements BrowserAutomationPort {
   private readonly windows = new Map<number, BrowserWindow>();
   private readonly visibleTabByWindow = new Map<number, string>();
   private readonly activeTabByConversation = new Map<string, string>();
+  /** 页面暂停订阅时保留打开意图，普通后台标签不自动请求展开。 */
+  private readonly pendingOpenRequests = new Set<string>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly grantedWebPermissions = new Set<string>();
   private readonly downloads: BrowserDownload[] = [];
@@ -447,6 +449,7 @@ export class BrowserHost implements BrowserAutomationPort {
       /** 关闭范围只取经过校验的会话身份和主进程实时标签。 */
       const window = this.requireRendererWindow(event);
       const id = requireNonEmptyString(conversationId, 'conversationId');
+      this.pendingOpenRequests.delete(id);
       for (const tab of this.snapshotFor(id).tabs) this.closeTab(window, id, tab.id);
       return this.snapshotFor(id);
     });
@@ -707,9 +710,9 @@ export class BrowserHost implements BrowserAutomationPort {
       url: string;
     },
   ): Promise<ZeusBrowserConversationSnapshot> {
-    const snapshot = await this.openTab(window, input);
+    await this.openTab(window, input);
     this.emitOpenRequested(input.conversationId);
-    return snapshot;
+    return this.snapshotFor(input.conversationId);
   }
 
   async invoke(input: BrowserAutomationToolCall): Promise<{
@@ -755,8 +758,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
       this.assertAgentUrlAllowed(url);
       const window = this.preferredWindow(input.conversationId);
-      const snapshot = await this.openTab(window, { conversationId: input.conversationId, url });
-      this.emitOpenRequested(input.conversationId);
+      const snapshot = await this.openConversationResource(window, { conversationId: input.conversationId, url });
       if (url !== 'about:blank' && snapshot.activeTabId) {
         await this.waitForTabReady(this.requireConversationTab(input.conversationId, snapshot.activeTabId), 30_000);
       }
@@ -1059,7 +1061,10 @@ export class BrowserHost implements BrowserAutomationPort {
     const remaining = [...this.tabs.values()].filter((candidate) => candidate.snapshot.conversationId === conversationId);
     const next = remaining.at(-1)?.snapshot.id ?? null;
     if (next) this.activeTabByConversation.set(conversationId, next);
-    else this.activeTabByConversation.delete(conversationId);
+    else {
+      this.activeTabByConversation.delete(conversationId);
+      this.pendingOpenRequests.delete(conversationId);
+    }
     if (next && focusedBounds) {
       // 在本次原生命令内完成页面和焦点交接，下一次 Cmd/Ctrl+W 仍有标签目标。
       // setLayout 在返回 Promise 前完成挂载；失败仍沿用浏览器的可见错误通道。
@@ -1097,6 +1102,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     view.setBounds(bounds);
     view.setVisible(true);
+    if (this.activeTabByConversation.get(conversationId) === tabId) this.pendingOpenRequests.delete(conversationId);
     return true;
   }
 
@@ -1660,6 +1666,7 @@ export class BrowserHost implements BrowserAutomationPort {
       tabs,
       activeTabId,
       pendingApprovals: [...this.pendingApprovals.values()].map(({ request }) => request).filter((request) => request.conversationId === conversationId),
+      openRequested: this.pendingOpenRequests.has(conversationId),
     };
   }
 
@@ -1668,6 +1675,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   private emitOpenRequested(conversationId: string): void {
+    this.pendingOpenRequests.add(conversationId);
     this.emit({ type: 'open_requested', conversationId });
   }
 
@@ -2022,7 +2030,7 @@ export class BrowserHost implements BrowserAutomationPort {
       case 'Tabs.new': {
         const url = optionalString(args.url) ? normalizeBrowserUrl(requireNonEmptyString(args.url, 'url')) : 'about:blank';
         if (url !== 'about:blank') this.assertAgentUrlAllowed(url);
-        const snapshot = await this.openTab(this.preferredWindow(input.conversationId), { conversationId: input.conversationId, url });
+        const snapshot = await this.openConversationResource(this.preferredWindow(input.conversationId), { conversationId: input.conversationId, url });
         const tab = this.requireConversationTab(input.conversationId, snapshot.activeTabId!);
         if (url !== 'about:blank') await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
         return toolJson(this.createAdvancedHandle(input, 'Tab', tab));

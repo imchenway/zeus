@@ -1278,6 +1278,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .application-error-dialog {
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
   gap: 16px;
@@ -1364,7 +1365,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
   padding-block-start: 2px;
+}
+
+/* 上报反馈直接放在错误旁，长回执在窄窗口内换行。 */
+.macos-ai-app .application-error-report-status {
+  margin: 0;
+  color: var(--zeus-product-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 560px) {

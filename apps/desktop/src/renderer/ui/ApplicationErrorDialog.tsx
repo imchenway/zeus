@@ -1,6 +1,6 @@
 import { MotionPresence } from './MotionPresence.js';
 import { Collapsible } from './Collapsible.js';
-import { describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
+import { describeUserFacingError, faultReportContext, faultReportDetails, normalizeFaultReportInput, redactUserFacingErrorDetails, type FaultReportInput, type FaultReportReceipt } from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { Button } from './Button.js';
@@ -36,6 +36,22 @@ interface ApplicationErrorEntry {
   showDetails: boolean;
   /** 保留当前错误对应的处理动作。 */
   action?: ApplicationErrorOptions['action'];
+  /** 采集发生错误时的现场，重试不能改为后续选中的会话。 */
+  report: FaultReportInput;
+  /** 每个队列条目独立保留异步上报状态。 */
+  reporting?: boolean;
+  receipt?: FaultReportReceipt;
+  reportError?: string;
+}
+
+/** 当前窗口的业务身份，只在错误入队时拍快照。 */
+let applicationErrorContext: Record<string, string> = {};
+
+/** 工作面切换更新身份，旧工作面卸载不能清空新工作面的身份。 */
+export function setApplicationErrorContext(context: Record<string, unknown>): () => void {
+  const value = faultReportContext(context);
+  applicationErrorContext = value;
+  return () => { if (applicationErrorContext === value) applicationErrorContext = {}; };
 }
 
 const listeners = new Set<() => void>();
@@ -106,8 +122,8 @@ function errorType(error: unknown): string | null {
 
 function errorOperation(error: unknown): string | null {
   if (!error || typeof error !== 'object') return null;
-  const value = error as { action?: unknown; source?: unknown };
-  const candidate = typeof value.action === 'string' ? value.action : typeof value.source === 'string' ? value.source : null;
+  const value = error as { operation?: unknown; action?: unknown; source?: unknown };
+  const candidate = typeof value.operation === 'string' ? value.operation : typeof value.action === 'string' ? value.action : typeof value.source === 'string' ? value.source : null;
   return candidate?.trim() || null;
 }
 
@@ -116,6 +132,21 @@ function errorOccurredAt(error: unknown): string {
     return new Date(error.occurredAt).toISOString();
   }
   return new Date().toISOString();
+}
+
+/** 只取错误字段和最多四层原因，保留服务端详情并排除业务正文。 */
+function diagnosticErrorStack(error: unknown, depth = 0): string {
+  if (depth >= 4 || !error || typeof error !== 'object') return typeof error === 'string' ? error : '';
+  const value = error as Record<string, unknown>;
+  const parts = [value.name, value.code].filter((item) => typeof item === 'string') as string[];
+  if (typeof value.message === 'string') parts.push(value.message);
+  const metadata = faultReportDetails(value);
+  delete metadata.stack;
+  delete metadata.message;
+  if (Object.keys(metadata).length) parts.push(JSON.stringify(metadata));
+  if (value.cause) parts.push(`Caused by:\n${diagnosticErrorStack(value.cause, depth + 1)}`);
+  if (typeof value.stack === 'string') parts.push(value.stack);
+  return parts.join('\n').slice(0, 32000);
 }
 
 /** 只负责解释原因，不改变错误对应操作的可重试性。 */
@@ -207,17 +238,31 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     dedupeKey: `${options.title ?? copy.title}\n${options.summary ?? explanation.message}\n${detailsBody}`,
     code,
     action: options.action,
+    report: normalizeFaultReportInput({
+      reportId: crypto.randomUUID(),
+      occurredAt: errorOccurredAt(error),
+      title: options.title ?? copy.title,
+      summary: options.summary ?? explanation.message,
+      code: code ?? '',
+      operation: operation ?? '',
+      stack: diagnosticErrorStack(error) || original,
+      context: { ...applicationErrorContext, ...faultReportContext(error) },
+    }),
   };
-  const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
+  /** 重新查看同一故障时保留报告身份和回执，不再次创建 Issue。 */
+  entry.dedupeKey += `\n${JSON.stringify(entry.report.context)}`;
+  const duplicate = queue.find((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
   if (options.showDetails) {
-    queue = [entry, ...queue.filter((candidate) => candidate.dedupeKey !== entry.dedupeKey)];
+    const visible = duplicate ?? entry;
+    visible.showDetails = true;
+    queue = [visible, ...queue.filter((candidate) => candidate !== visible && candidate.dedupeKey !== entry.dedupeKey)];
     notifyListeners();
   } else if (!duplicate) {
     queue = [...queue, entry];
     notifyListeners();
   }
   console.error('[Zeus runtime]', details);
-  window.zeus?.reportRendererRuntimeError?.(details);
+  window.zeus?.reportRendererRuntimeError?.(JSON.stringify({ kind: 'application_error', reportId: entry.report.reportId, detail: details, context: entry.report.context }));
   return entry.summary;
 }
 
@@ -249,12 +294,34 @@ function dismissCurrentError(): void {
   notifyListeners();
 }
 
+/** 上报失败留在当前窗口，避免错误出口再次弹出自身的故障。 */
+async function submitCurrentFault(entry: ApplicationErrorEntry): Promise<void> {
+  if (entry.reporting || entry.receipt) return;
+  entry.reporting = true;
+  entry.reportError = undefined;
+  notifyListeners();
+  try {
+    if (!window.zeus?.submitFaultReport) throw new Error('当前窗口无法上报，请使用桌面应用。');
+    entry.receipt = await window.zeus.submitFaultReport(entry.report);
+  } catch (error) {
+    entry.reportError = describeUserFacingError(error, entry.language).message;
+  } finally {
+    entry.reporting = false;
+    notifyListeners();
+  }
+}
+
 export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLanguage }) {
   const [, forceRender] = useState(0);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /** 上报按钮移除后，键盘焦点可回到仍可操作的关闭入口。 */
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const current = queue[0];
   useEffect(() => subscribe(() => forceRender((value) => value + 1)), []);
   useEffect(() => setDetailsOpen(current?.showDetails ?? false), [current?.id, current?.showDetails]);
+  useEffect(() => {
+    if (current?.receipt && document.activeElement === document.body) closeButtonRef.current?.focus();
+  }, [current?.receipt]);
   const copy = copyByLanguage[current?.language ?? props.language];
   return (
     <MotionPresence>
@@ -286,11 +353,22 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                   <pre data-zeus-selectable="text">{current.details}</pre>
                 </section>
               </Collapsible>
+              {current.receipt || current.reportError ? (
+                <p className="application-error-report-status" role="status" aria-live="polite">
+                  {current.reportError || (current.language === 'zh-CN' ? '已上报' : 'Reported')}
+                </p>
+              ) : null}
             </div>
             <footer>
               <Button variant="secondary" size="regular" onClick={() => setDetailsOpen((open) => !open)} aria-expanded={detailsOpen} aria-controls="application-error-dialog-details-title">
                 {detailsOpen ? copy.hideDetails : copy.details}
               </Button>
+              {!current.receipt ? (
+                <Button size="regular" busy={current.reporting} onClick={() => void submitCurrentFault(current)}
+                  data-icon-tooltip={current.language === 'zh-CN' ? '发送脱敏错误、环境和运行事件，不含对话正文、源码或截图' : 'Send redacted errors, environment and runtime events; excludes conversations, source and screenshots'}>
+                  {current.reporting ? (current.language === 'zh-CN' ? '上报中…' : 'Reporting…') : current.reportError ? (current.language === 'zh-CN' ? '重试上报' : 'Retry report') : (current.language === 'zh-CN' ? '上报故障' : 'Report issue')}
+                </Button>
+              ) : null}
               {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (
                 <Button
                   variant="primary"
@@ -320,7 +398,7 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                   {current.action.label}
                 </Button>
               ) : null}
-              <Button variant={current.action ? 'secondary' : 'primary'} size="regular" onClick={dismissCurrentError} autoFocus>
+              <Button ref={closeButtonRef} variant={current.action ? 'secondary' : 'primary'} size="regular" onClick={dismissCurrentError} autoFocus>
                 {copy.close}
               </Button>
             </footer>

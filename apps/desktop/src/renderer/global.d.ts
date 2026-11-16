@@ -398,6 +398,10 @@ declare global {
         sourceFilePath?: string;
         logs: Array<{ createdAt: string; stream: string; text: string }>;
       }) => Promise<{ saved: boolean; filePath: string | null }>;
+      /** 上报故障时由 Main 填充环境并保存本地副本。 */
+      submitFaultReport: (payload: import('@zeus/shared').FaultReportInput) => Promise<import('@zeus/shared').FaultReportReceipt>;
+      /** 导出与当前故障身份一致的已保存诊断包。 */
+      exportFaultReport: (reportId: string) => Promise<{ saved: boolean }>;
       beginWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean }>;
       moveWindowDrag: (point: { screenX: number; screenY: number }) => Promise<{ dragging: boolean; x?: number; y?: number }>;
       endWindowDrag: () => Promise<{ dragging: false }>;

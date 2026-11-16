@@ -136,6 +136,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         recordClientPerformanceSpan(options.onPerformanceSpan, blobPerformanceSpan(response, traceId, attempt, startedAt, true));
         return blob;
       } catch (error) {
+        if (error instanceof Error) Object.assign(error, { traceId, operation: `GET ${path.split('?')[0]}` });
         recordClientPerformanceSpan(options.onPerformanceSpan, blobPerformanceSpan(response, traceId, attempt, startedAt, false));
         if (attempt !== 1 || !shouldRefreshLocalApiConnection(error) || !options.refreshConnection) throw error;
         connection = await options.refreshConnection();
@@ -166,13 +167,18 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
 
   const requestStream = async <T>(path: string, init: RequestInit, onEvent: (event: T) => void): Promise<void> => {
     const connection = options.getConnection();
+    /** 流式请求与普通请求一样保留可关联的故障身份。 */
+    const traceId = createClientTraceId(path);
     const headers = new Headers(init.headers);
     headers.set('authorization', `Bearer ${connection.apiToken}`);
     headers.set('content-type', 'application/json');
-    headers.set('x-zeus-trace-id', createClientTraceId(path));
+    headers.set('x-zeus-trace-id', traceId);
     // 生成请求不可自动重放；超时覆盖整个响应流。
     const signal = init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000);
-    const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers, signal });
+    const response = await fetch(`${connection.baseUrl}${path}`, { ...init, headers, signal }).catch((error: unknown) => {
+      if (error instanceof Error) Object.assign(error, { traceId, operation: `${init.method ?? 'GET'} ${path.split('?')[0]}` });
+      throw error;
+    });
     if (!response.ok) throw await responseError(response, path);
     if (!response.body) throw new Error('生成响应为空。');
     const reader = response.body.getReader();
@@ -192,6 +198,9 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         if (done) break;
       }
       if (pending.trim()) onEvent(JSON.parse(pending) as T);
+    } catch (error) {
+      if (error instanceof Error) Object.assign(error, { traceId, operation: `${init.method ?? 'GET'} ${path.split('?')[0]}`, statusCode: response.status });
+      throw error;
     } finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
@@ -235,6 +244,10 @@ async function requestOnce<T>(connection: LocalApiConnection, path: string, init
     });
     completedSuccessfully = true;
     return result;
+  } catch (error) {
+    // 错误沿用原身份和原因，补上同次请求的关联信息供故障报告取证。
+    if (error instanceof Error) Object.assign(error, { traceId, operation: `${init?.method ?? 'GET'} ${path.split('?')[0]}`, ...(readState.response ? { statusCode: readState.response.status } : {}) });
+    throw error;
   } finally {
     const completedAt = performance.now();
     const response = readState.response;
@@ -265,14 +278,14 @@ async function responseError(response: Response, path: string): Promise<ZeusApiE
     operation?: { status?: string };
   } | null;
   const recoveryRequired = payload?.recoveryRequired === true || payload?.error === 'ZEUS_IDEMPOTENCY_RECOVERY_REQUIRED' || payload?.operation?.status === 'recovery_required';
-  return new ZeusApiError({
+  return Object.assign(new ZeusApiError({
     status: response.status,
     error: payload?.error,
     ...(payload?.cause ? { cause: userFacingErrorCause(payload.cause) } : {}),
     message: payload?.message ?? `Zeus local API request failed: ${path} ${response.status}`,
     recoveryRequired,
     retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
-  });
+  }), { traceId: response.headers.get('x-zeus-trace-id') ?? undefined, operation: path, statusCode: response.status });
 }
 
 /** 同时支持 HTTP 秒数与日期；无效提示交由会话恢复流程采用默认间隔。 */

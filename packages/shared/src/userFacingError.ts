@@ -1182,7 +1182,7 @@ export function userFacingErrorCause(error: unknown, depth = 0): UserFacingError
 }
 
 /** 原文进入详情前移除密钥、个人路径和堆栈；摘要不能成为敏感信息的旁路。 */
-export function redactUserFacingErrorDetails(value: string): string {
+export function redactUserFacingErrorDetails(value: string, options: { includeStack?: boolean; maxLength?: number } = {}): string {
   return value
     .replace(/(^|\n)\s*(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]*/giu, '$1$2: [REDACTED]')
     .replace(/\b([A-Za-z0-9_.-]*(?:api[ _-]?key|(?:access|refresh|session)[ _-]?token|token|password|passphrase|secret|authorization|cookie))["']?\s*[=:]\s*(["'])(?:\\.|(?!\2)[^\r\n])*?\2/giu, '$1=[REDACTED]')
@@ -1196,10 +1196,10 @@ export function redactUserFacingErrorDetails(value: string): string {
     .replace(/(?:file:\/\/)?\/(?:Users|home)\/[^\s,;"'<>]+/gu, '[LOCAL PATH]')
     .replace(/[A-Za-z]:\\[^\s,;"'<>]+/gu, '[LOCAL PATH]')
     .split(/\r?\n/u)
-    .filter((line) => !/^\s*at\s/u.test(line))
+    .filter((line) => options.includeStack || !/^\s*at\s/u.test(line))
     .join('\n')
     .trim()
-    .slice(0, 2000);
+    .slice(0, options.maxLength ?? 2000);
 }
 
 /** 这些文案只是旧版兜底，不应再次作为“具体原因”回显到新的错误弹窗。 */

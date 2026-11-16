@@ -222,6 +222,8 @@ export interface ZeusBrowserConversationSnapshot {
   tabs: ZeusBrowserTabSnapshot[];
   activeTabId: string | null;
   pendingApprovals: ZeusBrowserApprovalRequest[];
+  /** 工具请求打开后保持为真，直到所属会话实际显示网页或关闭全部标签。 */
+  openRequested: boolean;
 }
 
 export interface ZeusBrowserPreparedSubmission {

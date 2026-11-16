@@ -557,6 +557,10 @@ export function createDesktopApi(transport: DesktopTransport) {
     },
     /** 将脱敏运行日志导出到用户选择的文件。 */
     exportRuntimeLogsToFile: (payload: unknown) => transport.invoke('zeus:export-runtime-logs', payload),
+    /** 发送脱敏诊断并读取明确的云端回执。 */
+    submitFaultReport: (payload: unknown) => transport.invoke('zeus:submit-fault-report', payload),
+    /** 使用系统保存窗口导出本机诊断副本。 */
+    exportFaultReport: (reportId: string) => transport.invoke('zeus:export-fault-report', reportId),
     /** 通知原生宿主开始拖动窗口。 */
     beginWindowDrag: (point: unknown) => transport.invoke('zeus:window-drag-start', point),
     /** 向原生宿主更新窗口拖动位置。 */

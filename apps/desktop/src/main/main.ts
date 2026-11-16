@@ -43,6 +43,7 @@ import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
 import { ensureWindowsCodexRemoteControl } from './codexRemoteControlBootstrap.js';
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
+import { exportFaultReport, submitFaultReport } from './faultReporting.js';
 import { chooseProjectDirectory } from './projectDirectoryPicker.js';
 import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
 import { openSourceLocation, type SourceLocation } from './sourceOpen.js';
@@ -3150,6 +3151,22 @@ function setupIpc(): void {
       openPath: (filePath) => shell.openPath(filePath),
     }),
   );
+  /** 故障包只由可信主界面发起；采集不依赖 Core 仍可运行。 */
+  ipcMain.handle('zeus:submit-fault-report', async (event, input: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !isTrustedZeusRendererWindow(owner) || event.senderFrame !== event.sender.mainFrame || readOnlyValidationDescriptor) throw new Error('Fault reporting is unavailable in this window');
+    const layout = activeZeusDataLayout();
+    return submitFaultReport(input, { directory: join(layout.localLogs, 'fault-reports'), hostLog: join(layout.executionHost, 'host.log'), appVersion: app.getVersion(), ...(app.isPackaged ? { archivePath: app.getAppPath() } : {}), ...(localServerRuntime ? { core: localServerRuntime.config } : {}) });
+  });
+  /** 导出失败报告沿用系统保存窗口，不暴露任意本地文件读取。 */
+  ipcMain.handle('zeus:export-fault-report', async (event, reportId: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !isTrustedZeusRendererWindow(owner) || event.senderFrame !== event.sender.mainFrame || readOnlyValidationDescriptor) throw new Error('Fault export is unavailable in this window');
+    const target = await dialog.showSaveDialog(owner, { title: nativeText('保存故障报告', 'Save fault report'), defaultPath: 'zeus-fault-report.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (target.canceled || !target.filePath) return { saved: false };
+    await exportFaultReport(reportId, join(activeZeusDataLayout().localLogs, 'fault-reports'), target.filePath);
+    return { saved: true };
+  });
   ipcMain.handle('zeus:export-runtime-logs', (_event, payload: unknown) =>
     exportRuntimeLogsToFile({
       payload: payload as {

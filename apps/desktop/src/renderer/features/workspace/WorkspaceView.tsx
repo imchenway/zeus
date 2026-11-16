@@ -6,13 +6,13 @@ import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { toolPages } from '../../tooling/index.js';
-import { compareConversationWorkStartedDesc, temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
+import { compareConversationWorkStartedDesc, faultReportContext, temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import type { ProjectSourceContentMatch, SidebarConversationFilters } from '@zeus/shared';
-import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, setApplicationErrorContext, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, type TaskModelSetupContext } from '../../settings/useModelSetup.js';
@@ -374,6 +374,18 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setProjectCommandsProjectId,
     workspaceScrollRef,
   } = state;
+  /** 错误入队时固定当前工作面身份，不采集标题、正文或文件内容。 */
+  useEffect(() => {
+    const projectVisible = activeNavTarget === 'projects' || activeNavTarget === 'conversations';
+    const conversation = state.latestConversationContentVisible || (sessionDrawerTarget && sessionDrawerReady) ? selectedNativeConversation : undefined;
+    return setApplicationErrorContext({
+      ...faultReportContext(conversation),
+      view: activeNavTarget,
+      projectId: conversation?.projectId ?? (projectVisible ? activeProjectId : undefined),
+      taskId: conversation?.taskId ?? (projectVisible && activeProjectSection === 'tasks' && state.taskDetail?.id === taskDetailPaneTaskId ? taskDetailPaneTaskId : undefined),
+      conversationId: conversation?.id,
+    });
+  }, [activeNavTarget, activeProjectId, activeProjectSection, selectedNativeConversation, sessionDrawerTarget, sessionDrawerReady, state.latestConversationContentVisible, state.taskDetail?.id, taskDetailPaneTaskId]);
   const {
     addTaskCreateAttachments,
     applyThirdPartyTaskExtract,
