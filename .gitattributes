@@ -3,3 +3,7 @@ patches/*.patch text eol=lf -whitespace
 
 # 原生补丁统一固定 LF 并保留原始上下文，包含全部 CUA 补丁。
 apps/desktop/native/*.patch text eol=lf -whitespace
+
+# KeePassXC 原始资源和许可证保留上游空白，避免改写逐字节保存的第三方内容。
+apps/desktop/assets/keepassxc-browser/**/*.txt -whitespace
+apps/desktop/assets/licenses/keepassxc-browser.LICENSE -whitespace
