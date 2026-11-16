@@ -20,7 +20,7 @@
   padding: 4px 10px;
   flex: 0 0 auto;
 }
-.file-preview button,
+.file-preview-toolbar button,
 .file-preview-toolbar .file-preview-icon-button {
   font: inherit;
   color: inherit;
@@ -30,7 +30,7 @@
   padding: 3px 8px;
   cursor: pointer;
 }
-.file-preview button:hover:not(:disabled),
+.file-preview-toolbar button:hover:not(:disabled),
 .file-preview-toolbar .file-preview-icon-button:hover:not(:disabled) {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
@@ -48,12 +48,12 @@
 .file-preview-icon-button > svg {
   pointer-events: none;
 }
-.file-preview button[aria-pressed='true'],
+.file-preview-toolbar button[aria-pressed='true'],
 .file-preview-toolbar .file-preview-icon-button[aria-pressed='true'] {
   color: var(--zeus-control-accent);
   background: color-mix(in srgb, var(--zeus-control-accent) 10%, transparent);
 }
-.file-preview button:focus-visible,
+.file-preview-toolbar button:focus-visible,
 .file-preview-toolbar .file-preview-icon-button:focus-visible {
   outline: 2px solid var(--zeus-control-accent);
   outline-offset: 2px;
@@ -80,43 +80,7 @@
   min-width: 0;
   min-height: 0;
   flex: 1;
-}
-.file-preview-content > header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--zeus-control-border);
-  background: var(--zeus-product-panel);
-}
-/* 文件名可省略并悬浮查看完整路径，窄栏才允许工具操作换行。 */
-.file-preview-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 180px;
-  min-width: 0;
-}
-.file-preview-identity > strong,
-.file-preview-identity > small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.macos-ai-app .file-preview-identity > strong {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--zeus-control-text);
-}
-.file-preview-identity > small {
-  color: var(--zeus-control-muted-text);
-  font-size: 11px;
-}
-.file-preview-content > header > .file-preview-toolbar {
-  margin-inline-start: auto;
-  padding: 0;
+  container-type: inline-size;
 }
 /* 增删统计跟随审阅按钮并入文件工具栏，不额外占用内容高度。 */
 .file-review-stats {
@@ -328,23 +292,55 @@
   }
 }
 
-/* 解码与高亮选择影响查看结果，不隐藏系统打开入口。 */
+/* 文件来源和阅读设置放在状态栏，路径操作栏只保留文件动作。 */
+.file-preview-statusbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 28px;
+  padding: 2px 12px;
+  border-top: 1px solid var(--zeus-control-border);
+  color: var(--session-text-muted, var(--zeus-control-muted-text));
+  font-size: 11px;
+}
+.file-preview-statusbar > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+.file-preview-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-inline-start: auto;
+}
 .file-preview-setting {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  color: var(--zeus-control-muted-text);
+  white-space: nowrap;
 }
-.file-preview-setting select {
-  max-width: 130px;
+/* 状态栏保留原生菜单和键盘操作，不继承表单输入框的高度与阴影。 */
+.file-preview-statusbar .file-preview-setting select {
+  appearance: auto;
+  box-sizing: border-box;
   min-width: 0;
+  max-width: 130px;
+  min-height: 24px;
+  height: 24px;
+  padding: 2px 4px;
   font: inherit;
+  line-height: 1.4;
   color: var(--zeus-control-text);
-  background: var(--zeus-control-bg);
-  border: 1px solid var(--zeus-control-border);
+  background: transparent;
+  border: 0;
   border-radius: 4px;
-  padding: 3px 4px;
+  box-shadow: none;
 }
 
 /* 工作表和选中单元格固定在上方，大表滚动交给 AG Grid 虚拟视口。 */
