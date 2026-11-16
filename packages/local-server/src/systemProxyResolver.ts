@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
-import { join } from 'node:path';
-import { promisify } from 'node:util';
+import {execFile} from 'node:child_process';
+import {join} from 'node:path';
+import {promisify} from 'node:util';
 
 /** 系统针对当前目标选择的直连或代理出口；地址中的认证信息只留在进程内。 */
 export type SystemProxyRoute = { kind: 'direct' } | { kind: 'http' | 'https' | 'socks4' | 'socks5'; url: URL };
@@ -24,11 +24,12 @@ function routes(reference, target) {
   var result = [];
   for (var i = 0; i < list.count; i++) {
     var item = list.objectAtIndex(i);
-    var type = ObjC.unwrap(item.objectForKey($.kCFProxyTypeKey));
+    // CFString 常量须先桥接为 NSString，否则 JXA 会把字典键读成空值。
+    var type = ObjC.unwrap(item.objectForKey(ObjC.castRefToObject($.kCFProxyTypeKey)));
     if (type === 'kCFProxyTypeAutoConfigurationURL' || type === 'kCFProxyTypeAutoConfigurationJavaScript') {
       var script = type === 'kCFProxyTypeAutoConfigurationURL'
-        ? $.NSString.stringWithContentsOfURLEncodingError(item.objectForKey($.kCFProxyAutoConfigurationURLKey), $.NSUTF8StringEncoding, null)
-        : item.objectForKey($.kCFProxyAutoConfigurationJavaScriptKey);
+        ? $.NSString.stringWithContentsOfURLEncodingError(item.objectForKey(ObjC.castRefToObject($.kCFProxyAutoConfigurationURLKey)), $.NSUTF8StringEncoding, null)
+        : item.objectForKey(ObjC.castRefToObject($.kCFProxyAutoConfigurationJavaScriptKey));
       if (!script || script.length === 0 || script.length > 1048576) throw new Error('Invalid PAC script');
       var expanded = $.CFNetworkCopyProxiesForAutoConfigurationScript(script, target, null);
       if (!expanded) throw new Error('PAC resolution failed');
@@ -39,10 +40,10 @@ function routes(reference, target) {
       var scheme = type === 'kCFProxyTypeSOCKS' ? 'socks5' :
         type === 'kCFProxyTypeHTTP' || type === 'kCFProxyTypeHTTPS' ? 'http' : null;
       if (!scheme) throw new Error('Unsupported system proxy');
-      var host = ObjC.unwrap(item.objectForKey($.kCFProxyHostNameKey));
-      var port = ObjC.unwrap(item.objectForKey($.kCFProxyPortNumberKey));
-      var user = ObjC.unwrap(item.objectForKey($.kCFProxyUsernameKey));
-      var password = ObjC.unwrap(item.objectForKey($.kCFProxyPasswordKey));
+      var host = ObjC.unwrap(item.objectForKey(ObjC.castRefToObject($.kCFProxyHostNameKey)));
+      var port = ObjC.unwrap(item.objectForKey(ObjC.castRefToObject($.kCFProxyPortNumberKey)));
+      var user = ObjC.unwrap(item.objectForKey(ObjC.castRefToObject($.kCFProxyUsernameKey)));
+      var password = ObjC.unwrap(item.objectForKey(ObjC.castRefToObject($.kCFProxyPasswordKey)));
       var auth = user || password ? encodeURIComponent(user || '') + ':' + encodeURIComponent(password || '') + '@' : '';
       result.push({ url: scheme + '://' + auth + (host.indexOf(':') >= 0 ? '[' + host + ']' : host) + ':' + port });
     }
