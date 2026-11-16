@@ -1,6 +1,6 @@
-import {execFile} from 'node:child_process';
-import {join} from 'node:path';
-import {promisify} from 'node:util';
+import { execFile } from 'node:child_process';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 /** 系统针对当前目标选择的直连或代理出口；地址中的认证信息只留在进程内。 */
 export type SystemProxyRoute = { kind: 'direct' } | { kind: 'http' | 'https' | 'socks4' | 'socks5'; url: URL };
