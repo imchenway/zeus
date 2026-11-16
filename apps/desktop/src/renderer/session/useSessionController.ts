@@ -796,6 +796,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let identityEpoch = 0;
   let disposed = false;
   let startPromise: Promise<void> | null = null;
+  /** 所有连接入口正在接管的快照与事件流，正文读取复用同一水合任务。 */
+  let hydrationPromise: Promise<void> | null = null;
   let reconnectLoopPromise: Promise<void> | null = null;
   /** 磁盘显示缓存不能充当恢复事件订阅的权威基线。 */
   let hasCompleteSnapshot = false;
@@ -2442,7 +2444,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return tracked;
   }
 
-  async function hydrate(reconnecting: boolean, realtimeMode: 'auto' | 'required' = 'auto'): Promise<void> {
+  /** 统一登记自动重连、手动重连和请求答复后的水合，旧任务结束不清除新任务。 */
+  function hydrate(reconnecting: boolean, realtimeMode: 'auto' | 'required' = 'auto'): Promise<void> {
+    /** 快照和事件订阅共同完成本轮连接接管。 */
+    const attempt = hydrateSnapshotAndEvents(reconnecting, realtimeMode);
+    /** 后续连接可能先接管，只释放仍属于本轮的等待入口。 */
+    const tracked = attempt.finally(() => {
+      if (hydrationPromise === tracked) hydrationPromise = null;
+    });
+    hydrationPromise = tracked;
+    return tracked;
+  }
+
+  /** 读取权威快照并按会话活动状态接管实时事件订阅。 */
+  async function hydrateSnapshotAndEvents(reconnecting: boolean, realtimeMode: 'auto' | 'required'): Promise<void> {
     if (disposed) return;
     flushRenderDeltas();
     // 连接代次更换会取消旧分页请求，保留已显示内容并释放旧请求的读取标记。
@@ -3025,16 +3040,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'snapshot_v2_page_merged', snapshot });
   }
 
-  /** 分页等待消息位置实际接管，读取失败或连接换代不能被误认成游标未推进。 */
+  /** 分页等待位置核对及其触发的连接恢复，内部同步暂停不产生正文读取错误。 */
   async function waitForTranscriptPlacementRecovery(generation: number): Promise<void> {
-    while (placementRecovery) {
-      /** 等待当前真实核对；期间新到的位置代次仍由同一接管链处理。 */
-      const recovery = placementRecovery;
+    while (placementRecovery || syncProjectionSuspended) {
+      /** 位置核对失败会转入既有连接恢复，正文读取等待同一恢复任务继续。 */
+      const recovery = placementRecovery ?? hydrationPromise ?? reconnectLoopPromise;
+      if (!recovery) throw new Error(state.error?.message ?? '会话内容暂时无法刷新');
       await recovery;
       if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
     }
     if (disposed || generation !== connectionToken || state.snapshot?.id !== options.conversationId) throw new Error('会话连接已变化，请重新定位。');
-    if (syncProjectionSuspended) throw new Error(state.error?.message ?? '会话位置尚未完成同步，请重试。');
   }
 
   /** 正文页和分页进度作为同一动作接管，调用方不会先于真实状态继续读取。 */
@@ -3364,7 +3379,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
         },
       }));
     }
-    await commitV2Snapshot(canonicalizeTurnReadPaging(next, turn), generation);
+    try {
+      await commitV2Snapshot(canonicalizeTurnReadPaging(next, turn), generation);
+    } catch (error: unknown) {
+      // 等待位置接管期间的连接换代由当前视图接管，不报告旧过程请求的内部取消。
+      if (disposed || generation !== connectionToken) return;
+      throw error;
+    }
     if (processError) throw processError;
   }
 
