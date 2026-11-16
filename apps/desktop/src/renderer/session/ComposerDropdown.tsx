@@ -48,6 +48,7 @@ export function ComposerDropdown<Value extends string>(props: ComposerDropdownPr
       }}
       options={props.options}
       pinning={props.pinning}
+      popoverBoundarySelector=".session-conversation-pane"
       popoverClassName={props.popoverClassName}
       popoverMinWidth={112}
       searchable={props.searchable}

@@ -54,6 +54,8 @@ export interface ZeusSelectProps<T extends string> {
   emptyLabel?: string;
   searchable?: boolean;
   popoverMinWidth?: number;
+  /** 浮层横向限制在触发器最近匹配的面板内，未匹配时沿用窗口边界。 */
+  popoverBoundarySelector?: string;
   /** 浮层箭头对齐触发器的起始、中部或末端交互区。 */
   popoverArrowAlignment?: 'start' | 'center' | 'end';
   /** 启用后使用包含选择与置顶按钮的对话框，避免在选项内嵌套按钮。 */
@@ -244,13 +246,19 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const triggerRect = trigger.getBoundingClientRect();
     const viewportPadding = 8;
     const popoverGap = 6;
+    /** 所属面板的边界避免菜单越过分栏，触发相邻原生网页整体隐藏。 */
+    const boundaryRect = props.popoverBoundarySelector ? trigger.closest(props.popoverBoundarySelector)?.getBoundingClientRect() : undefined;
+    /** 左侧留白同时受窗口和所属面板约束，单位为 CSS 像素。 */
+    const minLeft = Math.max(0, boundaryRect?.left ?? 0) + viewportPadding;
+    /** 右侧留白同时受窗口和所属面板约束，单位为 CSS 像素。 */
+    const maxRight = Math.min(window.innerWidth, boundaryRect?.right ?? window.innerWidth) - viewportPadding;
     /** 模型长名称截断显示，避免单个长名称把菜单撑成横跨页面的大面板。 */
-    const maxWidth = Math.max(0, Math.min(window.innerWidth - viewportPadding * 2, props.pinning ? 360 : Number.POSITIVE_INFINITY));
+    const maxWidth = Math.max(0, Math.min(maxRight - minLeft, props.pinning ? 360 : Number.POSITIVE_INFINITY));
     if (popoverRef.current) {
       popoverContentWidthRef.current = Math.max(popoverContentWidthRef.current, measurePopoverContentWidth(popoverRef.current, maxWidth));
     }
     const width = Math.min(Math.max(triggerRect.width, props.popoverMinWidth ?? 0, popoverContentWidthRef.current), maxWidth);
-    const left = Math.min(Math.max(triggerRect.left, viewportPadding), Math.max(viewportPadding, window.innerWidth - width - viewportPadding));
+    const left = Math.min(Math.max(triggerRect.left, minLeft), Math.max(minLeft, maxRight - width));
     const triggerInset = Math.min(14, triggerRect.width / 2);
     const arrowAnchor = props.popoverArrowAlignment === 'start' ? triggerRect.left + triggerInset : props.popoverArrowAlignment === 'end' ? triggerRect.right - triggerInset : triggerRect.left + triggerRect.width / 2;
     /** 旋转方块以左上角定位，减去半边长后再限制在浮层圆角以内。 */
@@ -273,7 +281,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       }
       return nextLayout;
     });
-  }, [props.popoverArrowAlignment, props.popoverMinWidth, props.pinning]);
+  }, [props.popoverArrowAlignment, props.popoverBoundarySelector, props.popoverMinWidth, props.pinning]);
 
   const closeListbox = (restoreFocus = true) => {
     setOpen(false);
@@ -465,6 +473,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncPopoverLayout);
     if (triggerRef.current) resizeObserver?.observe(triggerRef.current);
     if (popoverRef.current) resizeObserver?.observe(popoverRef.current);
+    /** 拖动分栏时触发器宽度可以不变，仍需随所属面板重新定位。 */
+    const boundary = props.popoverBoundarySelector ? triggerRef.current?.closest(props.popoverBoundarySelector) : null;
+    if (boundary) resizeObserver?.observe(boundary);
     window.addEventListener('resize', syncPopoverLayout);
     document.addEventListener('scroll', syncPopoverLayout, true);
     return () => {
@@ -472,7 +483,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       window.removeEventListener('resize', syncPopoverLayout);
       document.removeEventListener('scroll', syncPopoverLayout, true);
     };
-  }, [open, searchPlaceholder, searchable, syncPopoverLayout, visibleOptions]);
+  }, [open, props.popoverBoundarySelector, searchPlaceholder, searchable, syncPopoverLayout, visibleOptions]);
 
   // 只在打开时自动聚焦；方向键移动后不能把焦点抢回搜索框。
   useEffect(() => {
