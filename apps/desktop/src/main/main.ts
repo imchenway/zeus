@@ -140,6 +140,8 @@ let menuBarUsageCostDetailPayload: MenuBarUsageCostDetailPayload | undefined;
 let menuBarUsageCostDetailHideTimer: ReturnType<typeof setTimeout> | undefined;
 /** 任务与会话交付复用同一种原生窗口，分别按真实范围定位已有实例。 */
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
+/** 接纳期间隐藏交付窗口并保留 Renderer，防止关闭中断提交请求。 */
+const submittingTaskGitDeliveryWindowIds = new Set<number>();
 /** 只保留当前会话一个尚未显示的预热窗口，切换范围时释放旧预热。 */
 let preloadedTaskGitDeliveryWindow: { window: BrowserWindow; reveal: () => void } | undefined;
 /** 迟到的预热请求不能替换用户后来打开或准备的范围。 */
@@ -1264,7 +1266,14 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
       },
     };
   taskGitDeliveryTargetByWindowId.set(window.id, target);
+  /** 接纳前的关闭只隐藏窗口；应用退出仍沿用原有关闭流程。 */
+  window.on('close', (event) => {
+    if (!submittingTaskGitDeliveryWindowIds.has(window.id) || desktopShutdown.signal.aborted) return;
+    event.preventDefault();
+    window.hide();
+  });
   window.on('closed', () => {
+    submittingTaskGitDeliveryWindowIds.delete(window.id);
     taskGitDeliveryFirstFrames.delete(window.id);
     if (preloadedTaskGitDeliveryWindow?.window === window) preloadedTaskGitDeliveryWindow = undefined;
     taskGitDeliveryTargetByWindowId.delete(window.id);
@@ -2213,6 +2222,21 @@ function setupIpc(): void {
         if (!ownerOperations.size) projectGitOperations.delete(event.sender.id);
       }
     });
+  });
+  /** 隐藏窗口保留接纳请求，接纳成功后允许关闭，失败时恢复原窗口。 */
+  ipcMain.handle('zeus:task-git-delivery:submission-state', (event, state: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    /** 只允许创建时绑定的交付窗口改变自身可见性。 */
+    const target = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id) : undefined;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !target || event.senderFrame !== event.sender.mainFrame) throw new Error('当前窗口不是受信任的代码交付窗口。');
+    if (state !== 'pending' && state !== 'accepted' && state !== 'failed') throw new Error('交付请求状态无效。');
+    if (state === 'pending') {
+      submittingTaskGitDeliveryWindowIds.add(requestingWindow.id);
+      requestingWindow.hide();
+    } else if (submittingTaskGitDeliveryWindowIds.delete(requestingWindow.id) && state === 'failed') {
+      revealTaskGitDeliveryWindow(requestingWindow);
+    }
+    return { state };
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

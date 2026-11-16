@@ -143,6 +143,8 @@ declare global {
       reportGitDeliveryFrame: (input: { kind: 'window' | 'diff'; durationMs?: number }) => void;
       /** 原生展示预热窗口后请求一次实际绘制回执。 */
       onGitDeliveryFrameRequested: (listener: () => void) => () => void;
+      /** 提交期间立即隐藏窗口，失败时恢复并保留原有输入。 */
+      setTaskGitDeliverySubmissionState: (state: 'pending' | 'accepted' | 'failed') => Promise<{ state: 'pending' | 'accepted' | 'failed' }>;
       /** 所有范围都关闭当前真实交付窗口。 */
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId?: string; projectId?: string; conversationId?: string }>;
       getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;

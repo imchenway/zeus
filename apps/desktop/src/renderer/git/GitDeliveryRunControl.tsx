@@ -47,7 +47,7 @@ export function GitDeliveryRunControl(props: {
   disabled: boolean;
   /** 当前语言。 */
   zh: boolean;
-  /** 只有服务端持久接纳后才关闭原窗口。 */
+  /** 服务端持久接纳后销毁已隐藏的原窗口。 */
   onAccepted(): void;
 }) {
   /** 功能区与底部按钮读取同一份组合，避免勾选和执行不一致。 */
@@ -156,12 +156,14 @@ export function GitDeliveryRunControl(props: {
     return () => setRunning(false);
   }, [busy, running, setRunning]);
 
-  /** 将固定快照交给后台；成功后不等待任何 Git 或 AI 步骤。 */
+  /** 立即隐藏窗口，将固定快照交给后台；接纳失败时恢复原窗口。 */
   async function start(): Promise<void> {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
     setError(null);
+    /** 接纳或偏好保存失败时仍需恢复窗口展示原因。 */
+    let dismissed = false;
     try {
       /** 读取模型前固定文件和设置，接纳重试继续使用同一快照。 */
       const sourceJson = JSON.stringify({
@@ -169,6 +171,7 @@ export function GitDeliveryRunControl(props: {
         postPushCommands: settings.push ? (settings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 })) : [],
         settings: { ...settings, finalTaskStatus: taskId ? settings.finalTaskStatus : null, archiveConversation: !taskId && settings.archiveConversation === true },
       });
+      await window.zeus?.setTaskGitDeliverySubmissionState?.('pending');
       if (request.current?.sourceJson !== sourceJson) {
         /** 模型参数随运行冻结，之后修改项目偏好不影响已接纳步骤。 */
         const input = JSON.parse(sourceJson) as GitDeliveryInput;
@@ -201,12 +204,15 @@ export function GitDeliveryRunControl(props: {
         setError(props.zh ? '组合已开始运行，但项目偏好保存失败。' : 'The combination started, but its project preference could not be saved.');
         return;
       }
+      await window.zeus?.setTaskGitDeliverySubmissionState?.('accepted');
       props.onAccepted();
+      dismissed = true;
     } catch (reason) {
       setError(reason);
     } finally {
       pending.current = false;
       setBusy(false);
+      if (!dismissed) await window.zeus?.setTaskGitDeliverySubmissionState?.('failed').catch((reason: unknown) => setError(reason));
     }
   }
 

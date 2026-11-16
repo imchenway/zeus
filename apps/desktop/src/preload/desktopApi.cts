@@ -254,6 +254,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     reportGitDeliveryFrame: (input: { kind: 'window' | 'diff'; durationMs?: number }) => transport.send('zeus:task-git-delivery:frame', input),
     /** 宿主显示预热窗口时显式请求绘制回执，不依赖焦点变化。 */
     onGitDeliveryFrameRequested: (listener: () => void) => transport.subscribe('zeus:task-git-delivery:request-frame', listener),
+    /** 提交时隐藏窗口并保留请求，接纳失败时恢复原窗口。 */
+    setTaskGitDeliverySubmissionState: (state: 'pending' | 'accepted' | 'failed') => transport.invoke('zeus:task-git-delivery:submission-state', state),
     /** 关闭当前 Git 交付窗口。 */
     closeTaskGitDeliveryWindow: () => transport.invoke('zeus:task-git-delivery:close'),
     /** 读取交付窗口的当前任务上下文。 */
