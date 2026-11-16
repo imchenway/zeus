@@ -1367,6 +1367,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           }}
           entry={row.entry}
           language={props.language}
+          readError={props.state.snapshot?.v2Paging?.historyByTurn?.[row.entry.providerTurnId ?? row.entry.turnId]?.error ?? props.state.snapshot?.v2Paging?.historyByTurn?.[row.entry.turnId]?.error}
           onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined}
           onReadError={
             props.onSaveSystemMessage && navigationTargetKey === row.entry.rowKey
@@ -2304,7 +2305,15 @@ function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: read
 }
 
 /** 只在占位真正靠近视口时读取对应轮次；失败保留在原位，等待用户重试。 */
-function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry; language: SessionUiLanguage; onLoad?: (turnId: string) => Promise<void>; onReadError?: (error: unknown) => void; onReadSuccess?: () => void }) {
+function NavigationHistoryPlaceholder(props: {
+  entry: TranscriptNavigationEntry;
+  language: SessionUiLanguage;
+  /** 已有分页错误随会话保存，虚拟行重建不能自动重试同一次失败。 */
+  readError?: string | null;
+  onLoad?: (turnId: string) => Promise<void>;
+  onReadError?: (error: unknown) => void;
+  onReadSuccess?: () => void;
+}) {
   /** 观察真实占位，虚拟列表远处保留的节点不能触发无关读取。 */
   const ref = useRef<HTMLElement | null>(null);
   /** 回调变化不触发再次读取；失败仍归属本次目标。 */
@@ -2315,9 +2324,17 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
   onReadSuccess.current = props.onReadSuccess;
   /** 同一占位失败后不因重复相交自动重放。 */
   const [attempt, setAttempt] = useState(0);
+  /** 错误回填不重新启动观察器，避免一次重试失败后再次自动读取。 */
+  const readError = useRef(props.readError);
+  readError.current = props.readError;
   /** 状态只影响此处占位，不覆盖整个会话。 */
-  const [status, setStatus] = useState<{ loading: boolean; error: string | null }>({ loading: true, error: null });
+  const [status, setStatus] = useState<{ loading: boolean; error: string | null }>({ loading: !props.readError, error: props.readError ? redactUserFacingErrorDetails(props.readError) : null });
   useEffect(() => {
+    // 沿用真实分页失败；只有用户点击原位重试才再次进入读取流程。
+    if (readError.current && attempt === 0) {
+      setStatus({ loading: false, error: redactUserFacingErrorDetails(readError.current) });
+      return;
+    }
     if (!ref.current || !props.onLoad) return;
     /** 卸载或切换目标后不处理旧结果。 */
     let cancelled = false;
@@ -2331,7 +2348,9 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
         /** 固定本次读取归属，切换会话后不借用新回调。 */
         const succeeded = onReadSuccess.current;
         void props.onLoad!(props.entry.turnId)
-          .then(() => succeeded?.())
+          .then(() => {
+            if (!cancelled) succeeded?.();
+          })
           .catch((error: unknown) => {
             if (!cancelled) {
               setStatus({ loading: false, error: redactUserFacingErrorDetails(error instanceof Error ? error.message : '正文读取失败。') });
