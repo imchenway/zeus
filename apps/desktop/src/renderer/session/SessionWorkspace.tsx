@@ -441,7 +441,10 @@ export interface ConnectedSessionWorkspaceProps {
   quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
-  onLatestContentVisibilityChange?: (visible: boolean) => void;
+  /** 按真实项目与会话上报最新正文可见性，主栏和侧栏分别确认已读。 */
+  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean) => void;
+  /** 面板被关闭或其他工作面遮住时，不把已挂载的正文当作可见。 */
+  contentVisible?: boolean;
 }
 
 interface ConversationCapabilitiesCacheEntry {
@@ -994,7 +997,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     onArchivedSideQuestion={(state) => onChange((current) => replaceArchivedSideQuestion(current, conversation.id, state))}
                     embeddedInTask
                     quickActionsSuppressed
-                    onLatestContentVisibilityChange={undefined}
+                    contentVisible={props.contentVisible !== false && visible}
                   />
                 )}
               />
@@ -1026,6 +1029,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       transcriptLoading={transcriptLoading}
       creationStatus={displayedCreationStatus}
       onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
+      contentVisible={props.contentVisible}
       actions={workspaceActions}
     />
   );
@@ -1861,7 +1865,10 @@ export interface SessionWorkspaceProps {
   loadState?: 'empty' | 'loading' | 'error';
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
-  onLatestContentVisibilityChange?: (visible: boolean) => void;
+  /** 最新正文的阅读事实归属实际渲染的会话。 */
+  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean) => void;
+  /** 隐藏的侧栏仍可保持挂载，但不能确认已读。 */
+  contentVisible?: boolean;
   creationStatus?: SessionCreationStatus;
   actions?: SessionWorkspaceActions;
 }
@@ -2136,6 +2143,19 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 仅当前可见的会话工作面可以占用全宽。 */
   const contextFullWidth = requestedContextFullWidth;
   const contextOpen = contextWorkspace.kind !== 'none';
+  /** 阅读回执使用持久项目身份，不使用面板导航身份。 */
+  const contentProjectId = props.conversation?.projectId;
+  /** 正文会话身份在提醒字段刷新时保持稳定。 */
+  const contentConversationId = props.conversation?.id;
+  /** 可见事实携带正文身份；全宽上下文或隐藏侧栏不代表用户读过正文。 */
+  const reportLatestContentVisibility = useCallback(
+    (visible: boolean): void => {
+      if (!contentProjectId || !contentConversationId) return;
+      props.onLatestContentVisibilityChange?.(contentProjectId, contentConversationId, visible && props.contentVisible !== false && !contextFullWidth);
+    },
+    [contentProjectId, contentConversationId, contextFullWidth, props.contentVisible, props.onLatestContentVisibilityChange],
+  );
+  useLayoutEffect(() => () => reportLatestContentVisibility(false), [reportLatestContentVisibility]);
   /** 通用文件同属审阅，原生焦点通知继续沿用源码类别。 */
   const contextActivityKind = contextWorkspace.kind === 'file' ? 'source' : contextWorkspace.kind;
   const browserOpen = contextOpen && contextWorkspace.kind === 'browser';
@@ -2161,8 +2181,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const legacyLatestContentRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     /** 回调与当前会话身份绑定，卸载时撤销旧会话的可见状态。 */
-    const report = props.onLatestContentVisibilityChange;
-    if (!legacy || !report) return;
+    const report = reportLatestContentVisibility;
+    if (!legacy || !props.onLatestContentVisibilityChange) return;
     report(false);
     /** 没有成功加载正文时保留未读，加载失败不确认。 */
     const marker = legacyLatestContentRef.current;
@@ -2174,7 +2194,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       observer.disconnect();
       report(false);
     };
-  }, [legacy, legacyMessages.length, props.loadState, props.conversation?.id, props.onLatestContentVisibilityChange]);
+  }, [legacy, legacyMessages.length, props.loadState, props.conversation?.id, props.onLatestContentVisibilityChange, reportLatestContentVisibility]);
   // 终端只依赖稳定的项目与会话身份；会话快照重水合期间短暂为空不能关闭仍存活的 PTY 面板。
   const terminalAvailable = Boolean(props.terminalClient && props.conversation && props.projectPath && !legacy);
   /** 工具收起后恢复可见入口；环境卡因布局变化收起时返回其顶部按钮。 */
@@ -3295,7 +3315,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     projectPersistedPlans={props.projectPersistedPlans}
                     localSubmissionRevision={localSubmissionRevision}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}
-                    onLatestContentVisibilityChange={props.onLatestContentVisibilityChange}
+                    onLatestContentVisibilityChange={reportLatestContentVisibility}
                     creationStatus={props.creationStatus}
                     onEditUserItem={
                       transcriptInteractionsEnabled && actions.onEditUserItem

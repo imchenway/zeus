@@ -18,7 +18,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     archivedConversationLoadState,
     codexConfigImportLoading,
     codexConfigImportPreview,
-    latestConversationContentVisible,
+    latestContentVisibleConversations,
     nativeConversationChoiceLoadCoordinator,
     nativeConversationStatusSyncState,
     nativeConversationStartEnvelopeManager,
@@ -249,8 +249,11 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
   }, []);
 
   useEffect(() => {
-    // 断线或校准期间保留提醒，恢复后只确认当前前台实际可见的最新修订。
-    if (nativeConversationStatusSyncState !== 'connected' || !selectedNativeConversation?.hasUnreadAttention || selectedNativeConversation.taskPushCreating || !zeusWindowForeground || !latestConversationContentVisible) return;
-    acknowledgeNativeConversationAttention(selectedNativeConversation.projectId, selectedNativeConversation.id, selectedNativeConversation.attentionRevision);
-  }, [acknowledgeNativeConversationAttention, latestConversationContentVisible, nativeConversationAttentionRetryRevision, nativeConversationStatusSyncState, selectedNativeConversation, zeusWindowForeground]);
+    // 断线或校准期间保留提醒；主栏和侧栏只确认各自前台实际可见的最新修订。
+    if (nativeConversationStatusSyncState !== 'connected' || !zeusWindowForeground) return;
+    for (const conversation of latestContentVisibleConversations) {
+      if (!conversation.hasUnreadAttention || conversation.taskPushCreating) continue;
+      acknowledgeNativeConversationAttention(conversation.projectId, conversation.id, conversation.attentionRevision);
+    }
+  }, [acknowledgeNativeConversationAttention, latestContentVisibleConversations, nativeConversationAttentionRetryRevision, nativeConversationStatusSyncState, zeusWindowForeground]);
 }
