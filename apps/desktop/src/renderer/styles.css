@@ -10459,6 +10459,72 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   display: grid;
 }
 
+/* 密码设置复用原有分组及按钮，长网址与窄窗口允许收缩或换行。 */
+.macos-ai-app .browser-password-heading,
+.macos-ai-app .browser-password-row,
+.macos-ai-app .browser-password-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.macos-ai-app .browser-password-heading h3 {
+  margin: 0;
+}
+.macos-ai-app .browser-password-heading {
+  flex-wrap: wrap;
+}
+.macos-ai-app .browser-password-heading > .zeus-button,
+.macos-ai-app .browser-password-actions > .zeus-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.macos-ai-app .browser-password-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-block-size: 320px;
+  overflow: auto;
+}
+.macos-ai-app .browser-password-row {
+  padding-block: 10px;
+  border-block-end: 1px solid var(--zeus-product-line);
+  flex-wrap: wrap;
+}
+.macos-ai-app .browser-password-account {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+  flex: 1 1 180px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.macos-ai-app .browser-password-account span {
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .browser-password-import {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+}
+.macos-ai-app .browser-password-file {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.macos-ai-app .browser-password-actions {
+  justify-content: flex-end;
+}
+.macos-ai-app .browser-password-invalid {
+  margin: 0;
+  padding-inline-start: 20px;
+  max-block-size: 120px;
+  overflow: auto;
+  color: var(--zeus-danger-text);
+  font-size: 12px;
+}
+
 .macos-ai-app .browser-settings-row {
   border-block-end: 0;
 }
@@ -23813,7 +23879,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
     gap: 8px;
   }
   .git-delivery-workflow-steps,
-  .git-delivery-workflow-options { column-gap: 16px; }
+  .git-delivery-workflow-options {
+    column-gap: 16px;
+  }
 }
 /* 未勾选推送时保留命令偏好，灰化说明本次组合不会执行这些命令。 */
 .git-delivery-command-selection[data-enabled='false'] {

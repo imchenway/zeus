@@ -70,6 +70,7 @@ import {
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
+import { BrowserPasswordStore } from './browserPasswords.js';
 import { createBrowserTranslationClient } from './browserTranslationClient.js';
 import { computerBackgroundLaunchSwitch, type ComputerHost, computerTargetDisplaySwitch, createComputerHost } from './computerHost.js';
 import { createNativeAutomationHost } from './nativeAutomationHost.js';
@@ -4226,6 +4227,7 @@ async function initializeApplication(): Promise<void> {
       productionEdgeExtensionId: process.env.ZEUS_EDGE_EXTENSION_ID,
     });
     browserHost = createBrowserHost({
+      passwords: new BrowserPasswordStore(join(dirname(dataLayout.browserState), 'passwords', 'passwords.enc'), createPlatformSecretStore({ service: activeDesktopKeychainService(), dataRootPath: dataLayout.root })),
       translation: createBrowserTranslationClient(async () => {
         if (!localServerRuntime) throw new Error('翻译服务尚未就绪。');
         return localServerRuntime.refreshConfig();

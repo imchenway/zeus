@@ -1,0 +1,96 @@
+{
+  "repository": "https://github.com/keepassxreboot/keepassxc-browser",
+  "release": "1.10.4.1",
+  "commit": "8b0b2c4347126f4983f59ea7dd6ca2a2a667cf48",
+  "license": "GPL-3.0",
+  "scripts": [
+    {
+      "path": "common/global.js",
+      "sha": "c445509c5bd1b7a33e116fd14a5340da40191898"
+    },
+    {
+      "path": "common/sites.js",
+      "sha": "770411b6afcd4c32be08028cfed12ac48ab05250"
+    },
+    {
+      "path": "content/ui.js",
+      "sha": "fbec8c622f1560030952ce45c7d1cca44a691eb7"
+    },
+    {
+      "path": "content/banner.js",
+      "sha": "fa228a84dfe032d0986656aa0fc35c3ec314a4cf"
+    },
+    {
+      "path": "content/autocomplete.js",
+      "sha": "fd472d4d10f867e3fb26dbc6591074b898a97def"
+    },
+    {
+      "path": "content/credential-autocomplete.js",
+      "sha": "53466192144201f184ed9d1442de6fd30ad74947"
+    },
+    {
+      "path": "content/custom-fields-banner.js",
+      "sha": "fe72a5db7dc78fbe74ad69f9cd253de57b200fb9"
+    },
+    {
+      "path": "content/fields.js",
+      "sha": "1766a7999b59924787fae6cfab576b0dbd73bf77"
+    },
+    {
+      "path": "content/fill.js",
+      "sha": "5f2f0ea1823b30a8514c93650f3a1c8c83c9e666"
+    },
+    {
+      "path": "content/form.js",
+      "sha": "f224f38b504dae22d28bfb43a1e2b49146e89267"
+    },
+    {
+      "path": "content/icon.js",
+      "sha": "bde3437b17a1e0dcf43586224dd37446d97956fc"
+    },
+    {
+      "path": "content/icon-handler.js",
+      "sha": "08f7439a8dc5ff628e0d989d164ba50b83a09f5b"
+    },
+    {
+      "path": "content/keepassxc-browser.js",
+      "sha": "77a3ccbe438b2728a1805ad1f0f880e0369133f0"
+    },
+    {
+      "path": "content/observer-helper.js",
+      "sha": "641bfcd965a45021955a9726b56335b6671099c2"
+    },
+    {
+      "path": "content/pwgen.js",
+      "sha": "8d04cf99d2fc3d6e5646a2e4baaab66b4432f08f"
+    },
+    {
+      "path": "content/totp-autocomplete.js",
+      "sha": "9b2f448bda6b777de5482ee2742abf34fb4e3622"
+    },
+    {
+      "path": "content/totp-field.js",
+      "sha": "def11f692460f864e336cef23e1fd52150aa3c84"
+    },
+    {
+      "path": "content/username-field.js",
+      "sha": "c7003f72cdc93dc8b43dafe93cae6af13f221dff"
+    }
+  ],
+  "locales": [
+    {
+      "path": "_locales/en/messages.json",
+      "sha": "cb1459b2f8ec8df4ec005bc5bf1eedd14ffc6a51"
+    },
+    {
+      "path": "_locales/zh_CN/messages.json",
+      "sha": "5dc428a619172538c4cc539b5429f2b5b8ae126c"
+    }
+  ],
+  "defaults": {
+    "path": "background/page.js",
+    "sha": "f29716b481fa8922ebda4654bd779ed38d876dbb"
+  },
+  "integration": "Source files are stored byte-for-byte as .txt resources and imported with Vite's existing ?raw support. Zeus replaces extension transport and the auto-start hook; field detection, observers, site rules, visibility checks and filling remain upstream code. Extension UI, password saving, TOTP, passkeys and automatic submission are disabled using upstream settings.",
+  "platformBoundary": "Only top-level HTTP(S) documents are connected to the credential bridge. Electron's DOM bridge provides open Shadow DOM roots; Chrome's privileged closed-shadow-root extension API is not exposed."
+}

@@ -27,6 +27,9 @@ import type {
   ZeusBrowserEvent,
   ZeusBrowserPreparedSubmission,
   ZeusBrowserSettings,
+  ZeusBrowserPasswordAccount,
+  ZeusBrowserPasswordImportPreview,
+  ZeusBrowserPasswordImportResult,
   ZeusComputerControlIdentity,
   ZeusComputerPreview,
   ZeusComputerSettings,
@@ -454,6 +457,12 @@ declare global {
       markBrowserCommentsSent: (input: { conversationId: string; tabId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;
       respondToBrowserApproval: (input: { requestId: string; decision: ZeusBrowserApprovalDecision }) => Promise<{ resolved: boolean }>;
       getBrowserSettings: () => Promise<ZeusBrowserSettings>;
+      /** 密码管理只接收元数据、冲突来源与统计回执。 */
+      listBrowserPasswords: () => Promise<ZeusBrowserPasswordAccount[]>;
+      prepareBrowserPasswordImport: () => Promise<ZeusBrowserPasswordImportPreview | null>;
+      cancelBrowserPasswordImport: (token: string) => Promise<void>;
+      commitBrowserPasswordImport: (input: { token: string; choices: Record<string, number> }) => Promise<ZeusBrowserPasswordImportResult>;
+      deleteBrowserPassword: (id: string) => Promise<{ deleted: boolean }>;
       updateBrowserSettings: (input: Partial<ZeusBrowserSettings>) => Promise<ZeusBrowserSettings>;
       clearBrowserData: () => Promise<{ cleared: boolean }>;
       getRetiredNativeRuntimeState: () => Promise<ZeusRetiredNativeRuntimeState>;

@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { ZeusBrowserSettings, ZeusComputerSettings, ZeusRetiredNativeRuntimeState } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { BrowserPasswordsSection } from './BrowserPasswordsSection.js';
 
 interface BrowserSettingsPaneProps {
   language: 'zh-CN' | 'en-US';
@@ -36,7 +37,7 @@ const copy = {
     // 单个开关保存不能暗示页面中的其他草稿也已保存。
     switchSaved: '开关设置已保存。',
     clear: '清除浏览器数据',
-    clearHelp: '清除 Cookie、缓存、站点存储、站点授权和页面评论，并把现有标签重置为空白页。',
+    clearHelp: '清除 Cookie、缓存、站点存储、站点授权和页面评论，并把现有标签重置为空白页。已保存密码保留。',
     cleared: '浏览器数据已清除。',
     clearConfirm: '将清除独立浏览器 Profile 中的登录态、站点数据、授权和评论。此操作不可撤销，确定继续吗？',
     computerTitle: 'Computer Use',
@@ -98,7 +99,7 @@ const copy = {
     // 只确认本次开关已经保存。
     switchSaved: 'Switch setting saved.',
     clear: 'Clear browser data',
-    clearHelp: 'Clears cookies, cache, site storage, site grants, and page comments, then resets open tabs to blank pages.',
+    clearHelp: 'Clears cookies, cache, site storage, site grants, and page comments, then resets open tabs to blank pages. Saved passwords are kept.',
     cleared: 'Browser data cleared.',
     clearConfirm: 'This clears sign-in state, site data, grants, and comments from the independent browser profile. It cannot be undone. Continue?',
     computerTitle: 'Computer Use',
@@ -392,6 +393,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           </BrowserSettingRow>
         </section>
       </section>
+      <BrowserPasswordsSection language={props.language} />
       <section className="settings-product-section">
         <h3>{props.language === 'zh-CN' ? '下载' : 'Downloads'}</h3>
         <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '下载' : 'Downloads'}>

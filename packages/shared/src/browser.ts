@@ -128,6 +128,40 @@ export interface ZeusBrowserSettings {
   externalConnectionDetail?: string;
 }
 
+/** 密码管理界面只接收账号标识，不接收密码。 */
+export interface ZeusBrowserPasswordAccount {
+  id: string;
+  origin: string;
+  username: string;
+}
+
+/** 冲突只提供来源行号；row 为 0 表示保留已有记录或跳过。 */
+export interface ZeusBrowserPasswordConflict {
+  id: string;
+  origin: string;
+  username: string;
+  rows: number[];
+  hasExisting: boolean;
+}
+
+/** CSV 内容仅留在主进程，确认界面使用有期限的导入身份。 */
+export interface ZeusBrowserPasswordImportPreview {
+  token: string;
+  fileName: string;
+  added: number;
+  unchanged: number;
+  invalidRows: Array<{ row: number; reason: string }>;
+  conflicts: ZeusBrowserPasswordConflict[];
+}
+
+/** 导入回执不包含 CSV 内容或密码。 */
+export interface ZeusBrowserPasswordImportResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  invalid: number;
+}
+
 /** 桌面控制设置与真实系统授权状态。 */
 export interface ZeusComputerSettings {
   enabled: boolean;
@@ -215,6 +249,8 @@ export function mergeBrowserSubmissions(current: ZeusBrowserPreparedSubmission |
 }
 
 export type ZeusBrowserCommand =
+  /** 使用当前站点保存的账号填充登录表单，不自动提交。 */
+  | { action: 'autofill' }
   | { action: 'navigate'; url: string }
   | { action: 'back' }
   | { action: 'forward' }

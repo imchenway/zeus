@@ -6,22 +6,26 @@ import { selectionCommentIcons } from './selectionCommentIcons.js';
 import selectionCommentStyles from '../renderer/session/selectionComment.css?inline';
 import { createBrowserPageTranslation, translationSourceElement, sourceText, isTranslationNode } from './browserTranslation.js';
 import type { BrowserTranslationSegment } from '@zeus/shared';
+import { installBrowserPasswordAutofill } from './browserPasswordAutofill.js';
 
-function invokeBrowserPageCommand(commandType: string, body: unknown): Promise<unknown> {
+function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 'zeus:browser-page:save-comment'): Promise<unknown> {
   const commandId = globalThis.crypto.randomUUID();
   const envelope = Object.freeze({
     schemaGeneration: 'zeus-command-envelope-v1',
     commandId,
     commandType,
     actor: Object.freeze({ kind: 'user', id: 'desktop-browser-page-user' }),
-    scope: Object.freeze({ kind: 'artifact', id: 'browser-page-comment' }),
+    scope: Object.freeze({ kind: 'artifact', id: channel === 'zeus:browser-page:save-comment' ? 'browser-page-comment' : 'browser-passwords' }),
     expectedRevision: null,
     idempotencyKey: `desktop-browser-page:${commandId}`,
     issuedAt: new Date().toISOString(),
-    payload: Object.freeze({ transport: 'electron-ipc', channel: 'zeus:browser-page:save-comment' }),
+    payload: Object.freeze({ transport: 'electron-ipc', channel }),
   });
-  return ipcRenderer.invoke('zeus:browser-page:save-comment', Object.freeze({ envelope, body }));
+  return ipcRenderer.invoke(channel, Object.freeze({ envelope, body }));
 }
+
+/** 登录字段识别、动态监听与填充统一由固定的上游内容脚本负责。 */
+installBrowserPasswordAutofill((generation) => invokeBrowserPageCommand('desktop.browser.autofill', { generation }, 'zeus:browser-page:show-passwords'));
 
 type Rect = { x: number; y: number; width: number; height: number };
 type DesignChange = { kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string };
