@@ -2821,14 +2821,14 @@ export function projectTranscriptTurnRows(
   const loadedProcessTurnIds = new Set<string>();
   /** 每个轮次只检索自己的沟通区间，长会话不扫描其他轮次。 */
   const groupsByTurn = Map.groupBy(processGroups, (group) => group.turnId);
-  /** 起点身份直接定位空摘要。 */
-  const groupByBoundary = new Map(processGroups.map((group) => [group.afterEntryId, group]));
+  /** 已显示的新边界会使跨越它的目录区间失效，不能再复用该区间的身份和补读范围。 */
+  const supersededProcessGroupIds = new Set<string>();
   /** 原始沟通行与已加载详情共用持久边界，按有序区间二分查找。 */
   const groupForRow = (row: TranscriptRow): ConversationProcessGroup | undefined => {
     /** 操作行中的成员按持久顺序排列。 */
     const item = row.kind === 'item' ? row.item : row.kind === 'activity' ? row.items[0] : undefined;
-    /** 本地轮次身份与服务端目录一致。 */
-    const placement = item?.transcript?.placement;
+    /** 普通发言、已答询问与操作使用同一持久位置校验目录区间。 */
+    const placement = row.kind === 'answered_request' ? row.request.transcript?.placement : item?.transcript?.placement;
     if (placement?.order == null || !placement.turnId) return undefined;
     /** 目录按顺序返回，查找起点小于条目位置的最后一组。 */
     const groups = groupsByTurn.get(placement.turnId) ?? [];
@@ -2844,8 +2844,17 @@ export function projectTranscriptTurnRows(
     }
     /** 结束边界排除下一段沟通后的详情。 */
     const group = groups[low - 1];
-    return group && (group.beforeOrder === null || placement.order < group.beforeOrder) ? group : undefined;
+    return group && !supersededProcessGroupIds.has(group.id) && (group.beforeOrder === null || placement.order < group.beforeOrder) ? group : undefined;
   };
+  /** 目录异步刷新期间，先按当前可见边界分组，避免旧范围让多个过程块共享身份。 */
+  for (const row of orderedRows) {
+    if (isTurnProcessRow(row)) continue;
+    /** 区间内出现非过程行，说明它已不能代表一段连续的可见操作。 */
+    const group = groupForRow(row);
+    if (group) supersededProcessGroupIds.add(group.id);
+  }
+  /** 失效区间也不能以空摘要重新插入正文。 */
+  const groupByBoundary = new Map(processGroups.filter((group) => !supersededProcessGroupIds.has(group.id)).map((group) => [group.afterEntryId, group]));
   /** Provider 事件早于开场消息落库时，持久输入身份仍负责把过程放回用户消息之后。 */
   const userAnchorByOpeningInputId = new Map<string, { index: number; rowKey: string; turnId: string }>();
   /** 缺少持久输入身份的旧记录只兼容同轮第一条普通用户消息。 */
