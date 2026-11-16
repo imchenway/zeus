@@ -6,6 +6,8 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationReso
 import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, filePreviewLimits, normalizeConversationResourceReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
+// 公式与字体资源随应用打包，供所有 Markdown 展示入口共用。
+import 'katex/dist/katex.min.css';
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
@@ -596,11 +598,6 @@ function ConversationTableNode(props: ComponentProps<typeof TableNode>) {
   );
 }
 
-function PlainMathNode(props: NodeComponentProps<MarkstreamNode>) {
-  const content = typeof props.node.raw === 'string' ? props.node.raw : typeof props.node.content === 'string' ? props.node.content : '';
-  return props.node.type === 'math_block' ? <pre className="session-markdown-math-plain">{content}</pre> : <span className="session-markdown-math-plain">{content}</span>;
-}
-
 /** 用户消息已完成的文本节点只按原标签切出结构化胶囊，普通 Markdown 结构仍由外层节点处理。 */
 function StructuredTextNode(props: NodeComponentProps<MarkstreamNode>) {
   const runtime = useContext(MarkdownRuntimeContext);
@@ -649,8 +646,6 @@ export const conversationMarkdownComponents = {
   infographic: SecureCodeBlockNode,
   d2: SecureCodeBlockNode,
   d2lang: SecureCodeBlockNode,
-  math_inline: PlainMathNode,
-  math_block: PlainMathNode,
 } as unknown as CustomComponentMap;
 
 setCustomComponents(CUSTOM_COMPONENTS_ID, conversationMarkdownComponents);

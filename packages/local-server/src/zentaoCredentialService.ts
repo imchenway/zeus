@@ -10,6 +10,8 @@ const zentaoInstancesSettingKey = 'zentao.instances';
 const zentaoAccountMaxLength = 200;
 /** 单次登录验证的最长等待毫秒数。 */
 const zentaoVerifyTimeoutMs = 12_000;
+/** 我的任务和缺陷列表在内存中的最长复用毫秒数。 */
+const zentaoMyWorkCacheMs = 30_000;
 
 export interface ZentaoCredentialService {
   list(): Promise<ZentaoInstanceRecord[]>;
@@ -36,14 +38,31 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
   const authentication = new Map<string, ZentaoInstanceVerifyResult>();
   /** 凭据修订阻止旧请求恢复已经清除或替换的登录状态。 */
   const generations = new Map<string, number>();
-  /** 实例列表和设置页共用正在进行的验证，避免并发重复登录。 */
+  /** 实例列表、设置页和业务请求共用正在进行的验证，避免并发重复登录。 */
   const verifications = new Map<string, Promise<ZentaoInstanceVerifyResult>>();
+  /** 登录令牌按实例隔离，仅保存在当前进程内存中。 */
+  const tokens = new Map<string, string>();
+  /** 任务和缺陷分别复用完整远端列表，搜索和分页仍由同步服务处理。 */
+  const myWorkResponses = new Map<string, { response: ZentaoCredentialResponse; expiresAt: number }>();
+  /** 同一实例、同一对象类型的并发读取共享远端请求。 */
+  const myWorkRequests = new Map<string, Promise<ZentaoCredentialResponse>>();
+
+  /** 撤销列表及在途请求身份，旧响应不能恢复已失效的列表。 */
+  function invalidateMyWork(id: string): void {
+    for (const kind of ['task', 'bug']) {
+      const key = `${id}:${kind}`;
+      myWorkResponses.delete(key);
+      myWorkRequests.delete(key);
+    }
+  }
 
   /** 凭据变化后立即撤销旧登录结果。 */
   function invalidateAuthentication(id: string): void {
     generations.set(id, (generations.get(id) ?? 0) + 1);
     authentication.delete(id);
     verifications.delete(id);
+    tokens.delete(id);
+    invalidateMyWork(id);
   }
 
   /** 网络故障不撤销已验证身份，明确认证失败才撤销。 */
@@ -168,27 +187,49 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     }
   }
 
+  /** 凭据服务内部的远端响应，不包含密码和令牌。 */
   type ZentaoCredentialResponse = { status: number; payload: unknown };
 
+  /** 复用登录令牌；拒绝的旧令牌只触发一次共享验证，不覆盖较新的令牌。 */
+  async function requireToken(id: string, generation: number, rejectedToken?: string): Promise<string> {
+    if ((generations.get(id) ?? 0) !== generation) throw serviceError('ZEUS_ZENTAO_CREDENTIALS_CHANGED', '禅道凭据已变更，请重新读取。', 409);
+    if (rejectedToken && tokens.get(id) === rejectedToken) {
+      tokens.delete(id);
+      invalidateMyWork(id);
+    }
+    if (!tokens.has(id)) {
+      /** 业务读取和设置页验证共享同一次登录，避免两路列表重复换取令牌。 */
+      const result = await verify(id);
+      if (!result.ok) throw serviceError(`ZEUS_ZENTAO_${result.code.toUpperCase()}`, result.message, result.code === 'auth_failed' ? 401 : 502);
+    }
+    if ((generations.get(id) ?? 0) !== generation) throw serviceError('ZEUS_ZENTAO_CREDENTIALS_CHANGED', '禅道凭据已变更，请重新读取。', 409);
+    /** 只取当前凭据的令牌，验证期间的凭据变更不能恢复旧令牌。 */
+    const token = tokens.get(id);
+    if (!token) throw serviceError('ZEUS_ZENTAO_AUTH_FAILED', '禅道登录已失效，请重新登录。', 401);
+    return token;
+  }
+
+  /** 所有禅道请求共用内存令牌，认证过期时刷新并最多重发一次。 */
   async function withToken(id: string, send: (instance: ZentaoInstanceRecord, token: string) => Promise<ZentaoCredentialResponse>): Promise<ZentaoCredentialResponse> {
     /** 捕获当前凭据代次，异步请求不能恢复旧登录。 */
     const generation = generations.get(id) ?? 0;
     const instance = await requireInstance(id);
     if (!instance.account) throw serviceError('ZEUS_ZENTAO_ACCOUNT_MISSING', '请先为禅道实例配置账号。', 400);
-    const password = await options.secretStore.getSecret(zentaoSecretAccount(id));
-    if (!password) throw serviceError('ZEUS_ZENTAO_PASSWORD_MISSING', '请先为禅道实例保存密码。', 401);
-    const exchange = await exchangeToken(instance, instance.account, password);
-    rememberAuthentication(id, generation, 'token' in exchange ? { ok: true, code: 'verified', checkedAt: now(), message: '登录验证通过。' } : { ok: false, ...exchange, checkedAt: now() });
-    if (!('token' in exchange)) throw serviceError(`ZEUS_ZENTAO_${exchange.code.toUpperCase()}`, exchange.message, exchange.code === 'auth_failed' ? 401 : 502);
+    if (!instance.passwordConfigured) throw serviceError('ZEUS_ZENTAO_PASSWORD_MISSING', '请先为禅道实例保存密码。', 401);
+    /** 保留本次实际发送的令牌，较晚返回的失败不能撤销后来换取的令牌。 */
+    let token = await requireToken(id, generation);
 
-    let result = await send(instance, exchange.token);
+    let result = await send(instance, token);
     if (result.status === 401 || result.status === 403) {
-      const refreshed = await exchangeToken(instance, instance.account, password);
-      rememberAuthentication(id, generation, 'token' in refreshed ? { ok: true, code: 'verified', checkedAt: now(), message: '登录验证通过。' } : { ok: false, ...refreshed, checkedAt: now() });
-      if (!('token' in refreshed)) throw serviceError(`ZEUS_ZENTAO_${refreshed.code.toUpperCase()}`, refreshed.message, refreshed.code === 'auth_failed' ? 401 : 502);
-      result = await send(instance, refreshed.token);
+      token = await requireToken(id, generation, token);
+      result = await send(instance, token);
     }
-    if (result.status === 401) rememberAuthentication(id, generation, { ok: false, code: 'auth_failed', checkedAt: now(), message: '禅道登录已失效。' });
+    if ((generations.get(id) ?? 0) !== generation) throw serviceError('ZEUS_ZENTAO_CREDENTIALS_CHANGED', '禅道凭据已变更，请重新读取。', 409);
+    if (result.status === 401 && tokens.get(id) === token) {
+      tokens.delete(id);
+      invalidateMyWork(id);
+      rememberAuthentication(id, generation, { ok: false, code: 'auth_failed', checkedAt: now(), message: '禅道登录已失效。' });
+    }
     return result;
   }
 
@@ -197,6 +238,8 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     /** 同一实例的并发验证共享结果。 */
     const existing = verifications.get(id);
     if (existing) return existing;
+    /** 显式验证重新登录；首次登录保留正在等待令牌的列表请求。 */
+    if (tokens.delete(id)) invalidateMyWork(id);
     /** 绑定本次凭据修订，清除密码后旧结果不再生效。 */
     const generation = generations.get(id) ?? 0;
     /** 整个验证操作只向界面返回状态，不返回令牌。 */
@@ -210,6 +253,7 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
           ? { code: 'password_missing' as const, message: '请先为该实例保存密码。' }
           : await exchangeToken(instance, instance.account, password);
       const result: ZentaoInstanceVerifyResult = 'token' in exchange ? { ok: true, code: 'verified', checkedAt, message: '登录验证通过。' } : { ok: false, ...exchange, checkedAt };
+      if ('token' in exchange && (generations.get(id) ?? 0) === generation) tokens.set(id, exchange.token);
       rememberAuthentication(id, generation, result);
       return result;
     })();
@@ -221,9 +265,11 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     }
   }
 
+  /** REST 读写共用登录，写入成功后立即撤销列表复用。 */
   async function request(id: string, input: { path: string; method?: 'GET' | 'POST' | 'PUT'; body?: Record<string, unknown> }): Promise<ZentaoCredentialResponse> {
     if (!input.path.startsWith('/') || input.path.includes('://')) throw serviceError('ZEUS_ZENTAO_PATH_INVALID', '禅道接口路径无效。', 400);
-    return withToken(id, async (instance, token) => {
+    /** 保留远端写入状态，成功后使任务归属和状态的后续读取重新访问禅道。 */
+    const result = await withToken(id, async (instance, token) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), zentaoVerifyTimeoutMs * 2);
       try {
@@ -247,10 +293,22 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
         clearTimeout(timer);
       }
     });
+    if (input.method && input.method !== 'GET' && result.status >= 200 && result.status < 300) invalidateMyWork(id);
+    return result;
   }
 
+  /** 成功列表在 30 秒内复用，并合并同类在途读取。 */
   async function requestMyWork(id: string, kind: 'task' | 'bug'): Promise<ZentaoCredentialResponse> {
-    return withToken(id, async (instance, token) => {
+    /** 实例和对象类型隔离完整列表，搜索词和页码不改变远端读取范围。 */
+    const key = `${id}:${kind}`;
+    /** 复用期限从远端读取完成时开始计算。 */
+    const cached = myWorkResponses.get(key);
+    if (cached && cached.expiresAt > Date.parse(now())) return cached.response;
+    /** 连续输入和翻页只等待同一次尚未完成的读取。 */
+    const existing = myWorkRequests.get(key);
+    if (existing) return existing;
+    /** 请求身份也用于阻止已失效的列表在返回后重新进入缓存。 */
+    const pending = withToken(id, async (instance, token) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), zentaoVerifyTimeoutMs * 2);
       try {
@@ -275,6 +333,24 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
         clearTimeout(timer);
       }
     });
+    myWorkRequests.set(key, pending);
+    try {
+      /** 保留完整响应交给同步服务归一化，缓存中不保存筛选后的分页。 */
+      const response = await pending;
+      /** 失败响应和已撤销的在途读取不进入缓存。 */
+      if (
+        myWorkRequests.get(key) === pending &&
+        response.status >= 200 &&
+        response.status < 300 &&
+        (isRecord(response.payload) || Array.isArray(response.payload)) &&
+        !(isRecord(response.payload) && (response.payload.status === 'fail' || response.payload.status === 'error' || response.payload.result === false))
+      ) {
+        myWorkResponses.set(key, { response, expiresAt: Date.parse(now()) + zentaoMyWorkCacheMs });
+      }
+      return response;
+    } finally {
+      if (myWorkRequests.get(key) === pending) myWorkRequests.delete(key);
+    }
   }
 
   return {

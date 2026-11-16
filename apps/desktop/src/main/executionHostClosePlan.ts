@@ -52,7 +52,8 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
   }
 }
 
-async function withCloseTimeout(operation: Promise<void>, timeoutMs: number, message: string): Promise<void> {
+/** 限制单个退出步骤的等待时间，超时后由调用方继续回收其余资源；单位为毫秒。 */
+export async function withCloseTimeout(operation: Promise<void>, timeoutMs: number, message: string): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([

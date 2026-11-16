@@ -2923,12 +2923,6 @@
   margin-block: -6px 12px;
 }
 
-.session-codex-parity-v1 .session-conversation-markdown .session-markdown-math-plain {
-  color: inherit;
-  font: inherit;
-  white-space: pre-wrap;
-}
-
 /* Markstream 的表头分隔线是透明拖动手柄，不应继承工作区通用按钮外观。 */
 .session-codex-parity-v1 .session-conversation-markdown .markstream-react .table-node__resize-handle {
   background: transparent;

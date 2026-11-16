@@ -136,7 +136,7 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
   } catch (error) {
     close();
     // 这里只终止本次未就绪的显示助手，不接触下载任务或独立安装器。
-    if (!closed) child.kill();
+    if (!closed) child.kill('SIGKILL');
     throw error;
   }
 
@@ -154,10 +154,13 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
           clearTimeout(timeout);
           resolveExit();
         };
-        /** 最多等待十秒，失败交给主进程阻止安装，不强杀后伪造成功。 */
-        const timeout = setTimeout(() => {
-          child.removeListener('exit', onExit);
-          rejectExit(new Error('Windows 更新窗口尚未退出，已停止安装。'));
+        /** 助手只承载界面；十秒后结束本实例，再等待三秒确认退出。 */
+        let timeout = setTimeout(() => {
+          child.kill('SIGKILL');
+          timeout = setTimeout(() => {
+            child.removeListener('exit', onExit);
+            rejectExit(new Error('Zeus 更新窗口尚未退出，未确认资源已释放。'));
+          }, 3_000);
         }, 10_000);
         child.once('exit', onExit);
         close();

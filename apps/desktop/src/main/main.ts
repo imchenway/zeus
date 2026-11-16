@@ -36,6 +36,7 @@ import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
+import { withCloseTimeout } from './executionHostClosePlan.js';
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
@@ -160,6 +161,10 @@ const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
+/** 退出时等待尚在建立的 Core 连接，避免初始化完成后留下新的后台进程。 */
+let localServerStartup: Promise<DesktopLocalServerRuntime> | undefined;
+/** 退出清理开始后取消尚未完成的 Core 创建和发现。 */
+const desktopShutdown = new AbortController();
 /** 界面日志由 Main 单独拥有，避免与 Core 同时轮转同一文件。 */
 let inputSuggestionUiDiagnostics: ReturnType<typeof createInputSuggestionDiagnosticLog> | undefined;
 let resolveRendererRuntimeReady!: (runtime: DesktopLocalServerRuntime) => void;
@@ -769,15 +774,6 @@ function ensureMacOSDockIconVisible(): void {
   void dock.show().catch((error: unknown) => {
     console.error('Zeus 无法保持 macOS Dock 图标可见。', error);
   });
-}
-
-/** 继续后台运行时只隐藏界面，保留 Main、Core、通知和 Dock 图标。 */
-function continueApplicationInBackground(): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.hide();
-  }
-  if (process.platform === 'darwin') app.hide();
-  ensureMacOSDockIconVisible();
 }
 
 function nativeUpdateProgressHelperPath(): string {
@@ -4260,8 +4256,9 @@ async function initializeApplication(): Promise<void> {
     // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
     const { startDesktopLocalServer } = await import('./localServerRuntime.js');
     traceApplicationStartup('local_server_module_ready', sanitizeRendererRuntimeLogDetail(`Core 项目根目录：${mainProjectRoot}`));
-    localServerRuntime = await startDesktopLocalServer({
+    localServerStartup = startDesktopLocalServer({
       userDataPath,
+      shutdownSignal: desktopShutdown.signal,
       dataLayout,
       projectRoot: mainProjectRoot,
       dataRootIdentity: zeusDataRootHostIdentity(activeDataRootIdentity()),
@@ -4292,6 +4289,9 @@ async function initializeApplication(): Promise<void> {
         }
       },
     });
+    localServerRuntime = await localServerStartup;
+    localServerStartup = undefined;
+    if (desktopShutdown.signal.aborted) return;
     traceApplicationStartup('local_server_ready');
     // 读取宿主实际生效值；后台宿主仍在工作时，保存的新设置留待完整退出后统一启用。
     await initializeNetworkProxy(localServerRuntime.config);
@@ -4564,7 +4564,7 @@ function nativeText(zh: string, en: string): string {
   return appShellSettings.appLanguage === 'en-US' ? en : zh;
 }
 
-/** 未保存检查通过后立即消费本轮关闭许可，避免取消退出或转后台后复用。 */
+/** 未保存检查通过后，普通退出直接关闭后台；重启继续核对活动工作。 */
 async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | 'cancel'> {
   // 取消结果未知时不能借后续普通退出让待命安装器继续安装。
   if (pendingUpgradeHandoff?.cancellationRequested) return cancelRequestedRestart();
@@ -4572,12 +4572,13 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
   taskTableLayoutQuitApproved = false;
   taskTableLayoutCloseApprovedWindowIds.clear();
   pendingTaskTableLayoutWindowCloseIds.clear();
+  // 用户明确选择退出即授权停止工作，不再把退出改成后台运行或状态查询。
+  if (!fullRestartRequested && !upgradeHandoffRequested) return 'final_quit';
   // 只读验收副本不得使用正式数据投影中的历史活动计数阻塞退出。
   if (readOnlyValidationDescriptor) return 'final_quit';
   if (storageRecoveryRestart.isRequested()) return 'final_quit';
   const runtime = localServerRuntime;
   if (!runtime) {
-    if (!fullRestartRequested && !upgradeHandoffRequested) return 'final_quit';
     const confirmed = await confirmRequestedRestart(nativeText('无法读取后台状态。重启可能中断尚未完成的工作。', 'The background service status is unavailable. Restarting may interrupt unfinished work.'));
     return confirmed ? requestedRestartQuitMode() : cancelRequestedRestart();
   }
@@ -4585,13 +4586,6 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
   try {
     status = await runtime.getStatus();
   } catch {
-    if (!fullRestartRequested && !upgradeHandoffRequested) {
-      await showRestartCancelled(
-        nativeText('无法确认后台工作状态，本次退出未完成。Zeus 仍在运行，请检查运行日志后重试。', 'The background work status could not be confirmed. Zeus is still running. Check the runtime logs before trying to quit again.'),
-        true,
-      );
-      return 'cancel';
-    }
     const confirmed = await confirmRequestedRestart(
       nativeText(
         '无法确认哪些工作仍在运行。重启可能中断对话、待回答或待授权的请求，以及正在运行的工具和命令。',
@@ -4632,40 +4626,7 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       return cancelRequestedRestart();
     }
   }
-  const mayContinueInBackground = appShellSettings.backgroundModeEnabled;
-  const options = {
-    type: 'warning' as const,
-    title: nativeText('仍有工作正在运行', 'Work is still running'),
-    message: nativeText('退出 Zeus 时如何处理正在运行的工作？', 'What should happen to active work when you quit Zeus?'),
-    detail: nativeText(
-      `正在处理 ${status.activeTurnCount} 个请求，${status.waitingRequestCount} 个请求等待回答或授权，另有 ${status.activeRuntimeCount} 个工具和 ${status.activeCommandRunCount} 个命令正在运行。`,
-      `${status.activeTurnCount} requests are being processed, ${status.waitingRequestCount} are awaiting answers or approvals, and ${status.activeRuntimeCount} other tools and ${status.activeCommandRunCount} commands are running.`,
-    ),
-    buttons: mayContinueInBackground
-      ? [nativeText('关闭窗口并继续后台运行', 'Close windows and keep work running'), nativeText('停止工作并退出', 'Stop work and quit'), nativeText('取消', 'Cancel')]
-      : [nativeText('停止工作并退出', 'Stop work and quit'), nativeText('取消', 'Cancel')],
-    defaultId: mayContinueInBackground ? 2 : 1,
-    cancelId: mayContinueInBackground ? 2 : 1,
-    noLink: true,
-  };
-  const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  const result = targetWindow ? await dialog.showMessageBox(targetWindow, options) : await dialog.showMessageBox(options);
-  if (mayContinueInBackground && result.response === 0) return 'continue_in_background';
-  const stopResponse = mayContinueInBackground ? 1 : 0;
-  const cancelResponse = mayContinueInBackground ? 2 : 1;
-  if (result.response === cancelResponse) return 'cancel';
-  if (result.response !== stopResponse) return 'cancel';
-  try {
-    await runtime.stopActiveWork();
-    return 'final_quit';
-  } catch (error) {
-    console.error('Zeus 未能记录全部活动工作的中断状态，已取消本次退出。', error);
-    await showRestartCancelled(
-      nativeText('停止工作尚未确认，本次退出未完成。Zeus 仍在运行，请检查运行日志后重试。', 'Stopping active work could not be confirmed. Zeus is still running. Check the runtime logs before trying to quit again.'),
-      true,
-    );
-    return 'cancel';
-  }
+  return 'final_quit';
 }
 
 async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'upgrade_shutdown' | 'final_quit' | 'cancel'> {
@@ -4738,11 +4699,11 @@ async function confirmRequestedRestart(detail: string): Promise<boolean> {
   return result.response === 0;
 }
 
-/** 退出或重启未完成时明确告知用户，不能只记录日志后保持后台运行。 */
-async function showRestartCancelled(detail: string, quitting = false): Promise<void> {
+/** 重启未完成时明确告知用户，并保留当前窗口处理失败原因。 */
+async function showRestartCancelled(detail: string): Promise<void> {
   const options = {
     type: 'warning' as const,
-    title: quitting ? nativeText('退出未完成', 'Quit not completed') : nativeText('重启已取消', 'Restart cancelled'),
+    title: nativeText('重启已取消', 'Restart cancelled'),
     message: nativeText('Zeus 将保持打开。', 'Zeus will remain open.'),
     detail,
     buttons: [nativeText('知道了', 'OK')],
@@ -4779,16 +4740,25 @@ app.on(
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
-    continueInBackground: continueApplicationInBackground,
     closeLocalServer: async (mode) => {
+      desktopShutdown.abort();
+      /** 每个清理阶段都保留失败原因，辅助资源超时不能阻止关闭 Core。 */
       const cleanupErrors: unknown[] = [];
-      const attemptCleanup = async (label: string, operation: () => void | Promise<void>): Promise<void> => {
+      /** 默认等待五秒；Core 和原生助手使用各自的退出时限，单位为毫秒。 */
+      const attemptCleanup = async (label: string, operation: () => void | Promise<void>, timeoutMs = 5_000): Promise<void> => {
         try {
-          await operation();
+          await withCloseTimeout(Promise.resolve().then(operation), timeoutMs, `Zeus 退出清理超时：${label}`);
         } catch (error) {
           cleanupErrors.push(Object.assign(new Error(`Zeus 退出清理失败：${label}`), { cause: error }));
         }
       };
+      await attemptCleanup(
+        '后台宿主初始化',
+        async () => {
+          await localServerStartup?.catch(() => undefined);
+        },
+        10_000,
+      );
       await attemptCleanup('附属服务初始化', () => auxiliaryServicesReady);
       await attemptCleanup('输入建议诊断日志', async () => {
         await inputSuggestionUiDiagnostics?.flush();
@@ -4801,17 +4771,16 @@ app.on(
       await attemptCleanup('电源监听器', () => {
         powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
       });
-      await attemptCleanup('更新控制器', async () => {
-        if (process.platform === 'win32') {
-          // Windows 替换安装目录前必须确认原生进度程序已退出。
+      await attemptCleanup(
+        '更新控制器',
+        async () => {
+          if (process.platform !== 'win32' && (mode === 'upgrade_handoff' || mode === 'upgrade_shutdown')) return;
+          // 普通退出在两端都等待原生进度程序实际结束。
           await homebrewUpdateController?.closeAndWait();
           homebrewUpdateController = undefined;
-          return;
-        }
-        if (mode === 'upgrade_handoff' || mode === 'upgrade_shutdown') return;
-        homebrewUpdateController?.close();
-        homebrewUpdateController = undefined;
-      });
+        },
+        15_000,
+      );
       await attemptCleanup('内置浏览器宿主', async () => {
         await browserHost?.close();
         browserHost = undefined;
@@ -4826,10 +4795,14 @@ app.on(
       });
       conversationInputResources = undefined;
       // 即使任一前序 UI/平台资源清理失败，Detached Core 关闭也必须独立尝试。
-      await attemptCleanup('Detached Core', async () => {
-        await localServerRuntime?.close(mode);
-        localServerRuntime = undefined;
-      });
+      await attemptCleanup(
+        'Detached Core',
+        async () => {
+          await localServerRuntime?.close(mode);
+          localServerRuntime = undefined;
+        },
+        45_000,
+      );
       if (process.platform === 'darwin' && !readOnlyValidationDescriptor && (mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
         await attemptCleanup('旧 App 备份', async () => {
           await cleanupStaleReleaseBackups(currentAppBundlePath());
@@ -4841,10 +4814,6 @@ app.on(
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },
     onCleanupError: async (error, quitMode): Promise<BeforeQuitCleanupFailureAction> => {
-      if (readOnlyValidationDescriptor) {
-        console.error('只读验收关闭失败；禁止以成功状态退出。', error);
-        return 'force_quit';
-      }
       if (quitMode === 'upgrade_shutdown' || (process.platform === 'win32' && pendingUpgradeHandoff)) {
         console.error('跨协议升级未能完整关闭旧 Zeus Core；保留当前应用，禁止启动新版本。', error);
         await cancelRequestedRestart();
@@ -4853,8 +4822,13 @@ app.on(
         );
         return 'keep_open';
       }
-      // 退出链已经有界等待并完成持久化优先收口；剩余技术错误只进运行日志，禁止再弹模态框卡住应用。
-      console.error('Zeus 退出清理未完整成功，将使用进程退出兜底。', error);
+      // 正常 close 的等待超时后，强制关闭必须绕开原有 Promise，回收同一身份的 Core 进程树。
+      try {
+        if (localServerRuntime) await withCloseTimeout(localServerRuntime.close('force_quit'), 10_000, 'Zeus Core 强制退出超过十秒。');
+      } catch (forceError) {
+        console.error('Zeus Core 强制退出失败。', forceError);
+      }
+      console.error('Zeus 退出清理未完整成功，将结束剩余主进程资源。', error);
       return 'force_quit';
     },
     exitApp: (code) => {
