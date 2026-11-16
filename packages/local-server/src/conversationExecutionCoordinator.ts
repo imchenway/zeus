@@ -403,8 +403,8 @@ export class ConversationExecutionCoordinator {
         if (submissionId) this.releaseLease(input.conversationId, submissionId);
       },
       acceptSynchronously: (accepted) => {
-        if (!submissionId || !segmentId) throw executionError('ZEUS_CONVERSATION_SEGMENT_NOT_PREPARED', '运行分段尚未完成本地预备。');
-        const turnId = stableTurnId(input.conversationId, segmentId, accepted.providerTurnId);
+        if (!submissionId || !segmentId || !nativeSessionId) throw executionError('ZEUS_CONVERSATION_SEGMENT_NOT_PREPARED', '运行分段尚未完成本地预备。');
+        const turnId = this.options.execution.resolveAcceptedTurnId(input.conversationId, nativeSessionId, accepted.providerTurnId, stableTurnId(input.conversationId, segmentId, accepted.providerTurnId));
         this.options.execution.appendConfigEvidence({
           conversationId: input.conversationId,
           turnId,

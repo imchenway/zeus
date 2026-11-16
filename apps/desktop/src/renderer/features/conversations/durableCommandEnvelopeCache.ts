@@ -25,7 +25,8 @@ export async function durableConversationCommandEnvelope(input: {
   inputSha256: string;
   commandType: string;
   scopeKind: CommandScopeKind;
-  scopeId: string;
+  /** 新资源的范围身份由生成后的命令确定，调用方须另行核对业务范围。 */
+  scopeId?: string;
   create: () => CommandEnvelope<DurableConversationCommandPayload> | Promise<CommandEnvelope<DurableConversationCommandPayload>>;
 }): Promise<CommandEnvelope<DurableConversationCommandPayload>> {
   const identity = stableCacheIdentity(input.namespace, input.stableIdentity);
@@ -42,18 +43,19 @@ export async function durableConversationCommandEnvelope(input: {
   }
 }
 
-export function forgetDurableConversationCommandEnvelope(namespace: string, stableIdentity: string): void {
+/** 先清理磁盘身份再释放内存，防止后续新操作重新读到已确认的旧信封。 */
+export async function forgetDurableConversationCommandEnvelope(namespace: string, stableIdentity: string): Promise<void> {
   const identity = stableCacheIdentity(namespace, stableIdentity);
-  inMemoryCommands.delete(identity);
   const storage = browserLocalStorage();
-  if (!storage) return;
-  void storageKey(identity).then((key) => {
+  if (storage) {
+    const key = await storageKey(identity);
     try {
       storage.removeItem(key);
     } catch {
       // 业务 acceptance 已经耐久；残留的无正文信封只会在同一 identity 下安全复用。
     }
-  });
+  }
+  inMemoryCommands.delete(identity);
 }
 
 async function loadOrCreateCommand(identity: string, input: Parameters<typeof durableConversationCommandEnvelope>[0]): Promise<CommandEnvelope<DurableConversationCommandPayload>> {
@@ -97,7 +99,7 @@ function validateCommand(command: CommandEnvelope<DurableConversationCommandPayl
   if (
     command.commandType !== input.commandType ||
     command.scope.kind !== input.scopeKind ||
-    command.scope.id !== input.scopeId ||
+    (input.scopeId !== undefined && command.scope.id !== input.scopeId) ||
     command.payload.inputSha256 !== input.inputSha256 ||
     typeof command.payload.operationIdentity !== 'string' ||
     !command.payload.operationIdentity

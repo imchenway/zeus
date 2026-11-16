@@ -1,5 +1,7 @@
 import { commandEnvelopeSchemaGeneration, normalizePerformanceTraceIdentity, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { currentConversationNavigationTraceId, markConversationNavigationSnapshotSettled } from '../performanceTraceContext.js';
+import { prepareRendererCommandRequest, settleRendererCommandRequest, type RendererCommandPayload } from '../commandRequest.js';
+import type { CommandEnvelope } from '@zeus/shared';
 
 /**
  * Renderer 各 bounded context 共享的公开传输端口。
@@ -19,6 +21,10 @@ export interface LocalApiTransport {
 export interface LocalApiRequestInit extends RequestInit {
   /** 已生成的规范 trace 身份只用于日志关联，不作为幂等键或自动重试授权。 */
   traceId?: string;
+  /** 仅携带请求头幂等键的旧接口复用同一命令身份，不把该信封发到业务正文。 */
+  commandEnvelope?: CommandEnvelope<RendererCommandPayload>;
+  /** 会话发送控制器已有接纳期限，保留底层请求以接收迟到的确定回执。 */
+  waitForLateReceipt?: boolean;
 }
 
 export interface LocalApiConnection {
@@ -62,6 +68,18 @@ export class ZeusApiError extends Error {
 }
 
 const localApiReadTimeoutMs = 8_000;
+/** 写操作只限制界面等待回执的时间，超时不代表后台未执行，单位毫秒。 */
+const localApiWriteAcceptanceTimeoutMs = 20_000;
+
+/** 写入后的传输中断必须保留原操作身份，不能被当作明确拒绝。 */
+class LocalApiWriteOutcomeUnknownError extends Error {
+  /** 显示送达待核对状态，避免把超时当作明确写入失败。 */
+  readonly code = 'ZEUS_LOCAL_API_WRITE_OUTCOME_UNKNOWN';
+  constructor(cause: unknown) {
+    super('暂未取得操作结果，操作可能已执行。请先核对状态，再重试原操作。', { cause });
+    this.name = 'LocalApiWriteOutcomeUnknownError';
+  }
+}
 /** 任务推送预检超时后恢复手动重试，不能继续占用任务详情主按钮。 */
 const localApiTaskPushCapabilitiesTimeoutMs = 5_000;
 /** 主动程序检测包含终端环境、版本和能力三段有界探针，预留完整返回时间。 */
@@ -84,26 +102,33 @@ class LocalApiReadTimeoutError extends Error {
 export function createLocalApiTransport(options: { getConnection(): LocalApiConnection; refreshConnection?: () => Promise<LocalApiConnection>; onPerformanceSpan?: (span: ZeusClientPerformanceSpan) => void }): LocalApiTransport {
   const request = async <T>(path: string, init?: LocalApiRequestInit): Promise<T> => {
     /** 诊断属性只映射到既有 trace 头，不进入业务正文或 fetch 扩展参数。 */
-    const { traceId: suppliedTraceId, ...requestInit } = init ?? {};
+    const { traceId: suppliedTraceId, commandEnvelope, waitForLateReceipt, ...rawRequestInit } = init ?? {};
+    const requestInit = await prepareRendererCommandRequest(path, rawRequestInit, commandEnvelope);
+    const idempotencyKey = new Headers(requestInit.headers).get('idempotency-key');
     /** 复用共享身份校验，避免任意正文经请求头进入服务端日志。 */
     const traceId = normalizePerformanceTraceIdentity(suppliedTraceId) ?? createClientTraceId(path);
     let completedSuccessfully = false;
     try {
       try {
-        const result = await requestOnce<T>(options.getConnection(), path, requestInit, traceId, 1, options.onPerformanceSpan);
+        const result = await requestOnce<T>(options.getConnection(), path, requestInit, traceId, 1, options.onPerformanceSpan, waitForLateReceipt);
+        await settleRendererCommandRequest(idempotencyKey);
         completedSuccessfully = true;
         return result;
       } catch (error) {
         // 无回执保护的写请求结果未知时不能自动重放。
         const method = (init?.method ?? 'GET').toUpperCase();
-        const replayable = method === 'GET' || method === 'HEAD' || new Headers(init?.headers).has('idempotency-key');
+        const replayable = method === 'GET' || method === 'HEAD' || Boolean(idempotencyKey);
         if (!replayable || !shouldRefreshLocalApiConnection(error) || !options.refreshConnection) throw error;
         // 一个逻辑请求最多刷新一次 Main 提供的端口/token，禁止在 context client 内自建重试循环。
         const refreshed = await options.refreshConnection();
-        const result = await requestOnce<T>(refreshed, path, requestInit, traceId, 2, options.onPerformanceSpan);
+        const result = await requestOnce<T>(refreshed, path, requestInit, traceId, 2, options.onPerformanceSpan, waitForLateReceipt);
+        await settleRendererCommandRequest(idempotencyKey);
         completedSuccessfully = true;
         return result;
       }
+    } catch (error) {
+      if (error instanceof ZeusApiError && error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status) && !error.recoveryRequired) await settleRendererCommandRequest(idempotencyKey);
+      throw error;
     } finally {
       // 重连的两个网络 attempt 属于同一个逻辑请求；只有最终结果才能结束 Snapshot 导航阶段。
       markConversationNavigationSnapshotSettled(traceId, path, completedSuccessfully);
@@ -118,7 +143,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
       const startedAt = performance.now();
       let response: Response | null = null;
       try {
-        const blob = await runWithReadTimeout(
+        const blob = await runWithRequestTimeout(
           {
             headers: {
               authorization: `Bearer ${connection.apiToken}`,
@@ -223,7 +248,15 @@ export function jsonRequest(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: u
   return { method, body: serializedBody };
 }
 
-async function requestOnce<T>(connection: LocalApiConnection, path: string, init: RequestInit | undefined, traceId: string, attempt: number, observer: ((span: ZeusClientPerformanceSpan) => void) | undefined): Promise<T> {
+async function requestOnce<T>(
+  connection: LocalApiConnection,
+  path: string,
+  init: RequestInit | undefined,
+  traceId: string,
+  attempt: number,
+  observer: ((span: ZeusClientPerformanceSpan) => void) | undefined,
+  waitForLateReceipt = false,
+): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('authorization', `Bearer ${connection.apiToken}`);
   headers.set('x-zeus-trace-id', traceId);
@@ -235,19 +268,26 @@ async function requestOnce<T>(connection: LocalApiConnection, path: string, init
   };
   let completedSuccessfully = false;
   try {
-    const result = await runWithReadTimeout({ ...init, headers }, path, traceId, async (timedInit) => {
-      readState.response = await fetch(`${connection.baseUrl}${path}`, timedInit);
-      readState.responseReceivedAt = performance.now();
-      if (!readState.response.ok) throw await responseError(readState.response, path);
-      if (readState.response.status === 204 || readState.response.headers.get('content-length') === '0') return undefined as T;
-      return (await readState.response.json()) as T;
-    });
+    const result = await runWithRequestTimeout(
+      { ...init, headers },
+      path,
+      traceId,
+      async (timedInit) => {
+        readState.response = await fetch(`${connection.baseUrl}${path}`, timedInit);
+        readState.responseReceivedAt = performance.now();
+        if (!readState.response.ok) throw await responseError(readState.response, path);
+        if (readState.response.status === 204 || readState.response.headers.get('content-length') === '0') return undefined as T;
+        return (await readState.response.json()) as T;
+      },
+      waitForLateReceipt,
+    );
     completedSuccessfully = true;
     return result;
   } catch (error) {
+    const failure = !['GET', 'HEAD'].includes((init?.method ?? 'GET').toUpperCase()) && !(error instanceof ZeusApiError) && !(error instanceof LocalApiWriteOutcomeUnknownError) ? new LocalApiWriteOutcomeUnknownError(error) : error;
     // 错误沿用原身份和原因，补上同次请求的关联信息供故障报告取证。
-    if (error instanceof Error) Object.assign(error, { traceId, operation: `${init?.method ?? 'GET'} ${path.split('?')[0]}`, ...(readState.response ? { statusCode: readState.response.status } : {}) });
-    throw error;
+    if (failure instanceof Error) Object.assign(failure, { traceId, operation: `${init?.method ?? 'GET'} ${path.split('?')[0]}`, ...(readState.response ? { statusCode: readState.response.status } : {}) });
+    throw failure;
   } finally {
     const completedAt = performance.now();
     const response = readState.response;
@@ -318,6 +358,7 @@ function blobPerformanceSpan(response: Response | null, traceId: string, attempt
 }
 
 export function isLikelyLocalServerConnectionError(error: unknown): boolean {
+  if (error instanceof LocalApiWriteOutcomeUnknownError) return isLikelyLocalServerConnectionError(error.cause);
   // 持久化升级交接中的 503 表示当前连接正在退出，不是业务失败。刷新 Main
   // 提供的连接并复用同一逻辑读取一次，避免把瞬时交接窗口展示成 Git/会话错误。
   if (error instanceof ZeusApiError) return error.error === 'ZEUS_EXECUTION_HOST_DRAINING';
@@ -334,19 +375,22 @@ function shouldRefreshLocalApiConnection(error: unknown): boolean {
   return !(error instanceof LocalApiReadTimeoutError) && isLikelyLocalServerConnectionError(error);
 }
 
-/** 读取期限覆盖响应头和正文，超时诊断沿用发往服务端的 trace 身份。 */
-async function runWithReadTimeout<T>(init: RequestInit, path: string, traceId: string, operation: (timedInit: RequestInit) => Promise<T>): Promise<T> {
+/** 回执期限覆盖响应头和正文；写入超时只报告结果未知，不撤销远端操作。 */
+async function runWithRequestTimeout<T>(init: RequestInit, path: string, traceId: string, operation: (timedInit: RequestInit) => Promise<T>, waitForLateReceipt = false): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
-  if (method !== 'GET') return operation(init);
+  if (waitForLateReceipt && method !== 'GET' && method !== 'HEAD') return operation(init);
 
   /** 主动检测和禅道读取保留完整等待时间；任务推送入口优先快速恢复用户操作。 */
-  const timeoutMs = /^\/api\/runtime\/adapters\/[^/?]+\/check(?:\?.*)?$/.test(path)
-    ? localApiAdapterCheckTimeoutMs
-    : /^\/api\/projects\/[^/?]+\/codex-task-push-capabilities(?:\?.*)?$/.test(path)
-      ? localApiTaskPushCapabilitiesTimeoutMs
-      : /^\/api\/zentao-instances(?:\/|$)/u.test(path)
-        ? localApiZentaoReadTimeoutMs
-        : localApiReadTimeoutMs;
+  const timeoutMs =
+    method !== 'GET' && method !== 'HEAD'
+      ? localApiWriteAcceptanceTimeoutMs
+      : /^\/api\/runtime\/adapters\/[^/?]+\/check(?:\?.*)?$/.test(path)
+        ? localApiAdapterCheckTimeoutMs
+        : /^\/api\/projects\/[^/?]+\/codex-task-push-capabilities(?:\?.*)?$/.test(path)
+          ? localApiTaskPushCapabilitiesTimeoutMs
+          : /^\/api\/zentao-instances(?:\/|$)/u.test(path)
+            ? localApiZentaoReadTimeoutMs
+            : localApiReadTimeoutMs;
   const controller = new AbortController();
   const callerSignal = init.signal;
   let timedOut = false;
@@ -361,7 +405,7 @@ async function runWithReadTimeout<T>(init: RequestInit, path: string, traceId: s
     // 超时覆盖响应头和正文解析，避免本地服务只返回响应头后让 JSON/Blob 读取永久悬挂。
     return await operation({ ...init, signal: controller.signal });
   } catch (error) {
-    if (timedOut) throw new LocalApiReadTimeoutError(path, traceId);
+    if (timedOut) throw method === 'GET' || method === 'HEAD' ? new LocalApiReadTimeoutError(path, traceId) : new LocalApiWriteOutcomeUnknownError(error);
     throw error;
   } finally {
     globalThis.clearTimeout(timer);

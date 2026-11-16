@@ -1034,6 +1034,10 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['所选模型的连接已更改或不可用。请检查模型设置并重新选择可用模型。', 'The selected model connection has changed or is unavailable. Check its settings and select an available model.', 'choose_model'],
   ],
   [['ZEUS_LOCAL_API_READ_TIMEOUT'], ['Zeus 的后台服务未能及时响应，当前信息暂时无法读取。', 'The Zeus background service did not respond in time. This information cannot be loaded yet.', 'retry']],
+  [
+    ['ZEUS_LOCAL_API_WRITE_OUTCOME_UNKNOWN'],
+    ['暂未取得操作结果，操作可能已执行。请先核对状态，再重试原操作。', 'The operation may have completed, but its result is not confirmed. Check its status before retrying the same operation.', 'check'],
+  ],
   [['ZEUS_CODEX_RPC_TIMEOUT'], ['Codex 未能在限定时间内响应，Zeus 暂时无法确认请求的处理情况。', 'Codex did not respond in time. Zeus cannot yet confirm the request’s progress.', 'check']],
   [['ZEUS_EXECUTION_HOST_DRAINING'], ['Zeus 正在重启后台服务，暂时无法处理新的操作。', 'Zeus is restarting its background service and cannot handle new actions yet.', 'retry']],
   [
