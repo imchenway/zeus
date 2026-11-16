@@ -42,18 +42,18 @@ export function createSideQuestionState(): SideQuestionState {
   return { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null };
 }
 
-/** 返回主会话时补回持久子会话；明确选择子会话时重新展开右栏。 */
-export function restoreSideQuestionWorkspace(source: NativeConversationChoice, conversation: NativeConversationChoice, activate = false): void {
+/** 返回主会话时补回持久子会话；明确选择子会话时更新身份并保留面板开闭状态。 */
+export function restoreSideQuestionWorkspace(source: NativeConversationChoice, conversation: NativeConversationChoice, selectConversation = false): void {
   if (conversation.sourceConversationId !== source.id || conversation.projectId !== source.projectId || conversation.taskId !== source.taskId || source.archived || conversation.archived) return;
   /** 创建期的导航身份继续承载原主会话的分栏和草稿。 */
   const key = JSON.stringify([source.projectId, source.navigationId ?? source.id]);
   /** 已有本地状态优先，目录刷新不能重新展开用户已关闭的侧栏。 */
   const current = workspaces.get(key) ?? emptyState;
-  if (current.questionState && !activate) return;
+  if (current.questionState && !selectConversation) return;
   workspaces.set(key, {
     ...current,
-    workspace: { kind: 'question' },
-    fullWidth: false,
+    workspace: current.questionState ? current.workspace : { kind: 'question' },
+    fullWidth: current.questionState ? current.fullWidth : false,
     questionState: { ...(current.questionState ?? createSideQuestionState()), conversation },
   });
   for (const listener of listeners) listener();
