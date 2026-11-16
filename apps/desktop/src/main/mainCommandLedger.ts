@@ -116,10 +116,11 @@ export class MainCommandLedgerError extends Error {
       | 'ZEUS_MAIN_COMMAND_RESULT_NOT_REPLAYABLE',
     message: string,
     readonly details: Readonly<Record<string, string | number | boolean | null>> = {},
-    /** Git 等外部命令在写入门禁后失败时，保留已识别的底层原因供界面解释。 */
+    /** 外部命令失败的脱敏原因；读取历史回执时沿用已保存的原因。 */
     override readonly cause?: UserFacingErrorCause,
   ) {
-    super(message, cause === undefined ? undefined : { cause });
+    // Electron IPC 可能只保留 message，错误身份和脱敏原因必须一并传递。
+    super(`${code}: ${message}${cause ? `\n${cause.message.slice(0, 512)}` : ''}`, cause === undefined ? undefined : { cause });
   }
 }
 
@@ -403,13 +404,15 @@ export class MainCommandLedger {
     }
     if (outcome.state === 'receipted' && outcome.result) return (await this.#loadResult(outcome.result)) as TResult;
     if (outcome.state === 'unknown_after_write' || (outcome.state === 'accepted' && outcome.writeMarker)) {
-      throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_OUTCOME_UNKNOWN_AFTER_WRITE', 'Main command may have written externally; automatic retry is forbidden.', {
-        commandId: envelope.commandId,
-        commandType: envelope.commandType,
-      });
+      throw new MainCommandLedgerError(
+        'ZEUS_MAIN_COMMAND_OUTCOME_UNKNOWN_AFTER_WRITE',
+        'Main command may have written externally; automatic retry is forbidden.',
+        { commandId: envelope.commandId, commandType: envelope.commandType },
+        outcome.failure,
+      );
     }
     if (outcome.state === 'failed_before_write') {
-      throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_FAILED_BEFORE_WRITE', 'Main command failed before its durable write marker.', { commandId: envelope.commandId, commandType: envelope.commandType });
+      throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_FAILED_BEFORE_WRITE', 'Main command failed before its durable write marker.', { commandId: envelope.commandId, commandType: envelope.commandType }, outcome.failure);
     }
     throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_IN_PROGRESS', 'Main command is already accepted and has no terminal receipt yet.', { commandId: envelope.commandId });
   }
