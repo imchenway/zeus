@@ -671,20 +671,13 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
         closing = true;
         closingController.abort();
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
         if (handoffTimer) clearInterval(handoffTimer);
+        handoffTimer = undefined;
         // 强制关闭是超时后的独立出口，不能复用仍在等待的正常关闭 Promise。
         if (mode === 'force_quit') return forceTerminateCurrentHost().finally(() => browserBridge.close());
         if (closePromise) return closePromise;
         closePromise = (async () => {
-          closing = true;
-          if (heartbeatTimer) {
-            clearInterval(heartbeatTimer);
-            heartbeatTimer = undefined;
-          }
-          if (handoffTimer) {
-            clearInterval(handoffTimer);
-            handoffTimer = undefined;
-          }
           const errors: unknown[] = [];
           const pendingHeartbeat = heartbeatCyclePromise;
           if (pendingHeartbeat) {
@@ -1228,6 +1221,7 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     };
     shutdownSignal?.addEventListener('abort', cancelLaunch, { once: true });
     if (shutdownSignal?.aborted) cancelLaunch();
+    /** 发现结果仍须绑定本轮创建身份，不能用同名进程替代。 */
     let launched: ExecutionHostRendezvous | null;
     try {
       launched = await waitForExecutionHostReady({
