@@ -19,6 +19,39 @@ const maximumUpdateBytes = 2 * 1024 * 1024 * 1024;
 const installerReadyTimeoutMs = 10_000;
 const installerPollIntervalMs = 100;
 
+/** 更新会话独立于模型和浏览器代理，初始化失败时允许下一次检查重新建立。 */
+let directUpdateSession: Promise<Electron.Session> | undefined;
+
+/** 更新请求可注入原生请求实现，隔离验证无需修改全局网络。 */
+type ReleaseNetworkRequest = (options: Electron.ClientRequestConstructorOptions) => Electron.ClientRequest | Promise<Electron.ClientRequest>;
+
+/** 清单与安装包共用直连会话，不携带浏览器登录凭据或改变默认会话。 */
+async function requestDirectUpdate(options: Electron.ClientRequestConstructorOptions): Promise<Electron.ClientRequest> {
+  /** 安装辅助进程仅导入文件校验时不加载 Electron。 */
+  const { net, session } = await import('electron');
+  directUpdateSession ??= (async () => {
+    /** 非持久会话不沿用浏览器缓存、登录状态或已有代理连接。 */
+    const isolated = session.fromPartition('zeus-release-updates-direct', { cache: false });
+    /** 会话初始化也有截止时间，原生设置异常不能让检查永久等待。 */
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        isolated.setProxy({ mode: 'direct' }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('更新直连通道初始化超时。')), 5_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return isolated;
+  })().catch((error: unknown) => {
+    directUpdateSession = undefined;
+    throw error;
+  });
+  return net.request({ ...options, session: await directUpdateSession, credentials: 'omit' });
+}
+
 export interface DesktopReleaseUpdateStatus {
   status: 'up_to_date' | 'available' | 'unavailable';
   currentVersion: string;
@@ -99,6 +132,8 @@ interface PreparedInstallerHandoff {
 
 export interface ReleaseUpdateService {
   check(): Promise<DesktopReleaseUpdateStatus>;
+  /** 安装阶段取回并复验已下载的文件，不重新读取远端或接管安装管理记录。 */
+  downloadedArtifactPath(update: DesktopReleaseUpdateStatus): Promise<string>;
   /** 查询直接安装条件，正式包始终保留签名、公证和可写位置约束。 */
   manualInstallReason(update: DesktopReleaseUpdateStatus): Promise<ReleaseManualInstallReason | null>;
   download(onProgress?: (progress: ReleaseDownloadProgress) => void): Promise<DesktopReleaseUpdateOperation>;
@@ -151,6 +186,12 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
 
   return {
     check: () => readDesktopReleaseUpdateStatus(options),
+    downloadedArtifactPath: async (update) => {
+      assertDownloadAllowed(update, options);
+      if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact!.sha256) throw new Error('未找到当前版本已下载的更新包，请重新下载。');
+      if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已下载的更新包已变化或不完整，请重新下载。');
+      return prepared.artifactPath;
+    },
     openRecoveryInstaller: async () => {
       if (operationChain || recoveryRunning) throw new Error('下载或安装操作正在进行，不能同时开始恢复。');
       recoveryRunning = true;
@@ -343,7 +384,7 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
   return null;
 }
 
-/** 清单与安装包共用 Electron 网络，系统代理和应用代理在两个阶段保持一致。 */
+/** 清单与安装包共用专属直连网络，不依赖模型代理或包管理器同步。 */
 export async function readDesktopReleaseUpdateStatus(
   options: Pick<CreateReleaseUpdateServiceOptions, 'currentAppVersion' | 'localServerConfig' | 'testMode' | 'allowUntrustedTestUpdate' | 'releaseUpdateManifestUrl'>,
 ): Promise<DesktopReleaseUpdateStatus> {
@@ -358,8 +399,6 @@ export async function readDesktopReleaseUpdateStatus(
   /** 来自本机 API 的状态仍需检查协议字段。 */
   const executionHost: unknown = await response.json();
   if (!isRecord(executionHost) || typeof executionHost.protocolVersion !== 'number' || !Number.isInteger(executionHost.protocolVersion)) throw new Error('Zeus execution host status response is invalid.');
-  /** 安装辅助进程导入本模块时不加载 Electron。 */
-  const { net } = await import('electron');
   /** 共享解析器继续验证官方来源、平台、摘要及安装门禁。 */
   const update = await readReleaseUpdateStatus({
     currentVersion: options.currentAppVersion,
@@ -368,17 +407,18 @@ export async function readDesktopReleaseUpdateStatus(
     platform: process.platform === 'win32' ? 'win32' : 'darwin',
     executionHostProtocolVersion: executionHost.protocolVersion,
     allowUntrustedTest: options.testMode && options.allowUntrustedTestUpdate,
-    request: (url, init) => fetchDesktopReleaseManifest(url, init, net.request),
+    request: fetchDesktopReleaseManifest,
   });
   return { ...update, executionHost };
 }
 
 /** Electron net.fetch 会取消 manual 跳转；将原生跳转事件显式返回给共享清单校验器。 */
-export async function fetchDesktopReleaseManifest(url: string, init: RequestInit, request: typeof import('electron').net.request): Promise<Response> {
+export async function fetchDesktopReleaseManifest(url: string, init: RequestInit, request: ReleaseNetworkRequest = requestDirectUpdate): Promise<Response> {
   init.signal?.throwIfAborted();
+  /** 请求创建后仍由下面的取消检查拦截已过期操作，不发送请求正文。 */
+  const pending = await request({ url, redirect: 'manual' });
   return new Promise((resolveResponse, rejectResponse) => {
     /** 每次仅读取一个地址；共享规则决定是否允许下一跳。 */
-    const pending = request({ url, redirect: 'manual' });
     const abort = () => {
       rejectResponse(init.signal?.reason);
       pending.abort();
@@ -434,11 +474,9 @@ function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: Creat
 /** Chromium 的重定向事件提供真实地址，避免依赖 net.fetch 不可靠的 Response.url。 */
 async function openReleaseDownload(source: URL, testMode: boolean, externalSignal?: AbortSignal): Promise<Readable> {
   externalSignal?.throwIfAborted();
-  /** 保留系统及应用代理；安装辅助进程仅导入校验能力时不加载 Electron。 */
-  const { net } = await import('electron');
+  /** 下载与清单必须使用同一条直连通道，模型代理失效不能阻止取得更新。 */
+  const request = await requestDirectUpdate({ url: source.href, redirect: 'manual' });
   return new Promise((resolve, reject) => {
-    /** 逐次确认目标后才允许 Chromium 继续跳转。 */
-    const request = net.request({ url: source.href, redirect: 'manual' });
     /** 请求和响应正文共用十分钟下载期限。 */
     const signal = AbortSignal.any([AbortSignal.timeout(10 * 60_000), ...(externalSignal ? [externalSignal] : [])]);
     /** 首次连接不能消耗完整下载期限；十五秒无响应即可尝试备用源。 */

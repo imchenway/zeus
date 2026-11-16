@@ -7,11 +7,11 @@ import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { downloadArtifactFromSource, downloadVerifiedArtifact, fetchDesktopReleaseManifest } from '../apps/desktop/src/main/releaseUpdateService.ts';
-import { caskMatchesRelease, prefetchHomebrewCdnArtifact } from '../apps/desktop/src/main/homebrewUpdateService.ts';
+import { downloadVerifiedArtifact, fetchDesktopReleaseManifest } from '../apps/desktop/src/main/releaseUpdateService.ts';
+import { caskMatchesRelease, stageHomebrewCachedArtifact } from '../apps/desktop/src/main/homebrewUpdateService.ts';
 import { isTrustedReleaseResponseUrl, parseReleaseUpdateManifest, readReleaseUpdateStatus, releaseArtifactDownloadUrls, releaseDownloadBaseUrl, releaseUpdateManifestUrls } from '../packages/local-server/src/releaseCore.ts';
 import { renderReleaseManifest } from './generate-release-manifest.mjs';
 import { publishReleaseCdn, releaseCdnConfiguration } from './publish-release-cdn.mjs';
@@ -313,74 +313,14 @@ try {
   assert.equal(caskMatchesRelease({ ...cask, sha256: '0'.repeat(64) }, brewUpdate), false);
   assert.equal(caskMatchesRelease({ ...cask, url: 'https://evil.example/package.dmg' }, brewUpdate), false);
   const cachePath = join(downloadDirectory, 'homebrew', `url-hash--${artifact.fileName}`);
-  const recoveryPolicy = { stallWindowMs: 30_000, minimumBytesPerSecond: 16 * 1024, minimumRemainingBytes: 8 * 1024 * 1024 };
-  let reconnect;
-  const setReconnect = (handler) => {
-    reconnect = handler;
-  };
-  assert.equal(
-    await prefetchHomebrewCdnArtifact(
-      brewUpdate,
-      cachePath,
-      () => {},
-      recoveryPolicy,
-      setReconnect,
-      (input) =>
-        downloadArtifactFromSource(input, async (url) => {
-          assert.equal(url.href, cdnManifest.artifacts[0].downloadUrl);
-          return Readable.from([bytes]);
-        }),
-    ),
-    true,
-  );
+  /** Homebrew 安装只接收本地已下载文件，复制和校验失败不能启动新的网络下载。 */
+  await stageHomebrewCachedArtifact(download.targetPath, cachePath, artifact);
   assert.deepEqual(await readFile(cachePath), bytes);
-  assert.equal(reconnect, null);
-  await rm(cachePath);
-  /** CDN 网络失败交给 brew fetch；篡改和大小不符不触发原生下载。 */
-  assert.equal(
-    await prefetchHomebrewCdnArtifact(
-      brewUpdate,
-      cachePath,
-      () => {},
-      recoveryPolicy,
-      setReconnect,
-      (input) =>
-        downloadArtifactFromSource(input, async () => {
-          throw new TypeError('Isolated CDN unavailable');
-        }),
-    ),
-    false,
-  );
-  await assert.rejects(
-    () =>
-      prefetchHomebrewCdnArtifact(
-        brewUpdate,
-        cachePath,
-        () => {},
-        recoveryPolicy,
-        setReconnect,
-        (input) => downloadArtifactFromSource(input, async () => Readable.from([Buffer.alloc(bytes.length)])),
-      ),
-    /摘要或大小/u,
-  );
-  /** 手动重连必须取消 CDN 流，清理 partial，并恢复原生 Homebrew 下载入口。 */
-  assert.equal(
-    await prefetchHomebrewCdnArtifact(
-      brewUpdate,
-      cachePath,
-      () => {},
-      recoveryPolicy,
-      setReconnect,
-      (input) =>
-        downloadArtifactFromSource(input, async (_url, _testMode, signal) => {
-          assert.equal(reconnect(), true);
-          signal.throwIfAborted();
-        }),
-    ),
-    false,
-  );
-  assert.equal(reconnect, null);
-  assert.deepEqual(await readdir(join(downloadDirectory, 'homebrew')), []);
+  await writeFile(download.targetPath, Buffer.alloc(bytes.length));
+  await assert.rejects(() => stageHomebrewCachedArtifact(download.targetPath, cachePath, artifact), /摘要或大小/u);
+  assert.deepEqual(await readFile(cachePath), bytes);
+  await writeFile(download.targetPath, bytes);
+  assert.deepEqual(await readdir(join(downloadDirectory, 'homebrew')), [basename(cachePath)]);
 
   /** 发布必须先准备全部固定版本文件，不提前改动 latest；重复执行不得覆盖历史制品。 */
   const distribution = isolatedDistribution();

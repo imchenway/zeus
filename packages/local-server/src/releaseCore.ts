@@ -1,4 +1,34 @@
 import { describeUserFacingError, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import { Readable } from 'node:stream';
+import { networkProxyEnvironment } from '@zeus/shared';
+
+/** 独立 Core 的更新请求显式直连，不继承全局模型代理或进程代理环境。 */
+function requestDirectReleaseManifest(address: string, init: RequestInit): Promise<Response> {
+  /** 生产清单为 HTTPS，隔离验收保留本机 HTTP 来源。 */
+  const transport = address.startsWith('https:') ? https : http;
+  /** 单次请求独立持有 Agent，响应关闭或失败时同步释放。 */
+  const agent = new transport.Agent({ keepAlive: false, proxyEnv: networkProxyEnvironment({ mode: 'direct', url: '', bypass: '' }) });
+  return new Promise((resolveResponse, rejectResponse) => {
+    /** 共享清单读取器负责超时及逐跳来源检查，原生请求不自动跳转。 */
+    const pending = transport.request(address, { method: 'GET', agent, headers: Object.fromEntries(new Headers(init.headers)), signal: init.signal ?? undefined }, (incoming) => {
+      incoming.once('close', () => agent.destroy());
+      /** 保留重定向位置与正文类型，重复响应头按原始顺序传递。 */
+      const headers = new Headers();
+      for (let index = 0; index < incoming.rawHeaders.length; index += 2) headers.append(incoming.rawHeaders[index]!, incoming.rawHeaders[index + 1]!);
+      /** HTTP 无正文状态不能传入空流，避免把远端状态误报为解析失败。 */
+      const noBody = [204, 205, 304].includes(incoming.statusCode ?? 0);
+      resolveResponse(new Response(noBody ? null : (Readable.toWeb(incoming) as ReadableStream), { status: incoming.statusCode, headers }));
+      if (noBody) incoming.destroy();
+    });
+    pending.once('error', (error) => {
+      agent.destroy();
+      rejectResponse(error);
+    });
+    pending.end();
+  });
+}
 
 /** Local Server 的发布清单与更新判定规则。 */
 export const currentExecutionHostProtocolVersion = 2;
@@ -401,7 +431,7 @@ export function resolveReleaseUpdateManifestUrl(configured: string | undefined, 
 export interface ReadReleaseUpdateStatusOptions extends Omit<EvaluateReleaseUpdateAvailabilityInput, 'manifest'> {
   /** 缺省读取当前平台的官方稳定清单。 */
   manifestUrl?: string;
-  /** Electron 使用系统网络，独立 Core 使用 Node 网络。 */
+  /** 桌面可注入独立会话，缺省的 Core 请求也显式直连。 */
   request?: (url: string, init: RequestInit) => Promise<Response>;
   /** 仅显式隔离验收允许本机清单与下载地址。 */
   allowUntrustedTest?: boolean;
@@ -416,7 +446,7 @@ export async function readReleaseUpdateStatus(input: ReadReleaseUpdateStatusOpti
     const platform = input.platform ?? (process.platform === 'win32' ? 'win32' : 'darwin');
     const manifestUrl = resolveReleaseUpdateManifestUrl(input.manifestUrl, Boolean(input.allowUntrustedTest), platform);
     const sources = releaseUpdateManifestUrls(platform);
-    const request = input.request ?? fetch;
+    const request = input.request ?? requestDirectReleaseManifest;
     let manifest: ReleaseUpdateManifest;
     try {
       manifest = await loadReleaseUpdateManifest(manifestUrl, request, Boolean(input.allowUntrustedTest), manifestUrl === sources[0] ? 1 : 2);
