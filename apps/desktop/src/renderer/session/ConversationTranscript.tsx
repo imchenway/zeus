@@ -469,12 +469,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   /** 完整目录覆盖深历史，但不能与首屏正文争抢 Core 的同步读取。 */
   const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: historyHydrated ? props.onLoadNavigation : undefined });
   useEffect(() => {
-    if (!props.onSaveSystemMessage) return;
-    /** 同一后台故障已被接纳时不因自动刷新再创建记录。 */
-    if (navigation.error && !systemMessages.some((message) => message.operation === 'navigation' && !message.recoveredAt && message.detail === redactUserFacingErrorDetails(navigation.error!)))
-      recordSystemMessage(systemScope, navigation.error, 'navigation', '会话目录读取失败。');
-    if (!navigation.error && !navigation.loading && navigation.snapshot) for (const message of systemMessages) if (message.operation === 'navigation' && !message.recoveredAt) recoverSystemMessage(systemScope, message);
-  }, [navigation.error, navigation.loading, navigation.snapshot, props.onSaveSystemMessage, systemScope, systemMessages]);
+    if (!navigation.error) return;
+    /** 后台目录失败只写诊断，不能打断已加载正文的阅读。 */
+    const diagnostic = `会话目录后台读取失败。\n会话：${props.state.conversationId}\n${redactUserFacingErrorDetails(navigation.error)}`;
+    console.warn('[Zeus runtime]', diagnostic);
+    window.zeus?.reportRendererRuntimeError?.(diagnostic);
+  }, [navigation.error, props.state.conversationId]);
   /** 内容批次复用已建立的输入、阶段和父组索引。 */
   const previousProjection = useRef<TranscriptProjection | null>(null);
   const projectionContext = [
@@ -1341,16 +1341,13 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         <SystemMessageNotice
           message={row.message}
           language={props.language}
-          busy={row.message.operation === 'navigation' && navigation.loading}
           onRetry={
-            row.message.operation === 'navigation'
-              ? () => navigation.retry()
-              : row.message.operation === 'navigation_body' && row.message.targetTurnId && props.onLoadNavigationTurn
-                ? async () => {
-                    await props.onLoadNavigationTurn!(row.message.targetTurnId!);
-                    recoverSystemMessage(systemScope, row.message);
-                  }
-                : undefined
+            row.message.operation === 'navigation_body' && row.message.targetTurnId && props.onLoadNavigationTurn
+              ? async () => {
+                  await props.onLoadNavigationTurn!(row.message.targetTurnId!);
+                  recoverSystemMessage(systemScope, row.message);
+                }
+              : undefined
           }
         />
       );
@@ -1361,6 +1358,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         !props.state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) && !props.state.activeTurnId && latestTurn?.providerTurnId === row.turnId;
       return <TurnFailureCard failure={row.failure} language={props.language} onRetry={retryable && props.onRetryFailedTurn ? () => props.onRetryFailedTurn?.(row.turnId) : undefined} />;
     }
+    /** 邻近视口的预读失败留在原位；只有显式跳转失败才生成系统消息。 */
     if (row.kind === 'navigation_placeholder')
       return (
         <NavigationHistoryPlaceholder
@@ -1370,7 +1368,11 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           entry={row.entry}
           language={props.language}
           onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined}
-          onReadError={props.onSaveSystemMessage ? (error) => recordSystemMessage(systemScope, error, 'navigation_body', '会话正文读取失败。', { entryId: row.entry.placement?.entryId ?? null, turnId: row.entry.turnId }) : undefined}
+          onReadError={
+            props.onSaveSystemMessage && navigationTargetKey === row.entry.rowKey
+              ? (error) => recordSystemMessage(systemScope, error, 'navigation_body', '会话正文读取失败。', { entryId: row.entry.placement?.entryId ?? null, turnId: row.entry.turnId })
+              : undefined
+          }
         />
       );
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
@@ -2071,6 +2073,8 @@ export function projectSystemMessageRows(rows: readonly TranscriptViewportRow[],
   /** 保持原正文顺序，只插入系统消息。 */
   const result = [...rows];
   for (const message of [...messages].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))) {
+    /** 旧的后台目录错误保留诊断记录，不再占用聊天正文。 */
+    if (message.operation === 'navigation') continue;
     /** 权威位置优先，尚未落库时使用首次记录的消息锚点。 */
     const order = message.transcript?.placement.order;
     /** 折叠的过程也不能吞掉消息边界；后续工具流式追加留在提示之后。 */
@@ -2330,8 +2334,14 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
           .then(() => succeeded?.())
           .catch((error: unknown) => {
             if (!cancelled) {
-              setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
-              onReadError.current?.(error);
+              setStatus({ loading: false, error: redactUserFacingErrorDetails(error instanceof Error ? error.message : '正文读取失败。') });
+              if (onReadError.current) onReadError.current(error);
+              else {
+                /** 预读失败保留脱敏诊断，用户滚动到占位时可原位重试。 */
+                const diagnostic = `会话正文预读失败。\n轮次：${props.entry.turnId}\n${redactUserFacingErrorDetails(error instanceof Error ? error.message : String(error))}`;
+                console.warn('[Zeus runtime]', diagnostic);
+                window.zeus?.reportRendererRuntimeError?.(diagnostic);
+              }
             }
           });
       },
