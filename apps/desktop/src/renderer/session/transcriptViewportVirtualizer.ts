@@ -7,6 +7,8 @@ export const transcriptViewportMaximumWindowRows = 48;
 export const transcriptViewportMeasurementCacheLimit = 384;
 /** 最近访问的会话测量缓存上限，避免切换会话后重新估高。 */
 export const transcriptViewportConversationCacheLimit = 6;
+/** 后台窗口可能暂停动画帧，测量投影最多等待 80 毫秒。 */
+const transcriptViewportUpdateFallbackMs = 80;
 
 /** 一份会话缓存同时记录适用宽度，宽度变化会使 Markdown 高度失效。 */
 interface TranscriptConversationMeasurementCache {
@@ -132,8 +134,9 @@ export class TranscriptViewportLayout {
     const scrollTop = input.scrollTop === null ? Math.max(0, estimatedTotalHeight - viewportHeight) : Math.min(Math.max(0, input.scrollTop), Math.max(0, estimatedTotalHeight - viewportHeight));
     const targetStart = Math.max(0, scrollTop - overscan);
     const targetEnd = Math.min(estimatedTotalHeight, scrollTop + viewportHeight + overscan);
-    let windowStartIndex = this.firstIndexEndingAtOrAfter(targetStart);
-    let windowEndIndex = this.lastIndexStartingAtOrBefore(targetEnd);
+    // 已在 DOM 预算内的短会话完整保留，滚动不能反复重建图片、图表和读取失败状态。
+    let windowStartIndex = rowCount <= maximumWindowRows ? 0 : this.firstIndexEndingAtOrAfter(targetStart);
+    let windowEndIndex = rowCount <= maximumWindowRows ? rowCount - 1 : this.lastIndexStartingAtOrBefore(targetEnd);
     if (windowEndIndex < windowStartIndex) windowEndIndex = windowStartIndex;
     if (windowEndIndex - windowStartIndex + 1 > maximumWindowRows) {
       const centerIndex = this.firstIndexEndingAtOrAfter(scrollTop + viewportHeight / 2);
@@ -252,6 +255,8 @@ export interface TranscriptViewportAnchor {
   itemKey: string | null;
   rowKey: string | null;
   topOffset: number | null;
+  /** 条目被正文接管后，仍可按同一外层行的位置补偿；单位为 CSS 像素。 */
+  rowTopOffset?: number | null;
   scrollHeight: number;
   scrollTop: number;
   /** 原条目被删除时，依次尝试后继和前驱；只保存可见窗口的短位置元数据。 */
@@ -274,6 +279,7 @@ export function captureTranscriptViewportAnchor(container: HTMLElement): Transcr
     itemKey: itemElement?.dataset.transcriptItemKey ?? null,
     rowKey: rowElement?.dataset.transcriptRowKey ?? null,
     topOffset: anchorElement ? anchorElement.getBoundingClientRect().top - containerRect.top : null,
+    rowTopOffset: rowElement ? rowElement.getBoundingClientRect().top - containerRect.top : null,
     scrollHeight: container.scrollHeight,
     scrollTop: container.scrollTop,
     neighbors:
@@ -298,6 +304,11 @@ export function compensateTranscriptViewportAnchor(container: HTMLElement, ancho
       anchorElement = elements.get(neighbor.itemKey);
       topOffset = neighbor.topOffset;
     }
+  }
+  // 图片、正文异步接管内部条目时，优先保住仍在窗口中的外层行。
+  if (!anchorElement && anchor.rowKey && anchor.rowTopOffset != null) {
+    anchorElement = [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchor.rowKey);
+    topOffset = anchor.rowTopOffset;
   }
   const previousScrollTop = container.scrollTop;
   if (anchorElement && topOffset !== null) {
@@ -331,6 +342,8 @@ export function useTranscriptViewportVirtualizer(input: {
   const windowElementRef = useRef<HTMLElement | null>(null);
   const windowObserverRef = useRef<ResizeObserver | null>(null);
   const updateFrameRef = useRef<number | null>(null);
+  /** 动画帧暂停时仍提交待处理行高，不留下过期的空白占位窗口。 */
+  const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 行高与滚动位置可以在同一帧变化，两项更新必须分别保留。 */
   const pendingMeasurementRef = useRef(false);
   const pendingViewportRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(null);
@@ -353,8 +366,12 @@ export function useTranscriptViewportVirtualizer(input: {
   const scheduleUpdate = useCallback((measurementChanged = false) => {
     pendingMeasurementRef.current ||= measurementChanged;
     if (updateFrameRef.current !== null) return;
-    updateFrameRef.current = requestAnimationFrame(() => {
+    /** 动画帧与后备定时器只允许其中一个提交本批测量。 */
+    const flush = (): void => {
+      if (updateFrameRef.current !== null) cancelAnimationFrame(updateFrameRef.current);
+      if (updateTimerRef.current !== null) clearTimeout(updateTimerRef.current);
       updateFrameRef.current = null;
+      updateTimerRef.current = null;
       const pending = pendingViewportRef.current;
       pendingViewportRef.current = null;
       if (pending) {
@@ -368,7 +385,9 @@ export function useTranscriptViewportVirtualizer(input: {
         pendingMeasurementRef.current = false;
         setLayoutRevision((revision) => revision + 1);
       }
-    });
+    };
+    updateFrameRef.current = requestAnimationFrame(flush);
+    updateTimerRef.current = setTimeout(flush, transcriptViewportUpdateFallbackMs);
   }, []);
 
   const measureElement = useCallback(
@@ -385,7 +404,8 @@ export function useTranscriptViewportVirtualizer(input: {
       const followingLatest = Boolean(input.isFollowingLatest?.());
       const candidateAnchor = !measurementAnchorRef.current && !input.suspendAutomaticAnchor && !followingLatest && container ? (input.getReadingAnchor?.() ?? captureTranscriptViewportAnchor(container)) : null;
       if (!layoutRef.current.updateMeasuredHeight(rowKey, height, cacheRef.current)) return;
-      measurementAnchorRef.current ??= candidateAnchor;
+      // 可见行尚未挂载时没有可守住的阅读位置；不能把任意行高变化当作历史前插。
+      measurementAnchorRef.current ??= candidateAnchor?.rowKey ? candidateAnchor : null;
       // 已挂载内容先在本次绘制前补偿；占位层提交后仍沿用同一锚点核对剩余差值。
       if (container && measurementAnchorRef.current && !input.suspendAutomaticAnchor && !followingLatest) {
         compensateTranscriptViewportAnchor(container, measurementAnchorRef.current);
@@ -499,6 +519,7 @@ export function useTranscriptViewportVirtualizer(input: {
   useLayoutEffect(
     () => () => {
       if (updateFrameRef.current !== null) cancelAnimationFrame(updateFrameRef.current);
+      if (updateTimerRef.current !== null) clearTimeout(updateTimerRef.current);
     },
     [],
   );
@@ -528,13 +549,14 @@ export function useTranscriptViewportVirtualizer(input: {
     [measureElement],
   );
 
-  const synchronizeViewport = useCallback(
-    (container: HTMLElement): void => {
-      pendingViewportRef.current = { scrollTop: container.scrollTop, viewportHeight: positiveMetric(container.clientHeight, 720) };
-      scheduleUpdate();
-    },
-    [scheduleUpdate],
-  );
+  /** 用户滚动和程序定位直接更新可见窗口，不再等下一次动画帧才挂载正文。 */
+  const synchronizeViewport = useCallback((container: HTMLElement): void => {
+    const scrollTop = container.scrollTop;
+    const viewportHeight = positiveMetric(container.clientHeight, 720);
+    // 当前真实位置优先于此前测量留下的坐标。
+    pendingViewportRef.current = null;
+    setViewport((current) => (current.scopeKey === scopeRef.current && current.scrollTop === scrollTop && current.viewportHeight === viewportHeight ? current : { scopeKey: scopeRef.current, scrollTop, viewportHeight }));
+  }, []);
 
   useLayoutEffect(() => {
     const container = input.containerRef.current;
@@ -575,7 +597,8 @@ export function useTranscriptViewportVirtualizer(input: {
     // 行测量会先修改高度树、再提交新的 spacer/窗口投影。必须在投影真正进入 DOM 后
     // 再通知一次底部跟随，否则首次请求只会滚到旧 scrollHeight 的底部。
     if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
-  }, [input.isFollowingLatest, input.onFollowingLatestGeometryChange, projection]);
+    else if (input.containerRef.current) synchronizeViewport(input.containerRef.current);
+  }, [input.containerRef, input.isFollowingLatest, input.onFollowingLatestGeometryChange, projection, synchronizeViewport]);
 
   useLayoutEffect(() => {
     const anchor = measurementAnchorRef.current;

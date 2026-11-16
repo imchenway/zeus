@@ -23,6 +23,69 @@ import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/Ap
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 
+/** 图片回到虚拟窗口时复用预览地址、解码状态和固有尺寸。 */
+interface CachedConversationImage {
+  dataUrl: string;
+  width?: number;
+  height?: number;
+  decoded?: boolean;
+}
+
+/** 当前窗口最多保留 32 张、64 MiB 的图片地址，避免长会话无限持有 Base64。 */
+const conversationImageCacheLimit = 32;
+/** 图片地址按 UTF-16 字符占用估算，单位为字节。 */
+const conversationImageCacheByteLimit = 64 * 1024 * 1024;
+/** 项目、会话、资源修订隔离图片；待登记附件使用完整受控引用。 */
+const conversationImageCache = new Map<string, CachedConversationImage>();
+/** 同一图片在多个位置挂载时共用一次正在进行的受控读取。 */
+const pendingConversationImages = new Map<string, Promise<CachedConversationImage | null>>();
+/** 当前缓存中图片地址的估算字节数。 */
+let conversationImageCacheBytes = 0;
+
+/** 命中的预览移到最近使用位置，不缓存读取或解码失败。 */
+function cachedConversationImage(key: string): CachedConversationImage | null {
+  const image = conversationImageCache.get(key);
+  if (!image) return null;
+  conversationImageCache.delete(key);
+  conversationImageCache.set(key, image);
+  return image;
+}
+
+/** 超出容量的大图只在当前组件使用，其余预览按最近使用顺序淘汰。 */
+function rememberConversationImage(key: string, image: CachedConversationImage): CachedConversationImage {
+  forgetConversationImage(key);
+  if (image.dataUrl.length * 2 > conversationImageCacheByteLimit) return image;
+  conversationImageCache.set(key, image);
+  conversationImageCacheBytes += image.dataUrl.length * 2;
+  while (conversationImageCache.size > conversationImageCacheLimit || conversationImageCacheBytes > conversationImageCacheByteLimit) forgetConversationImage(conversationImageCache.keys().next().value!);
+  return image;
+}
+
+/** 失败和显式重试均移除旧预览，下一次仍经过原授权读取入口。 */
+function forgetConversationImage(key: string): void {
+  const previous = conversationImageCache.get(key);
+  if (previous) conversationImageCacheBytes -= previous.dataUrl.length * 2;
+  conversationImageCache.delete(key);
+}
+
+/** 虚拟行卸载不取消共享读取；失败不留缓存，用户可沿用原入口重试。 */
+function loadCachedConversationImage(key: string, load: () => Promise<string | null>): Promise<CachedConversationImage | null> {
+  const cached = cachedConversationImage(key);
+  if (cached) return Promise.resolve(cached);
+  const pending = pendingConversationImages.get(key);
+  if (pending) return pending;
+  const request = load()
+    .then((dataUrl) => (dataUrl ? rememberConversationImage(key, { dataUrl }) : null))
+    .finally(() => pendingConversationImages.delete(key));
+  pendingConversationImages.set(key, request);
+  return request;
+}
+
+/** 记录浏览器确认的尺寸，重新挂载第一帧即可保留图片比例。 */
+function decodedConversationImage(key: string, preview: CachedConversationImage, image: HTMLImageElement): CachedConversationImage {
+  return rememberConversationImage(key, { ...preview, width: image.naturalWidth, height: image.naturalHeight, decoded: true });
+}
+
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -54,19 +117,28 @@ export function ConversationPendingAttachmentImages(props: {
 function ConversationPendingAttachmentImage(props: { attachment: NativeConversationAttachment; language: SessionUiLanguage; onVisibleContentChange?: () => void; /** 紧凑缩略图保留文件名与打开入口。 */ compact?: boolean }) {
   /** 图片由会话统一打开弹窗，独立页面沿用自身预览。 */
   const openFilePreview = useContext(FilePreviewOpenContext);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** 本地路径和上传引用共同隔离待登记图片。 */
+  const previewKey = JSON.stringify(['pending', props.attachment.localPath, props.attachment.uploadRef]);
+  const [preview, setPreview] = useState<CachedConversationImage | null>(() => cachedConversationImage(previewKey));
+  const previewUrl = preview?.dataUrl ?? null;
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   /** 读取返回后等待浏览器解码，加载结束才切换为真实图片。 */
-  const [decodedPreviewUrl, setDecodedPreviewUrl] = useState<string | null>(null);
+  const [decodedPreviewUrl, setDecodedPreviewUrl] = useState<string | null>(() => (preview?.decoded ? preview.dataUrl : null));
   const [previewOpen, setPreviewOpen] = useState(false);
   const identity = pendingAttachmentIdentity(props.attachment);
 
   useEffect(() => {
     let active = true;
-    setPreviewUrl(null);
+    const cached = cachedConversationImage(previewKey);
+    setPreview(cached);
+    setDecodedPreviewUrl(cached?.decoded ? cached.dataUrl : null);
     setFailed(false);
     setPreviewOpen(false);
+    if (cached) {
+      setLoading(false);
+      return;
+    }
     const loadConversationPreview = window.zeus?.getConversationResourcePreview;
     const loadTaskPreview = window.zeus?.getTaskAttachmentPreview;
     if (!loadConversationPreview && (!props.attachment.localPath || !loadTaskPreview)) {
@@ -77,14 +149,17 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
       };
     }
     setLoading(true);
-    void loadPendingAttachmentPreview(props.attachment, loadConversationPreview, loadTaskPreview)
+    void loadCachedConversationImage(previewKey, async () => {
+      const result = await loadPendingAttachmentPreview(props.attachment, loadConversationPreview, loadTaskPreview);
+      return result?.mimeType.startsWith('image/') ? result.previewUrl : null;
+    })
       .then((preview) => {
         if (!active) return;
-        if (!preview?.previewUrl || !preview.mimeType.startsWith('image/')) {
+        if (!preview) {
           setFailed(true);
           return;
         }
-        setPreviewUrl(preview.previewUrl);
+        setPreview(preview);
       })
       .catch(() => {
         if (active) setFailed(true);
@@ -95,7 +170,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
     return () => {
       active = false;
     };
-  }, [identity, props.attachment.localPath, props.attachment.uploadRef]);
+  }, [identity, previewKey, props.attachment.localPath, props.attachment.uploadRef]);
 
   useLayoutEffect(() => {
     props.onVisibleContentChange?.();
@@ -121,10 +196,18 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
             <img
               decoding="async"
               src={previewUrl}
+              width={preview?.width}
+              height={preview?.height}
               alt={props.attachment.name}
               style={decodedPreviewUrl === previewUrl ? undefined : { visibility: 'hidden' }}
-              onLoad={() => setDecodedPreviewUrl(previewUrl)}
-              onError={() => setFailed(true)}
+              onLoad={(event) => {
+                if (preview) setPreview(decodedConversationImage(previewKey, preview, event.currentTarget));
+                setDecodedPreviewUrl(previewUrl);
+              }}
+              onError={() => {
+                forgetConversationImage(previewKey);
+                setFailed(true);
+              }}
             />
             {decodedPreviewUrl !== previewUrl ? <ResourceLoading label={props.language === 'zh-CN' ? '正在加载图片' : 'Loading image'} /> : null}
           </>
@@ -260,11 +343,13 @@ function ConversationImagePreview(
   },
 ) {
   const rootRef = useRef<HTMLButtonElement | null>(null);
+  /** 资源更新后重新读取，不能沿用旧修订的像素和尺寸。 */
+  const previewKey = JSON.stringify(['resource', props.resource.projectId, props.resource.conversationId, props.resource.id, props.resource.updatedAt]);
   const [visible, setVisible] = useState(false);
-  const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
+  const [preview, setPreview] = useState<CachedConversationImage | null>(() => cachedConversationImage(previewKey));
   const [loading, setLoading] = useState(false);
   /** 资源读取已按可见区域延迟；回执后立即解码，避免再次懒加载而停在占位。 */
-  const [decodedPreviewUrl, setDecodedPreviewUrl] = useState<string | null>(null);
+  const [decodedPreviewUrl, setDecodedPreviewUrl] = useState<string | null>(() => (preview?.decoded ? preview.dataUrl : null));
   const [error, setError] = useState<unknown>(null);
   /** 重试只重新读取相同受控资源，不打开另一个窗口或改变消息位置。 */
   const [retry, setRetry] = useState(0);
@@ -301,24 +386,33 @@ function ConversationImagePreview(
   }, [visible]);
 
   useEffect(() => {
-    setPreview(null);
+    const cached = cachedConversationImage(previewKey);
+    setPreview(cached);
+    setDecodedPreviewUrl(cached?.decoded ? cached.dataUrl : null);
     setError(null);
-    setVisible(false);
-  }, [props.resource.id]);
+    setVisible(Boolean(cached));
+  }, [previewKey]);
 
   useEffect(() => {
     const loadPreview = loadPreviewRef.current;
     if (!visible || !loadPreview) return;
+    const cached = cachedConversationImage(previewKey);
+    if (cached) {
+      setPreview(cached);
+      setDecodedPreviewUrl(cached.decoded ? cached.dataUrl : null);
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
     setError(null);
-    void loadPreview(resourceRef.current)
+    void loadCachedConversationImage(previewKey, async () => {
+      const result = await loadPreview(resourceRef.current);
+      if (result.kind !== 'image') throw new Error(languageRef.current === 'zh-CN' ? '该资源不是可预览图片。' : 'This resource is not a previewable image.');
+      return result.dataUrl;
+    })
       .then((result) => {
         if (!active) return;
-        if (result.kind !== 'image') {
-          reportPreviewFailure(languageRef.current === 'zh-CN' ? '该资源不是可预览图片。' : 'This resource is not a previewable image.');
-          return;
-        }
         setPreview(result);
       })
       .catch((loadError) => {
@@ -330,7 +424,7 @@ function ConversationImagePreview(
     return () => {
       active = false;
     };
-  }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible, retry]);
+  }, [previewKey, Boolean(props.onLoadResourcePreview), visible, retry]);
 
   /** 图片缩略图也沿用会话资源入口，不自行创建弹窗。 */
   async function open(): Promise<void> {
@@ -341,7 +435,9 @@ function ConversationImagePreview(
     }
   }
 
+  /** 解码失败不能让同一坏预览在虚拟行恢复时再次命中。 */
   function reportPreviewFailure(cause: unknown): void {
+    forgetConversationImage(previewKey);
     setError(cause);
   }
 
@@ -388,6 +484,7 @@ function ConversationImagePreview(
       onClick={() => {
         setVisible(true);
         if (error && !previewTooLarge) {
+          forgetConversationImage(previewKey);
           setPreview(null);
           setRetry((value) => value + 1);
           return;
@@ -400,9 +497,14 @@ function ConversationImagePreview(
           <img
             decoding="async"
             src={preview.dataUrl}
+            width={preview.width}
+            height={preview.height}
             alt={props.label}
             style={decodedPreviewUrl === preview.dataUrl ? undefined : { visibility: 'hidden' }}
-            onLoad={() => setDecodedPreviewUrl(preview.dataUrl)}
+            onLoad={(event) => {
+              setPreview(decodedConversationImage(previewKey, preview, event.currentTarget));
+              setDecodedPreviewUrl(preview.dataUrl);
+            }}
             onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')}
           />
           {decodedPreviewUrl !== preview.dataUrl ? <ResourceLoading label={status} /> : null}
