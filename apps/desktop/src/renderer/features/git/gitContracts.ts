@@ -30,6 +30,8 @@ export interface GitDiffHunk {
 }
 
 export interface GitFileDiff {
+  /** Git 模式明确标记的子模块引用。 */
+  isSubmodule?: boolean;
   oldPath: string;
   newPath: string;
   changeType: GitDiffFileChangeType;
@@ -65,6 +67,8 @@ export interface GitCommitSummary {
 }
 
 export interface GitFileStatusSummary {
+  /** 来自 Git 原始模式的子模块类型。 */
+  isSubmodule?: boolean;
   path: string;
   originalPath?: string;
   indexStatus: string;

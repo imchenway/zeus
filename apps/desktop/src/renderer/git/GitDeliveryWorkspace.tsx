@@ -30,6 +30,8 @@ export type BusyAction = 'loading' | 'files' | 'commit' | 'commit-message' | 'pu
 
 /** 文件树保留真实仓库相对路径。 */
 export interface DeliveryFile {
+  /** 子模块是可提交的版本引用，不展开为父仓库文件。 */
+  isSubmodule?: boolean;
   /** 仓库相对路径保持文件操作身份。 */
   path: string;
   /** 工作区使用 Git 状态，已提交成果使用比较类型。 */
@@ -273,7 +275,7 @@ export function DeliveryRepositoryFileTree(props: {
                         <span>
                           <strong>{repositoryLabel(group.workspace, props.zh)}</strong>
                           <small>
-                            {group.files.length} {props.zh ? '个文件' : 'files'}
+                            {group.files.length} {group.files.some((file) => file.isSubmodule) ? (props.zh ? '项变更' : 'changes') : props.zh ? '个文件' : 'files'}
                           </small>
                           <small>{group.statusLabel}</small>
                         </span>
@@ -489,7 +491,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                   type="button"
                   data-file-path={path}
                   data-icon-tooltip={name}
-                  aria-label={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
+                  aria-label={`${path}${files[0].isSubmodule ? (props.zh ? ' · 子模块' : ' · Submodule') : ''} · ${fileStatusLabel(files[0].status, props.zh)}`}
                   aria-pressed={props.selectedFile === path}
                   onClick={() => {
                     if (props.selectedFile !== path) beginGitDiffSelection(path);
@@ -500,8 +502,9 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                   onDoubleClick={() => props.onOpen(path)}
                   disabled={props.disabled}
                 >
-                  <DeliveryEntryIcon path={path} />
+                  <DeliveryEntryIcon path={path} submodule={files[0].isSubmodule} />
                   <span data-file-status={files[0].status}>{name}</span>
+                  {files[0].isSubmodule ? <small>{props.zh ? '子模块' : 'Submodule'}</small> : null}
                   {files[0].additions || files[0].deletions ? <small>{`+${files[0].additions} −${files[0].deletions}`}</small> : null}
                 </button>
               </div>
@@ -514,8 +517,12 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
 }
 
 /** 交付树复用源码及会话的文件图标，目录使用同一 Phosphor 文件夹轮廓。 */
-function DeliveryEntryIcon(props: { path?: string }) {
-  return props.path ? <FileTypeIcon name={props.path} className="task-git-delivery-entry-icon" /> : <FolderIcon className="task-git-delivery-entry-icon" size={16} weight="regular" aria-hidden="true" />;
+function DeliveryEntryIcon(props: { path?: string; submodule?: boolean }) {
+  return props.path ? (
+    <FileTypeIcon name={props.path} kind={props.submodule ? 'submodule' : undefined} className="task-git-delivery-entry-icon" />
+  ) : (
+    <FolderIcon className="task-git-delivery-entry-icon" size={16} weight="regular" aria-hidden="true" />
+  );
 }
 
 /** 操作区和冲突页标题栏只显示摘要，复用原生浮层查看逐仓详情。 */

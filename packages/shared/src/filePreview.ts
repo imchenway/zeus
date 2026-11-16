@@ -71,6 +71,8 @@ export type FilePreviewRequest = (
 
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
+  /** Git 子模块只展示固定提交和工作区状态，不授予目录文件的读写权限。 */
+  submodule?: { commit: string; dirty?: boolean; initialized?: boolean };
   /** 逐行归属绑定仓库路径和固定提交；无 ref 时以本次预览内容计算未提交行。 */
   git?: { root: string; path: string; ref?: string; baseRef?: string };
   /** 编辑目标由宿主解析；历史副本与快照目录不能成为编辑目标。 */
@@ -103,6 +105,8 @@ export interface FilePreviewIntent {
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */
 export interface FilePreviewItem {
+  /** 子模块版本元数据不作为普通文件大小或可编辑正文。 */
+  submodule?: FilePreviewSource['submodule'];
   /** 已解析文件的显示路径，仅供复制；打开和读写继续使用资源身份。 */
   path?: string;
   /** 当前文本可按同次预览的旧侧恢复区块；历史副本和只读编码不提供此能力。 */

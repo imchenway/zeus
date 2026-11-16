@@ -253,6 +253,19 @@ export function registerFilePreview(services: {
         /** 解码内容绑定本次授权，释放时随授权回收。 */
         let image: Buffer | undefined;
         try {
+          if (source.submodule) {
+            /** 与 Git 原生 gitlink 补丁保持相同正文，复用已有只读 Diff。 */
+            const content = `Subproject commit ${source.submodule.commit}${source.submodule.dirty ? '-dirty' : ''}\n`;
+            return {
+              ...item,
+              submodule: source.submodule,
+              label: `${source.label} · 子模块${source.submodule.initialized === false ? ' · 未初始化（记录版本）' : source.submodule.dirty ? ' · 有本地修改' : ''}`,
+              kind: 'text',
+              mime: 'text/plain',
+              content,
+              byteLength: Buffer.byteLength(content),
+            };
+          }
           if (source.reason) return { ...item, reason: source.reason };
           if (source.blob || source.sha256) {
             await mkdir(services.temporaryRoot, { recursive: true, mode: 0o700 });

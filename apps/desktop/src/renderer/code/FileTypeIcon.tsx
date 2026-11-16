@@ -1,6 +1,7 @@
 import type { Icon, IconProps } from '@phosphor-icons/react';
 import type { ConversationFileIconKind } from '@zeus/shared';
 import { FileIcon } from '@phosphor-icons/react/dist/csr/File';
+import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { FileCodeIcon } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
@@ -27,10 +28,11 @@ import { BracketsCurlyIcon } from '@phosphor-icons/react/dist/csr/BracketsCurly'
 import './fileAppearance.css';
 
 /** 资源保留既有类型语义，文件树额外区分库内已有的媒体和语言图标。 */
-export type FileIconKind = ConversationFileIconKind | 'text' | 'audio' | 'video' | 'jsx' | 'csv' | 'c' | 'cpp' | 'python' | 'vue';
+export type FileIconKind = ConversationFileIconKind | 'text' | 'audio' | 'video' | 'jsx' | 'csv' | 'c' | 'cpp' | 'python' | 'vue' | 'submodule';
 
 /** 会话资源、源码树和交付树共用同一套 Phosphor 文件图标。 */
 const fileIcons: Record<FileIconKind, Icon> = {
+  submodule: GitBranchIcon,
   // 语言类型保留文件轮廓，JSON 使用库内对应的大括号图形。
   typescript: FileTsIcon,
   javascript: FileJsIcon,
@@ -99,9 +101,9 @@ export function fileIconKindForName(name: string): FileIconKind {
 }
 
 /** 文件入口共用 Phosphor 图标；类型只影响外观，不决定内容解码或读取权限。 */
-export function FileTypeIcon({ name, className, ...props }: IconProps & { name: string }) {
-  /** 按原文件扩展名选择图标，未知类型保留普通文件图标。 */
-  const kind = fileIconKindForName(name);
+export function FileTypeIcon({ name, kind: explicitKind, className, ...props }: IconProps & { name: string; /** Git 等来源已确认的类型优先于扩展名。 */ kind?: FileIconKind }) {
+  /** 子模块使用受信类型，其余文件继续按扩展名识别。 */
+  const kind = explicitKind ?? fileIconKindForName(name);
   /** 直接使用已有组件，不维护另一套 SVG 或图标注册器。 */
   const Icon = fileIconForKind(kind);
   return <Icon size={16} weight="regular" aria-hidden="true" {...props} className={`file-type-icon${className ? ` ${className}` : ''}`} data-file-kind={kind} />;

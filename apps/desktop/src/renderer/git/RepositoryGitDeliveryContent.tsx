@@ -251,8 +251,14 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         /** 已提交与未提交范围分别来自上游比较及本机快照。 */
         const files =
           scope === 'committed'
-            ? (committed[repository.id]?.fileDiffs ?? []).map((file) => ({ path: file.newPath || file.oldPath, status: file.changeType, additions: file.addedLines, deletions: file.deletedLines }))
-            : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => ({ path: file.path, status: file.category, additions: 0, deletions: 0 }));
+            ? (committed[repository.id]?.fileDiffs ?? []).map((file) => ({ path: file.newPath || file.oldPath, status: file.changeType, additions: file.addedLines, deletions: file.deletedLines, isSubmodule: file.isSubmodule }))
+            : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => ({
+                path: file.path,
+                status: file.category,
+                additions: 0,
+                deletions: 0,
+                isSubmodule: file.isSubmodule || repository.snapshot.submodules?.some((module) => module.path === file.path),
+              }));
         return {
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
           localPath: repository.localPath ?? displayedFilePath(repository.relativePath, props.project.localPath),

@@ -379,7 +379,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             }
           : current,
       );
-      if (action.type === 'submodule_update' || action.type === 'subtree') await loadWorkbench();
+      // 父仓库签出会同时更新子模块，不能保留子模块的旧分支快照。
+      if (
+        action.type === 'submodule_update' ||
+        action.type === 'subtree' ||
+        ((action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && repository.snapshot.submodules?.some((module) => module.initialized))
+      )
+        await loadWorkbench();
       notifyProjectGitChanged(props.project.id);
       if (response.result.outcome === 'conflict') openDelivery(repository.id);
       return response.result.outcome;

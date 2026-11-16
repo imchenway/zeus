@@ -1225,6 +1225,8 @@ export interface TaskWorkspaceRecord {
 }
 
 export interface TaskGitFileStatus {
+  /** 子模块引用沿用文件选择身份，但保留独立类型。 */
+  isSubmodule?: boolean;
   path: string;
   originalPath?: string;
   indexStatus: string;
@@ -1240,6 +1242,8 @@ export interface TaskGitDiffLine {
 }
 
 export interface TaskGitFileDiff {
+  /** 子模块沿用父仓库的版本引用差异，不作为目录正文。 */
+  isSubmodule?: boolean;
   oldPath: string;
   newPath: string;
   changeType: 'added' | 'deleted' | 'modified' | 'renamed' | 'copied';
@@ -1256,6 +1260,8 @@ export interface TaskGitDiffSummary {
 }
 
 export interface TaskBranchFileChange {
+  /** 已提交的子模块版本引用。 */
+  isSubmodule?: boolean;
   path: string;
   originalPath?: string;
   changeType: TaskGitFileDiff['changeType'];
