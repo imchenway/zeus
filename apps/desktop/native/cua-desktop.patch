@@ -2627,14 +2627,17 @@ new file mode 100644
 +        })
 +}
 diff --git a/crates/cua-driver-sdk/src/embedded.rs b/crates/cua-driver-sdk/src/embedded.rs
+index f17dacc..a3abfc6 100644
 --- a/crates/cua-driver-sdk/src/embedded.rs
 +++ b/crates/cua-driver-sdk/src/embedded.rs
-@@ -865,6 +865,8 @@
+@@ -865,6 +865,10 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                  | "CUA_LOG"
                  | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
                  | "CUA_TELEMETRY_ENABLED"
-+                // Zeus 私有通知仅允许这一项认证密钥，保留其他环境限制。
++                // Zeus 私有通知和浏览器桥只接收宿主生成的身份与地址。
 +                | "ZEUS_CUA_EVENT_TOKEN"
++                | "ZEUS_CUA_BROWSER_ENDPOINT"
++                | "ZEUS_CUA_BROWSER_PID"
          )
  }
  
@@ -2893,3 +2896,522 @@ diff --git a/crates/platform-macos/src/windows.rs b/crates/platform-macos/src/wi
  }
  
  /// Enumerate all windows (including off-screen).
+diff --git a/crates/cua-driver-core/src/browser/engine.rs b/crates/cua-driver-core/src/browser/engine.rs
+index 5c987cb..7f0185d 100644
+--- a/crates/cua-driver-core/src/browser/engine.rs
++++ b/crates/cua-driver-core/src/browser/engine.rs
+@@ -58,7 +58,8 @@ use super::store::{
+ };
+ use super::types::{
+     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
+-    EndpointAccessClass, NativeWindowInfo, OwnedEndpoint, Rect,
++    EndpointAccessClass, EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
++    NativeWindowInfo, OwnedEndpoint, Rect,
+ };
+ 
+ /// Bounds tolerance (device pixels) for native ↔ CDP window correlation.
+@@ -90,6 +91,40 @@ fn refuse(code: BrowserRefusalCode, msg: impl Into<String>) -> BrowserRefusal {
+     BrowserRefusal::new(code, msg)
+ }
+ 
++/// 私有宿主地址只从受控 worker 环境读取；调用参数不能指定端点或冒充其他进程。
++pub(crate) fn hosted_browser_endpoint(session: &str, pid: i64) -> Option<OwnedEndpoint> {
++    if std::env::var("ZEUS_CUA_BROWSER_PID")
++        .ok()?
++        .parse::<i64>()
++        .ok()?
++        != pid
++    {
++        return None;
++    }
++    let mut url = url::Url::parse(&std::env::var("ZEUS_CUA_BROWSER_ENDPOINT").ok()?).ok()?;
++    if url.scheme() != "ws" || url.host_str() != Some("127.0.0.1") || url.port().is_none() {
++        return None;
++    }
++    let context = crate::tool::current_dispatch_authorization_context()?;
++    let prefix = context.runtime_session_key("");
++    let public_session = session.strip_prefix(&prefix)?;
++    url.path_segments_mut()
++        .ok()?
++        .pop_if_empty()
++        .push(public_session);
++    Some(OwnedEndpoint {
++        http_port: url.port(),
++        ws_url: url.to_string(),
++        transport: EndpointTransport::EmbeddedDescendant,
++        ownership: EndpointOwnershipProof {
++            method: EndpointOwnershipMethod::PlatformAttested,
++            owner_pid: pid,
++            listener_pid: Some(pid),
++            detail: Some("Zeus private host transport".to_owned()),
++        },
++    })
++}
++
+ fn authorize_live_browser_origin(
+     manifest: Option<&crate::session_manifest::SessionManifest>,
+     live_url: &str,
+@@ -1240,7 +1275,20 @@ impl BrowserEngine {
+         pid: i64,
+         window_id: u64,
+     ) -> Result<(String, TargetRecord), BrowserRefusal> {
+-        let class = self.platform.classify_browser(pid).await?;
++        let hosted = hosted_browser_endpoint(session, pid);
++        let class = if hosted.is_some() {
++            BrowserClassification {
++                is_browser: true,
++                engine: BrowserEngineFamily::Chromium,
++                product_kind: super::types::BrowserProduct::Electron,
++                product: Some("Zeus embedded browser".to_owned()),
++                channel: None,
++                process_role: BrowserProcessRole::EmbeddedApplication,
++                supports_cdp: true,
++            }
++        } else {
++            self.platform.classify_browser(pid).await?
++        };
+         if !class.is_browser {
+             return Err(refuse(
+                 BrowserRefusalCode::BrowserRouteUnavailable,
+@@ -1262,7 +1310,9 @@ impl BrowserEngine {
+ 
+         let native = self.native_window_checked(pid, window_id).await?;
+         let fingerprint = self.platform.process_fingerprint(pid).await?;
+-        let endpoint = if let Some(live_grant) = &grant {
++        let endpoint = if let Some(endpoint) = hosted {
++            endpoint
++        } else if let Some(live_grant) = &grant {
+             self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
+                 .await?
+         } else {
+@@ -1487,8 +1537,11 @@ impl BrowserEngine {
+                 }
+             }
+             EndpointAccessClass::EmbeddedApplication => {
++                let hosted = hosted_browser_endpoint(session, record.pid)
++                    .is_some_and(|endpoint| endpoint.ws_url == record.ws_url);
+                 let classification = self.platform.classify_browser(record.pid).await?;
+-                if classification.process_role != BrowserProcessRole::EmbeddedApplication {
++                if !hosted && classification.process_role != BrowserProcessRole::EmbeddedApplication
++                {
+                     return Err(refuse(
+                         BrowserRefusalCode::BrowserBindingStale,
+                         "the process is no longer proven to be the approved embedded browser host",
+@@ -1522,7 +1575,9 @@ impl BrowserEngine {
+             .await?;
+ 
+         // 3. Endpoint still owned and unchanged.
+-        let endpoint = if record.generation > 0 {
++        let endpoint = if let Some(endpoint) = hosted_browser_endpoint(session, record.pid) {
++            endpoint
++        } else if record.generation > 0 {
+             self.existing_profile_endpoint(record.pid, &record.ws_url)
+                 .await?
+         } else {
+@@ -1680,25 +1735,63 @@ impl BrowserEngine {
+         viewport_y: f64,
+         kind: BrowserVisualActionKind,
+     ) {
++        // 宿主提供内容区 DIP 和真实缩放；页面输入与光标渲染仍由 CUA 执行。
++        let hosted = hosted_browser_endpoint(session, validated.native.pid).is_some();
++        let surface = if hosted {
++            validated
++                .conn
++                .call(None, "Zeus.getBrowserSurface", json!({}))
++                .await
++                .ok()
++                .filter(|value| {
++                    value.get("windowId").and_then(Value::as_u64)
++                        == Some(validated.native.window_id)
++                        && value.get("targetId").and_then(Value::as_str)
++                            == Some(validated.tab.cdp_target_id.as_str())
++                })
++        } else {
++            None
++        };
+         // `document.visibilityState` distinguishes the selected tab without
+         // focusing its native window or invoking any CDP activation command.
+         // Treat an unavailable or malformed proof as inactive: omitting
+         // feedback is safer than drawing a cursor over another tab.
+-        let tab_is_active = validated
+-            .conn
+-            .call(
+-                Some(&validated.cdp_session),
+-                "Runtime.evaluate",
+-                json!({
+-                    "expression": "document.visibilityState === 'visible'",
+-                    "returnByValue": true,
+-                    "awaitPromise": false,
+-                }),
+-            )
+-            .await
+-            .ok()
+-            .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
+-            .unwrap_or(false);
++        let tab_is_active = if hosted {
++            surface
++                .as_ref()
++                .and_then(|value| value.get("active"))
++                .and_then(Value::as_bool)
++                .unwrap_or(false)
++        } else {
++            validated
++                .conn
++                .call(
++                    Some(&validated.cdp_session),
++                    "Runtime.evaluate",
++                    json!({
++                        "expression": "document.visibilityState === 'visible'",
++                        "returnByValue": true,
++                        "awaitPromise": false,
++                    }),
++                )
++                .await
++                .ok()
++                .and_then(|result| result.pointer("/result/value").and_then(Value::as_bool))
++                .unwrap_or(false)
++        };
++
++        let viewport_bounds = surface
++            .as_ref()
++            .and_then(|value| value.get("bounds"))
++            .and_then(|bounds| {
++                Some(Rect::new(
++                    bounds.get("x")?.as_f64()?,
++                    bounds.get("y")?.as_f64()?,
++                    bounds.get("width")?.as_f64()?,
++                    bounds.get("height")?.as_f64()?,
++                ))
++            })
++            .unwrap_or(validated.native.bounds);
+ 
+         let screen_point = if cdp_session == validated.cdp_session {
+             validated
+@@ -1707,12 +1800,25 @@ impl BrowserEngine {
+                 .await
+                 .ok()
+                 .and_then(|metrics| {
+-                    viewport_point_to_screen(
+-                        validated.native.bounds,
+-                        &metrics,
+-                        viewport_x,
+-                        viewport_y,
+-                    )
++                    if hosted {
++                        let zoom = surface.as_ref()?.get("zoom")?.as_f64()?;
++                        let x = viewport_x * zoom;
++                        let y = viewport_y * zoom;
++                        if !zoom.is_finite()
++                            || zoom <= 0.0
++                            || !x.is_finite()
++                            || !y.is_finite()
++                            || x < 0.0
++                            || y < 0.0
++                            || x > viewport_bounds.width
++                            || y > viewport_bounds.height
++                        {
++                            return None;
++                        }
++                        Some((viewport_bounds.x + x, viewport_bounds.y + y))
++                    } else {
++                        viewport_point_to_screen(viewport_bounds, &metrics, viewport_x, viewport_y)
++                    }
+                 })
+         } else {
+             // Child-frame coordinates are not necessarily in the top-level
+@@ -2506,6 +2612,29 @@ impl BrowserEngine {
+         scope_ref: Option<&str>,
+         query: Option<&str>,
+         continuation: Option<&str>,
++    ) -> Result<SemanticSnapshotOutcome, BrowserRefusal> {
++        self.snapshot_tab_semantic_with_budget(
++            session,
++            target_id,
++            tab_id,
++            scope_ref,
++            query,
++            continuation,
++            DEFAULT_SEMANTIC_NODE_BUDGET,
++        )
++        .await
++    }
++
++    /// 宿主的观察预算直接作用于 CUA 语义选择和分页，不在返回后截断有效引用。
++    pub(crate) async fn snapshot_tab_semantic_with_budget(
++        &self,
++        session: &str,
++        target_id: &str,
++        tab_id: &str,
++        scope_ref: Option<&str>,
++        query: Option<&str>,
++        continuation: Option<&str>,
++        node_budget: usize,
+     ) -> Result<SemanticSnapshotOutcome, BrowserRefusal> {
+         if let Some(token) = continuation {
+             if scope_ref.is_some() || query.is_some() {
+@@ -2556,7 +2685,7 @@ impl BrowserEngine {
+             })?;
+             let page = document.page(
+                 continuation.offset,
+-                DEFAULT_SEMANTIC_NODE_BUDGET,
++                node_budget,
+                 continuation.query.as_deref(),
+                 continuation.scope_backend_node_id,
+             );
+@@ -2723,12 +2852,7 @@ impl BrowserEngine {
+             OopifStatus::Unsupported
+         };
+ 
+-        let page = semantic.page(
+-            0,
+-            DEFAULT_SEMANTIC_NODE_BUDGET,
+-            query,
+-            scope_backend_node_id,
+-        );
++        let page = semantic.page(0, node_budget, query, scope_backend_node_id);
+         let next_offset = page.next_offset;
+         let snapshot_id = self.store.mint_snapshot_id();
+         let scope = if scope_ref.is_some() {
+diff --git a/crates/cua-driver-core/src/browser/tools.rs b/crates/cua-driver-core/src/browser/tools.rs
+index e7be285..9d668ab 100644
+--- a/crates/cua-driver-core/src/browser/tools.rs
++++ b/crates/cua-driver-core/src/browser/tools.rs
+@@ -16,7 +16,7 @@ use crate::tool_args::ArgsExt;
+ 
+ use super::cdp_ws::CdpConnection;
+ use super::download::BrowserDownloadTool;
+-use super::engine::{BrowserEngine, BrowserTabScreenshot};
++use super::engine::{hosted_browser_endpoint, BrowserEngine, BrowserTabScreenshot};
+ use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+ use super::pointer::BrowserPointerTool;
+ use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+@@ -276,6 +276,10 @@ impl GetBrowserStateTool {
+                         "type": "string",
+                         "description": "Read-only semantic match over role, accessible name, and visible text."
+                     },
++                    "node_budget": {
++                        "type": "integer", "minimum": 1, "maximum": super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET,
++                        "description": "Maximum semantic nodes returned per observation; continuation preserves omitted content."
++                    },
+                     "continuation": {
+                         "type": "string",
+                         "description": "Opaque continuation minted by an earlier semantic_v2 response."
+@@ -373,15 +377,30 @@ impl Tool for GetBrowserStateTool {
+                 );
+             }
+             if snapshot_format == "semantic_v2" {
++                let node_budget = match args.get("node_budget") {
++                    None => super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET,
++                    Some(value) => match value.as_u64().filter(|budget| {
++                        *budget > 0
++                            && *budget <= super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET as u64
++                    }) {
++                        Some(budget) => budget as usize,
++                        None => {
++                            return ToolResult::error(
++                                "node_budget must be an integer within the semantic node limit",
++                            )
++                        }
++                    },
++                };
+                 let snapshot = match self
+                     .engine
+-                    .snapshot_tab_semantic(
++                    .snapshot_tab_semantic_with_budget(
+                         &session,
+                         &target_id,
+                         &tab_id,
+                         args.opt_str("scope_ref").as_deref(),
+                         args.opt_str("query").as_deref(),
+                         args.opt_str("continuation").as_deref(),
++                        node_budget,
+                     )
+                     .await
+                 {
+@@ -415,7 +434,7 @@ impl Tool for GetBrowserStateTool {
+                                 "scope": outcome.scope,
+                                 "selected_nodes": outcome.selected_nodes,
+                                 "total_nodes": outcome.total_nodes,
+-                                "node_budget": super::semantic::DEFAULT_SEMANTIC_NODE_BUDGET,
++                                "node_budget": node_budget,
+                                 "omitted": {
+                                     "css_hidden": outcome.omissions.css_hidden,
+                                     "offscreen": outcome.omissions.offscreen,
+@@ -1481,6 +1500,139 @@ pub struct BrowserTypeTool {
+     engine: Arc<BrowserEngine>,
+ }
+ 
++/// 私有嵌入页面的按键沿用 CUA 窗口复核、串行和 CDP 传输，不聚焦宿主窗口。
++async fn hosted_browser_key(engine: &BrowserEngine, args: &Value) -> ToolResult {
++    let (session, target_id, tab_id, key) = match (
++        require_explicit_session(args),
++        args.require_str("target_id"),
++        args.require_str("tab_id"),
++        args.require_str("key"),
++    ) {
++        (Ok(session), Ok(target), Ok(tab), Ok(key)) => (session, target, tab, key),
++        (Err(error), _, _, _)
++        | (_, Err(error), _, _)
++        | (_, _, Err(error), _)
++        | (_, _, _, Err(error)) => return error,
++    };
++    if args.get("text").is_some() || args.get("ref").is_some() || key.is_empty() || key.len() > 64 {
++        return ToolResult::error("key requires a nonempty logical key without text or ref");
++    }
++    let modifiers = match args.get("modifiers") {
++        None => 0,
++        Some(value) => match value.as_u64().filter(|value| *value <= 15) {
++            Some(value) => value,
++            None => return ToolResult::error("modifiers must be a CDP bitmask from 0 to 15"),
++        },
++    };
++    if modifiers & 6 != 0 && ["c", "v", "x"].contains(&key.to_ascii_lowercase().as_str()) {
++        return ToolResult::error("clipboard shortcuts require the host clipboard capability");
++    }
++    let _mutation = match engine.lock_mutation(&session, &target_id, &tab_id).await {
++        Ok(guard) => guard,
++        Err(error) => return error.to_tool_result(),
++    };
++    let validated = match engine
++        .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
++        .await
++    {
++        Ok(value) => value,
++        Err(error) => return error.to_tool_result(),
++    };
++    if !hosted_browser_endpoint(&session, validated.record.pid)
++        .is_some_and(|endpoint| endpoint.ws_url == validated.record.ws_url)
++    {
++        return ToolResult::error("key dispatch requires the private embedded host route");
++    }
++    let virtual_key = match key.as_str() {
++        "Enter" => 13,
++        "Tab" => 9,
++        "Escape" => 27,
++        "Backspace" => 8,
++        "Delete" => 46,
++        "ArrowLeft" => 37,
++        "ArrowUp" => 38,
++        "ArrowRight" => 39,
++        "ArrowDown" => 40,
++        "Home" => 36,
++        "End" => 35,
++        "PageUp" => 33,
++        "PageDown" => 34,
++        " " => 32,
++        value if value.len() == 1 && value.is_ascii() => {
++            value.as_bytes()[0].to_ascii_uppercase() as u32
++        }
++        value if value.starts_with('F') => match value[1..].parse::<u32>() {
++            Ok(number @ 1..=24) => 111 + number,
++            _ => 0,
++        },
++        _ => 0,
++    };
++    if virtual_key == 0 && key.chars().count() != 1 {
++        return ToolResult::error("unsupported logical key; use a standard browser key name");
++    }
++    let focus = validated
++        .conn
++        .call(
++            Some(&validated.cdp_session),
++            "Emulation.setFocusEmulationEnabled",
++            json!({ "enabled": true }),
++        )
++        .await;
++    if let Err(error) = focus {
++        return ToolResult::error(format!("background key focus is unavailable: {error}"));
++    }
++    let code = if key.len() == 1 && key.as_bytes()[0].is_ascii_alphabetic() {
++        format!("Key{}", key.to_ascii_uppercase())
++    } else if key.len() == 1 && key.as_bytes()[0].is_ascii_digit() {
++        format!("Digit{key}")
++    } else if key == " " {
++        "Space".to_owned()
++    } else {
++        key.clone()
++    };
++    let mut down = json!({ "type": "keyDown", "key": key, "code": code, "windowsVirtualKeyCode": virtual_key, "modifiers": modifiers });
++    if key.chars().count() == 1 && modifiers & 6 == 0 {
++        down["text"] = Value::String(key.clone());
++    }
++    if key == "Enter" && modifiers & 6 == 0 {
++        down["text"] = Value::String("\r".to_owned());
++    }
++    let mut failure = None;
++    for event in [
++        down,
++        json!({ "type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": virtual_key, "modifiers": modifiers }),
++    ] {
++        if let Err(error) = validated
++            .conn
++            .call(
++                Some(&validated.cdp_session),
++                "Input.dispatchKeyEvent",
++                event,
++            )
++            .await
++        {
++            failure = Some(error);
++            break;
++        }
++    }
++    let restored = validated
++        .conn
++        .call(
++            Some(&validated.cdp_session),
++            "Emulation.setFocusEmulationEnabled",
++            json!({ "enabled": false }),
++        )
++        .await;
++    if let Some(error) = failure.or_else(|| restored.err()) {
++        return ToolResult::error(format!(
++            "key delivery is unconfirmed; inspect the page before retrying: {error}"
++        ));
++    }
++    ToolResult::text("key dispatched; business outcome requires observation").with_structured(
++        json!({ "status": "ok", "effect": "dispatched", "key": key, "modifiers": modifiers }),
++    )
++}
++
+ impl BrowserTypeTool {
+     pub fn new(engine: Arc<BrowserEngine>) -> Self {
+         let def = ToolDef {
+@@ -1491,7 +1643,8 @@ impl BrowserTypeTool {
+                 at the caret, so typing into a field that already holds text appends \
+                 to it; pass replace=true to set the field instead, or to clear it by \
+                 typing an empty string. Pass a ref to an editable element from the \
+-                latest snapshot. A ref is required; heuristic bindings are refused."
++                latest snapshot. Text requires a ref; the private embedded host may \
++                instead dispatch a logical key with key/modifiers. Heuristic bindings are refused."
+                 .into(),
+             input_schema: json!({
+                 "type": "object",
+@@ -1500,6 +1653,8 @@ impl BrowserTypeTool {
+                     "tab_id": schema_tab_id(),
+                     "session": schema_session(),
+                     "text": { "type": "string", "description": "Text to type." },
++                    "key": { "type": "string", "description": "Private embedded host: dispatch a logical key such as Enter or Tab without text/ref." },
++                    "modifiers": { "type": "integer", "minimum": 0, "maximum": 15, "description": "Private host key modifiers: Alt=1, Control=2, Meta=4, Shift=8." },
+                     "ref": schema_ref(),
+                     "mode": {
+                         "type": "string",
+@@ -1517,7 +1672,7 @@ impl BrowserTypeTool {
+                             framework state stays consistent."
+                     },
+                 },
+-                "required": ["target_id", "tab_id", "ref", "text"],
++                "required": ["target_id", "tab_id"],
+                 "additionalProperties": true
+             }),
+             read_only: false,
+@@ -1560,6 +1715,9 @@ impl Tool for BrowserTypeTool {
+     }
+ 
+     async fn invoke(&self, args: Value) -> ToolResult {
++        if args.get("key").is_some() {
++            return hosted_browser_key(&self.engine, &args).await;
++        }
+         let (target_id, tab_id, text) = match (
+             args.require_str("target_id"),
+             args.require_str("tab_id"),

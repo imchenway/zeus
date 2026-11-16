@@ -4226,6 +4226,10 @@ async function initializeApplication(): Promise<void> {
       productionEdgeExtensionId: process.env.ZEUS_EDGE_EXTENSION_ID,
     });
     browserHost = createBrowserHost({
+      computer: () => {
+        if (!computerHost) throw new Error('CUA 原生宿主尚未就绪。');
+        return computerHost;
+      },
       translation: createBrowserTranslationClient(async () => {
         if (!localServerRuntime) throw new Error('翻译服务尚未就绪。');
         return localServerRuntime.refreshConfig();
@@ -4244,7 +4248,9 @@ async function initializeApplication(): Promise<void> {
     });
     for (const window of windows) browserHost.registerWindow(window);
     browserHost.registerIpc();
+    await browserHost.initializeCua();
     computerHost = createComputerHost({
+      browserEndpoint: () => browserHost?.getCuaEndpoint(),
       statePath: dataLayout.computerState,
       hostBundleId: app.isPackaged ? activeDataRootIdentity().bundleId : 'com.github.Electron',
       mainCommandLedger: activeMainCommandLedger,

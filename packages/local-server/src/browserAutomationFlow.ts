@@ -33,11 +33,13 @@ export function createBrowserAutomationFlow(invoke: BrowserAutomationPort['invok
     /** 两端共用浏览器选择；无效目标不能静默降级到内置浏览器。 */
     const surface = input.arguments.surface ?? 'built_in';
     if (typeof surface !== 'string' || !['built_in', 'chrome', 'edge'].includes(surface)) throw new TypeError('浏览器 surface 必须为 built_in、chrome 或 edge。');
+    if (input.tool === 'wait' && input.arguments.query !== undefined && surface !== 'built_in') throw new TypeError('CUA query 等待仅适用于内置浏览器。');
     /** 截止时间在进入队列前固定，排队不会重新获得完整预算。 */
     const deadlineUnixMs = browserAutomationDeadline(input.deadlineUnixMs);
     remainingBrowserAutomationTime(deadlineUnixMs);
     /** 对话框处置可能是完成当前动作的前提，不能排在该动作之后；身份和路径仍由宿主校验。 */
-    const resolvesDialog = input.tool === 'invoke' && typeof input.arguments.path === 'string' && /^(?:Alert|BeforeUnload|Confirm|Prompt)Dialog\.(?:accept|dismiss)$/u.test(input.arguments.path);
+    const resolvesDialog =
+      input.tool === 'invoke' && typeof input.arguments.path === 'string' && (/^(?:Alert|BeforeUnload|Confirm|Prompt)Dialog\.(?:accept|dismiss)$/u.test(input.arguments.path) || input.arguments.path === 'browser_dialog');
     /** 元数据查询不触碰页面，可在页面动作期间读取。 */
     if (input.tool === 'catalog' || resolvesDialog) return invoke({ ...input, deadlineUnixMs });
     /** JSON 元组防止用户身份中的分隔符引起队列碰撞。 */
@@ -109,6 +111,7 @@ async function invokeBrowserAction(invoke: BrowserAutomationPort['invoke'], inpu
   if (typeof maxElements !== 'number' || !Number.isInteger(maxElements) || maxElements < 1 || maxElements > 400) throw new TypeError('maxElements 必须为 1 至 400 的整数。');
   /** 条件等待是业务结果观察，缺省不插入固定睡眠。 */
   const waitFor = validateActionWait(args.waitFor);
+  if (waitFor?.query && common.surface !== 'built_in') throw new TypeError('CUA query 等待仅适用于内置浏览器。');
   /** 顶层调用边界已固定预算。 */
   const deadlineUnixMs = input.deadlineUnixMs!;
   /** 返回内容按动作、条件、观察分段，动作成功不代表业务已经完成。 */
@@ -156,19 +159,22 @@ async function invokeBrowserAction(invoke: BrowserAutomationPort['invoke'], inpu
 }
 
 /** 校验可选的操作后条件，拒绝在动作后才发现无效条件。 */
-function validateActionWait(value: unknown): { selector: string; state: string; text?: string; timeoutMs: number } | undefined {
+function validateActionWait(value: unknown): { selector?: string; query?: string; state: string; text?: string; timeoutMs: number } | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value) || Object.keys(value).some((key) => !['selector', 'state', 'text', 'timeoutMs'].includes(key))) throw new TypeError('waitFor 条件无效。');
+  if (!isRecord(value) || Object.keys(value).some((key) => !['selector', 'query', 'state', 'text', 'timeoutMs'].includes(key))) throw new TypeError('waitFor 条件无效。');
   /** 必须有真实页面条件，复合动作不接受无条件睡眠。 */
-  const selector = requireActionString(value.selector, 'waitFor.selector');
+  if ((value.selector === undefined) === (value.query === undefined)) throw new TypeError('waitFor 必须提供 selector 或 query 中的一项。');
+  const selector = value.selector === undefined ? undefined : requireActionString(value.selector, 'waitFor.selector');
+  const query = value.query === undefined ? undefined : requireActionString(value.query, 'waitFor.query');
   /** 可见状态是默认的观察条件。 */
   const state = value.state ?? 'visible';
   if (typeof state !== 'string' || !['attached', 'visible', 'hidden', 'detached', 'enabled'].includes(state)) throw new TypeError('waitFor.state 无效。');
+  if (query && !['visible', 'hidden', 'enabled'].includes(state)) throw new TypeError('CUA query 等待只支持 visible、hidden、enabled。');
   if (value.text !== undefined && (typeof value.text !== 'string' || value.text.length > 20_000 || ['hidden', 'detached'].includes(state))) throw new TypeError('waitFor.text 只能用于存在、可见或可用状态，且不超过 20000 个字符。');
   /** 条件等待上限为毫秒，与基础 wait 工具一致。 */
   const timeoutMs = value.timeoutMs ?? 5_000;
   if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 30_000) throw new TypeError('waitFor.timeoutMs 必须为 0 至 30000 的整数毫秒。');
-  return { selector, state, timeoutMs, ...(typeof value.text === 'string' ? { text: value.text } : {}) };
+  return { ...(selector ? { selector } : { query }), state, timeoutMs, ...(typeof value.text === 'string' ? { text: value.text } : {}) };
 }
 
 /** 保留未完成及未知结果，避免连接失败后模型重填或重复提交。 */

@@ -33,6 +33,8 @@ interface CreateComputerHostOptions {
   mainCommandLedger: () => MainCommandLedger;
   /** 只读验证模式禁止加载原生 SDK。 */
   readOnlyValidation?: boolean;
+  /** 内置浏览器的私有 CDP 地址，只传给本应用启动的 CUA worker。 */
+  browserEndpoint?: () => string | undefined;
   /** 可替换时钟用于稳定持久化字段。 */
   now?: () => string;
 }
@@ -87,9 +89,15 @@ export const computerTargetDisplaySwitch = 'zeus-computer-target-display';
 const computerCursorThemeId = 'dev.hypha.zeus.cursor';
 /** Zeus 允许模型调用的 CUA 工具白名单。 */
 const supportedComputerTools = new Set(['list_apps', 'launch_app', 'list_windows', 'get_window_state', 'click', 'drag', 'type_text', 'press_key', 'hotkey', 'set_value', 'scroll', 'invoke_menu', 'verify_state']);
+/** 浏览器宿主只能调用 CUA 的页面能力，不能借此调用桌面输入。 */
+const supportedBrowserTools = new Set(['get_browser_state', 'browser_navigate', 'browser_click', 'browser_type', 'browser_pointer', 'browser_dialog']);
 
 /** Electron 独占管理 CUA Driver，macOS 私有 worker 提供原生光标并隔离各产品轮次。 */
 export class ComputerHost implements BrowserAutomationPort {
+  /** 页面会话独立于桌面控制开关，Driver 重建后必须重新创建会话。 */
+  private readonly browserSessions = new Map<string, { driver: ComputerDriver; ready: Promise<unknown> }>();
+  /** 原生实例变化后，页面必须重新观察，旧元素引用不能继续使用。 */
+  private browserGeneration = 0;
   /** 持久化使用的时钟。 */
   private readonly now: () => string;
   /** 规范化后的设置路径。 */
@@ -223,6 +231,60 @@ export class ComputerHost implements BrowserAutomationPort {
   /** 返回不可变的设置页快照。 */
   getSettings(): ZeusComputerSettings {
     return { ...this.settings };
+  }
+
+  /** 复用官方 Driver 和原生光标；调用方必须先通过 BrowserHost 的标签权限检查。 */
+  async browserTool(input: BrowserAutomationToolCall, session: string, tool: string, args: Record<string, unknown>, isActive: () => boolean): Promise<ToolResult> {
+    if (this.closed || this.options.readOnlyValidation) throw computerError('ZEUS_BROWSER_CUA_UNAVAILABLE', '当前宿主不能启动 CUA 浏览器控制。');
+    if (!supportedBrowserTools.has(tool)) throw computerError('ZEUS_BROWSER_CUA_TOOL_UNSUPPORTED', '当前宿主未开放此 CUA 浏览器能力。');
+    const driver = await this.ensureDriver();
+    if (!isActive()) throw computerError('ZEUS_BROWSER_CUA_SESSION_ENDED', '浏览器控制会话已经结束。');
+    let current = this.browserSessions.get(session);
+    if (!current || current.driver !== driver) {
+      current = {
+        driver,
+        ready: this.loadCuaModule().then((cua) =>
+          this.callWithDeadline(input, undefined, (signal) => driver.startSession({ session, cursorTheme: { themeId: computerCursorThemeId, reducedMotion: cua.CursorReducedMotion.Auto } }, { signal })),
+        ),
+      };
+      this.browserSessions.set(session, current);
+    }
+    try {
+      await current.ready;
+    } catch (error) {
+      if (this.browserSessions.get(session) === current) this.browserSessions.delete(session);
+      throw error;
+    }
+    if (!isActive() || this.browserSessions.get(session) !== current || this.driver !== driver) throw computerError('ZEUS_BROWSER_CUA_SESSION_ENDED', '浏览器控制会话已经结束，请重新观察页面。');
+    return this.callWithDeadline(input, undefined, (signal) => driver.callTool(tool, JSON.stringify({ ...args, session }), { signal }));
+  }
+
+  /** 轮次结束只释放原生能力，保留用户标签和登录态。 */
+  async endBrowserSession(session: string): Promise<void> {
+    const current = this.browserSessions.get(session);
+    this.browserSessions.delete(session);
+    if (current?.driver === this.driver) await computerBounded(current.driver.endSession({ session }), 1_500);
+  }
+
+  /** 仅切换本页面会话的原生光标，不结束背景中的浏览器任务。 */
+  async setBrowserCursor(session: string, enabled: boolean): Promise<void> {
+    const current = this.browserSessions.get(session);
+    if (!current || current.driver !== this.driver) return;
+    await current.ready;
+    if (this.browserSessions.get(session) === current) await computerBounded(current.driver.setAgentCursorEnabled({ session, enabled }), 1_500);
+  }
+
+  /** 返回当前原生实例代次，不把它作为模型可选参数。 */
+  getBrowserGeneration(): number {
+    return this.driver?.isAvailable() ? this.browserGeneration : -1;
+  }
+
+  /** 读取实际运行库的目录，内置浏览器只暴露已接入的页面工具。 */
+  async browserCatalog(): Promise<Record<string, unknown>[]> {
+    if (this.closed || this.options.readOnlyValidation) throw computerError('ZEUS_BROWSER_CUA_UNAVAILABLE', '当前宿主不能启动 CUA 浏览器控制。');
+    const driver = await this.ensureDriver();
+    const value = JSON.parse(await computerBounded(driver.listToolsJson(), 10_000)) as { tools?: Record<string, unknown>[] };
+    return (value.tools ?? []).filter((tool) => supportedBrowserTools.has(String(tool.name)));
   }
 
   /** 只向所属产品会话返回最近一次 CUA 窗口图像。 */
@@ -723,6 +785,7 @@ export class ComputerHost implements BrowserAutomationPort {
   /** 合并并发启动，在应用生命周期内复用同一 Driver。 */
   private async ensureDriver(owner?: ComputerControlOwner): Promise<DestroyableCuaDriver> {
     if (this.workerRecovery) await this.workerRecovery;
+    if (this.driver && !this.driver.isAvailable()) await this.recoverWorker();
     if (this.driver) return this.driver;
     if (this.driverStartup) return this.driverStartup;
     /** 异步加载期间的全局停止也会撤销尚未创建的 SDK 进程。 */
@@ -756,7 +819,12 @@ export class ComputerHost implements BrowserAutomationPort {
       environment.push({ name: 'CUA_DRIVER_RS_TELEMETRY_ENABLED', value: 'false' });
       /** 通知密钥仅在本次私有进程之间传递，防止应用文本伪造暂停事件。 */
       environment.push({ name: 'ZEUS_CUA_EVENT_TOKEN', value: randomBytes(32).toString('hex') });
-      if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || (owner && this.owners.get(computerTurnKey(owner.input)) !== owner)) throw computerError('ZEUS_COMPUTER_STOPPED', 'Computer Use 已停止。');
+      const browserEndpoint = this.options.browserEndpoint?.();
+      if (browserEndpoint) {
+        environment.push({ name: 'ZEUS_CUA_BROWSER_ENDPOINT', value: browserEndpoint });
+        environment.push({ name: 'ZEUS_CUA_BROWSER_PID', value: String(process.pid) });
+      }
+      if (this.closed || generation !== this.controlGeneration || (owner && this.owners.get(computerTurnKey(owner.input)) !== owner)) throw computerError('ZEUS_COMPUTER_STOPPED', 'Computer Use 已停止。');
       /** 同步 FFI 初始化在专用 SDK 进程内执行，主线程保留启动阶段停止能力。 */
       const driver: ComputerDriver =
         process.platform === 'darwin' || process.platform === 'win32'
@@ -798,7 +866,7 @@ export class ComputerHost implements BrowserAutomationPort {
             throw computerError('ZEUS_COMPUTER_WORKER_IDENTITY_INVALID', '无法核对本任务私有 worker 身份。');
           this.workerPid = metadata.pid;
         }
-        if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || (owner && this.owners.get(computerTurnKey(owner.input)) !== owner)) throw computerError('ZEUS_COMPUTER_STOPPED', 'Computer Use 已停止。');
+        if (this.closed || generation !== this.controlGeneration || (owner && this.owners.get(computerTurnKey(owner.input)) !== owner)) throw computerError('ZEUS_COMPUTER_STOPPED', 'Computer Use 已停止。');
       } catch (error) {
         if (driver instanceof ComputerDriverProxy) await driver.abortStartup();
         else {
@@ -817,6 +885,7 @@ export class ComputerHost implements BrowserAutomationPort {
         }
       }
       this.driver = driver;
+      this.browserGeneration += 1;
       this.settings = { ...this.settings, serviceState: 'ready', detail: 'CUA Driver 已就绪；所有输入固定为精确窗口后台投递。' };
       return driver;
     })();

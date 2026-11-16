@@ -42,7 +42,9 @@ export function createNativeAutomationHost(options: NativeAutomationHostOptions)
       return readPublicPricingPage(input);
     },
     /** 将桌面控制生命周期送到唯一的原生控制宿主。 */
-    endComputerUse: (input) => options.computer.endComputerUse?.(input) ?? Promise.resolve(),
+    endComputerUse: async (input) => {
+      await Promise.all([options.browser.endComputerUse?.(input), options.computer.endComputerUse?.(input)]);
+    },
     async invoke(input: BrowserAutomationToolCall) {
       if (input.namespace === 'zeus_computer') return options.computer.invoke(input);
       if (input.namespace && input.namespace !== 'zeus_browser') {
