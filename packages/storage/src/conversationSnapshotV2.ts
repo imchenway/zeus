@@ -1077,16 +1077,16 @@ export class ConversationSnapshotV2Repository {
       afterOrder: row.placement.order!,
       beforeOrder: boundaries[index + 1]?.placement.order ?? null,
     }));
-    /** 使用持久顺序索引聚合；临时思考摘要不生成入口，真实操作与持久思考正文仍可按需展开。 */
+    /** 固定区间、位置、别名的扫描顺序，使每个区间使用轮次位置索引，避免别名反复遍历全部区间。 */
     const counts = this.db.select<{ id: string; item_count: number }>(
       `SELECT json_extract(boundary.value, '$.id') AS id,
               COUNT(DISTINCT CASE WHEN alias.facet = 'tool_activity' THEN entry.id END) AS item_count
          FROM json_each(?) AS boundary
-         JOIN conversation_transcript_entries AS entry
+         CROSS JOIN conversation_transcript_entries AS entry
            ON entry.conversation_id = ? AND entry.turn_id = json_extract(boundary.value, '$.turnId')
           AND entry.display_order > json_extract(boundary.value, '$.afterOrder')
           AND (json_extract(boundary.value, '$.beforeOrder') IS NULL OR entry.display_order < json_extract(boundary.value, '$.beforeOrder'))
-         JOIN conversation_transcript_aliases AS alias
+         CROSS JOIN conversation_transcript_aliases AS alias
            ON alias.conversation_id = entry.conversation_id AND alias.entry_id = entry.id
          LEFT JOIN conversation_process_items
            ON alias.source_domain = 'process' AND conversation_process_items.conversation_id = alias.conversation_id

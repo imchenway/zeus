@@ -69,11 +69,14 @@ const localApiAdapterCheckTimeoutMs = 20_000;
 /** 禅道读取含一次登录和远端查询，覆盖服务端最长 12 秒加 24 秒的等待。 */
 const localApiZentaoReadTimeoutMs = 40_000;
 
+/** 读取超时保留脱敏路由与同次 HTTP 请求的 trace 身份，供服务端日志关联。 */
 class LocalApiReadTimeoutError extends Error {
+  /** 沿用稳定错误码，保持现有提示与手动重读策略。 */
   readonly code = 'ZEUS_LOCAL_API_READ_TIMEOUT';
 
-  constructor(path: string) {
-    super(`Zeus 本地服务读取超时：${apiRouteFamily(path)}`);
+  /** 诊断详情只包含路由模板和已校验的 trace，不包含查询参数。 */
+  constructor(path: string, traceId: string) {
+    super(`Zeus 本地服务读取超时：GET ${apiRouteTemplate(path)}；traceId=${traceId}`);
     this.name = 'LocalApiReadTimeoutError';
   }
 }
@@ -123,6 +126,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
             },
           },
           path,
+          traceId,
           async (timedInit) => {
             response = await fetch(`${connection.baseUrl}${path}`, timedInit);
             if (!response.ok) throw await responseError(response, path);
@@ -222,7 +226,7 @@ async function requestOnce<T>(connection: LocalApiConnection, path: string, init
   };
   let completedSuccessfully = false;
   try {
-    const result = await runWithReadTimeout({ ...init, headers }, path, async (timedInit) => {
+    const result = await runWithReadTimeout({ ...init, headers }, path, traceId, async (timedInit) => {
       readState.response = await fetch(`${connection.baseUrl}${path}`, timedInit);
       readState.responseReceivedAt = performance.now();
       if (!readState.response.ok) throw await responseError(readState.response, path);
@@ -314,7 +318,8 @@ function shouldRefreshLocalApiConnection(error: unknown): boolean {
   return !(error instanceof LocalApiReadTimeoutError) && isLikelyLocalServerConnectionError(error);
 }
 
-async function runWithReadTimeout<T>(init: RequestInit, path: string, operation: (timedInit: RequestInit) => Promise<T>): Promise<T> {
+/** 读取期限覆盖响应头和正文，超时诊断沿用发往服务端的 trace 身份。 */
+async function runWithReadTimeout<T>(init: RequestInit, path: string, traceId: string, operation: (timedInit: RequestInit) => Promise<T>): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   if (method !== 'GET') return operation(init);
 
@@ -340,7 +345,7 @@ async function runWithReadTimeout<T>(init: RequestInit, path: string, operation:
     // 超时覆盖响应头和正文解析，避免本地服务只返回响应头后让 JSON/Blob 读取永久悬挂。
     return await operation({ ...init, signal: controller.signal });
   } catch (error) {
-    if (timedOut) throw new LocalApiReadTimeoutError(path);
+    if (timedOut) throw new LocalApiReadTimeoutError(path, traceId);
     throw error;
   } finally {
     globalThis.clearTimeout(timer);
@@ -355,6 +360,16 @@ function createClientTraceId(path: string): string {
   const bytes = new Uint8Array(16);
   globalThis.crypto.getRandomValues(bytes);
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+/** 诊断保留小写路由段，含编号或编码字符的段替换为参数占位；查询参数不进入模板。 */
+function apiRouteTemplate(path: string): string {
+  try {
+    const segments = new URL(path, 'http://127.0.0.1').pathname.split('/').filter(Boolean);
+    return segments[0] === 'api' ? `/${segments.map((segment) => (/^[a-z]+(?:-[a-z]+)*$/u.test(segment) ? segment : ':id')).join('/')}` : '/api/unknown';
+  } catch {
+    return '/api/unknown';
+  }
 }
 
 function apiRouteFamily(path: string, method?: string): string {
