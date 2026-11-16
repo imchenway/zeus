@@ -4795,6 +4795,12 @@ app.on(
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
+    /** 在关闭 Core 前通知所有桌面窗口暂停重连。 */
+    onQuitStateChanged: (quitting) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:quit-state-changed', quitting);
+      }
+    },
     closeLocalServer: async (mode) => {
       desktopShutdown.abort();
       /** 每个清理阶段都保留失败原因，辅助资源超时不能阻止关闭 Core。 */

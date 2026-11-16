@@ -13,6 +13,8 @@ export interface BeforeQuitCleanupResources {
   closeLocalServer?: (mode: DesktopLocalServerCloseMode) => Promise<void>;
   shouldDeferQuit?: () => boolean;
   requestQuitConfirmation?: () => void;
+  /** 确认退出后暂停界面连接；保留窗口时恢复连接。 */
+  onQuitStateChanged?: (quitting: boolean) => void;
   onCleanupError?: (error: unknown, quitMode: DesktopLocalServerCloseMode | null) => BeforeQuitCleanupFailureAction | Promise<BeforeQuitCleanupFailureAction>;
   exitApp: (code: number) => void;
 }
@@ -38,9 +40,11 @@ export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResou
           const resolvedQuitMode = (await resources.resolveQuitMode?.()) ?? 'final_quit';
           if (resolvedQuitMode === 'cancel') {
             cleanupStarted = false;
+            resources.onQuitStateChanged?.(false);
             return;
           }
           quitMode = resolvedQuitMode;
+          resources.onQuitStateChanged?.(true);
           const cleanupErrors: unknown[] = [];
           try {
             resources.closeSystemNotifications?.();
@@ -69,6 +73,7 @@ export function createBeforeQuitCleanupHandler(resources: BeforeQuitCleanupResou
             return;
           }
           cleanupStarted = false;
+          resources.onQuitStateChanged?.(false);
           return;
         }
       }

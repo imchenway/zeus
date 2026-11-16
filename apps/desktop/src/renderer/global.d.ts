@@ -191,6 +191,8 @@ declare global {
       onOpenTaskNotification?: (listener: (input: { projectId?: string; taskId?: string; reminderId?: string }) => void) => () => void;
       onOpenConversationNotification: (listener: (input: { projectId: string; conversationId: string }) => void) => () => void;
       getRequestingWindowForeground: () => Promise<{ foreground: boolean }>;
+      /** 已确认退出时为 true；退出中止并保留窗口时为 false。 */
+      onQuitStateChanged: (listener: (quitting: boolean) => void) => () => void;
       onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => () => void;
       hideMenuBarUsage: () => Promise<{ hidden: true }>;
       /** 菜单栏浮窗仅随内容调整高度，原生宽度保持 360px。 */
