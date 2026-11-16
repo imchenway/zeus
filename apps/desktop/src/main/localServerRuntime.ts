@@ -1233,6 +1233,10 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
         expectedValidationIdentity,
         childFailure: () => childFailure,
       });
+    } catch (error) {
+      // 启动失败也必须回收本次子进程，不能留下失去连接所有权的 Core。
+      cancelLaunch();
+      throw error;
     } finally {
       shutdownSignal?.removeEventListener('abort', cancelLaunch);
       if (shutdownSignal?.aborted && child.pid) await waitForProcessExit(child.pid, Date.now() + 5_000);
