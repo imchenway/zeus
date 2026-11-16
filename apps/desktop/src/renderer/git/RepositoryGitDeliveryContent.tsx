@@ -125,6 +125,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const [focus, setFocus] = useState({ repositoryId: '', path: '' });
   /** 两种入口采用相同文件范围。 */
   const [scope, setScope] = useState<DiffScope>('working');
+  /** 单独合入与组合交付使用同一合入方式。 */
+  const [mode, setMode] = useState<'merge' | 'squash'>('merge');
   /** 手动编辑和生成失败均保留提交说明。 */
   const [drafts, setDrafts] = useGitCommitDrafts(props.conversation ? `${props.project.id}:conversation:${props.conversation.id}` : props.project.id);
   /** 项目全量、单仓和会话分别保存草稿，避免不同提交范围互相覆盖。 */
@@ -410,7 +412,18 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   );
   useEffect(() => () => generation.current?.abort(), [generationKey]);
 
-  /** 会话单独合入复用后台交付执行器，不夹带提交或推送。 */
+  /** 文件树与合入目标共用分支复制及失败反馈。 */
+  async function copyBranchName(branch: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(branch);
+      return true;
+    } catch (reason) {
+      setError(reason);
+      return false;
+    }
+  }
+
+  /** 冻结当前合入方式、目标仓库与收尾设置后交给后台执行。 */
   async function mergeSelected(settings: GitDeliverySettings): Promise<void> {
     if (!props.conversation || busyRef.current) return;
     busyRef.current = 'merge';
@@ -421,7 +434,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       const input = {
         scope: { kind: 'conversation' as const, conversationId: props.conversation.id },
         message,
-        mode: 'merge' as const,
+        mode,
         repositories: deliveryRepositories,
         settings: { ...settings, commit: false, generateCommitMessage: false, merge: true, push: false, postPushCommandIds: [] },
       };
@@ -656,15 +669,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                     })
                     .catch((reason) => setError(reason));
                 }}
-                onCopyBranch={async (branch) => {
-                  try {
-                    await navigator.clipboard.writeText(branch);
-                    return true;
-                  } catch (reason) {
-                    setError(reason);
-                    return false;
-                  }
-                }}
+                onCopyBranch={copyBranchName}
               />
             }
             actions={
@@ -701,8 +706,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                   branches: repository.snapshot.localBranches.filter((branch) => branch !== repository.snapshot.branch),
                 }))}
                 onMergeTargetChange={(id, branch) => setSelectedTargetBranches((current) => ({ ...current, [id]: branch }))}
+                onCopyBranch={copyBranchName}
                 mergeDisabled={!props.conversation || snapshot.repositories.some((repository) => repository.snapshot.detached || Boolean(repository.snapshot.integrationState) || repository.snapshot.conflictFiles.length > 0)}
-                mode="merge"
+                mode={mode}
+                onModeChange={setMode}
                 mergeCount={props.conversation ? snapshot.repositories.length : 0}
                 onMerge={(settings) => void mergeSelected(settings)}
                 combination={
@@ -717,7 +724,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                       input={{
                         scope: { kind: 'conversation', conversationId: props.conversation.id },
                         message,
-                        mode: 'merge',
+                        mode,
                         repositories: deliveryRepositories,
                       }}
                     />
