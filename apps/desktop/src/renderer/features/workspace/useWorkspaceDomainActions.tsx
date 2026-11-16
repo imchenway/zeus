@@ -309,9 +309,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   const attentionAcknowledgementCoordinatorRef = useRef<typeof attentionAcknowledgementCoordinator | null>(attentionAcknowledgementCoordinator);
   /** 只用于唤醒生命周期重读当前可见提醒，不缓存另一份提醒事实。 */
   const [nativeConversationAttentionRetryRevision, setNativeConversationAttentionRetryRevision] = useState(0);
-  /** 在途期间切换或到达新提醒时，回调只读取当前选择而不复用旧版本。 */
-  const visibleAttentionConversationRef = useRef(state.selectedNativeConversation);
-  visibleAttentionConversationRef.current = state.selectedNativeConversation;
+  /** 在途期间切换或到达新提醒时，回调只读取当前两栏可见会话的最新版本。 */
+  const visibleAttentionConversationsRef = useRef(state.latestContentVisibleConversations);
+  visibleAttentionConversationsRef.current = state.latestContentVisibleConversations;
   useEffect(() => {
     attentionAcknowledgementCoordinatorRef.current = attentionAcknowledgementCoordinator;
     return () => {
@@ -439,8 +439,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           const retryAfterReconciliation = attentionAcknowledgementCoordinator.settle(attempt, outcome);
           if (attentionAcknowledgementCoordinatorRef.current !== attentionAcknowledgementCoordinator) return;
           /** 新版本仍须由前台可见条件决定是否确认。 */
-          const current = visibleAttentionConversationRef.current;
-          if (retryAfterReconciliation || (current?.projectId === projectId && current.id === conversationId && current.attentionRevision > expectedRevision)) {
+          const current = visibleAttentionConversationsRef.current.find((conversation) => conversation.projectId === projectId && conversation.id === conversationId);
+          if (retryAfterReconciliation || (current && current.attentionRevision > expectedRevision)) {
             setNativeConversationAttentionRetryRevision((revision) => revision + 1);
           }
         });

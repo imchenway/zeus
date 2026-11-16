@@ -249,8 +249,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [selectedNativeConversationPresentation, setSelectedNativeConversationPresentation] = useState<'history' | 'interactive'>(() => (props.initialSelectedNativeConversationId ? 'history' : 'interactive'));
-  /** 可见回执绑定真实会话，切换时不复用上一条会话的布尔状态。 */
-  const [latestConversationContentVisibility, setLatestConversationContentVisibility] = useState<{ identity: string | null; visible: boolean }>({ identity: null, visible: false });
+  /** 同一工作面的主栏和侧栏各自记录阅读事实，切换后不继承旧工作面的状态。 */
+  const [latestConversationContentVisibility, setLatestConversationContentVisibility] = useState<{ ownerIdentity: string | null; identities: string[] }>({ ownerIdentity: null, identities: [] });
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [optimisticTerminalTaskStatuses, setOptimisticTerminalTaskStatuses] = useState<Record<string, TaskManagementStatus>>({});
@@ -1113,16 +1113,37 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   );
   /** 项目和真实会话共同决定正文回执归属。 */
   const visibleConversationIdentity = selectedNativeConversation ? JSON.stringify([selectedNativeConversation.projectId, selectedNativeConversation.id]) : null;
+  // 切换工作面即丢弃旧阅读事实，返回同一会话也必须等待正文重新报告。
+  if (latestConversationContentVisibility.ownerIdentity !== visibleConversationIdentity) {
+    setLatestConversationContentVisibility({ ownerIdentity: visibleConversationIdentity, identities: [] });
+  }
   /** 拒绝已经卸载会话的迟到可见回调。 */
   const currentVisibleConversationIdentity = useRef(visibleConversationIdentity);
   currentVisibleConversationIdentity.current = visibleConversationIdentity;
-  /** 已加载会话的回执只有在其仍被选中时才有效。 */
-  const latestConversationContentVisible = Boolean(visibleConversationIdentity && latestConversationContentVisibility.identity === visibleConversationIdentity && latestConversationContentVisibility.visible);
-  /** 旧组件卸载时的回调仍绑定旧身份，不会误确认新会话。 */
+  /** 主栏可见性仍单独供当前会话的通知展示使用。 */
+  const latestConversationContentVisible = Boolean(
+    visibleConversationIdentity && latestConversationContentVisibility.ownerIdentity === visibleConversationIdentity && latestConversationContentVisibility.identities.includes(visibleConversationIdentity),
+  );
+  /** 提醒修订始终读取实时目录，不使用侧栏创建时保存的会话快照。 */
+  const latestContentVisibleConversations = useMemo(
+    () =>
+      latestConversationContentVisibility.ownerIdentity === visibleConversationIdentity
+        ? nativeConversationChoices.filter((conversation) => latestConversationContentVisibility.identities.includes(JSON.stringify([conversation.projectId, conversation.id])))
+        : [],
+    [latestConversationContentVisibility, nativeConversationChoices, visibleConversationIdentity],
+  );
+  /** 旧组件仍绑定旧工作面；同一工作面中的两个正文按各自身份更新。 */
   const setLatestConversationContentVisible = useCallback(
-    (visible: boolean) => {
+    (projectId: string, conversationId: string, visible: boolean) => {
       if (currentVisibleConversationIdentity.current !== visibleConversationIdentity) return;
-      setLatestConversationContentVisibility((current) => (current.identity === visibleConversationIdentity && current.visible === visible ? current : { identity: visibleConversationIdentity, visible }));
+      /** 项目和真实会话共同决定阅读事实，避免主子会话相互覆盖。 */
+      const identity = JSON.stringify([projectId, conversationId]);
+      setLatestConversationContentVisibility((current) => {
+        /** 工作面切换后只保留新工作面实际报告的身份。 */
+        const identities = current.ownerIdentity === visibleConversationIdentity ? current.identities : [];
+        if (identities.includes(identity) === visible) return current;
+        return { ownerIdentity: visibleConversationIdentity, identities: visible ? [...identities, identity] : identities.filter((entry) => entry !== identity) };
+      });
     },
     [visibleConversationIdentity],
   );
@@ -1537,6 +1558,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     gitSwitchBranchName,
     gitTargetRef,
     latestConversationContentVisible,
+    latestContentVisibleConversations,
     loadTaskBoard,
     loadingDiffBusy,
     loadingRuntimeBusy,
