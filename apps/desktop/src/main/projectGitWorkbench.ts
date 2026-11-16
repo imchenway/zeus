@@ -6,6 +6,7 @@ import {
   discoverGitRepositories,
   projectGitRepositoryId,
   executeProjectGitAction,
+  withGitRepositoryOperation,
   getProjectGitCommitDetail,
   getProjectGitPushPreview,
   type ProjectGitPushPreviewInput,
@@ -155,31 +156,34 @@ export class ProjectGitWorkbenchService {
     if (this.activeRepositories.has(repositoryPath)) throw projectGitError('ZEUS_GIT_BUSY', '该仓库已有 Git 操作正在执行，请等待完成。');
     this.activeRepositories.add(repositoryPath);
     try {
-      await beforeWrite(resolved.repository, action);
-      signal?.throwIfAborted();
-      // 桌面、Core 和模型子进程继承同一系统认证入口，不为每次操作创建临时提示程序。
-      const result = await executeProjectGitAction(resolved.repository.localPath, action, signal, undefined, onCommand).catch((error: unknown) => {
-        // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。
-        const message = redactGitOutput(error instanceof Error ? error.message : String(error));
-        const code = isRecord(error) && typeof error.code === 'string' ? error.code : '';
-        const details = isRecord(error) && typeof error.details === 'string' ? error.details : undefined;
-        if (signal?.aborted) throw projectGitError('ZEUS_GIT_CANCELLED', `Git 操作已中止，请刷新核对仓库状态。已完成的写入不会自动撤销；推送结果需要核对远端。\n${message}`);
-        if (/authentication failed|could not read Username|terminal prompts disabled|permission denied.*publickey/iu.test(message)) {
-          throw projectGitError('ZEUS_GIT_AUTH_REQUIRED', `Git 鉴权失败。请检查系统凭据管理器、SSH agent 和仓库访问权限后重试。\n${message}`);
-        }
-        if (/host key verification failed/iu.test(message)) throw projectGitError('ZEUS_GIT_HOST_UNVERIFIED', `SSH 主机验证失败，请核对服务器指纹和 known_hosts 后重试。\n${message}`);
-        if (/SIGKILL|ETIMEDOUT/iu.test(message)) throw projectGitError('ZEUS_GIT_TIMEOUT', 'Git 操作超过两分钟，已停止等待。请刷新仓库核对操作结果；推送结果也需要核对远端。');
-        // Git Core 已经识别出的可处理原因不能再次降级成通用失败，否则界面会丢失具体提示。
-        if (code.startsWith('ZEUS_GIT_') && code !== 'ZEUS_GIT_COMMAND_FAILED') throw projectGitError(code, message, details);
-        throw projectGitError('ZEUS_GIT_ACTION_FAILED', message, details);
+      // 锁竞争必须发生在耐久写标记之前；底层 Git 执行器复用同一锁的可重入所有权。
+      return await withGitRepositoryOperation(repositoryPath, async () => {
+        await beforeWrite(resolved.repository, action);
+        signal?.throwIfAborted();
+        // 桌面、Core 和模型子进程继承同一系统认证入口，不为每次操作创建临时提示程序。
+        const result = await executeProjectGitAction(repositoryPath, action, signal, undefined, onCommand);
+        return {
+          projectId: resolved.project.id,
+          repositoryId: resolved.id,
+          repositoryName: resolved.repository.name,
+          result,
+          snapshot: await getProjectGitRepositorySnapshot(repositoryPath),
+        };
       });
-      return {
-        projectId: resolved.project.id,
-        repositoryId: resolved.id,
-        repositoryName: resolved.repository.name,
-        result,
-        snapshot: await getProjectGitRepositorySnapshot(resolved.repository.localPath),
-      };
+    } catch (error: unknown) {
+      // 取消也保留底层的恢复信息，尤其是尚未恢复的智能暂存编号。
+      const message = redactGitOutput(error instanceof Error ? error.message : String(error));
+      const code = isRecord(error) && typeof error.code === 'string' ? error.code : '';
+      const details = isRecord(error) && typeof error.details === 'string' ? error.details : undefined;
+      if (signal?.aborted) throw projectGitError('ZEUS_GIT_CANCELLED', `Git 操作已中止，请刷新核对仓库状态。已完成的写入不会自动撤销；推送结果需要核对远端。\n${message}`);
+      if (/authentication failed|could not read Username|terminal prompts disabled|permission denied.*publickey/iu.test(message)) {
+        throw projectGitError('ZEUS_GIT_AUTH_REQUIRED', `Git 鉴权失败。请检查系统凭据管理器、SSH agent 和仓库访问权限后重试。\n${message}`);
+      }
+      if (/host key verification failed/iu.test(message)) throw projectGitError('ZEUS_GIT_HOST_UNVERIFIED', `SSH 主机验证失败，请核对服务器指纹和 known_hosts 后重试。\n${message}`);
+      if (/SIGKILL|ETIMEDOUT/iu.test(message)) throw projectGitError('ZEUS_GIT_TIMEOUT', 'Git 操作超过两分钟，已停止等待。请刷新仓库核对操作结果；推送结果也需要核对远端。');
+      // Git Core 已经识别出的可处理原因不能再次降级成通用失败，否则界面会丢失具体提示。
+      if (code.startsWith('ZEUS_GIT_') && code !== 'ZEUS_GIT_COMMAND_FAILED') throw projectGitError(code, message, details);
+      throw projectGitError('ZEUS_GIT_ACTION_FAILED', message, details);
     } finally {
       this.activeRepositories.delete(repositoryPath);
     }
