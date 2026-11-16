@@ -11,11 +11,19 @@ import {
 import { lstat, readdir } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { conversationExecutionWorkspace, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 
 /** detached HEAD 恢复使用固定 Git 参数，不通过 shell 拼接。 */
 const execute = promisify(execFile);
+
+/** 按项目与原工作树隔离恢复引用，不使用分支名，也不影响其他会话目录。 */
+function recoveryReferencePrefix(plan: ConversationWorktreeRecovery): string {
+  return `refs/zeus/conversation-recovery/${createHash('sha256')
+    .update(JSON.stringify([plan.projectId, plan.worktreePath]))
+    .digest('hex')}/`;
+}
 
 /** 只处理会话自有目录，任务环境继续由任务工作区仓储管理。 */
 export interface ConversationWorktreeLifecyclePorts {
@@ -127,6 +135,12 @@ export async function removeConversationWorktrees(db: ZeusDatabase, plans: Conve
       return { ...plan, branchName: git.detached ? '' : git.branch, headSha: git.headSha };
     }),
   );
+  for (const snapshot of snapshots) {
+    if (snapshot.branchName || !snapshot.headSha) continue;
+    /** SHA 独立占用一个引用，重试不覆盖数据库尚在使用的旧提交保护。 */
+    beforeExternalWrite?.();
+    await execute('git', ['update-ref', `${recoveryReferencePrefix(snapshot)}${snapshot.headSha}`, snapshot.headSha], { cwd: snapshot.repositoryPath, timeout: 30_000 });
+  }
   new ConversationWorktreeRecoveryRepository(db).save(snapshots);
   /** 子仓先于父仓回收，避免父工作树含有仍登记的子仓目录。 */
   const ordered = [...plans].sort((left, right) => right.worktreePath.length - left.worktreePath.length);
@@ -196,5 +210,12 @@ export async function restoreConversationWorktrees(ports: ConversationWorktreeLi
     }
   }
   await resolveConversationGitWorkspace(project, conversation.id, ports.conversations, ports.conversationSubmissions);
+  /** 全部工作树恢复并核验后，HEAD 已保护当前提交，旧恢复引用可一并释放。 */
+  for (const plan of plans) {
+    const { stdout } = await execute('git', ['for-each-ref', '--format=%(refname)', recoveryReferencePrefix(plan)], { cwd: plan.repositoryPath, timeout: 30_000 });
+    for (const reference of stdout.trim().split(/\r?\n/).filter(Boolean)) {
+      await execute('git', ['update-ref', '-d', reference], { cwd: plan.repositoryPath, timeout: 30_000 });
+    }
+  }
   recovery.clear(conversation.projectId, resolve(context.projectLocalPath));
 }
