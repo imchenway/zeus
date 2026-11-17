@@ -1,7 +1,7 @@
 import type { ConversationFeatureCatalog, ConversationFeatureAvailability } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, modelRef, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type CopilotModelInfo, type SelectableConnectionModel } from '@zeus/ai-runtime';
+import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, modelRef, parseModelRef, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type CopilotModelInfo, type SelectableConnectionModel } from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
@@ -557,13 +557,23 @@ function repositoryRevision(repositories: ZeusProjectRepositoryRecord[]): string
     .digest('hex');
 }
 
-function resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null {
+/** 优先使用目录 ID；带来源的 Codex 引用只匹配 Codex 模型，裸模型名须唯一。 */
+export function resolveModelCapability<T extends { id: string; model: string; sourceId?: string }>(models: readonly T[], identity: string | null | undefined): T | null {
+  /** 设置与会话输入允许模型 ID 带首尾空白。 */
   const normalized = identity?.trim();
   if (!normalized) return null;
+  /** 现有目录 ID 包括完整的外部连接身份。 */
   const exact = models.find((candidate) => candidate.id === normalized);
   if (exact) return exact;
-  const legacyMatches = models.filter((candidate) => candidate.model === normalized);
-  return legacyMatches.length === 1 ? legacyMatches[0]! : null;
+
+  /** 操作设置和子代理继承使用来源引用，Codex 目录保留 Provider 返回的原始 ID。 */
+  const reference = parseModelRef(normalized);
+  /** 裸模型名按原有规则消歧，Codex 引用按原始 ID 或模型名匹配。 */
+  const matches =
+    reference?.sourceId === 'codex'
+      ? models.filter((candidate) => candidate.sourceId === 'codex' && (candidate.id === reference.modelId || candidate.model === reference.modelId))
+      : models.filter((candidate) => candidate.model === normalized);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 function positiveIntegerOrNull(value: unknown): number | null {

@@ -1114,8 +1114,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     /** 原提交由服务端恢复入口绑定，不从提示词或时间猜测归属。 */
     const resumeSubmission = input.internalOperation && input.resumeSubmissionId ? options.submissions.getById(input.resumeSubmissionId) : undefined;
-    if (input.internalOperation && (!resumeSubmission || resumeSubmission.conversationId !== conversation.id)) throw coordinatorError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的冻结设置，请检查会话。');
-    const previousContext = resumeSubmission ? contextFromSubmission(resumeSubmission) : contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
+    /** 原执行快照在 Codex 派发配置中同样优先于历史提交上下文。 */
+    const frozenRetry = resumeSubmission?.executionSnapshotId ? options.execution.getExecutionSnapshot(resumeSubmission.executionSnapshotId) : undefined;
+    if (input.internalOperation && (!resumeSubmission || resumeSubmission.conversationId !== conversation.id || (resumeSubmission.executionSnapshotId && frozenRetry?.conversationId !== conversation.id))) {
+      throw coordinatorError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的冻结设置，请检查会话。');
+    }
+    const previousContext = resumeSubmission
+      ? contextFromPersistedSubmission(resumeSubmission, conversation, frozenRetry)
+      : contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
     const context: ConversationDispatchContext = resumeSubmission
       ? { ...previousContext }
       : {

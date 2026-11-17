@@ -138,7 +138,7 @@ import { ContextDispatchApplicationService, type ContextDispatchEnvelope, type P
 import { createConversationApplicationOperations, isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import { createConversationTitleGeneration } from './conversationTitleGeneration.js';
 import { routeConversationExpertEvent } from './conversationExpertEventRouting.js';
-import { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { ConversationCapabilityQueryApplication, resolveModelCapability } from './conversationCapabilityQueryApplication.js';
 import { compareConversationStageUpdatedDesc, ConversationChoiceQueryApplication, type ProjectConversationAttentionState } from './conversationChoiceQueryApplication.js';
 import { ConversationCommandApplication } from './conversationCommandApplication.js';
 import { ConversationDispatchCommandApplication } from './conversationDispatchCommandApplication.js';
@@ -3322,7 +3322,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     trustedConversationAttachmentRoots,
   });
   const {
-    resolveModelCapability,
     resolveConversationCapabilities,
     assertCodexAccountReady,
     readServiceTierOverride,
@@ -3529,7 +3528,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     recordTaskEvent,
     redactSensitiveText,
     resolveConversationCapabilities,
-    resolveModelCapability,
     resolveNonCodexLiveSession,
     resolveSelectedTaskPushContext,
     resolveTaskEnvironmentWritableRoots,
