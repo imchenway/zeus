@@ -135,7 +135,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'type_text',
           description:
-            'Insert Unicode text into an exact background window. Prefer element_token for an editable control. On macOS, x/y-positioned typing is refused because it may change user focus. Some Electron web controls also lack a safe background text route: after background_unavailable, stop this route rather than trying set_value, pixels or foreground input. Use an already authorized application API if available. If the effect is unverifiable, observe once and never blindly repeat text.',
+            'Insert Unicode text into an exact background window. Prefer element_token for an editable control. Zeus application windows use a private renderer input bridge and verify the DOM value without activating the window. On macOS, x/y-positioned typing is refused because it may change user focus. Other Electron apps may lack a safe background route: after background_unavailable, stop rather than trying set_value, pixels or foreground input. Use an already authorized application API if available. If the effect is unverifiable, observe once and never blindly repeat text.',
           inputSchema: objectSchema({ ...actionTargetProperties, text: { type: 'string' }, delay_ms: { type: 'integer', minimum: 0, maximum: 200 } }, ['pid', 'window_id', 'text']),
         },
         {
@@ -162,7 +162,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'set_value',
-          description: 'Set the value of an accessible control from the latest window snapshot. Prefer element_token; verify the result from fresh state.',
+          description: 'Set the value of an accessible control from the latest window snapshot. Zeus text controls use the private background renderer bridge to replace or clear text and verify the DOM value. Prefer element_token; verify the result from fresh state.',
           deferLoading: true,
           inputSchema: objectSchema({ ...exactWindowProperties, ...semanticTargetProperties, value: { type: 'string' } }, ['pid', 'window_id', 'value']),
         },
