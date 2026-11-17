@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import { ReleasePublicationUnconfirmedError, releasePublicationUnconfirmedExitCode, releaseWorkflowQueueWaitLimitMs } from './release-workflow-wait-policy.mjs';
-import { assertVersionAfterTag, parseBoolean, renderCdnReleaseNotes } from './release-script-utils.mjs';
+import { assertVersionAfterTag, parseBoolean, readReleaseCdnFiles, renderCdnReleaseNotes } from './release-script-utils.mjs';
 
 /** 一键发布唯一允许操作的官方仓库。 */
 const repositoryRoot = resolve(import.meta.dirname, '..');
@@ -56,7 +56,7 @@ async function main() {
   const packageVersion = readMatchingPackageVersion();
   const nextVersion = resolveTargetVersion(stableRelease.version, packageVersion);
   announceReleaseStage('恢复或创建发布状态');
-  const state = resolveReleaseState({ stableRelease, publicCommit, headSha, packageVersion, nextVersion });
+  const state = await resolveReleaseState({ stableRelease, publicCommit, headSha, packageVersion, nextVersion });
 
   if (state.type === 'already_published') {
     /** 版本号与标签相同不能证明两端资产齐全；此分支只读回验，不触发新发布。 */
@@ -438,21 +438,17 @@ function assertMainRelationship(headSha) {
 }
 
 /** 优先恢复本机进度；已提交的下一版本可依据 Git 与远端事实重建进度。 */
-function resolveReleaseState(input) {
+async function resolveReleaseState(input) {
   const currentState = readState(input.packageVersion);
-  if (currentState && currentState.version === input.packageVersion && currentState.releaseCommit === input.headSha && currentState.phase !== 'completed') {
-    validateState(currentState, input.stableRelease);
-    return { type: 'resume', value: currentState };
-  }
   if (input.packageVersion === input.stableRelease.version && input.headSha === input.publicCommit) {
     const worktreeStatus = git(['status', '--short']);
     if (worktreeStatus) throw new Error(`发布 main 必须以已提交内容为准；当前工作区不干净：\n${worktreeStatus}`);
     return { type: 'already_published' };
   }
-  /** 已写入 tag 的失败候选保留原身份，修复提交使用独立版本及恢复目录。 */
-  const replacementVersion = resolveFailedTaggedReleaseVersion(input, currentState);
+  /** CDN 暂存发生在 tag 之前，本机恢复记录不能覆盖版本目录已绑定的候选。 */
+  const replacementVersion = await resolveFailedReleaseVersion(input, currentState);
   /** 未触发替换时继续恢复原候选，不能将旧门禁结果带入新版本。 */
-  const nextVersion = replacementVersion ?? input.nextVersion;
+  let nextVersion = replacementVersion ?? input.nextVersion;
   if (input.packageVersion === nextVersion && currentState) {
     validateState(currentState, input.stableRelease);
     if (currentState.releaseCommit && currentState.releaseCommit !== input.headSha && !rebindUnpublishedReleaseRepair(currentState, input.headSha)) {
@@ -460,8 +456,13 @@ function resolveReleaseState(input) {
     }
     return { type: 'resume', value: currentState };
   }
-  if (!replacementVersion && input.packageVersion !== input.stableRelease.version && input.packageVersion !== nextVersion) {
+  if (!replacementVersion && input.packageVersion !== input.stableRelease.version && input.packageVersion !== nextVersion && !process.env.RELEASE_VERSION?.trim()) {
     throw new Error(`当前包版本 ${input.packageVersion} 与公开稳定版 ${input.stableRelease.version} 不一致，也不是可恢复的 ${nextVersion}。`);
+  }
+  /** 显式更换版本可放弃不可恢复的原制品，但不能退回旧版本或覆盖另一候选。 */
+  if (nextVersion !== input.packageVersion) {
+    assertVersionAfterTag(nextVersion, `v${input.packageVersion}`);
+    if (!replacementVersion) nextVersion = await resolveAvailableReleaseVersion(nextVersion);
   }
   const targetState = readState(nextVersion);
   if (targetState) {
@@ -520,33 +521,49 @@ function resolveReleaseState(input) {
   return { type: preparedCandidate ? 'resume' : 'new', value: state };
 }
 
-/** 同一 main 历史上的 tag 已占用且 Workflow 明确失败时，允许修复提交使用更高版本。 */
-function resolveFailedTaggedReleaseVersion(input, currentState) {
+/** tag 或 CDN 已绑定失败候选时，新提交使用更高版本，保留所有已存制品。 */
+async function resolveFailedReleaseVersion(input, currentState) {
   if (input.packageVersion === input.stableRelease.version) return null;
-  /** 当前包版本对应的 tag 固定了旧候选，不能重新绑定或覆盖其制品。 */
+  /** 未创建 tag 的部分上传同样固定了旧候选，混合来源必须逐一确认。 */
   const tag = `v${input.packageVersion}`;
-  /** 只查询 tag 对应提交的发布结果，不能误用修复提交的 Workflow。 */
   const taggedCommit = resolveLocalTagSha(tag);
-  if (!taggedCommit || taggedCommit === input.headSha) return null;
+  /** CDN 上各平台可能来自不同的失败运行，不能仅检查本机最后一次记录。 */
+  const cdnFiles = await readReleaseCdnFiles(input.packageVersion);
+  /** 只替换与当前候选不同的占用来源；同一候选继续复用原运行的制品。 */
+  const reservedCommits = [...new Set([taggedCommit, ...cdnFiles.map((file) => file.sourceCommit)].filter((commit) => commit && commit !== input.headSha))];
+  if (!reservedCommits.length) return null;
   assertVersionAfterTag(input.packageVersion, input.stableRelease.tag);
-  assertAncestor(tag, input.headSha);
-  if (resolveRemoteReference(`refs/tags/${tag}`) !== git(['rev-parse', `refs/tags/${tag}`])) throw new Error(`${tag} 的本地和远端身份不一致，拒绝替换失败候选。`);
+  if (taggedCommit && resolveRemoteReference(`refs/tags/${tag}`) !== git(['rev-parse', `refs/tags/${tag}`])) throw new Error(`${tag} 的本地和远端身份不一致，拒绝替换失败候选。`);
   if (currentState) {
     validateState(currentState, input.stableRelease);
-    if (currentState.releaseCommit !== taggedCommit || currentState.publishResultPath || ['published', 'completed'].includes(currentState.phase)) {
-      throw new Error(`${tag} 的恢复记录与未完成的 tag 候选不一致，拒绝自动创建替代版本。`);
+    if (currentState.publishResultPath || ['published', 'completed'].includes(currentState.phase)) {
+      throw new Error(`${tag} 已有发布完成记录，拒绝自动创建替代版本。`);
     }
+    if (currentState.releaseCommit) assertAncestor(currentState.releaseCommit, input.headSha);
   }
   /** 未确认、成功或仍在执行的 Workflow 都不能作为跳过旧候选的依据。 */
-  const [latestRun] = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--commit', taggedCommit, '--limit', '1', '--json', 'status,conclusion,headSha,url']));
-  if (latestRun?.headSha !== taggedCommit || latestRun.status !== 'completed' || !['failure', 'cancelled', 'timed_out'].includes(latestRun.conclusion)) {
-    throw new Error(`${tag} 已有固定 tag，但其 Release Workflow 尚未确认失败；请先核对该候选的发布结果。`);
+  for (const commit of reservedCommits) {
+    assertAncestor(commit, input.headSha);
+    const [latestRun] = JSON.parse(gh(['run', 'list', '--repo', repository, '--workflow', 'Release', '--commit', commit, '--limit', '1', '--json', 'status,conclusion,headSha,url']));
+    if (latestRun?.headSha !== commit || latestRun.status !== 'completed' || !['failure', 'cancelled', 'timed_out'].includes(latestRun.conclusion)) {
+      throw new Error(`${tag} 已有固定制品，但其候选 ${commit} 的 Release Workflow 尚未确认失败；请先核对发布结果。`);
+    }
   }
   assertNoActiveReleaseWorkflow(input.headSha);
   /** 显式指定的版本必须高于旧 tag；默认只递增一个补丁版本。 */
-  const version = process.env.RELEASE_VERSION?.trim() ? input.nextVersion : incrementPatch(input.packageVersion);
+  const version = await resolveAvailableReleaseVersion(process.env.RELEASE_VERSION?.trim() ? input.nextVersion : incrementPatch(input.packageVersion));
   assertVersionAfterTag(version, tag);
-  console.log(`保留失败候选 ${tag} 及其固定制品，修复提交改用 v${version}：${latestRun.url}`);
+  console.log(`保留失败候选 ${tag} 及其固定制品，修复提交改用 v${version}；旧候选：${reservedCommits.join('、')}`);
+  return version;
+}
+
+/** 新候选只使用 tag 和 CDN 都未占用的版本，显式指定的版本不能被悄悄替换。 */
+async function resolveAvailableReleaseVersion(version) {
+  while (resolveLocalTagSha(`v${version}`) || resolveRemoteReference(`refs/tags/v${version}`) || (await readReleaseCdnFiles(version)).length) {
+    if (process.env.RELEASE_VERSION?.trim()) throw new Error(`指定版本 v${version} 已被 tag 或 CDN 制品占用，请使用更高的未占用版本。`);
+    console.log(`v${version} 已被 tag 或 CDN 制品占用，继续选择下一补丁版本。`);
+    version = incrementPatch(version);
+  }
   return version;
 }
 

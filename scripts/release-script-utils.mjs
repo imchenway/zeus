@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -16,6 +16,32 @@ export async function waitForReleaseOperations(operations) {
   const failure = results.find((result) => result.status === 'rejected');
   if (failure) throw failure.reason;
   return results.map((result) => result.value);
+}
+
+/** 固定版本的任一文件写入后即占用版本号，不能等公开 tag 创建后才识别旧候选。 */
+export async function readReleaseCdnFiles(version, request = fetch) {
+  requiredVersion(version);
+  /** 安装包可先于平台清单上传，五个固定对象都参与版本占用判断。 */
+  const fileNames = [`Zeus-${version}-arm64.dmg`, `Zeus-${version}-win32-x64.exe`, `Zeus-${version}-win32-arm64.exe`, 'zeus-release-manifest.json', 'zeus-release-manifest-win32.json'];
+  /** 只读取元数据；网络、权限和身份异常均不能被当成版本尚未使用。 */
+  const files = await waitForReleaseOperations(
+    fileNames.map(async (fileName) => {
+      /** 独立检查地址并禁止缓存，避免新版本的缺失响应污染正常下载地址。 */
+      const response = await request(`${releaseCdnBaseUrl}/releases/${version}/${fileName}?zeus-release-inspect=${randomUUID()}`, {
+        method: 'HEAD',
+        headers: { 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache, no-store' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`无法确认 CDN 版本占用：${version}/${fileName}，HTTP ${response.status}`);
+      /** 对象的候选身份来自上传时保留的 OSS 元数据。 */
+      const sourceCommit = response.headers.get('x-oss-meta-source-commit');
+      if (!/^[a-f0-9]{40}$/u.test(sourceCommit ?? '')) throw new Error(`CDN 已存文件缺少有效候选身份：${version}/${fileName}`);
+      return { fileName, sourceCommit };
+    }),
+  );
+  return files.filter(Boolean);
 }
 
 /** 固定下载名仅接受正式支持的平台与架构，不能构造任意 OSS 对象路径。 */
