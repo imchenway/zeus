@@ -25,7 +25,7 @@ import type { NativeConversationAttachment } from './index.js';
 import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
 import { compactUtf8Tail, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
 import { hasTaskImageSignature, historicalTaskAttachmentField, resolveCurrentManagedTaskAttachmentPath } from './taskAttachmentLifecycle.js';
-import type { ConversationCapabilitiesSnapshot } from './conversationCapabilityQueryApplication.js';
+import { resolveModelCapability, type ConversationCapabilitiesSnapshot } from './conversationCapabilityQueryApplication.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
@@ -105,15 +105,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     toConversationHistoryItem,
     trustedConversationAttachmentRoots,
   } = dependencies;
-  function resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null {
-    const normalized = identity?.trim();
-    if (!normalized) return null;
-    const exact = models.find((candidate) => candidate.id === normalized);
-    if (exact) return exact;
-    const legacyMatches = models.filter((candidate) => candidate.model === normalized);
-    return legacyMatches.length === 1 ? legacyMatches[0]! : null;
-  }
-
   function positiveIntegerOrNull(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
   }
@@ -1245,7 +1236,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
   }
 
   return {
-    resolveModelCapability,
     positiveIntegerOrNull,
     resolveConversationCapabilities,
     assertCodexAccountReady,

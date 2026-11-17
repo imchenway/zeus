@@ -1,13 +1,35 @@
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
-import type { ConversationRepository, ConversationSubmissionRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord, ZeusConversationTurnRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
+import type {
+  ConversationExecutionSnapshotRecord,
+  ConversationRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ZeusConversationSubmissionRecord,
+  ZeusConversationTurnRecord,
+  ZeusConversationWithMessagesRecord,
+} from '@zeus/storage';
 import type { ConversationDispatchContext } from './codexNativeConversationContracts.js';
 import { readCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { coordinatorError, isRecord, parseJsonRecord, permissionModeFromValue } from './codexNativeConversationPolicy.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 
-export function contextFromPersistedSubmission(submission: ZeusConversationSubmissionRecord, conversation: ZeusConversationWithMessagesRecord | undefined): ConversationDispatchContext {
+/** 读取提交的执行目录和资源；续接时用原执行快照覆盖已冻结的模型与权限。 */
+export function contextFromPersistedSubmission(submission: ZeusConversationSubmissionRecord, conversation: ZeusConversationWithMessagesRecord | undefined, frozen?: ConversationExecutionSnapshotRecord): ConversationDispatchContext {
   const parsed = parseJsonRecord(submission.inputJson);
-  const context = isRecord(parsed.context) ? parsed.context : {};
+  /** 历史上下文仍保存本轮的目录和资源范围。 */
+  const persisted = isRecord(parsed.context) ? parsed.context : {};
+  /** 快照中的空档位和空服务层级也有含义，避免继承旧上下文的值。 */
+  const context = frozen
+    ? {
+        ...persisted,
+        model: frozen.modelId,
+        modelSourceId: frozen.connectionId ?? frozen.runtimeKind,
+        effort: frozen.effort,
+        serviceTier: frozen.serviceTier,
+        permissionMode: frozen.permissionMode,
+        workMode: frozen.collaborationMode,
+      }
+    : persisted;
   const additionalContext = readCodexAdditionalContext(context.additionalContext);
   return {
     contextCapacityTokens: conversation?.contextCapacityTokens ?? null,

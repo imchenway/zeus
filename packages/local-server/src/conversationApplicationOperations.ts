@@ -77,7 +77,7 @@ import { nativePendingRequestProjection } from './codexNativeConversationPolicy.
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
 import type { ZeusSkillService } from './zeusSkillService.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
-import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication, resolveModelCapability } from './conversationCapabilityQueryApplication.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
@@ -139,7 +139,6 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   resolveConversationCapabilities(project: ZeusProjectRecord, selectedModelRef?: string | null): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
   /** 任务推送使用已冻结的模型身份复验能力。 */
   resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord, selectedModelRef: string): Promise<ConversationCapabilitiesSnapshot>;
-  resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null;
   normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] };
   normalizeTaskPushSupplementalAttachments(value: unknown, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushSupplementalAttachment[] };
   mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>): { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
@@ -304,7 +303,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     recordTaskEvent,
     redactSensitiveText,
     resolveConversationCapabilities,
-    resolveModelCapability,
     resolveNonCodexLiveSession,
     resolveSelectedTaskPushContext,
     resolveTaskEnvironmentWritableRoots,
@@ -1570,20 +1568,32 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ) {
         throw Object.assign(nativeApiError('ZEUS_CONVERSATION_RETRY_NOT_READY', '该轮次已改变，或仍有消息尚未确认，请先检查处理状态。'), { statusCode: 409 });
       }
-      /** 原提交拥有模型和权限；恢复不读取用户编辑中的下轮设置。 */
+      /** 失败轮次关联的原提交决定续接配置。 */
       const previous = turn.clientSubmissionId ? conversationSubmissions.getById(turn.clientSubmissionId) : undefined;
-      /** 持久设置不完整时停止恢复，不能猜测更宽的权限。 */
-      const persistedContext = previous ? parseJsonObject(previous.inputJson).context : null;
-      /** 冻结上下文已经是对象，不再次按 JSON 字符串解析。 */
+      if (!previous || previous.conversationId !== conversation.id) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+      /** 已关联的执行快照是本轮实际配置，快照缺失或归属不符时停止续接。 */
+      const frozenSnapshot = previous.executionSnapshotId ? conversationExecution.getExecutionSnapshot(previous.executionSnapshotId) : undefined;
+      if (previous.executionSnapshotId && frozenSnapshot?.conversationId !== conversation.id) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+      /** 仅未关联执行快照的历史提交使用其持久配置。 */
+      const persistedContext = frozenSnapshot ? null : parseJsonObject(previous.inputJson).context;
+      /** 历史输入只接受结构化会话上下文。 */
       const context = isNativeApiRecord(persistedContext) ? persistedContext : {};
-      if (typeof context.model !== 'string' || !context.model || !['read-only', 'auto', 'auto-review', 'full-access'].includes(String(context.permissionMode))) {
+      /** 使用原提供方模型 ID 和已保存的权限、协作模式。 */
+      const model = frozenSnapshot ? frozenSnapshot.modelId : context.model;
+      const permissionMode = parseConversationPermissionMode(frozenSnapshot ? frozenSnapshot.permissionMode : context.permissionMode);
+      const collaborationMode = frozenSnapshot ? parseConversationCollaborationMode(frozenSnapshot.collaborationMode) : (parseConversationCollaborationMode(context.workMode) ?? 'default');
+      if (typeof model !== 'string' || !model.trim() || !permissionMode || !collaborationMode) {
         throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
       }
-      /** 原执行快照拥有容量，恢复不能继承用户新选的下一轮容量。 */
-      const frozenSnapshot = previous?.executionSnapshotId ? conversationExecution.getExecutionSnapshot(previous.executionSnapshotId) : undefined;
-      /** 旧提交没有执行快照时只读取其持久上下文，不回退到当前会话设置。 */
-      const frozenCapacity = frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : context.contextCapacityTokens;
-      assertContextCapacity(frozenCapacity ?? null);
+      /** 托管模型以运行时标识来源，自定义 API 模型使用原连接 ID。 */
+      const sourceId = frozenSnapshot ? (frozenSnapshot.connectionId ?? frozenSnapshot.runtimeKind) : context.modelSourceId;
+      /** 无容量覆盖时保留模型默认值，容量单位为 Token。 */
+      const contextCapacityTokens = (frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : context.contextCapacityTokens) ?? null;
+      assertContextCapacity(contextCapacityTokens);
+      /** 历史提交曾使用 effort 或 thinkingLevel 保存推理档位。 */
+      const effort = frozenSnapshot ? frozenSnapshot.effort : typeof context.effort === 'string' ? context.effort : context.thinkingLevel;
+      /** 空服务层级也是快照值，历史提交保留是否显式选择的区别。 */
+      const serviceTier = frozenSnapshot ? { present: true as const, value: frozenSnapshot.serviceTier } : readServiceTierOverride(context);
       /** 新提交只携带服务端生成的续接意图，不复制原用户消息和附件。 */
       const restored = await acceptNativeConversationMessage(
         conversation,
@@ -1592,20 +1602,19 @@ export function createConversationApplicationOperations(dependencies: Conversati
           clientUserMessageId: idempotencyKey,
           displayText: '已请求继续上次中断的操作',
           delivery: 'queue',
-          contextCapacityTokens: (frozenCapacity as number | null | undefined) ?? null,
-          // Codex 原生目录使用模型本名，只有独立模型连接使用带来源的身份。
-          model: typeof context.modelSourceId === 'string' && context.modelSourceId !== 'codex' ? modelRef(context.modelSourceId, context.model) : context.model,
-          effort: typeof context.effort === 'string' ? context.effort : typeof context.thinkingLevel === 'string' ? context.thinkingLevel : undefined,
-          ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier as string | null } : {}),
-          permissionMode: context.permissionMode as ConversationPermissionMode,
-          collaborationMode: context.workMode === 'plan' ? 'plan' : 'default',
+          contextCapacityTokens,
+          model: typeof sourceId === 'string' && (frozenSnapshot || sourceId !== 'codex') ? modelRef(sourceId, model) : model,
+          effort: typeof effort === 'string' ? effort : undefined,
+          ...(serviceTier.present ? { serviceTier: serviceTier.value } : {}),
+          permissionMode,
+          collaborationMode,
         },
         idempotencyKey,
         input.operationIdentity,
         input.providerWriteLifecycle,
         undefined,
         true,
-        previous?.id,
+        { submissionId: previous.id, frozenEffort: frozenSnapshot?.effort },
       );
       return { statusCode: 202, body: restored };
     }
@@ -1875,8 +1884,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     reservedSubmissionId?: string,
     /** 仅服务端已校验的恢复或操作结果可以设置内部来源。 */
     internalOperation: boolean | 'automation_completion' = false,
-    /** 原提交身份只在服务端恢复分支传入。 */
-    resumeSubmissionId?: string,
+    /** 续接关联原提交；快照中空档位表示沿用原先未指定的推理档位。 */
+    retry?: { submissionId: string; frozenEffort?: string | null },
   ) {
     if (body.contextCapacityTokens !== undefined) assertContextCapacity(body.contextCapacityTokens);
     const project = projects.getById(conversation.projectId);
@@ -2027,7 +2036,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       selectedModel = capability.model;
       selectedModelSourceId = capability.sourceId ?? null;
       selectedAgentKind = capability.agentKind ?? 'codex';
-      selectedEffort = requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null;
+      selectedEffort = retry?.frozenEffort === null ? null : (requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null);
       selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
       selectedContextWindow = capability.contextWindow;
     }
@@ -2240,7 +2249,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       return codexNativeCoordinator.submitMessage({
         ...(internalOperation ? { internalOperation: true } : {}),
-        ...(resumeSubmissionId ? { resumeSubmissionId } : {}),
+        ...(retry ? { resumeSubmissionId: retry.submissionId } : {}),
         conversationId: conversation.id,
         ...(reservedSubmissionId ? { submissionId: reservedSubmissionId } : {}),
         content: providerContent,
