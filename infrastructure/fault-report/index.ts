@@ -1,5 +1,16 @@
 import { createHash, createHmac, createSign, randomUUID } from 'node:crypto';
-import { faultReportMaxBytes, isFaultReportId, normalizeFaultReportPacket, redactFaultReportText, type FaultReportPacket, type FaultReportReceipt } from '../../packages/shared/src/faultReport.js';
+import { gunzipSync } from 'node:zlib';
+import {
+  faultReportMaxBytes,
+  faultEvidenceCompressedMaxBytes,
+  faultEvidenceMaxBytes,
+  faultReportServiceCapabilities,
+  isFaultReportId,
+  normalizeFaultReportPacket,
+  redactFaultReportText,
+  type FaultReportPacket,
+  type FaultReportReceipt,
+} from '../../packages/shared/src/faultReport.js';
 import { describeUserFacingError } from '../../packages/shared/src/userFacingError.js';
 
 /** 故障服务只操作专用桶和指定仓库，客户端不能提供资源地址。 */
@@ -38,7 +49,7 @@ function hmac(key: string | Buffer, value: string): Buffer {
 }
 
 /** 对固定桶的单对象读写使用 OSS 官方 HMAC-SHA256 签名。 */
-async function objectRequest(context: FunctionContext, method: 'GET' | 'POST', key: string, body = '', position = 0): Promise<Response> {
+async function objectRequest(context: FunctionContext, method: 'GET' | 'POST', key: string, body: string | Uint8Array = '', position = 0): Promise<Response> {
   const credentials = context.credentials;
   const timestamp = new Date().toISOString().replace(/[:-]|\.\d{3}/gu, '');
   const date = timestamp.slice(0, 8);
@@ -62,7 +73,7 @@ async function objectRequest(context: FunctionContext, method: 'GET' | 'POST', k
   return fetch(`https://${bucket}.oss-${region}-internal.aliyuncs.com/${path}${query ? `?${query}` : ''}`, {
     method,
     headers,
-    ...(method === 'POST' ? { body } : {}),
+    ...(method === 'POST' ? { body: typeof body === 'string' ? body : new Uint8Array(body).buffer } : {}),
     signal: AbortSignal.timeout(8000),
     redirect: 'error',
   });
@@ -210,6 +221,10 @@ async function createIssue(context: FunctionContext, key: string, stored: Report
     `- 对象：\`${key}\`；下载后先核对报告 ID。`,
     `- 采集：${packet.events.length} 条宿主事件、${packet.diagnostics?.logs.length ?? 0} 条运行诊断日志、${Object.keys(packet.diagnostics?.snapshots ?? {}).length} 组状态快照。`,
     packet.diagnostics ? `- 采集限制与失败说明：${packet.diagnostics.notes.length} 项，详见包内 \`diagnostics.notes\`。` : '- 此报告来自旧采集器，缺少状态快照和采集完整性说明。',
+    ...(packet.diagnostics?.scene?.attachments ?? []).map(
+      (attachment) =>
+        `- 私有现场附件（上传状态以对象是否存在为准）：[${attachment.name}](https://oss.console.aliyun.com/bucket/oss-${region}/${bucket}/object?path=${encodeURIComponent(`reports/${packet.reportId}/evidence/${attachment.sha256}.gz`)})；SHA-256：\`${attachment.sha256}\`。`,
+    ),
     '- 完整脱敏错误、原因链与运行诊断保留在私有包；公开页面不放对话正文、工作区文件或终端输出。',
   ].join('\n');
   const response = await github(`/repos/${repository}/issues`, token, { method: 'POST', body: JSON.stringify({ title: `[Zeus 故障] ${code} · ${packet.appVersion}`.slice(0, 240), body: issueBody }) }).catch(async (error: unknown) => {
@@ -276,7 +291,33 @@ export async function handler(event: Buffer, context: FunctionContext): Promise<
     }
     const method = request.requestContext?.http?.method;
     const path = request.rawPath ?? request.requestContext?.http?.path ?? '';
-    if (method === 'GET' && path === '/health') return response(200, { status: 'ok' });
+    if (method === 'GET' && path === '/health') return response(200, { status: 'ok', capabilities: faultReportServiceCapabilities });
+    /** 附件只能补充到已接收报告的固定清单中，不能借此写入任意 OSS 对象。 */
+    const evidenceRoute = /^\/reports\/([a-f0-9-]{36})\/evidence\/([a-f0-9]{64})$/u.exec(path);
+    if (method === 'POST' && evidenceRoute) {
+      const [, id, sha256] = evidenceRoute;
+      if (!isFaultReportId(id) || typeof request.body !== 'string' || request.body.length > faultEvidenceCompressedMaxBytes * 2) return response(400, { error: 'INVALID_EVIDENCE' });
+      const stored = await readReport(context, `reports/${id}.jsonl`);
+      const expected = stored?.value.packet.diagnostics?.scene?.attachments.find((entry) => entry.sha256 === sha256);
+      if (!expected) return response(404, { error: 'EVIDENCE_NOT_DECLARED' });
+      /** 解析与校验失败返回 400，云端存储故障继续使用外层的 503。 */
+      let compressed: Buffer;
+      try {
+        const body = request.isBase64Encoded ? Buffer.from(request.body, 'base64').toString('utf8') : request.body;
+        const attachment = JSON.parse(body) as { name?: string; bytes?: number; sha256?: string; gzip?: string };
+        if (attachment.name !== expected.name || attachment.bytes !== expected.bytes || attachment.sha256 !== sha256 || typeof attachment.gzip !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/u.test(attachment.gzip))
+          return response(400, { error: 'INVALID_EVIDENCE' });
+        compressed = Buffer.from(attachment.gzip, 'base64');
+        if (compressed.length > faultEvidenceCompressedMaxBytes) return response(413, { error: 'EVIDENCE_TOO_LARGE' });
+        const raw = gunzipSync(compressed, { maxOutputLength: faultEvidenceMaxBytes });
+        if (raw.length !== expected.bytes || createHash('sha256').update(raw).digest('hex') !== sha256) return response(400, { error: 'EVIDENCE_DIGEST_MISMATCH' });
+      } catch {
+        return response(400, { error: 'INVALID_EVIDENCE' });
+      }
+      const saved = await objectRequest(context, 'POST', `reports/${id}/evidence/${sha256}.gz`, compressed, 0);
+      if (!saved.ok && saved.status !== 409) throw await storageError(saved, 'save evidence');
+      return response(200, { reportId: id, sha256 });
+    }
     if (method === 'GET' && path.startsWith('/reports/')) {
       const id = path.slice('/reports/'.length).toLowerCase();
       if (!isFaultReportId(id)) return response(400, { error: 'INVALID_REPORT' });

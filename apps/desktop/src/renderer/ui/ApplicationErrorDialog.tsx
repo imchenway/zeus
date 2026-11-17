@@ -51,8 +51,12 @@ let applicationErrorContext: Record<string, string> = {};
 export function setApplicationErrorContext(context: Record<string, unknown>): () => void {
   const value = faultReportContext(context);
   applicationErrorContext = value;
+  window.zeus?.reportFaultContext?.(value);
   return () => {
-    if (applicationErrorContext === value) applicationErrorContext = {};
+    if (applicationErrorContext === value) {
+      applicationErrorContext = {};
+      window.zeus?.reportFaultContext?.({});
+    }
   };
 }
 

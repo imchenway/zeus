@@ -3,6 +3,41 @@ import { redactUserFacingErrorDetails } from './userFacingError.js';
 /** 单份诊断包最大 128 KiB；客户端和匿名接收入口使用同一上限。 */
 export const faultReportMaxBytes = 128 * 1024;
 
+/** 单个现场附件原始大小上限为 16 MiB；压缩后的单次上传最多 2 MiB。 */
+export const faultEvidenceMaxBytes = 16 * 1024 * 1024;
+/** gzip 附件的上限限制匿名接收端的内存和流量。 */
+export const faultEvidenceCompressedMaxBytes = 2 * 1024 * 1024;
+/** 上传现场前确认云端能保留清单和附件，避免旧接收端静默丢弃新增证据。 */
+export const faultReportServiceCapabilities = ['saved_scene', 'evidence_upload'] as const;
+
+/** 附件只使用采集器生成的文件名，不能携带本机路径。 */
+export interface FaultReportAttachment {
+  name: string;
+  kind: 'thread_sample' | 'minidump' | 'node_diagnostic';
+  bytes: number;
+  sha256: string;
+}
+
+/** 故障瞬间的进程观测；内存单位 KiB，CPU 单位百分比。 */
+export interface FaultProcessSnapshot {
+  role: 'main' | 'renderer' | 'core' | 'gpu';
+  pid: number;
+  cpuPercent?: number;
+  memoryKiB?: number;
+  lastHeartbeatAt?: string;
+  ready?: boolean;
+}
+
+/** 独立监控保存故障时刻，避免把点击上报时的状态当成故障现场。 */
+export interface FaultReportScene {
+  reason: 'main_unresponsive' | 'main_exception' | 'renderer_unresponsive' | 'renderer_crashed' | 'core_unresponsive' | 'core_exited' | 'main_exited' | 'startup_timeout' | 'startup_failed' | 'unclean_exit' | 'manual_report';
+  detectedAt: string;
+  processes: FaultProcessSnapshot[];
+  breadcrumbs: FaultReportEvent[];
+  configuration: Record<string, string | number | boolean | null>;
+  attachments: FaultReportAttachment[];
+}
+
 /** 只采集定位所需身份，不包含会话正文、源码或附件。 */
 export interface FaultReportInput {
   reportId: string;
@@ -31,6 +66,10 @@ export interface FaultReportDiagnostics {
   snapshots: Record<string, Record<string, string | number | boolean | null>>;
   logs: FaultReportEvent[];
   notes: string[];
+  /** 已冻结的故障现场由独立守护进程填写，普通异常报告可以没有。 */
+  scene?: FaultReportScene;
+  /** 用户主动补充的复现步骤或脱敏最小示例，最多 4000 字符。 */
+  reproduction?: string;
 }
 
 /** 云端收到的脱敏诊断包；应用版本和系统信息由 Main 填写。 */
@@ -48,6 +87,23 @@ export interface FaultReportReceipt {
   reportId: string;
   status: 'received' | 'submitted';
   issueUrl?: string;
+}
+
+/** 本地文件与匿名云端入口共用附件身份校验，不接受路径或无限大小。 */
+export function isFaultReportAttachment(value: unknown): value is FaultReportAttachment {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.name === 'string' &&
+    /^[a-z0-9][a-z0-9_-]{0,95}\.(?:txt|json|dmp)$/u.test(item.name) &&
+    ['thread_sample', 'minidump', 'node_diagnostic'].includes(String(item.kind)) &&
+    typeof item.bytes === 'number' &&
+    Number.isSafeInteger(item.bytes) &&
+    item.bytes > 0 &&
+    item.bytes <= faultEvidenceMaxBytes &&
+    typeof item.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(item.sha256)
+  );
 }
 
 /** 只接受随机 UUID，避免报告身份变成任意文件路径。 */
@@ -72,7 +128,7 @@ export function faultReportContext(value: unknown): Record<string, string> {
   const record = value as Record<string, unknown>;
   const source = { ...(record.details && typeof record.details === 'object' ? record.details : {}), ...(record.context && typeof record.context === 'object' ? record.context : {}), ...record } as Record<string, unknown>;
   return Object.fromEntries(
-    ['projectId', 'taskId', 'conversationId', 'sessionId', 'runId', 'commandId', 'clientUserMessageId', 'turnId', 'providerId', 'providerThreadId', 'providerTurnId', 'requestId', 'traceId', 'view'].flatMap((key) => {
+    ['projectId', 'taskId', 'conversationId', 'sessionId', 'runId', 'commandId', 'clientUserMessageId', 'turnId', 'providerId', 'providerThreadId', 'providerTurnId', 'requestId', 'traceId', 'view', 'windowId'].flatMap((key) => {
       const item = source[key];
       return typeof item === 'string' && /^[\w.:-]{1,160}$/u.test(item) ? [[key, item]] : [];
     }),
@@ -143,6 +199,15 @@ export function faultReportDetails(value: unknown, depth = 0): Record<string, st
     'inFlightCount',
     'unresolvedAdmission',
     'deferredCount',
+    'targetRole',
+    'theme',
+    'webviewDebugEnabled',
+    'multiWindowEnabled',
+    'backgroundModeEnabled',
+    'gpuCompositing',
+    'eventLoopDelayMs',
+    'hostAppVersion',
+    'hostProtocolVersion',
   ]);
   const result: Record<string, string | number | boolean | null> = {};
   for (const [key, item] of Object.entries(value)) {
@@ -209,7 +274,38 @@ export function normalizeFaultReportPacket(value: unknown): FaultReportPacket {
       ),
       logs: events(diagnostic.logs),
       notes: Array.isArray(diagnostic.notes) ? diagnostic.notes.slice(0, 16).map((entry) => redactFaultReportText(entry, 400)) : [],
+      ...(typeof diagnostic.reproduction === 'string' ? { reproduction: redactFaultReportText(diagnostic.reproduction, 4000) } : {}),
     };
+    if (diagnostic.scene && typeof diagnostic.scene === 'object') {
+      const scene = diagnostic.scene as Record<string, unknown>;
+      const reasons = ['main_unresponsive', 'main_exception', 'renderer_unresponsive', 'renderer_crashed', 'core_unresponsive', 'core_exited', 'main_exited', 'startup_timeout', 'startup_failed', 'unclean_exit', 'manual_report'];
+      if (reasons.includes(String(scene.reason)) && typeof scene.detectedAt === 'string' && Number.isFinite(Date.parse(scene.detectedAt))) {
+        packet.diagnostics.scene = {
+          reason: scene.reason as FaultReportScene['reason'],
+          detectedAt: new Date(scene.detectedAt).toISOString(),
+          processes: Array.isArray(scene.processes)
+            ? scene.processes.slice(0, 16).flatMap((entry: unknown): FaultProcessSnapshot[] => {
+                if (!entry || typeof entry !== 'object') return [];
+                const process = entry as Record<string, unknown>;
+                if (!['main', 'renderer', 'core', 'gpu'].includes(String(process.role)) || typeof process.pid !== 'number' || !Number.isSafeInteger(process.pid) || process.pid <= 0) return [];
+                return [
+                  {
+                    role: process.role as FaultProcessSnapshot['role'],
+                    pid: process.pid,
+                    ...(typeof process.cpuPercent === 'number' && Number.isFinite(process.cpuPercent) && process.cpuPercent >= 0 ? { cpuPercent: process.cpuPercent } : {}),
+                    ...(typeof process.memoryKiB === 'number' && Number.isFinite(process.memoryKiB) && process.memoryKiB >= 0 ? { memoryKiB: process.memoryKiB } : {}),
+                    ...(typeof process.lastHeartbeatAt === 'string' && Number.isFinite(Date.parse(process.lastHeartbeatAt)) ? { lastHeartbeatAt: new Date(process.lastHeartbeatAt).toISOString() } : {}),
+                    ...(typeof process.ready === 'boolean' ? { ready: process.ready } : {}),
+                  },
+                ];
+              })
+            : [],
+          breadcrumbs: events(scene.breadcrumbs).slice(-60),
+          configuration: faultReportDetails(scene.configuration),
+          attachments: Array.isArray(scene.attachments) ? scene.attachments.filter(isFaultReportAttachment).slice(0, 8) : [],
+        };
+      }
+    }
   }
   return packet;
 }

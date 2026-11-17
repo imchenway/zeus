@@ -72,13 +72,22 @@ function resolveAsarNode(header, innerPath) {
  * 只实现发布门禁需要的只读路径校验，不引入额外 asar 依赖，避免本地核心验收再增加安装变量。
  */
 export function readAsarTextFile(asarPath, innerPath) {
+  return readAsarFiles(asarPath, [innerPath]).get(innerPath).toString('utf8');
+}
+
+/** 批量读取同一 ASAR 的文件字节，归档脚本与源码时只加载一次安装包。 */
+export function readAsarFiles(asarPath, innerPaths) {
   const { archive, header, contentStart } = readAsarArchive(asarPath);
-  const node = resolveAsarNode(header, innerPath);
-  if (typeof node.size !== 'number' || typeof node.offset !== 'string') {
-    throw new Error(`asar path is not a file: ${innerPath}`);
-  }
-  const start = contentStart + Number(node.offset);
-  return archive.subarray(start, start + node.size).toString('utf8');
+  return new Map(
+    innerPaths.map((innerPath) => {
+      const node = resolveAsarNode(header, innerPath);
+      if (typeof node.size !== 'number' || typeof node.offset !== 'string') {
+        throw new Error(`asar path is not a file: ${innerPath}`);
+      }
+      const start = contentStart + Number(node.offset);
+      return [innerPath, archive.subarray(start, start + node.size)];
+    }),
+  );
 }
 
 /** 列出 asar 内指定目录的所有文件，确保 Vite 动态 chunk 也进入发布文案门禁。 */

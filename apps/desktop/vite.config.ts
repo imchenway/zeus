@@ -13,6 +13,8 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    // 保留匹配构建的错误栈映射，不向运行时脚本添加 sourceMappingURL。
+    sourcemap: 'hidden',
     rolldownOptions: {
       output: {
         codeSplitting: {

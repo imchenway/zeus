@@ -16,6 +16,29 @@ export interface DesktopTransport {
 
 /** 为可信 Zeus 界面创建同一套桌面接口；每个界面上下文只初始化一次。 */
 export function createDesktopApi(transport: DesktopTransport) {
+  if (transport.kind === 'electron-ipc') {
+    /** 只记录已登记的接口名称，不记录参数、凭据或用户输入。 */
+    const invoke = transport.invoke.bind(transport);
+    transport = {
+      ...transport,
+      invoke: (channel, ...args) => {
+        transport.send('zeus:fault-breadcrumb', { event: 'desktop.invoke', details: { operation: channel } });
+        return invoke(channel, ...args);
+      },
+    };
+    transport.subscribe<string>('zeus:health-ping', (nonce) => {
+      if (typeof nonce === 'string' && nonce.length <= 64) transport.send('zeus:renderer-health', nonce);
+    });
+    /** 点击轨迹只保留控件角色；不读取标签文字、文件名或输入框内容。 */
+    globalThis.addEventListener?.(
+      'pointerdown',
+      (event) => {
+        const target = event.target instanceof Element ? event.target.closest('button,a,input,textarea,[role="button"],[role="menuitem"]') : null;
+        if (target) transport.send('zeus:fault-breadcrumb', { event: 'ui.click', details: { targetRole: target.getAttribute('role') ?? target.tagName.toLowerCase() } });
+      },
+      true,
+    );
+  }
   /** 缓存本窗口的退出状态，让稍后创建的订阅也能停止重连。 */
   let quitting = false;
   transport.subscribe<boolean>('zeus:quit-state-changed', (state) => {
@@ -456,6 +479,14 @@ export function createDesktopApi(transport: DesktopTransport) {
     reportRendererFatalFailure: (message: string) => rendererBootstrapReporter.reportFailure(message),
     /** 向宿主上报界面运行错误。 */
     reportRendererRuntimeError: (message: string) => transport.send('zeus:renderer-runtime-log', message),
+    /** 当前界面身份供独立守护关联故障，字段由 Main 再次投影。 */
+    reportFaultContext: (context: unknown) => {
+      if (transport.kind === 'electron-ipc') transport.send('zeus:fault-context', context);
+    },
+    /** 网络轨迹只发送路由模板和耗时，不能携带请求正文。 */
+    reportFaultBreadcrumb: (entry: unknown) => {
+      if (transport.kind === 'electron-ipc') transport.send('zeus:fault-breadcrumb', entry);
+    },
     /** 输入建议只上传有界诊断元数据，不通过日志 IPC 传递正文。 */
     reportInputSuggestionDiagnostic: (entry: unknown) => transport.send('zeus:input-suggestion-diagnostic', entry),
     /** 通知宿主界面已完成首次启动。 */

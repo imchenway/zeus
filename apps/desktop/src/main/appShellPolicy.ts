@@ -20,6 +20,8 @@ export interface AppShellMenuActions {
   /** Windows 隔离设置由用户查看、初始化和清理。 */
   manageWindowsSandbox?: () => void | Promise<void>;
   openLogsDirectory: () => void | Promise<void>;
+  /** 全局菜单可以上报无弹窗、无错误码的界面故障。 */
+  reportFault?: () => void;
   closeFocusedWindow: () => void;
   quit: () => void;
 }
@@ -68,6 +70,7 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
         ...(actions.manageWindowsSandbox ? [{ label: zh ? '受限执行…' : 'Restricted Execution...', click: actions.manageWindowsSandbox }] : []),
         { type: 'separator' },
         { label: zh ? `显示 ${appName}` : `Show ${appName}`, click: actions.showMainWindow },
+        ...(actions.reportFault ? [{ label: zh ? '上报故障…' : 'Report a Problem...', click: actions.reportFault }] : []),
         {
           label: zh ? '打开日志文件夹' : 'Open Logs Folder',
           accelerator: 'CommandOrControl+L',

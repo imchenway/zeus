@@ -10,7 +10,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Zeus.Platform;
 
-/// <summary>普通用户权限下的浏览器通信、Git 授权提示及系统文件剪贴板入口。</summary>
+/// <summary>普通用户权限下的浏览器通信、Git 授权、文件剪贴板和故障转储入口。</summary>
 internal static class WindowsDesktopBridge
 {
     // 浏览器传入帧沿用现有上限，返回帧遵守 Chrome Native Messaging 的一兆限制。
@@ -31,13 +31,16 @@ internal static class WindowsDesktopBridge
         bool discover = args.Length > 1 && args[0] == "--find-application";
         // 更新窗口使用独立入口，避免把原生消息或凭据协议解释成界面命令。
         bool updateProgress = args.Length == 1 && args[0] == "--update-progress";
-        if (!browser && !askpass && !clipboard && !discover && !updateProgress) return false;
+        // 故障转储由独立守护调用，使用固定参数并保持普通用户权限。
+        bool faultDump = args.Length == 3 && args[0] == "--fault-dump";
+        if (!browser && !askpass && !clipboard && !discover && !updateProgress && !faultDump) return false;
         try
         {
             if (browser) RunBrowser(args);
             else if (askpass) exitCode = WindowsGitAskpass.Run(args);
             else if (clipboard) Console.Write(JsonSerializer.Serialize(ReadClipboardFiles()));
             else if (updateProgress) WindowsUpdateProgress.Run();
+            else if (faultDump) WriteFaultDump(args[1], args[2]);
             else Console.Write(JsonSerializer.Serialize(FindInstalledApplications(args[1..])));
         }
         catch
@@ -53,6 +56,22 @@ internal static class WindowsDesktopBridge
         }
         return true;
     }
+
+    /// <summary>保存指定进程的线程栈转储及内存占用，不启用完整内存或权限提升。</summary>
+    private static void WriteFaultDump(string processId, string target)
+    {
+        if (!int.TryParse(processId, out int pid) || pid <= 1 || pid == Environment.ProcessId || !Path.IsPathFullyQualified(target) || !target.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException();
+        using Process process = Process.GetProcessById(pid);
+        using FileStream dump = new(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        // MiniDumpNormal 包含各线程栈，不请求完整堆或其他进程的内存。
+        if (!MiniDumpWriteDump(process.Handle, (uint)pid, dump.SafeFileHandle, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        Console.Write(JsonSerializer.Serialize(new { pid, memoryKiB = process.WorkingSet64 / 1024 }));
+    }
+
+    /// <summary>Windows 自带 DbgHelp 提供线程栈转储，不引入外部崩溃 SDK。</summary>
+    [DllImport("dbghelp.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MiniDumpWriteDump(IntPtr process, uint pid, SafeFileHandle file, uint type, IntPtr exception, IntPtr userStreams, IntPtr callback);
 
     /// <summary>只读取标准应用注册位置，不执行注册表中的任何命令。</summary>
     private static string[] FindInstalledApplications(string[] names)
