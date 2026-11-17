@@ -3406,3 +3406,157 @@ index e7be285..9d668ab 100644
          let (target_id, tab_id, text) = match (
              args.require_str("target_id"),
              args.require_str("tab_id"),
+diff --git a/crates/platform-macos/src/browser/electron_js.rs b/crates/platform-macos/src/browser/electron_js.rs
+index fd6bde6f..7e32de98 100644
+--- a/crates/platform-macos/src/browser/electron_js.rs
++++ b/crates/platform-macos/src/browser/electron_js.rs
+@@ -8,6 +8,83 @@ use super::cdp_client::{listening_ports, CdpClient};
+ pub struct ElectronJs;
+ 
+ impl ElectronJs {
++    /// 从同一系统用户的私有凭证连接 Zeus 窗口，只允许后台文本输入。
++    pub async fn type_text_background(
++        pid: i32,
++        window_id: u32,
++        rect: [f64; 4],
++        text: &str,
++        replace: bool,
++    ) -> Option<cua_driver_core::protocol::ToolResult> {
++        use cua_driver_core::{browser::cdp_ws::CdpConnection, protocol::ToolResult};
++        use std::io::Read;
++        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
++
++        let uid = unsafe { libc::geteuid() };
++        let directory = std::env::temp_dir().join(format!("zeus-cua-electron-{uid}"));
++        let metadata = std::fs::symlink_metadata(&directory).ok()?;
++        if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
++            return None;
++        }
++        let file = std::fs::OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_NOFOLLOW)
++            .open(directory.join(format!("{pid}-{window_id}.json")))
++            .ok()?;
++        let metadata = file.metadata().ok()?;
++        if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
++            return None;
++        }
++        let mut bytes = Vec::new();
++        file.take(8193).read_to_end(&mut bytes).ok()?;
++        if bytes.len() > 8192 {
++            return None;
++        }
++        let record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
++        if record["pid"].as_i64() != Some(pid as i64)
++            || record["windowId"].as_u64() != Some(window_id as u64)
++        {
++            return None;
++        }
++        let endpoint = record["endpoint"].as_str()?;
++        let connection = match CdpConnection::connect(endpoint).await {
++            Ok(connection) => connection,
++            Err(_) => return Some(ToolResult::error("Electron background input was not started: private window bridge is unavailable; observe the window again.")),
++        };
++        if let Err(error) = crate::input::user_guard::check_pid(pid) {
++            return Some(ToolResult::error(error.to_string()));
++        }
++        // 每次只投递一次；传输或页面异常不回退到 AX、系统键盘或前台输入。
++        let result = tokio::time::timeout(
++            Duration::from_secs(10),
++            connection.call(
++                None,
++                "Zeus.insertText",
++                serde_json::json!({
++                    "pid": pid, "windowId": window_id, "rect": rect, "text": text, "replace": replace,
++                }),
++            ),
++        )
++        .await;
++        let verified = match result {
++            Ok(Ok(value)) => value["verified"].as_bool() == Some(true),
++            _ => return Some(ToolResult::error("Electron background input result is unknown; observe the window before any further action. Do not repeat the input.")),
++        };
++        Some(ToolResult::text(if verified {
++            "Inserted text through the private Electron renderer bridge; DOM value verified."
++        } else {
++            "Electron renderer input was dispatched but the DOM value could not be confirmed; observe the window and do not repeat the input."
++        }).with_structured(serde_json::json!({
++            "pid": pid,
++            "window_id": window_id,
++            "path": "electron_cdp",
++            "verified": verified,
++            "effect": if verified { "confirmed" } else { "unverifiable" },
++            "delivery": { "mode": "background" },
++            "delivered_chars": if verified { Some(text.chars().count()) } else { None },
++        })))
++    }
++
+     /// Returns true if the process at `pid` is an Electron app.
+     pub fn is_electron(pid: i32) -> bool {
+         // Look up the bundle path from list_running_apps.
+diff --git a/crates/platform-macos/src/tools/type_text.rs b/crates/platform-macos/src/tools/type_text.rs
+index 8d7e2aa2..87916978 100644
+--- a/crates/platform-macos/src/tools/type_text.rs
++++ b/crates/platform-macos/src/tools/type_text.rs
+@@ -327,6 +327,23 @@ impl Tool for TypeTextTool {
+                 element_ptr,
+                 window_id,
+             ));
++        // 仅在原有精确窗口与语义控件校验通过后使用自有 Electron 的私有通道。
++        if !delivery_mode.is_foreground() && electron_background_ax_unsafe {
++            if let (Some((element, _)), Some(wid)) = (element_ptr, window_id) {
++                if let Some(rect) =
++                    unsafe { crate::ax::bindings::element_screen_rect(element as AXUIElementRef) }
++                {
++                    if let Some(result) =
++                        crate::browser::electron_js::ElectronJs::type_text_background(
++                            pid, wid, rect, &text, false,
++                        )
++                        .await
++                    {
++                        return result;
++                    }
++                }
++            }
++        }
+         if let Some(refusal) = electron_background_ax_refusal(
+             delivery_mode,
+             element_ptr.is_some(),
+diff --git a/crates/platform-macos/src/tools/set_value.rs b/crates/platform-macos/src/tools/set_value.rs
+index 79bcca10..1730494f 100644
+--- a/crates/platform-macos/src/tools/set_value.rs
++++ b/crates/platform-macos/src/tools/set_value.rs
+@@ -165,6 +165,33 @@ impl Tool for SetValueTool {
+             Err(refusal_result) => return refusal_result,
+         };
+ 
++        // 自有 Electron 文本控件复用页面输入通道，替换与清空同样触发真实编辑事件。
++        let text_control =
++            unsafe { crate::ax::bindings::copy_string_attr(element_ptr as _, "AXRole") }
++                .is_some_and(|role| {
++                    matches!(
++                        role.as_str(),
++                        "AXTextField"
++                            | "AXTextArea"
++                            | "AXSearchField"
++                            | "AXComboBox"
++                            | "AXIncrementor"
++                    )
++                });
++        if text_control && crate::browser::electron_js::ElectronJs::is_electron(pid) {
++            if let Some(rect) =
++                unsafe { crate::ax::bindings::element_screen_rect(element_ptr as _) }
++            {
++                if let Some(result) = crate::browser::electron_js::ElectronJs::type_text_background(
++                    pid, window_id, rect, &value, true,
++                )
++                .await
++                {
++                    return result;
++                }
++            }
++        }
++
+         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+         let center_guard = element_guard.clone();
+         if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {

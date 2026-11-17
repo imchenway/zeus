@@ -17,6 +17,8 @@ export interface BrowserCuaSurface {
   visible(): boolean;
   /** CUA 连接建立前已经打开的原生 Page 对话框事件。 */
   pendingDialog?(): Record<string, unknown> | undefined;
+  /** 应用窗口只开放已绑定控件的文本输入，不开放通用 CDP。 */
+  textInputOnly?: boolean;
   /** 导航沿用 Zeus 的页面访问边界。 */
   allowUrl(url: string): void;
 }
@@ -159,6 +161,12 @@ export class BrowserCuaBridge {
           if (window.isDestroyed()) throw new Error('浏览器承载窗口已经关闭。');
           if (request.sessionId && !sessions.has(request.sessionId)) throw new Error('CDP 会话不属于当前网页。');
           const params = request.params ?? {};
+          if (surface.textInputOnly) {
+            if (request.method !== 'Zeus.insertText' || request.sessionId) throw new Error('应用窗口只允许后台文本输入。');
+            const result = await this.insertText(surface, params);
+            send({ id, result });
+            return;
+          }
           const targetInfo = await rootTarget;
           const root = targetInfo.targetInfo;
           targets.add(root.targetId);
@@ -238,6 +246,66 @@ export class BrowserCuaBridge {
       }
     });
     client.on('error', () => client.terminate());
+  }
+
+  /** 将无障碍控件的屏幕范围绑定到 DOM，并通过 Blink 输入和 DOM 读回确认交付。 */
+  private async insertText(surface: BrowserCuaSurface, params: Record<string, unknown>): Promise<unknown> {
+    const window = surface.window();
+    if (params.pid !== process.pid || params.windowId !== this.windowId(window) || typeof params.text !== 'string') throw new Error('后台输入的进程或窗口身份不匹配。');
+    const rect = params.rect;
+    if (!Array.isArray(rect) || rect.length !== 4 || !rect.every((value) => typeof value === 'number' && Number.isFinite(value)) || rect[2] <= 0 || rect[3] <= 0) throw new Error('后台输入缺少有效控件范围。');
+    const content = window.getContentBounds();
+    const bounds = surface.bounds();
+    const zoom = surface.contents.getZoomFactor();
+    const expected = { x: (rect[0] - content.x - bounds.x) / zoom, y: (rect[1] - content.y - bounds.y) / zoom, width: rect[2] / zoom, height: rect[3] / zoom };
+    const x = expected.x + expected.width / 2;
+    const y = expected.y + expected.height / 2;
+    if (x < 0 || y < 0 || x >= bounds.width / zoom || y >= bounds.height / zoom) throw new Error('后台输入控件已离开目标页面。');
+    const debuggerApi = surface.contents.debugger;
+    const node = (await debuggerApi.sendCommand('DOM.getNodeForLocation', { x: Math.floor(x), y: Math.floor(y) })) as { backendNodeId: number };
+    const resolved = (await debuggerApi.sendCommand('DOM.resolveNode', { backendNodeId: node.backendNodeId })) as { object: { objectId: string } };
+    let prepared: { result?: { objectId?: string }; exceptionDetails?: unknown } | undefined;
+    try {
+      prepared = (await debuggerApi.sendCommand('Runtime.callFunctionOn', {
+        objectId: resolved.object.objectId,
+        functionDeclaration: `function(rect, text, replace) {
+          let field = this.nodeType === 1 ? this : this.parentElement;
+          while (field && !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field.isContentEditable)) field = field.parentElement;
+          if (!field || !field.isConnected || field.disabled || field.readOnly) throw new Error('目标控件不可编辑。');
+          if (field instanceof HTMLInputElement && !['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(field.type)) throw new Error('目标控件不接受文本。');
+          const actual = field.getBoundingClientRect();
+          if (['x', 'y', 'width', 'height'].some(key => Math.abs(actual[key] - rect[key]) > 2)) throw new Error('页面控件与无障碍目标不一致，请重新观察。');
+          field.focus({ preventScroll: true });
+          const root = field.getRootNode();
+          if (root.activeElement !== field || !field.isConnected) throw new Error('目标控件未取得页面内焦点。');
+          const before = field.isContentEditable ? field.textContent : field.value;
+          let expected = null;
+          if (replace) expected = text;
+          else if (typeof field.selectionStart === 'number' && typeof field.selectionEnd === 'number') expected = before.slice(0, field.selectionStart) + text + before.slice(field.selectionEnd);
+          else if (!before) expected = text;
+          return { field, before, expected };
+        }`,
+        arguments: [{ value: expected }, { value: params.text }, { value: params.replace === true }],
+      })) as typeof prepared;
+      if (prepared?.exceptionDetails || !prepared?.result?.objectId) throw new Error('后台输入目标已变化或不可编辑，请重新观察。');
+      if (params.replace === true) await debuggerApi.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', commands: ['selectAll'] });
+      if (params.replace === true && params.text === '') await debuggerApi.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', commands: ['deleteBackward'] });
+      else await debuggerApi.sendCommand('Input.insertText', { text: params.text });
+      const readback = (await debuggerApi.sendCommand('Runtime.callFunctionOn', {
+        objectId: prepared.result.objectId,
+        functionDeclaration: `function() {
+          const { field, expected } = this;
+          const value = field.isContentEditable ? field.textContent : field.value;
+          return { verified: field.isConnected && expected !== null && value === expected };
+        }`,
+        returnByValue: true,
+      })) as { result?: { value?: { verified: boolean } }; exceptionDetails?: unknown };
+      return { verified: !readback.exceptionDetails && readback.result?.value?.verified === true };
+    } finally {
+      for (const objectId of [resolved.object.objectId, prepared?.result?.objectId]) {
+        if (objectId) await debuggerApi.sendCommand('Runtime.releaseObject', { objectId }).catch(() => undefined);
+      }
+    }
   }
 
   /** 返回真实宿主窗口几何，不用页面标题推断标签身份。 */

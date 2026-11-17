@@ -13,6 +13,7 @@ import { ComputerDriverProxy, type ComputerDriver, type ComputerControlEvent } f
 import { computerSdkUrl, computerNativePath } from './computerSdk.js';
 import { runWindowsRuntimeHelper, type WindowsRuntimeIdentity } from '@zeus/ai-runtime';
 import { projectComputerToolResult } from './computerToolResult.js';
+import { ComputerElectronBridge } from './computerElectronBridge.js';
 
 /** CUA SDK 根模块的动态导入类型。 */
 type CuaModule = typeof import('@trycua/cua-driver');
@@ -94,6 +95,8 @@ const supportedBrowserTools = new Set(['get_browser_state', 'browser_navigate', 
 
 /** Electron 独占管理 CUA Driver，macOS 私有 worker 提供原生光标并隔离各产品轮次。 */
 export class ComputerHost implements BrowserAutomationPort {
+  /** macOS 自有窗口通过私有桥接收原生后台输入，其他平台沿用现有驱动。 */
+  private readonly electronBridge = process.platform === 'darwin' ? new ComputerElectronBridge() : null;
   /** 页面会话独立于桌面控制开关，Driver 重建后必须重新创建会话。 */
   private readonly browserSessions = new Map<string, { driver: ComputerDriver; ready: Promise<unknown> }>();
   /** 原生实例变化后，页面必须重新观察，旧元素引用不能继续使用。 */
@@ -345,7 +348,11 @@ export class ComputerHost implements BrowserAutomationPort {
     screen.removeListener('display-added', this.displayChanged);
     screen.removeListener('display-removed', this.displayChanged);
     screen.removeListener('display-metrics-changed', this.displayChanged);
-    await this.stop('closed', true);
+    try {
+      await this.stop('closed', true);
+    } finally {
+      await this.electronBridge?.close();
+    }
   }
 
   /** 执行一次经过宿主收敛的 CUA 调用。 */
