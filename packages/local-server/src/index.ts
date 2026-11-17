@@ -148,6 +148,7 @@ import { ManagedConversationToolResultStore } from './conversationPortableContex
 import { ConversationSourceContextReader } from './conversationSourceContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
+import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import { isObjectLike } from './conversationResourcePreview.js';
 import { normalizeConversationResources, syncConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
@@ -2255,7 +2256,35 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     try {
       const persisted = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
       const persistedContext = isNativeApiRecord(persisted.context) ? persisted.context : {};
-      if (persistedContext.holdDispatch === true) return;
+      if (persistedContext.holdDispatch === true) {
+        /** 冲突准备仍由所属流程推进；普通会话只在目录就绪后解除等待。 */
+        const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversationId);
+        if (conflictAttempt?.state === 'preparing' || conflictAttempt?.state === 'failed' || (isNativeApiRecord(persistedContext.operationContext) && isNativeApiRecord(persistedContext.operationContext.conflictPreparation))) return;
+        if (!hasUnwrittenSubmissionEvidence(commandDeliveries, head) || (!conversation.nativeSessionId && commandDeliveries.providerWriteStatus(conversationId) === 'written_or_unknown')) {
+          throw nativeApiError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '消息是否送达尚未确认，请先检查处理状态。');
+        }
+        /** 复用正式目录准备入口，不根据等待时长或路径字符串猜测已就绪。 */
+        const executionContext = await ensureNativeConversationExecutionContext({ conversationId, mode: 'dispatch' });
+        if (!executionContext) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录尚未准备完成。');
+        /** 目录读取期间已取消或已开始的消息不能再次进入派发。 */
+        const current = conversationSubmissions.getById(head.id);
+        if (!current || current.status !== 'queued' || !hasUnwrittenSubmissionEvidence(commandDeliveries, current) || conversations.getRecordById(conversationId)?.archived) return;
+        /** 保留正文、附件及模型快照，通过现有替换记录解除等待并留下来源。 */
+        const releasedContext: Record<string, unknown> = { ...persistedContext, projectLocalPath: executionContext.projectLocalPath, writableRoots: executionContext.writableRoots };
+        delete releasedContext.holdDispatch;
+        /** 输入内容不可原位改写，沿用统一的解除等待记录。 */
+        const releasedInput = { ...persisted, context: releasedContext };
+        conversationSubmissions.createReplacement(head.id, {
+          requestHash: createHash('sha256').update(JSON.stringify(releasedInput)).digest('hex'),
+          input: releasedInput,
+          reason: 'release_hold',
+          clientMessageId: head.clientMessageId,
+          updatedAt: now().toISOString(),
+        });
+        await db.save();
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId });
+        return;
+      }
       const content = typeof persisted.text === 'string' ? persisted.text : '';
       const attachments = Array.isArray(persisted.attachments) ? persisted.attachments : [];
       const browserComments = Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isNativeApiRecord) : [];
@@ -2368,6 +2397,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             conversationTitle: conversation.title,
             cwd: executionRoot,
             prompt: content,
+            ...(typeof persisted.goalObjective === 'string' ? { goalObjective: persisted.goalObjective } : {}),
             model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
             permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',

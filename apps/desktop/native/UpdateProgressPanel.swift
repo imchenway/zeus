@@ -19,7 +19,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     private let reproductionLabel = NSTextField(labelWithString: "")
     /** 可选文本材料保持在独立窗口中，故障 Renderer 不参与编辑。 */
     private let reproductionField = NSTextView()
-    /** 多行输入由原生文本视图处理回车，不触发窗口的默认重启按钮。 */
+    /** 多行输入由原生文本视图处理回车，不触发窗口的默认操作。 */
     private let reproductionScrollView = NSScrollView()
     private let secondaryButton = NSButton(title: "", target: nil, action: nil)
     private let primaryButton = NSButton(title: "", target: nil, action: nil)
@@ -323,12 +323,12 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         case "fault-saved":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
-            setButtons(secondary: localized("faultRestart"), primary: localized("faultReportRestart"))
+            setButtons(secondary: localized("faultRestart"), primary: localized("faultReport"))
         case "fault-capture-failed":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
             setButtons(secondary: localized("faultRestart"), primary: localized("faultRetryCapture"))
-        case "fault-reporting":
+        case "fault-restarting":
             progressRow.isHidden = false
             progressIndicator.isHidden = false
             setButtons(secondary: localized("faultRestart"), primary: nil)
@@ -440,7 +440,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         // 固定状态决定恢复动作，不依赖翻译后的按钮文字识别授权。
         if currentState == "fault-saved" || currentState == "fault-capture-failed" {
             primaryButton.isEnabled = false
-            emit(action: currentState == "fault-saved" ? "fault_report_restart" : "fault_retry_capture")
+            emit(action: currentState == "fault-saved" ? "fault_report" : "fault_retry_capture")
             return
         }
         switch primaryButton.title {
@@ -518,9 +518,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         switch key {
         case "softwareUpdate": return english ? "Software Update" : "软件更新"
         case "faultRestart": return english ? "Restart Now" : "仅重启"
-        case "faultReportRestart": return english ? "Report and Restart" : "上报故障并重启"
         case "faultRetryCapture": return english ? "Retry Capture" : "重试保存现场"
-        case "faultReport": return english ? "Send Report" : "补报故障"
+        case "faultReport": return english ? "Report Fault" : "故障上报"
         case "later": return english ? "Later" : "稍后"
         case "check": return english ? "Check for Updates" : "重新检查更新"
         case "downloadPage": return english ? "Download New Version" : "下载新版"
@@ -542,7 +541,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
 
     private func emit(action: String) {
         var payload = ["action": action]
-        if action == "fault_report_restart" || action == "fault_report" || action == "fault_restart" {
+        if action == "fault_report" || action == "fault_restart" {
             payload["reproduction"] = reproductionField.string
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),

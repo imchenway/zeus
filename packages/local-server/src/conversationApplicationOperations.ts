@@ -2923,7 +2923,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ? await sdkCoordinator(selectedAgentKind).startConversation({
             conversationId: reservation.conversationId,
             // 首发先持久接纳，沿用队列入口在回执之后准备运行时。
-            holdDispatch: true,
+            deferInitialDispatch: true,
             contextCapacityTokens: reservation.contextCapacityTokens,
             submissionId: reservation.submissionId,
             projectId: project.id,
@@ -3274,7 +3274,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
         ...((plan.skills ?? (plan.skill ? [plan.skill] : undefined)) ? { skills: plan.skills ?? [plan.skill!] } : {}),
         ...(plan.computerUseRequested ? { computerUseRequested: true } : {}),
-        ...(plan.holdDispatch || plan.deferInitialDispatch ? { holdDispatch: true } : {}),
+        ...(plan.holdDispatch ? { holdDispatch: true } : {}),
+        ...(plan.deferInitialDispatch ? { deferInitialDispatch: true } : {}),
         ...(plan.operationContext ? { operationContext: plan.operationContext } : {}),
         ...(plan.internalOperation ? { internalOperation: true } : {}),
         permissionMode: plan.permissionMode,

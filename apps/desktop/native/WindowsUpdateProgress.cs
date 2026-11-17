@@ -201,15 +201,15 @@ internal sealed class WindowsUpdateProgress : Form
             progress.Value = (int)(Math.Clamp(fraction, 0, 1) * progress.Maximum);
         }
         else progress.Style = ProgressBarStyle.Marquee;
-        progress.Visible = progressRow.Visible = currentState is "checking" or "updating" or "downloading" or "verifying" or "installing" or "fault-reporting" or "fault-capturing" or "fault-uploading";
+        progress.Visible = progressRow.Visible = currentState is "checking" or "updating" or "downloading" or "verifying" or "installing" or "fault-restarting" or "fault-capturing" or "fault-uploading";
         (primaryAction, secondaryAction) = currentState switch
         {
             "fault-pending" => ("fault_report", "close"),
             "fault-uploading" => ("", "close"),
             "fault-reported" => ("close", ""),
-            "fault-saved" => ("fault_report_restart", "fault_restart"),
+            "fault-saved" => ("fault_report", "fault_restart"),
             "fault-capture-failed" => ("fault_retry_capture", "fault_restart"),
-            "fault-reporting" => ("", "fault_restart"),
+            "fault-restarting" => ("", "fault_restart"),
             "available" => ("download", "later"),
             "manual" => ("open_download_page", "later"),
             "downloaded" => ("open_installer", "later"),
@@ -267,7 +267,7 @@ internal sealed class WindowsUpdateProgress : Form
         if (action.Length == 0) return;
         if (action is "later" or "close") Hide();
         else primary.Enabled = secondary.Enabled = false;
-        Emit(action, action is "fault_report_restart" or "fault_report" or "fault_restart" ? reproduction.Text : null);
+        Emit(action, action is "fault_report" or "fault_restart" ? reproduction.Text : null);
     }
 
     /// <summary>退出消息循环以释放安装目录文件；不会在此处执行应用重启。</summary>
@@ -281,8 +281,7 @@ internal sealed class WindowsUpdateProgress : Form
     /// <summary>动作名保持与 AppKit 辅助程序相同，按钮文字不参与业务分派。</summary>
     private string Localized(string action) => action switch
     {
-        "fault_report_restart" => english ? "Report and Restart" : "上报故障并重启",
-        "fault_report" => english ? "Send Report" : "补报故障",
+        "fault_report" => english ? "Report Fault" : "故障上报",
         "fault_restart" => english ? "Restart Now" : "仅重启",
         "fault_retry_capture" => english ? "Retry Capture" : "重试保存现场",
         "download" => english ? "Download Update" : "下载更新",

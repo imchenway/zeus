@@ -24,7 +24,8 @@ export const conversationSchemaGeneration = '2026-08-16-unified-conversation-seg
 export type ConversationRuntimeKind = 'codex' | 'pi' | 'copilot';
 export type ConversationSegmentState = 'provisional' | 'current' | 'sealed' | 'abandoned';
 export type ConversationSwitchState = 'preflight' | 'provisional' | 'outcome_unknown' | 'accepted' | 'failed' | 'cancelled';
-export type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+/** 处理过程区分规则上下文更新、模型摘要和实际执行活动。 */
+export type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'context_update' | 'waiting' | 'warning';
 export type ConversationConfigEvidenceLayer = 'selected' | 'frozen' | 'adapter_serialized' | 'runtime_acknowledged' | 'provider_echo';
 
 export interface ConversationExecutionSnapshotRecord {

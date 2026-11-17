@@ -639,6 +639,8 @@ export interface NativeConversationSnapshotV2Turn {
 }
 
 export interface NativeConversationActiveItemV2 {
+  /** 规则更新的首屏预览复用过程全文句柄。 */
+  instructionDetail?: NativeBoundedContentProjection;
   /** 已完成长命令沿用过程预览和不可变详情句柄。 */
   commandDetail?: {
     /** 命令身份独立于活动载荷的截断位置。 */
@@ -790,7 +792,8 @@ export interface NativeConversationProcessV2Item {
   protocolFamily?: string | null;
   /** 该过程条目所属的稳定展示阶段。 */
   stageId?: string | null;
-  kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+  /** 规则更新独立于模型摘要及工具活动。 */
+  kind: 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'context_update' | 'waiting' | 'warning';
   status: string;
   title: string;
   sourceEventId: string | null;

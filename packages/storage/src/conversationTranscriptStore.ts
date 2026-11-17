@@ -1588,6 +1588,8 @@ export function providerEntryId(segmentId: string, providerItemId: string, facet
 /** Provider 类型映射到互不覆盖的显示内容部分。 */
 export function providerFacet(itemType: string): 'body' | 'reasoning_block' | 'tool_activity' {
   if (itemType.toLowerCase().includes('reason')) return 'reasoning_block';
+  // 规则条目与过程记录共用显示身份，避免实时和历史各出现一份正文。
+  if (itemType === 'contextUpdate') return 'tool_activity';
   if (/tool|command|file|search|image/u.test(itemType.toLowerCase())) return 'tool_activity';
   return 'body';
 }

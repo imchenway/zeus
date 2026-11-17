@@ -43,7 +43,8 @@ interface ContentQuery {
   byteLimit?: string;
 }
 
-type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+/** 过程分页支持按实际规则更新分类读取。 */
+type ProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'context_update' | 'waiting' | 'warning';
 
 /** 注册 Snapshot V2 与所有重内容按需读取入口；V1 路由继续由主 server 保持兼容。 */
 export function registerConversationSnapshotV2Api(options: ConversationSnapshotV2ApiOptions): void {
@@ -349,7 +350,7 @@ function hasConversationAccess(options: ConversationSnapshotV2ApiOptions, params
 }
 
 function parseProcessKind(value: string): ProcessKind {
-  if (['reasoning', 'tool', 'command', 'retry', 'context_compaction', 'waiting', 'warning'].includes(value)) return value as ProcessKind;
+  if (['reasoning', 'tool', 'command', 'retry', 'context_compaction', 'context_update', 'waiting', 'warning'].includes(value)) return value as ProcessKind;
   throw new ConversationSnapshotV2Error('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', '过程类型无效。', 400);
 }
 

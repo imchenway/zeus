@@ -62,15 +62,17 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
         ? 'commandExecution'
         : kind === 'context_compaction'
           ? 'contextCompaction'
-          : kind === 'warning'
-            ? 'error'
-            : kind === 'waiting'
-              ? record.provider === 'pi' && payload.recovery !== 'content_only'
-                ? 'commentary'
-                : 'requestUserInput'
-              : kind === 'retry'
-                ? 'commentary'
-                : 'dynamicToolCall';
+          : kind === 'context_update'
+            ? 'contextUpdate'
+            : kind === 'warning'
+              ? 'error'
+              : kind === 'waiting'
+                ? record.provider === 'pi' && payload.recovery !== 'content_only'
+                  ? 'commentary'
+                  : 'requestUserInput'
+                : kind === 'retry'
+                  ? 'commentary'
+                  : 'dynamicToolCall';
   if (record.provider !== 'pi' || (kind !== 'tool' && kind !== 'command')) {
     // 原生事件已声明工具语义，历史回看不能将文件修改或搜索降级为通用工具。
     if (kind === 'tool' && ['fileChange', 'webSearch', 'imageView', 'mcpToolCall', 'dynamicToolCall'].includes(String(record.itemType))) type = String(record.itemType);

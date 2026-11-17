@@ -237,6 +237,9 @@ export interface StartPiConversationInput {
   /** 本轮完整的显式 Skill 选择。 */
   skills?: NativeConversationSkillInput[];
   computerUseRequested?: boolean;
+  /** 仅等待创建回执返回，队列随后可直接派发。 */
+  deferInitialDispatch?: boolean;
+  /** 工作目录尚未准备完成，后续准备流程负责解除派发限制。 */
   holdDispatch?: boolean;
   operationContext?: Record<string, unknown>;
   internalOperation?: boolean;
@@ -476,6 +479,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     });
   }
 
+  /** 首发区分回执后的自动派发与等待工作目录准备，避免队列被永久挂起。 */
   async function startConversation(input: StartPiConversationInput) {
     await options.transcripts.waitUntilReady(input.conversationId);
     const existingConversation = options.conversations.getById(input.conversationId);
@@ -487,7 +491,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     options.validateContextCapacity(existingConversation?.contextCapacityTokens ?? input.contextCapacityTokens ?? null, input.model.sourceId, input.model.modelId, runtimeKind);
     if (existingConversation?.archived) throw piError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
-    if (existingConversation && !input.holdDispatch) {
+    if (existingConversation && !input.holdDispatch && !input.deferInitialDispatch) {
       /** 切换模型后首次派发也先恢复原任务目录，再准备工具和模型请求。 */
       const executionContext = await options.ensureExecutionContext({ conversationId: existingConversation.id, mode: 'dispatch' });
       if (!executionContext) throw piError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录尚未准备完成。');
@@ -507,7 +511,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       input.browserComments,
       input.conversationContext,
     );
-    if (input.holdDispatch) {
+    if (input.holdDispatch || input.deferInitialDispatch) {
       if (!existingConversation) {
         (input.createRecord ?? options.conversations.create.bind(options.conversations))({
           contextCapacityTokens: input.contextCapacityTokens ?? null,
@@ -568,7 +572,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             agentKind: runtimeKind,
             thinkingLevel: input.thinkingLevel,
             permissionMode: input.permissionMode,
-            holdDispatch: true,
+            ...(input.holdDispatch ? { holdDispatch: true } : {}),
             ...(allowedResourceRoots.length ? { allowedAttachmentRoots: allowedResourceRoots } : {}),
             ...(writableRoots.length ? { writableRoots } : {}),
             ...(input.operationContext ? { operationContext: input.operationContext } : {}),
@@ -577,7 +581,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         },
         createdAt,
       });
-      projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
+      projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish, requestQueueDispatch: false });
       await input.segmentLifecycle?.prepare(submission);
       await options.db.save();
       await input.providerWriteLifecycle?.markPrepared(input.submissionId);

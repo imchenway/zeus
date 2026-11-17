@@ -2517,8 +2517,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
 
 function TranscriptV2ContentBoundary(props: { item: NativeSessionItemBuffer; onLoadContent?: (handle: string) => Promise<void>; children: ReactNode }): ReactNode {
   const handle = typeof props.item.payload.v2ContentHandle === 'string' && props.item.payload.v2ContentHandle ? props.item.payload.v2ContentHandle : null;
-  // 轮次过程展开后，思考正文和普通阶段说明共用全文加载，不再要求第二次展开。
-  const truncated = (props.item.payload.v2ContentKind === 'model_history' || isReasoningProcessText(props.item)) && props.item.payload.v2ContentTruncated === true;
+  // 过程展开后规则与思考正文共用全文加载，长规则不截断为预览或要求第二次展开。
+  const truncated = (props.item.payload.v2ContentKind === 'model_history' || isReasoningProcessText(props.item) || normalizeItemType(props.item.type) === 'contextupdate') && props.item.payload.v2ContentTruncated === true;
   const canLoad = Boolean(handle && props.onLoadContent);
   const attemptedHandleRef = useRef<string | null>(null);
 
@@ -3137,8 +3137,8 @@ function isTurnProcessRow(row: TranscriptRow, collapseAssistantMessages = false)
   if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
-  // 思考内容保留独立的次要层级，不能冒充面向用户的进展说明。
-  if (normalizeItemType(row.item.type) === 'reasoning') return true;
+  // 思考与规则更新都归入处理过程，实际类型分别保留。
+  if (normalizeItemType(row.item.type) === 'reasoning' || normalizeItemType(row.item.type) === 'contextupdate') return true;
   // 运行中助手消息从创建起固定在主会话，完成后才将非最终说明收进过程。
   if (itemRole(row.item) === 'assistant' || itemRole(row.item) === 'commentary') return collapseAssistantMessages && !isFinalAnswerItem(row.item);
   // 明确失败需要直接可见，不能因为没有最终答复而藏进过程入口。

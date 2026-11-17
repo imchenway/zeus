@@ -4400,7 +4400,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   // 被动查看用量只能读取现有运行时或持久缓存，不得为了展示统计而启动外部 Codex。
   server.get('/api/codex/usage-summary', async () => codexUsageService.readSummary());
 
-  server.get('/api/usage-overview', async () => ({ ...usageOverviewService.read(), refreshingSources: usageRefreshingSources() }));
+  /** 等待用量汇总完成再追加刷新状态，避免展开 Promise 时丢失供应商与统计字段。 */
+  server.get('/api/usage-overview', async () => ({ ...(await usageOverviewService.read()), refreshingSources: usageRefreshingSources() }));
 
   /** 显式显示或刷新才检查官方数据，普通读取始终无网络及持久化副作用。 */
   server.post('/api/usage-overview/refresh', async (request: FastifyRequest<{ Body: { force?: boolean } }>, reply) => {
@@ -4408,7 +4409,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     /** 各供应源独立刷新，Kilo 不以 Codex 运行状态作为查询前提。 */
     const maxAgeMs = request.body?.force === true ? 15_000 : 10 * 60_000;
     scheduleOfficialUsageRefresh({ maxAgeMs, includePricing: false });
-    return reply.code(202).send({ ...usageOverviewService.read(), refreshingSources: usageRefreshingSources() });
+    return reply.code(202).send({ ...(await usageOverviewService.read()), refreshingSources: usageRefreshingSources() });
   });
 
   server.get(

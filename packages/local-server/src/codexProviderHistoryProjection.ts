@@ -37,6 +37,7 @@ import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './provid
 import { sanitizeConversationItemPayload } from './conversationResources.js';
 import { shouldPreserveProviderStopTerminalTurn } from './codexProviderStopRecoveryApplication.js';
 import { inspectCodexRolloutRequestUserInputEvidence } from './codexRolloutRequestUserInput.js';
+import { CodexRolloutInstructionReader } from './codexRolloutInstructions.js';
 import { interruptedQueueSubmissions } from './codexNativeRunStateProjection.js';
 import { threadPath } from './codexThreadMetadataProjection.js';
 import type { NativeUserMessageProjection } from './codexNativeUserMessageProjection.js';
@@ -191,6 +192,64 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     upsertRecoveredTurn,
   } = dependencies;
   const inspectedRolloutTurnStates = new Set<string>();
+  /** 规则更新与普通消息共用持久条目，仅补充原生展示接口尚未提供的来源。 */
+  const instructionReader = new CodexRolloutInstructionReader();
+
+  /** 实时边界与历史读取共用规则更新投影，稳定原生身份避免重开后重复。 */
+  async function reconcileRolloutInstructions(conversation: ZeusConversationWithMessagesRecord): Promise<void> {
+    if (!conversation.providerThreadId) return;
+    /** 本次只读取该会话已经绑定的原生线程。 */
+    const providerThreadId = conversation.providerThreadId;
+    // 线程尚未绑定运行分段时等待下个边界，不能只写实时条目而漏掉持久过程。
+    if (!options.execution.segmentByNativeSession(providerThreadId, conversation.id)) return;
+    /** 只有实际新增或改变条目时才保存数据库。 */
+    let changed = false;
+    await instructionReader.read({
+      rolloutPath: conversation.nativeSessionPath,
+      providerThreadId,
+      project(record) {
+        /** 元数据中的原始轮次必须已归属当前产品会话。 */
+        const turn = options.turns.getByProvider(providerThreadId, record.turnId);
+        if (!turn || turn.conversationId !== conversation.id) return false;
+        /** 沿用既有原生条目身份和重内容存储，正文不重新加入模型输入历史。 */
+        const existing = options.providerItems.getByProvider(providerThreadId, record.id);
+        if (existing?.itemType === 'contextUpdate' && existing.textContent === record.text) return true;
+        /** 原始发生时间决定过程位置，回放时间不能把旧规则移动到最新回复之后。 */
+        const occurredAt = record.occurredAt ?? turn.startedAt ?? turn.createdAt;
+        /** 规则输入独立分类，保留完整正文及替换说明。 */
+        const item = options.providerItems.upsertCompleted({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          providerThreadId,
+          providerTurnId: record.turnId,
+          providerItemId: record.id,
+          itemType: 'contextUpdate',
+          phase: 'prework',
+          payload: { type: 'contextUpdate', source: 'agents_md', contentKind: 'agents_md.instructions', title: 'AGENTS.md', text: record.text },
+          textContent: record.text,
+          startedAt: occurredAt,
+          completedAt: occurredAt,
+          updatedAt: occurredAt,
+        });
+        projectSnapshotItemContent(conversation, turn, item, { payload: parseJsonRecord(item.payloadJson), textContent: item.textContent }, occurredAt);
+        changed = true;
+        options.broadcast('conversation.item.updated', {
+          conversationId: conversation.id,
+          providerThreadId,
+          providerTurnId: record.turnId,
+          providerItemId: item.providerItemId,
+          itemType: item.itemType,
+          itemPayload: parseJsonRecord(item.payloadJson),
+          textContent: item.textContent,
+          status: item.status,
+          phase: item.phase,
+          itemResources: [],
+        });
+        return true;
+      },
+    });
+    if (changed) await options.db.save();
+  }
 
   async function reconcileRecoveredRequestUserInput(
     conversation: ZeusConversationWithMessagesRecord,
@@ -381,6 +440,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       localTurns.set(providerTurn.id, projected);
     }
     await reconcileRecoveredRequestUserInput(options.conversations.getById(conversation.id) ?? conversation, providerThreadId, eligibleDescending, localTurns);
+    await reconcileRolloutInstructions(options.conversations.getById(conversation.id) ?? conversation);
 
     const newest = eligibleDescending[0];
     if (newest)
@@ -1076,6 +1136,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     ensureProviderSyncCheckpoint,
     reconcilePersistedTerminalTurnSubmissions,
     reconcileProviderTurnsSinceCheckpoint,
+    reconcileRolloutInstructions,
     projectedProviderThreadSnapshot,
     reconcileConversationSnapshot,
   };

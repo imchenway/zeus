@@ -397,6 +397,7 @@ export function itemTypeFromValue(value: unknown): ConversationItemType {
     'imageGeneration',
     'webSearch',
     'contextCompaction',
+    'contextUpdate',
     'collabAgentToolCall',
     'subAgentActivity',
     'providerEvent',

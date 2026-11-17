@@ -168,6 +168,7 @@ function nativeProcessKind(itemType: string): ConversationProcessKind | null {
   if (itemType === 'reasoning') return 'reasoning';
   if (itemType === 'commandExecution') return 'command';
   if (itemType === 'contextCompaction') return 'context_compaction';
+  if (itemType === 'contextUpdate') return 'context_update';
   if (itemType === 'warning' || itemType === 'error') return 'warning';
   if (/tool|fileChange|webSearch|image/i.test(itemType)) return 'tool';
   return null;
@@ -188,6 +189,7 @@ function processTitle(kind: ConversationProcessKind, source: string): string {
   if (kind === 'command') return '执行命令';
   if (kind === 'retry') return '自动重试';
   if (kind === 'context_compaction') return '上下文压缩';
+  if (kind === 'context_update') return 'AGENTS.md 规则更新';
   if (kind === 'waiting') return '等待用户操作';
   if (kind === 'warning') return '运行警告';
   return source === 'fileChange' ? '修改文件' : '调用工具';

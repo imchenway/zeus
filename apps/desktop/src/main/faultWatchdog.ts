@@ -116,12 +116,12 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   let fault: Promise<void> | undefined;
   /** 当前恢复窗口由守护进程持有，Main 退出不会关闭它的管道。 */
   let panel: ChildProcessWithoutNullStreams | undefined;
-  /** 用户可以在网络等待期间直接重启，上传使用独立可取消边界。 */
+  /** 关闭或单独选择重启时取消上传，本机报告保持不变。 */
   let upload: AbortController | undefined;
   /** 恢复动作串行执行，重复点击不能启动多个新 Main。 */
   let recovering = false;
-  /** 补报操作不重启当前已经恢复的 Main。 */
-  let reportingOnly = false;
+  /** 上报独立于恢复，重复提交不能并行上传同一份现场。 */
+  let reporting = false;
   /** 用户补充文字只在首次提交前编辑，默认空白，不影响一键上报。 */
   let reproduction = '';
   /** 首次提交后锁定文字，避免同一报告重试时改变证据内容。 */
@@ -318,18 +318,17 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       actions.on('line', (line) => {
         try {
           const value = JSON.parse(line) as { action?: string; reproduction?: unknown };
-          if (value.action === 'fault_report_restart') void recover(true, value.reproduction);
-          else if (value.action === 'fault_report') void reportPrevious();
-          else if (value.action === 'fault_restart') void recover(false, value.reproduction);
+          if (value.action === 'fault_report') void reportFault(value.reproduction);
+          else if (value.action === 'fault_restart') void recover(value.reproduction);
           else if (value.action === 'fault_retry_capture' && !recovering) {
             if (retrySave) void retrySave().catch(() => showCaptureFailure());
             else if (lastFault) {
               fault = undefined;
               void detect(lastFault.reason, lastFault.windowId, lastFault.detail);
             }
-          } else if (value.action === 'closed' && !recovering) {
+          } else if ((value.action === 'closed' || value.action === 'close') && !recovering) {
             dismissed = true;
-            if (reportingOnly) upload?.abort();
+            if (reporting) upload?.abort();
             if (parentGone) {
               panel?.stdin.end();
               process.exit(0);
@@ -421,50 +420,18 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     process.exit(0);
   }
 
-  /** 上报共用十五秒总期限；失败保留待补报状态并继续重启。 */
-  async function recover(report: boolean, supplement?: unknown): Promise<void> {
-    if (cleanExit || (report && !saved)) return;
-    if (recovering) {
-      if (!report) upload?.abort();
-      return;
-    }
+  /** 只有用户单独选择重启时才结束旧进程，上报结果不触发恢复。 */
+  async function recover(supplement?: unknown): Promise<void> {
+    if (cleanExit || recovering) return;
     if (!reproductionLocked) {
       reproduction = redactFaultReportText(supplement, 4000);
       reproductionLocked = true;
     }
     recovering = true;
+    upload?.abort();
     const zh = pulse.language !== 'en-US';
-    show(
-      'fault-reporting',
-      zh ? '正在恢复 Zeus' : 'Recovering Zeus',
-      report ? (zh ? '正在上报已保存的现场，最多等待 15 秒。' : 'Sending the saved evidence. This takes at most 15 seconds.') : zh ? '故障现场已保留在本机，正在重新启动。' : 'Evidence remains on this device. Restarting now.',
-    );
-    /** 主包与全部附件均确认接收后才能在重启前显示“已上报”。 */
-    let reported = false;
-    if (!report && saved && reproduction) await deadline(prepareFaultSubmission(saved.reportId, directory, reproduction), 2_000).catch(() => log('复现文字未能另存，原始故障现场仍保留；继续用户请求的重启。'));
-    if (report) {
-      upload = new AbortController();
-      try {
-        await deadline(uploadSavedFaultReport(saved!.reportId, directory, 15_000, upload.signal, reproduction), 15_000);
-        reported = true;
-      } catch {
-        upload.abort();
-        void writePrivateJson(join(directory, `${saved!.reportId}.pending.json`), { reportId: saved!.reportId, attemptedAt: new Date().toISOString() }).catch(() => undefined);
-        log('上报未完整确认，已保留本机报告与附件，继续用户请求的重启。');
-      }
-    }
-    if (report)
-      show(
-        'fault-reporting',
-        zh ? '正在重新启动 Zeus' : 'Restarting Zeus',
-        reported
-          ? zh
-            ? '故障报告及现场附件已完整接收。'
-            : 'The report and all evidence attachments were received.'
-          : zh
-            ? '现场已保存在本机，上报尚未完整确认。重启后可以补报。'
-            : 'Evidence remains on this device. Reporting was not fully confirmed. It can be retried after restarting.',
-      );
+    show('fault-restarting', zh ? '正在重新启动 Zeus' : 'Restarting Zeus', zh ? '故障现场已保留在本机，正在重新启动。' : 'Evidence remains on this device. Restarting now.');
+    if (saved && reproduction) await deadline(prepareFaultSubmission(saved.reportId, directory, reproduction), 2_000).catch(() => log('复现文字未能另存，原始故障现场仍保留；继续用户请求的重启。'));
     if (cleanExit) return;
     try {
       await restart();
@@ -521,30 +488,34 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       'fault-saved',
       zh ? 'Zeus 故障现场已保存' : 'Zeus evidence was saved',
       zh
-        ? '上报包含诊断与进程转储，可能含业务数据，仅提交到私有诊断存储。重启会中断当前工作，未保存的内容可能丢失。'
-        : 'Reporting sends diagnostics and process dumps, which may contain business data, to private diagnostic storage. Restarting interrupts work and may lose unsaved changes.',
+        ? '上报包含诊断与进程转储，可能含业务数据，仅提交到私有诊断存储。单独选择重启会中断当前工作，未保存的内容可能丢失。'
+        : 'Reporting sends diagnostics and process dumps, which may contain business data, to private diagnostic storage. Choosing Restart separately interrupts work and may lose unsaved changes.',
     );
   }
 
-  /** 重启后的待补报入口明确区分“已保存”和“已完整接收”。 */
+  /** 上传失败或旧报告待补报时，明确区分本机保存与完整接收。 */
   function showPending(): void {
     const zh = pulse.language !== 'en-US';
     show(
       'fault-pending',
-      zh ? '上次故障报告尚未完整上报' : 'The previous report is not fully submitted',
+      zh ? '故障报告尚未完整上报' : 'The fault report is not fully submitted',
       zh ? '现场已保存在本机。补报将诊断与进程转储提交到私有存储，可能包含业务数据。' : 'Evidence remains on this device. Sending it uploads diagnostics and process dumps to private storage and may include business data.',
     );
   }
 
-  /** 原报告和附件都确认接收后才显示成功；补报不会重新采集或重启。 */
-  async function reportPrevious(): Promise<void> {
-    if (cleanExit || !saved || recovering || reportingOnly) return;
+  /** 首次上报与补报共用上传流程，成功、失败和取消都不触发重启。 */
+  async function reportFault(supplement?: unknown): Promise<void> {
+    if (cleanExit || !saved || recovering || reporting) return;
+    if (!reproductionLocked) {
+      reproduction = redactFaultReportText(supplement, 4000);
+      reproductionLocked = true;
+    }
     const reportId = saved.reportId;
     const cancellation = new AbortController();
     upload = cancellation;
-    reportingOnly = true;
+    reporting = true;
     const zh = pulse.language !== 'en-US';
-    show('fault-uploading', zh ? '正在补报故障' : 'Sending the previous report', zh ? '最多等待 15 秒。关闭窗口会取消本次上传，本机现场仍保留。' : 'This takes at most 15 seconds. Closing cancels this upload and keeps the local evidence.');
+    show('fault-uploading', zh ? '正在上报故障' : 'Sending the fault report', zh ? '最多等待 15 秒。关闭窗口会取消本次上传，本机现场仍保留。' : 'This takes at most 15 seconds. Closing cancels this upload and keeps the local evidence.');
     try {
       await deadline(uploadSavedFaultReport(reportId, directory, 15_000, cancellation.signal, reproduction), 15_000);
       if (!dismissed && !cancellation.signal.aborted && saved?.reportId === reportId)
@@ -552,9 +523,10 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     } catch {
       const cancelled = cancellation.signal.aborted;
       cancellation.abort();
-      if (!cancelled && !dismissed && saved?.reportId === reportId) showPending();
+      void writePrivateJson(join(directory, `${reportId}.pending.json`), { reportId, attemptedAt: new Date().toISOString() }).catch(() => log('待补报标记无法保存，本机故障报告仍保留。'));
+      if (!recovering && !cancelled && !dismissed && saved?.reportId === reportId) showPending();
     } finally {
-      reportingOnly = false;
+      reporting = false;
     }
   }
 
@@ -576,7 +548,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       saved = undefined;
       reproduction = '';
       reproductionLocked = false;
-      if (reportingOnly) {
+      if (reporting) {
         dismissed = true;
         upload?.abort();
       }
@@ -631,7 +603,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       show(
         'fault-capturing',
         zh ? '正在保存 Zeus 故障现场' : 'Saving Zeus evidence',
-        zh ? '正在限时采集进程状态与线程栈，完成后可以上报并重启。' : 'Collecting process state and thread stacks with a time limit. Report and restart will be available when saving finishes.',
+        zh ? '正在限时采集进程状态与线程栈，完成后可以上报故障。' : 'Collecting process state and thread stacks with a time limit. Fault reporting will be available when saving finishes.',
       );
       await deadline(
         writePrivateJson(activePath, {

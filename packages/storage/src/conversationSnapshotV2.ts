@@ -64,7 +64,8 @@ export const conversationSnapshotV2Limits = {
 
 type ConversationContentKind = 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
 type ConversationPageKind = ConversationSnapshotV2PageKind;
-type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+/** 历史分页保留规则更新的独立过程身份。 */
+type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'context_update' | 'waiting' | 'warning';
 
 /** 目录查询直接携带持久位置，避免逐条回查相同的来源别名和显示条目。 */
 interface ConversationNavigationPlacementRow {
@@ -351,6 +352,8 @@ export interface ConversationSnapshotV2TurnSummary {
 }
 
 export interface ConversationSnapshotV2ActiveItem {
+  /** 长规则更新与历史过程共用完整正文句柄。 */
+  instructionDetail?: BoundedContentProjection;
   /** 已完成长命令复用过程的有界身份与不可变全文入口。 */
   commandDetail?: {
     /** 命令和目录不依赖截断的活动载荷。 */
@@ -2196,39 +2199,53 @@ export class ConversationSnapshotV2Repository {
       [previewCharacterLimit, previewCharacterLimit, conversationId, turnId, activeTurnItemLimit],
     );
     const selected = rows.reverse();
-    /** 只补本次首屏选中的长命令，避免为展开入口读取整轮历史。 */
-    const commandSourceIds = selected
-      .filter((row) => row.item_type === 'commandExecution' && row.status !== 'in_progress' && (row.payload_bytes > Buffer.byteLength(row.payload_preview) || row.projection_truncated === 1))
+    /** 只补首屏选中的长命令和规则更新，全文仍按需读取。 */
+    const processSourceIds = selected
+      .filter(
+        (row) =>
+          (row.item_type === 'commandExecution' || row.item_type === 'contextUpdate') &&
+          row.status !== 'in_progress' &&
+          (row.text_bytes > Buffer.byteLength(row.text_preview) || row.payload_bytes > Buffer.byteLength(row.payload_preview) || row.projection_truncated === 1),
+      )
       .map((row) => `codex:item:${row.native_item_id ?? row.provider_item_id}`);
-    /** 同一条命令在活动首屏和历史回看中使用相同的详情句柄。 */
-    const commandDetails = new Map<string, NonNullable<ConversationSnapshotV2ActiveItem['commandDetail']>>();
-    if (commandSourceIds.length > 0) {
+    /** 规则与命令在活动首屏和历史回看中使用相同的详情句柄。 */
+    const processDetails = new Map<string, { presentation: Record<string, unknown> | null; content: BoundedContentProjection }>();
+    if (processSourceIds.length > 0) {
       /** SQL 只返回有界身份、预览和大小，完整输出仍留在数据库中。 */
-      const commands = this.db.select<{ source_event_id: string; process_sequence: number; status: string; completed_at: string | null; detail_preview: string; detail_bytes: number; detail_characters: number; presentation_json: string }>(
+      const processes = this.db.select<{
+        source_event_id: string;
+        process_sequence: number;
+        status: string;
+        completed_at: string | null;
+        detail_preview: string;
+        detail_bytes: number;
+        detail_characters: number;
+        presentation_json: string | null;
+      }>(
         `SELECT source_event_id, process_sequence, status, completed_at,
                 substr(detail_json, 1, ?) AS detail_preview,
                 length(CAST(detail_json AS BLOB)) AS detail_bytes, length(detail_json) AS detail_characters,
-                json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', 'commandExecution',
-                  'payload', json_object(${commandIdentityPresentationSql})) AS presentation_json
+                CASE WHEN kind = 'command' THEN json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', 'commandExecution',
+                  'payload', json_object(${commandIdentityPresentationSql})) ELSE NULL END AS presentation_json
            FROM conversation_process_items
-          WHERE conversation_id = ? AND turn_id = ? AND kind = 'command' AND status <> 'in_progress'
-            AND source_event_id IN (${commandSourceIds.map(() => '?').join(', ')})`,
-        [previewCharacterLimit, conversationId, turnId, ...commandSourceIds],
+          WHERE conversation_id = ? AND turn_id = ? AND kind IN ('command', 'context_update') AND status <> 'in_progress'
+            AND source_event_id IN (${processSourceIds.map(() => '?').join(', ')})`,
+        [previewCharacterLimit, conversationId, turnId, ...processSourceIds],
       );
-      for (const command of commands) {
-        commandDetails.set(command.source_event_id, {
-          presentation: parseJsonRecordOrNull(redactSensitivePreview(command.presentation_json).text),
+      for (const process of processes) {
+        processDetails.set(process.source_event_id, {
+          presentation: process.presentation_json ? parseJsonRecordOrNull(redactSensitivePreview(process.presentation_json).text) : null,
           content: boundedProjection(
-            command.detail_preview,
-            command.detail_bytes,
+            process.detail_preview,
+            process.detail_bytes,
             this.contentHandle({
               kind: 'process_detail',
               conversationId,
-              identity: String(command.process_sequence),
+              identity: String(process.process_sequence),
               turnId,
-              revision: `${command.status}:${command.completed_at ?? ''}`,
-              totalCharacters: command.detail_characters,
-              totalBytes: command.detail_bytes,
+              revision: `${process.status}:${process.completed_at ?? ''}`,
+              totalCharacters: process.detail_characters,
+              totalBytes: process.detail_bytes,
             }),
             false,
           ),
@@ -2242,7 +2259,11 @@ export class ConversationSnapshotV2Repository {
         turnId,
         providerItemId: row.provider_item_id,
         itemType: row.item_type,
-        ...(commandDetails.has(`codex:item:${row.native_item_id ?? row.provider_item_id}`) ? { commandDetail: commandDetails.get(`codex:item:${row.native_item_id ?? row.provider_item_id}`) } : {}),
+        ...(row.item_type === 'contextUpdate'
+          ? { instructionDetail: processDetails.get(`codex:item:${row.native_item_id ?? row.provider_item_id}`)?.content }
+          : processDetails.has(`codex:item:${row.native_item_id ?? row.provider_item_id}`)
+            ? { commandDetail: processDetails.get(`codex:item:${row.native_item_id ?? row.provider_item_id}`) }
+            : {}),
         ...(row.message_created_at ? { messageCreatedAt: row.message_created_at } : {}),
         status: row.status,
         phase: row.phase,
@@ -3157,7 +3178,7 @@ function requiredIdentity(value: string, name: string): string {
 }
 
 function processKind(value: string): ConversationProcessKind {
-  if (['reasoning', 'tool', 'command', 'retry', 'context_compaction', 'waiting', 'warning'].includes(value)) return value as ConversationProcessKind;
+  if (['reasoning', 'tool', 'command', 'retry', 'context_compaction', 'context_update', 'waiting', 'warning'].includes(value)) return value as ConversationProcessKind;
   throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', '过程类型无效。', 400);
 }
 

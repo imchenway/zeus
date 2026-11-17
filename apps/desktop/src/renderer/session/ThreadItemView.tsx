@@ -546,7 +546,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       : (providerRoleLabel(props.item, role, props.assistantLabel) ?? roleLabel(role, labels));
   const command = normalizeType(props.item.type) === 'commandexecution' || normalizeType(props.item.type) === 'command';
   const mcpApp = normalizeType(props.item.type) === 'pluginmcpapp';
-  const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
+  /** 规则正文复用阶段正文样式，读屏名称保留其输入来源。 */
+  const accessibleLabel = command
+    ? props.language === 'zh-CN'
+      ? '命令执行'
+      : 'Command execution'
+    : normalizeType(props.item.type) === 'contextupdate'
+      ? props.language === 'zh-CN'
+        ? 'AGENTS.md 规则更新'
+        : 'AGENTS.md instruction update'
+      : label;
   const showVisibleRoleLabel = Boolean(subagentInput || expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
   const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.waitingInQueue) : null;
@@ -948,7 +957,7 @@ export function itemRole(item: NativeSessionItemBuffer): ThreadItemRole {
   }
   if (type === 'usermessage' || type === 'user') return 'user';
   if (type === 'agentmessage' || type === 'assistantmessage' || type === 'assistant' || type === 'message') return 'assistant';
-  if (type === 'reasoning' || type === 'plan' || type === 'commentary' || type === 'analysis') return 'commentary';
+  if (type === 'reasoning' || type === 'plan' || type === 'commentary' || type === 'analysis' || type === 'contextupdate') return 'commentary';
   if (type === 'filechange' || type === 'file') return 'file';
   if (type === 'imagegeneration') return item.status === 'failed' ? 'error' : 'image';
   if (['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'providerevent', 'hookprompt', 'sleep', 'enteredreviewmode', 'exitedreviewmode'].includes(type)) return 'tool';

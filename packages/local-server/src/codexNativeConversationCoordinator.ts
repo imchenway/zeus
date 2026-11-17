@@ -3039,7 +3039,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     });
   }
 
-  const { reconcilePersistedTerminalTurnSubmissions, reconcileProviderTurnsSinceCheckpoint, projectedProviderThreadSnapshot, reconcileConversationSnapshot } = createCodexProviderHistoryProjection({
+  const { reconcilePersistedTerminalTurnSubmissions, reconcileProviderTurnsSinceCheckpoint, reconcileRolloutInstructions, projectedProviderThreadSnapshot, reconcileConversationSnapshot } = createCodexProviderHistoryProjection({
     failedTurnResults,
     hasExactProviderUserMessage,
     isSteeringSubmission,
@@ -3261,6 +3261,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       return;
     }
     await remoteControlConversationSync.synchronizeOpenConversation(input);
+    /** 即使轮次水位未变，规则上下文仍可能在当前轮次追加。 */
+    const conversation = options.conversations.getById(input.conversationId);
+    if (conversation?.providerThreadId) await providerEvents.enqueueBarrier(() => reconcileRolloutInstructions(conversation));
   }
 
   async function synchronizeConversations(input: { conversationIds: readonly string[] }): Promise<void> {
@@ -3413,6 +3416,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       const status = isRecord(eventParams.status) ? eventParams.status : {};
       const activeFlags = Array.isArray(status.activeFlags) ? status.activeFlags.filter((flag): flag is string => typeof flag === 'string') : [];
       interactionRecovery.scheduleProviderThreadStatusReconciliation(eventThreadId, event.generationId, status.type === 'active' && activeFlags.includes('waitingOnUserInput'));
+    }
+    if (eventThreadId && ['turn/started', 'turn/completed', 'item/started', 'item/completed', 'thread/status/changed'].includes(event.method)) {
+      /** 只在语义边界补读完整规则记录，不把每片文字增量变成磁盘扫描。 */
+      const conversation = options.conversations.getByProviderThreadId(eventThreadId);
+      if (conversation) await reconcileRolloutInstructions(conversation);
     }
   }
 
