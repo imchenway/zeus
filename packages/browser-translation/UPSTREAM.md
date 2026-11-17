@@ -24,6 +24,7 @@ directly. There is no second Zeus page-recognition engine or fallback scanner.
   onLayout, onError and onRetry ports. Extension networking, storage, messaging,
   remote rules, dictionaries, arbitrary JS hooks and main-world script injection
   are not exposed. The public Zeus API exposes only bilingual HTML and stop.
+- The existing in-page retry control has an accessible translation-failure label.
 - Plain-text mode sends actual text instead of HTML entities and KISS markup
   placeholders. Returned text is escaped before the retained DOMPurify path.
   Original links and formatting remain; translation text has no copied inline
@@ -39,6 +40,8 @@ directly. There is no second Zeus page-recognition engine or fallback scanner.
 - config/app.js uses the pinned component identity; config/setting.js has no
   remote rule subscriptions. config/index.js excludes the extension settings
   dictionaries. messages.js supplies the few page-runtime UI strings.
+- config/api.js omits the unused upstream Google API key. Translation requests
+  use the Zeus host ports instead of the upstream provider credentials.
 - libs/style.js uses Emotion's create-instance entry lazily. Electron runs preload
   before document.head exists; eager upstream keyframes would insert into a null
   container before the IPC listener is registered. Styles now initialize when
