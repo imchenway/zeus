@@ -1891,7 +1891,6 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   const pluginReferences = currentSkills.pluginSkills.map((skill) => ({ kind: 'skill' as const, id: skill.id }));
   options.runs.update(run.id, { skillSnapshot: skillReferencesFromPreview([...currentSkills.nativeSkills, ...currentSkills.pluginSkills]) });
   const authority = run.authoritySnapshot;
-  const writeEnabled = authority.permissionMode !== 'read-only';
   let workspace = run.workspaceSnapshot;
   if (!workspace) {
     const legacyCapabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
@@ -1899,12 +1898,6 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     workspace = resolveTaskWorkWorkspaceSnapshot({ mode: 'create' }, legacyCapabilities, blockers);
     if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
     options.runs.update(run.id, { workspaceSnapshot: workspace });
-  }
-  if (workspace.mode === 'direct' && writeEnabled) {
-    const capabilities = await options.conversationCapabilities.readTaskPush(project.id, task.id);
-    if (isRecord(capabilities.directWorkspace) && typeof capabilities.directWorkspace.activeWritableConversationCount === 'number' && capabilities.directWorkspace.activeWritableConversationCount > 0) {
-      throw new TaskWorkStoreError('ZEUS_TASK_WORK_DIRECT_WORKSPACE_BUSY', '项目目录已有可写会话，新运行不会隐式共享写入现场。');
-    }
   }
   const supplementalInfo = await buildAgentSupplementalInfo(options, run, [...currentSkills.nativeSkills, ...currentSkills.pluginSkills]);
   const supplementalAttachments = Array.isArray(run.entrypointSnapshot.supplementalAttachments) ? run.entrypointSnapshot.supplementalAttachments : [];
@@ -1958,7 +1951,13 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
           tags: [...run.contextManifest.task.tags],
         }
       : currentTask;
-  const accepted = await options.executeTaskConversationIdempotent(project, executionTask, body, `task-work-run:${run.id}`);
+  /** 已接纳的运行先重放原回执，目录占用仅在接纳新会话时检查。 */
+  const accepted = await options.executeTaskConversationIdempotent(project, executionTask, body, `task-work-run:${run.id}`).catch((error: unknown) => {
+    if (isRecord(error) && error.code === 'ZEUS_DIRECT_WORKSPACE_CONCURRENCY_CONFIRMATION_REQUIRED') {
+      throw new TaskWorkStoreError('ZEUS_TASK_WORK_DIRECT_WORKSPACE_BUSY', '项目目录已有可写会话，新运行不会隐式共享写入现场。');
+    }
+    throw error;
+  });
   const response = isRecord(accepted.body) ? accepted.body : {};
   const projection = isRecord(response.conversation) ? response.conversation : {};
   /** 耐久 submission 身份供数字团队绑定准确轮次，普通工作仍可忽略。 */
@@ -2522,14 +2521,17 @@ async function stopWorkItemRuntime(options: TaskWorkManagementOptions, item: Tas
 
 /** 暂停自主目标并请求准确会话轮次或命令停止，只有确认终态才返回。 */
 async function interruptWorkItemRuntime(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, operationIdentity: string): Promise<void> {
+  /** 只有仍需外部停止的运行可以暂停目标，已提交成果的会话可以承载新目标。 */
+  const stoppableStatuses = ['dispatching', 'active', 'waiting_input'];
   let run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
-  if (run && !(await pauseTaskWorkGoal(options, run, `goal-stop:${run.id}`))) throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', '自主目标暂停尚未确认，请在原会话核对目标状态。');
+  if (!run || !stoppableStatuses.includes(run.status)) return;
+  if (!(await pauseTaskWorkGoal(options, run, `goal-stop:${run.id}`))) throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', '自主目标暂停尚未确认，请在原会话核对目标状态。');
   /** 暂停目标需要等待外部响应；继续停止前重新核对原运行并读取其最新状态。 */
   const current = options.items.getById(item.id);
   assertWorkItemCancellationSnapshot(options, item, current?.revision ?? item.revision);
   run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
   if (run?.status === 'outcome_unknown') throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', '此工作仍有未知外部结果，请先核对原会话的实际状态。');
-  if (!run || !['dispatching', 'active', 'waiting_input'].includes(run.status)) return;
+  if (!run || !stoppableStatuses.includes(run.status)) return;
   if (run.entrypointKind === 'agent') {
     if (!run.conversationId) {
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN', 'Agent 尚无可核对的耐久会话身份；结果确认前不能记为取消完成。');
