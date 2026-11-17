@@ -2,7 +2,7 @@ import AppKit
 import CoreServices
 import Foundation
 
-private final class UpdateProgressPanelController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+private final class UpdateProgressPanelController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDelegate {
     private let panel: NSPanel
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
@@ -15,6 +15,12 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     private let detailsActionRow = NSStackView()
     private let technicalDetailsView = NSTextView()
     private let technicalDetailsScrollView = NSScrollView()
+    /** 复现步骤由用户主动填写，默认空白，不读取故障界面的输入内容。 */
+    private let reproductionLabel = NSTextField(labelWithString: "")
+    /** 可选文本材料保持在独立窗口中，故障 Renderer 不参与编辑。 */
+    private let reproductionField = NSTextView()
+    /** 多行输入由原生文本视图处理回车，不触发窗口的默认重启按钮。 */
+    private let reproductionScrollView = NSScrollView()
     private let secondaryButton = NSButton(title: "", target: nil, action: nil)
     private let primaryButton = NSButton(title: "", target: nil, action: nil)
     private let buttonRow = NSStackView()
@@ -43,7 +49,7 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         }
         guard let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue == requested }),
               requested != String(CGMainDisplayID()) else {
-            FileHandle.standardError.write(Data("测试更新窗口无法定位指定的非主显示器。\n".utf8))
+            FileHandle.standardError.write(Data("测试原生窗口无法定位指定的非主显示器。\n".utf8))
             exit(1)
         }
         return NSRect(x: screen.visibleFrame.midX - 240, y: screen.visibleFrame.midY - 88, width: 480, height: 176)
@@ -166,7 +172,27 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         buttonRow.alignment = .centerY
         buttonRow.spacing = 8
 
-        contentStack.setViews([titleLabel, detailLabel, progressRow, progressIndicator, detailsActionRow, technicalDetailsScrollView, buttonRow], in: .leading)
+        reproductionLabel.font = NSFont.systemFont(ofSize: 12)
+        reproductionField.isEditable = true
+        reproductionField.isSelectable = true
+        reproductionField.font = NSFont.systemFont(ofSize: 13)
+        reproductionField.isRichText = false
+        reproductionField.isAutomaticQuoteSubstitutionEnabled = false
+        reproductionField.isAutomaticDashSubstitutionEnabled = false
+        reproductionField.isAutomaticTextReplacementEnabled = false
+        reproductionField.isHorizontallyResizable = false
+        reproductionField.isVerticallyResizable = true
+        reproductionField.autoresizingMask = [.width]
+        reproductionField.textContainer?.widthTracksTextView = true
+        reproductionField.textContainerInset = NSSize(width: 7, height: 6)
+        reproductionField.delegate = self
+        reproductionLabel.maximumNumberOfLines = 2
+        reproductionScrollView.documentView = reproductionField
+        reproductionScrollView.borderType = .lineBorder
+        reproductionScrollView.hasVerticalScroller = true
+        reproductionLabel.isHidden = true
+        reproductionScrollView.isHidden = true
+        contentStack.setViews([titleLabel, detailLabel, progressRow, progressIndicator, detailsActionRow, technicalDetailsScrollView, reproductionLabel, reproductionScrollView, buttonRow], in: .leading)
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 11
@@ -189,6 +215,9 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
             detailsActionRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             technicalDetailsScrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             technicalDetailsScrollView.heightAnchor.constraint(equalToConstant: 112),
+            reproductionLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            reproductionScrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            reproductionScrollView.heightAnchor.constraint(equalToConstant: 64),
             buttonRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             secondaryButton.heightAnchor.constraint(equalToConstant: 30),
             secondaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 76),
@@ -254,6 +283,15 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     private func applyState(_ command: [String: Any]) {
         let state = command["state"] as? String ?? "checking"
         currentState = state
+        let editable = command["reproductionEnabled"] as? Bool == true
+        let reproduction = command["reproduction"] as? String ?? ""
+        let showReproduction = (state == "fault-saved" || state == "fault-pending") && (editable || !reproduction.isEmpty)
+        reproductionLabel.stringValue = language == "en-US" ? "Reproduction steps or minimal example (optional, up to 4000 characters)" : "复现步骤或最小示例（可选，最多4000字符）"
+        reproductionField.setAccessibilityLabel(reproductionLabel.stringValue)
+        reproductionField.string = reproduction
+        reproductionField.isEditable = editable
+        reproductionLabel.isHidden = !showReproduction
+        reproductionScrollView.isHidden = !showReproduction
         titleLabel.stringValue = command["title"] as? String ?? localized("softwareUpdate")
         detailLabel.stringValue = command["detail"] as? String ?? ""
         progressCaptionLabel.stringValue = command["progressCaption"] as? String ?? ""
@@ -270,6 +308,30 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         }
 
         switch state {
+        case "fault-pending":
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: localized("close"), primary: localized("faultReport"))
+        case "fault-uploading":
+            progressRow.isHidden = false
+            progressIndicator.isHidden = false
+            setButtons(secondary: localized("close"), primary: nil)
+        case "fault-reported":
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: nil, primary: localized("close"))
+        case "fault-saved":
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: localized("faultRestart"), primary: localized("faultReportRestart"))
+        case "fault-capture-failed":
+            progressRow.isHidden = true
+            progressIndicator.isHidden = true
+            setButtons(secondary: localized("faultRestart"), primary: localized("faultRetryCapture"))
+        case "fault-reporting":
+            progressRow.isHidden = false
+            progressIndicator.isHidden = false
+            setButtons(secondary: localized("faultRestart"), primary: nil)
         case "manual":
             progressRow.isHidden = true
             progressIndicator.isHidden = true
@@ -339,11 +401,23 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         secondaryButton.isEnabled = true
         secondaryButton.title = secondary ?? ""
         primaryButton.isHidden = primary == nil
+        primaryButton.isEnabled = true
         primaryButton.title = primary ?? ""
         buttonRow.isHidden = secondary == nil && primary == nil
     }
 
     @objc private func secondaryAction() {
+        // 补报上次现场不再重启已经恢复的主程序。
+        if currentState == "fault-pending" || currentState == "fault-uploading" {
+            panel.orderOut(nil)
+            emit(action: "closed")
+            return
+        }
+        // 故障恢复的立即重启不依赖故障主进程或网络上传完成。
+        if currentState.hasPrefix("fault-") {
+            emit(action: "fault_restart")
+            return
+        }
         if currentState == "downloading" {
             secondaryButton.isEnabled = false
             emit(action: "reconnect")
@@ -358,6 +432,17 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     }
 
     @objc private func primaryAction() {
+        if currentState == "fault-pending" {
+            primaryButton.isEnabled = false
+            emit(action: "fault_report")
+            return
+        }
+        // 固定状态决定恢复动作，不依赖翻译后的按钮文字识别授权。
+        if currentState == "fault-saved" || currentState == "fault-capture-failed" {
+            primaryButton.isEnabled = false
+            emit(action: currentState == "fault-saved" ? "fault_report_restart" : "fault_retry_capture")
+            return
+        }
         switch primaryButton.title {
         case localized("check"):
             emit(action: "check")
@@ -432,6 +517,10 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         let english = language == "en-US"
         switch key {
         case "softwareUpdate": return english ? "Software Update" : "软件更新"
+        case "faultRestart": return english ? "Restart Now" : "仅重启"
+        case "faultReportRestart": return english ? "Report and Restart" : "上报故障并重启"
+        case "faultRetryCapture": return english ? "Retry Capture" : "重试保存现场"
+        case "faultReport": return english ? "Send Report" : "补报故障"
         case "later": return english ? "Later" : "稍后"
         case "check": return english ? "Check for Updates" : "重新检查更新"
         case "downloadPage": return english ? "Download New Version" : "下载新版"
@@ -452,10 +541,24 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     }
 
     private func emit(action: String) {
-        guard let data = try? JSONSerialization.data(withJSONObject: ["action": action]),
+        var payload = ["action": action]
+        if action == "fault_report_restart" || action == "fault_report" || action == "fault_restart" {
+            payload["reproduction"] = reproductionField.string
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let line = String(data: data, encoding: .utf8)
         else { return }
         FileHandle.standardOutput.write(Data("\(line)\n".utf8))
+    }
+
+    /** 输入时执行与 Windows 文本框相同的 UTF-16 长度上限，不截断正在组合的中文。 */
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === reproductionField, !reproductionField.hasMarkedText() else { return }
+        let text = reproductionField.string as NSString
+        if text.length > 4000 {
+            reproductionField.string = text.substring(to: 4000)
+            reproductionField.setSelectedRange(NSRange(location: (reproductionField.string as NSString).length, length: 0))
+        }
     }
 
     private func waitForExitAndRelaunch(pid: Int32, appPath: String, bundleId: String, version: String) {

@@ -7,6 +7,7 @@ import { mkdir, open, readFile, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { generateReleaseManifest } from './generate-release-manifest.mjs';
 import { assertPackagedPreloadEntrypoint, assertPackagedRendererEntrypoint } from './verify-packaged-app-health.mjs';
+import { archivePackageSymbols } from './archive-package-symbols.mjs';
 
 /** 所有路径固定到当前工作树，不依赖调用终端的目录。 */
 const root = resolve(import.meta.dirname, '..');
@@ -75,6 +76,9 @@ await run(
   { ZEUS_VERIFY_INSTALLER: join(output, installerName), ZEUS_VERIFY_APP: unpacked },
 );
 await generateReleaseManifest({ version: manifest.version, platform: 'win32', distDir: output, outputPath: join(output, `zeus-release-manifest-win32-${arch}.json`), signed: requireSignature });
+/** 在最终安装器签名和校验完成后保存对应定位文件。 */
+const symbols = await archivePackageSymbols({ asarPath, outputRoot: output, platform: 'win32', arch, variant: 'release', installerPaths: [join(output, installerName)] });
+console.log(`Zeus 定位文件已归档：${symbols}`);
 console.log(`Windows Zeus ${requireSignature ? '已签名' : '未签名'}正式安装包已生成：${join(output, installerName)}`);
 
 /** 构建命令直接传参，输出由调用方保存到构建日志。 */

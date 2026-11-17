@@ -22,7 +22,7 @@ import {
   type ZentaoInstanceRecord,
   zentaoSecretAccount,
 } from '@zeus/shared';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -43,6 +43,7 @@ import { ensureWindowsCodexRemoteControl } from './codexRemoteControlBootstrap.j
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
 import { exportFaultReport, submitFaultReport } from './faultReporting.js';
+import { startFaultMonitor } from './faultMonitor.js';
 import { chooseProjectDirectory } from './projectDirectoryPicker.js';
 import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
 import { openSourceLocation, type SourceLocation } from './sourceOpen.js';
@@ -130,6 +131,8 @@ delete process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH;
 delete process.env.ZEUS_COMPUTER_TARGET_DISPLAY_ID;
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
+/** 独立故障监控不依赖任何业务窗口的 Renderer。 */
+let desktopFaultMonitor: ReturnType<typeof startFaultMonitor> | undefined;
 let tray: Tray | undefined;
 let menuBarUsageWindow: BrowserWindow | undefined;
 let menuBarUsageWindowBlurTimer: ReturnType<typeof setTimeout> | undefined;
@@ -917,11 +920,17 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   window.webContents.once('preload-error', (_event, preloadPath, error) => {
     rendererBootstrapMonitor.fail(window, new Error(`Renderer preload failed (${preloadPath}): ${error.message}`));
   });
-  window.webContents.once('render-process-gone', (_event, details) => {
-    rendererBootstrapMonitor.fail(window, new Error(`Renderer process exited during bootstrap (${details.reason}, exit ${details.exitCode})`));
+  window.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit' || window.isDestroyed()) return;
+    const error = new Error(`Renderer process exited (${details.reason}, exit ${details.exitCode})`);
+    if (!rendererBootstrapMonitor.fail(window, error)) desktopFaultMonitor?.fault('renderer_crashed', window, error.message);
   });
   window.on('unresponsive', () => {
-    rendererBootstrapMonitor.fail(window, new Error('Renderer became unresponsive during bootstrap'));
+    desktopFaultMonitor?.responsive(window, false);
+  });
+  window.on('responsive', () => desktopFaultMonitor?.responsive(window, true));
+  window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) desktopFaultMonitor?.loading(window);
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) return;
@@ -1460,6 +1469,7 @@ function setupMenu(): void {
         openLogsDirectory: () => {
           void openLogsDirectoryFromMenu();
         },
+        reportFault: () => desktopFaultMonitor?.fault('manual_report', BrowserWindow.getFocusedWindow() ?? undefined),
         showMainWindow: () => {
           void requestMainWindow();
         },
@@ -2560,6 +2570,7 @@ function setupIpc(): void {
   ipcMain.on('zeus:renderer-bootstrap-ready', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || event.senderFrame !== event.sender.mainFrame) return;
+    desktopFaultMonitor?.ready(requestingWindow);
     // 失败后的迟到通知与重复通知均不能确认 Windows 升级成功。
     if (!rendererBootstrapMonitor.markReady(requestingWindow)) return;
     traceApplicationStartup('renderer_bootstrap_ready');
@@ -4167,6 +4178,76 @@ async function initializeApplication(): Promise<void> {
     installReadOnlyValidationIpcFence(ipcMain, readOnlyValidationDescriptor);
     traceApplicationStartup('read_only_validation_verified');
   }
+  if (!readOnlyValidationDescriptor && !desktopFaultMonitor) {
+    /** 崩溃转储先保存在同一数据根，只有用户选择上报才上传。 */
+    const layout = activeZeusDataLayout();
+    const crashDirectory = join(layout.localLogs, 'crashes');
+    await mkdir(crashDirectory, { recursive: true, mode: 0o700 });
+    await mkdir(join(layout.localLogs, 'fault-reports'), { recursive: true, mode: 0o700 });
+    app.setPath('crashDumps', crashDirectory);
+    const runId = randomUUID();
+    crashReporter.start({ uploadToServer: false, compress: true, extra: { zeusRunId: runId } });
+    process.report.directory = crashDirectory;
+    process.report.filename = `main-fatal-${process.pid}.json`;
+    process.report.excludeEnv = true;
+    process.report.reportOnFatalError = true;
+    /** 认证只经私有 IPC 送到本轮守护，不写入活动标记或报告。 */
+    const reports = () => ({
+      directory: join(layout.localLogs, 'fault-reports'),
+      hostLog: join(layout.executionHost, 'host.log'),
+      appVersion: app.getVersion(),
+      ...(app.isPackaged ? { archivePath: app.getAppPath() } : {}),
+      ...(localServerRuntime ? { core: localServerRuntime.config } : {}),
+    });
+    desktopFaultMonitor = startFaultMonitor({
+      runId,
+      mainPid: process.pid,
+      startedAt: new Date().toISOString(),
+      executable: process.execPath,
+      args: process.argv.slice(1),
+      dataRoot: layout.root,
+      helperPath: process.platform === 'win32' ? nativeDesktopHelperPath('zeus-windows-security.exe') : nativeUpdateProgressHelperPath(),
+      crashDirectory,
+      reports: reports(),
+      language: appShellSettings.appLanguage,
+      appearance: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+      windows: () => BrowserWindow.getAllWindows().filter(isTrustedZeusRendererWindow),
+      isReady: (window) => rendererBootstrapMonitor.isReady(window),
+      onUnavailable: () => {
+        void dialog
+          .showMessageBox({
+            type: 'warning',
+            title: nativeText('故障恢复监控不可用', 'Fault recovery monitoring is unavailable'),
+            message: nativeText(
+              'Zeus 无法启动独立故障监控。卡死或崩溃时可能无法自动保存现场，请重新启动应用。',
+              'Zeus could not start its independent fault monitor. Evidence may not be saved automatically if the app freezes or crashes. Restart the application.',
+            ),
+            buttons: [nativeText('关闭', 'Close')],
+            noLink: true,
+          })
+          .catch(() => undefined);
+      },
+      current: () => ({
+        reports: reports(),
+        language: appShellSettings.appLanguage,
+        appearance: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+        configuration: {
+          webviewDebugEnabled: appShellSettings.webviewDebugEnabled,
+          multiWindowEnabled: appShellSettings.multiWindowEnabled,
+          backgroundModeEnabled: appShellSettings.backgroundModeEnabled,
+          gpuCompositing: app.getGPUFeatureStatus().gpu_compositing ?? 'unknown',
+          ...(localServerRuntime ? { hostAppVersion: localServerRuntime.config.executionHostTransition.hostAppVersion, hostProtocolVersion: localServerRuntime.executionHost.protocolVersion } : {}),
+        },
+        ...(localServerRuntime?.executionHost.mode === 'detached' && localServerRuntime.executionHost.instanceId ? { core: { pid: localServerRuntime.executionHost.pid, instanceId: localServerRuntime.executionHost.instanceId } } : {}),
+      }),
+    });
+    ipcMain.on('zeus:renderer-health', (event, nonce: unknown) => desktopFaultMonitor?.heartbeat(event, nonce));
+    ipcMain.on('zeus:fault-context', (event, context: unknown) => desktopFaultMonitor?.context(event, context));
+    ipcMain.on('zeus:fault-breadcrumb', (event, entry: unknown) => desktopFaultMonitor?.breadcrumb(event, entry));
+    powerMonitor.on('resume', () => desktopFaultMonitor?.resume());
+    app.once('will-quit', () => desktopFaultMonitor?.close());
+    process.on('uncaughtExceptionMonitor', (error) => desktopFaultMonitor?.fault('main_exception', undefined, error.stack ?? error.message));
+  }
   registerFilePreview({
     commandLedger: activeMainCommandLedger,
     openSource: openFileSourceWorkspace,
@@ -4551,6 +4632,7 @@ function isConversationStoreMigrationError(error: unknown): boolean {
 
 function handleFatalStartupError(error: unknown): void {
   fatalStartup = true;
+  desktopFaultMonitor?.fault('startup_failed', mainWindow, error instanceof Error ? (error.stack ?? error.message) : String(error));
   traceApplicationStartup('initialization_failed', sanitizeRendererRuntimeLogDetail(error instanceof Error ? error.message : String(error)));
   // Renderer 已通过被拒绝的启动配置进入唯一“启动失败”页；Main 只记录日志，
   // 不再叠加原生错误弹窗或主动退出造成白屏。
@@ -4604,7 +4686,8 @@ const rendererBootstrapMonitor = createRendererBootstrapMonitor<BrowserWindow>({
   onFailure: (window, error) => {
     // 辅助窗口失败不能把整个应用标为启动失败。
     if (windows.has(window)) void startupCoordinator.fail(error);
-    void showRendererBootstrapFailure(window, error).catch((recoveryError: unknown) => console.error('Zeus 无法显示窗口加载错误。', recoveryError));
+    if (desktopFaultMonitor) desktopFaultMonitor.fault('startup_failed', window, error instanceof Error ? (error.stack ?? error.message) : String(error));
+    else void showRendererBootstrapFailure(window, error).catch((recoveryError: unknown) => console.error('Zeus 无法显示窗口加载错误。', recoveryError));
   },
 });
 
@@ -4808,6 +4891,7 @@ app.on(
     resolveQuitMode: resolveDesktopQuitMode,
     /** 在关闭 Core 前通知所有桌面窗口暂停重连。 */
     onQuitStateChanged: (quitting) => {
+      desktopFaultMonitor?.quitting(quitting);
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:quit-state-changed', quitting);
       }
@@ -4884,6 +4968,7 @@ app.on(
       if (readOnlyValidationDescriptor && cleanupErrors.length === 0) {
         await attemptCleanup('只读验收副本销毁助手', () => scheduleReadOnlyValidationCleanup(readOnlyValidationDescriptor!));
       }
+      if (cleanupErrors.length === 0) await attemptCleanup('独立故障监控', () => desktopFaultMonitor?.closeAndWait(), 30_000);
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },
     onCleanupError: async (error, quitMode): Promise<BeforeQuitCleanupFailureAction> => {
@@ -4911,6 +4996,7 @@ app.on(
         pendingUpgradeHandoff.resolve(true);
         pendingUpgradeHandoff = null;
       }
+      desktopFaultMonitor?.close();
       app.exit(code);
     },
   }),

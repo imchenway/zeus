@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
-import { appendFile, readFile, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -75,6 +75,15 @@ async function runExecutionHost(): Promise<void> {
   if (bootstrap.readOnlyValidation) await verifyReadOnlyValidationBeforeOwnedCoreLock(bootstrap.readOnlyValidation);
   // 只有 bootstrap 路径、descriptor 与全部 validationRoot 规范身份验证后，失败路径才允许写入该宿主目录。
   startupFailureLogDirectory = dataLayout.executionHost;
+  if (!bootstrap.readOnlyValidation) {
+    // Node 致命错误在退出前写入诊断；环境变量不进入原始报告。
+    const diagnosticDirectory = join(dataLayout.executionHost, 'fault-diagnostics');
+    await mkdir(diagnosticDirectory, { recursive: true, mode: 0o700 });
+    process.report.directory = diagnosticDirectory;
+    process.report.filename = `core-fatal-${process.pid}.json`;
+    process.report.excludeEnv = true;
+    process.report.reportOnFatalError = true;
+  }
   // 未捕获异常仍按 Node 默认行为退出；只保留代码位置，排除可能包含工具参数或凭据的错误正文。
   process.on('uncaughtExceptionMonitor', (error, origin) => {
     try {

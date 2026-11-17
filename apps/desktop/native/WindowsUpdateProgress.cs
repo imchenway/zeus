@@ -15,6 +15,10 @@ internal sealed class WindowsUpdateProgress : Form
     private readonly Label progressText = new() { AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight };
     private readonly ProgressBar progress = new() { Dock = DockStyle.Fill, Maximum = 1000, Height = 18 };
     private readonly TextBox technical = new() { ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Height = 120 };
+    // 用户主动补充复现步骤；故障界面中的草稿和正文不会自动填入此处。
+    private readonly Label reproductionLabel = new() { AutoSize = true, Dock = DockStyle.Fill, Visible = false };
+    // 文本材料有界，原始故障现场和重试身份保持不变。
+    private readonly TextBox reproduction = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Height = 72, MaxLength = 4000, Visible = false };
     private readonly Button primary = new() { AutoSize = true, MinimumSize = new Size(80, 32) };
     private readonly Button secondary = new() { AutoSize = true, MinimumSize = new Size(80, 32) };
     private readonly Button detailsToggle = new() { AutoSize = true, FlatStyle = FlatStyle.Flat };
@@ -88,6 +92,8 @@ internal sealed class WindowsUpdateProgress : Form
         layout.Controls.Add(progress);
         layout.Controls.Add(detailActions);
         layout.Controls.Add(technical);
+        layout.Controls.Add(reproductionLabel);
+        layout.Controls.Add(reproduction);
         layout.Controls.Add(actions);
         Controls.Add(layout);
         primary.Click += (_, _) => PerformAction(primaryAction);
@@ -176,6 +182,12 @@ internal sealed class WindowsUpdateProgress : Form
     private void ApplyState(JsonElement command)
     {
         currentState = GetText(command, "state");
+        bool editable = IsTrue(command, "reproductionEnabled");
+        reproduction.Text = GetText(command, "reproduction");
+        reproduction.ReadOnly = !editable;
+        reproductionLabel.Text = english ? "Reproduction steps or minimal example (optional, up to 4000 characters)" : "复现步骤或最小示例（可选，最多4000字符）";
+        reproduction.AccessibleName = reproductionLabel.Text;
+        reproduction.Visible = reproductionLabel.Visible = (currentState is "fault-saved" or "fault-pending") && (editable || reproduction.TextLength > 0);
         Text = english ? "Zeus Software Update" : "Zeus 软件更新";
         heading.Text = GetText(command, "title");
         detail.Text = GetText(command, "detail");
@@ -189,9 +201,15 @@ internal sealed class WindowsUpdateProgress : Form
             progress.Value = (int)(Math.Clamp(fraction, 0, 1) * progress.Maximum);
         }
         else progress.Style = ProgressBarStyle.Marquee;
-        progress.Visible = progressRow.Visible = currentState is "checking" or "updating" or "downloading" or "verifying" or "installing";
+        progress.Visible = progressRow.Visible = currentState is "checking" or "updating" or "downloading" or "verifying" or "installing" or "fault-reporting" or "fault-capturing" or "fault-uploading";
         (primaryAction, secondaryAction) = currentState switch
         {
+            "fault-pending" => ("fault_report", "close"),
+            "fault-uploading" => ("", "close"),
+            "fault-reported" => ("close", ""),
+            "fault-saved" => ("fault_report_restart", "fault_restart"),
+            "fault-capture-failed" => ("fault_retry_capture", "fault_restart"),
+            "fault-reporting" => ("", "fault_restart"),
             "available" => ("download", "later"),
             "manual" => ("open_download_page", "later"),
             "downloaded" => ("open_installer", "later"),
@@ -235,8 +253,8 @@ internal sealed class WindowsUpdateProgress : Form
         // 系统绘制按钮、进度条和标题栏，避免替换原生焦点与无障碍行为。
         Color background = SystemInformation.HighContrast ? SystemColors.Window : dark ? Color.FromArgb(36, 36, 36) : SystemColors.Window;
         Color foreground = SystemInformation.HighContrast ? SystemColors.WindowText : dark ? Color.WhiteSmoke : SystemColors.WindowText;
-        BackColor = layout.BackColor = technical.BackColor = background;
-        ForeColor = technical.ForeColor = foreground;
+        BackColor = layout.BackColor = technical.BackColor = reproduction.BackColor = background;
+        ForeColor = technical.ForeColor = reproduction.ForeColor = foreground;
         // 系统绘制按钮继续使用系统文字色，避免深色内容区继承白字导致浅色按钮不可读。
         primary.ForeColor = secondary.ForeColor = SystemColors.ControlText;
         detailsToggle.ForeColor = copyDetails.ForeColor = SystemColors.ControlText;
@@ -249,7 +267,7 @@ internal sealed class WindowsUpdateProgress : Form
         if (action.Length == 0) return;
         if (action is "later" or "close") Hide();
         else primary.Enabled = secondary.Enabled = false;
-        Emit(action);
+        Emit(action, action is "fault_report_restart" or "fault_report" or "fault_restart" ? reproduction.Text : null);
     }
 
     /// <summary>退出消息循环以释放安装目录文件；不会在此处执行应用重启。</summary>
@@ -263,6 +281,10 @@ internal sealed class WindowsUpdateProgress : Form
     /// <summary>动作名保持与 AppKit 辅助程序相同，按钮文字不参与业务分派。</summary>
     private string Localized(string action) => action switch
     {
+        "fault_report_restart" => english ? "Report and Restart" : "上报故障并重启",
+        "fault_report" => english ? "Send Report" : "补报故障",
+        "fault_restart" => english ? "Restart Now" : "仅重启",
+        "fault_retry_capture" => english ? "Retry Capture" : "重试保存现场",
         "download" => english ? "Download Update" : "下载更新",
         "check" => english ? "Check for Updates" : "重新检查更新",
         "open_download_page" => english ? "Download New Version" : "下载新版",
@@ -282,9 +304,9 @@ internal sealed class WindowsUpdateProgress : Form
     private static bool IsTrue(JsonElement command, string name) => command.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
 
     /// <summary>标准输出只包含逐行 JSON 动作，错误信息使用标准错误。</summary>
-    private static void Emit(string action)
+    private static void Emit(string action, string? reproduction = null)
     {
-        Console.WriteLine(JsonSerializer.Serialize(new { action }));
+        Console.WriteLine(JsonSerializer.Serialize(new { action, reproduction }));
         Console.Out.Flush();
     }
 }

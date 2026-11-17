@@ -378,7 +378,16 @@ function shouldRefreshLocalApiConnection(error: unknown): boolean {
 /** 回执期限覆盖响应头和正文；写入超时只报告结果未知，不撤销远端操作。 */
 async function runWithRequestTimeout<T>(init: RequestInit, path: string, traceId: string, operation: (timedInit: RequestInit) => Promise<T>, waitForLateReceipt = false): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
-  if (waitForLateReceipt && method !== 'GET' && method !== 'HEAD') return operation(init);
+  /** 故障轨迹从请求开始即保存，挂起的请求也能关联到最后一个操作。 */
+  const startedAt = performance.now();
+  /** 路由已移除查询和业务编号，轨迹不包含请求头或正文。 */
+  const details = { operation: `${method} ${apiRouteTemplate(path)}` };
+  if (typeof window !== 'undefined') window.zeus?.reportFaultBreadcrumb?.({ event: 'local_api.request_started', context: { traceId }, details });
+  /** 无论成功或中断都记录结束，不改变写操作结果未知和迟到回执语义。 */
+  const finished = (): void => {
+    if (typeof window !== 'undefined') window.zeus?.reportFaultBreadcrumb?.({ event: 'local_api.request_finished', context: { traceId }, details: { ...details, durationMs: performance.now() - startedAt } });
+  };
+  if (waitForLateReceipt && method !== 'GET' && method !== 'HEAD') return operation(init).finally(finished);
 
   /** 主动检测和禅道读取保留完整等待时间；任务推送入口优先快速恢复用户操作。 */
   const timeoutMs =
@@ -408,6 +417,7 @@ async function runWithRequestTimeout<T>(init: RequestInit, path: string, traceId
     if (timedOut) throw method === 'GET' || method === 'HEAD' ? new LocalApiReadTimeoutError(path, traceId) : new LocalApiWriteOutcomeUnknownError(error);
     throw error;
   } finally {
+    finished();
     globalThis.clearTimeout(timer);
     callerSignal?.removeEventListener('abort', forwardAbort);
   }

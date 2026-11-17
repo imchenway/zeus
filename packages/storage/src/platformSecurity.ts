@@ -179,8 +179,15 @@ export async function publishFile(source: string, target: string, options: { rep
     await link(source, target);
     await unlink(source);
   }
-  syncPosixDirectory(dirname(target));
-  if (dirname(source) !== dirname(target)) syncPosixDirectory(dirname(source));
+  // 目录刷新也异步等待，慢磁盘不能阻塞 Main 或故障监控的事件循环。
+  for (const directory of new Set([dirname(target), dirname(source)])) {
+    const handle = await open(directory, constants.O_RDONLY);
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
 }
 
 /** 同步调用方沿用相同的持久化发布语义。 */
