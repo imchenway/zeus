@@ -44,10 +44,7 @@ async function requestFreeTranslation(url: URL, signal: AbortSignal, label: stri
       const retryAfter = response.headers.get('retry-after')?.trim() ?? '';
       /** 供应商期限采用 Unix 毫秒，与共享队列的时钟口径一致。 */
       const retryAt = /^\d+$/u.test(retryAfter) ? Date.now() + Number(retryAfter) * 1000 : Date.parse(retryAfter);
-      throw new BrowserFreeTranslationError(
-        `${label}请求过于频繁，请稍后重试或在翻译服务菜单中切换服务。`,
-        Math.max(Date.now() + googleRequestIntervalMs, Number.isFinite(retryAt) ? retryAt : Date.now() + rateLimitCooldownMs),
-      );
+      throw new BrowserFreeTranslationError(`${label}请求过于频繁，请稍后重试或在翻译服务菜单中切换服务。`, Math.max(Date.now() + googleRequestIntervalMs, Number.isFinite(retryAt) ? retryAt : Date.now() + rateLimitCooldownMs));
     }
     throw new BrowserFreeTranslationError(`${label}暂不可用（HTTP ${response.status}），请重试或切换翻译服务。`);
   }

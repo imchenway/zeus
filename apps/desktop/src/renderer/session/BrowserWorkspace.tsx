@@ -291,13 +291,15 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         visible,
         capturePreview: !visible && rect.width > 0 && rect.height > 0,
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      }).then((result) => {
-        if (disposed) return;
-        if (visible && result.applied && !isSuspended()) setViewportPreview(null);
-        else if (result.previewImageUrl && isSuspended()) setViewportPreview({ tabId, imageUrl: result.previewImageUrl });
-      }).catch((layoutError) => {
-        if (!disposed) setError(layoutError);
-      });
+      })
+        .then((result) => {
+          if (disposed) return;
+          if (visible && result.applied && !isSuspended()) setViewportPreview(null);
+          else if (result.previewImageUrl && isSuspended()) setViewportPreview({ tabId, imageUrl: result.previewImageUrl });
+        })
+        .catch((layoutError) => {
+          if (!disposed) setError(layoutError);
+        });
     };
     // 隐藏立即提交，显示仍合并到下一帧，并在提交前再次检查遮挡条件。
     const apply = (): void => {

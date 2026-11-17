@@ -466,7 +466,13 @@ declare global {
       closeBrowserConversation: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       runBrowserCommand: (input: { conversationId: string; tabId: string; command: ZeusBrowserCommand }) => Promise<ZeusBrowserConversationSnapshot>;
       /** 遮挡原生网页时可请求一张内存快照，供当前标签保留弹窗背景。 */
-      setBrowserLayout: (input: { conversationId: string; tabId: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean; capturePreview?: boolean }) => Promise<{ applied: boolean; previewImageUrl?: string }>;
+      setBrowserLayout: (input: {
+        conversationId: string;
+        tabId: string;
+        bounds: { x: number; y: number; width: number; height: number };
+        visible: boolean;
+        capturePreview?: boolean;
+      }) => Promise<{ applied: boolean; previewImageUrl?: string }>;
       prepareBrowserComments: (input: { conversationId: string; tabId: string; commentIds?: string[] }) => Promise<ZeusBrowserPreparedSubmission>;
       getBrowserCommentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: 'image/png' } | null>;
       markBrowserCommentsSent: (input: { conversationId: string; tabId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;
