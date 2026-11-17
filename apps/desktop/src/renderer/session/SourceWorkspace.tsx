@@ -6,6 +6,7 @@ import { FileMagnifyingGlassIcon as FileMagnifyingGlass } from '@phosphor-icons/
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
+import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { OpenWithMenu } from './ConversationResources.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
@@ -18,6 +19,7 @@ import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsI
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { FileWorkspaceToolbar } from '../code/FileWorkspaceToolbar.js';
+import { useFilePreviewRefresh } from '../code/useFilePreviewRefresh.js';
 import { fileStatusLabel } from '../code/fileStatus.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
@@ -59,6 +61,8 @@ export function SourceWorkspace(
     state: SourceWorkspaceState | null;
     /** 所有标签操作写回所属会话。 */
     onStateChange: Dispatch<SetStateAction<SourceWorkspaceState | null>>;
+    /** 重新读取资源正文与 Git 状态，不触发打开、导航或焦点变化。 */
+    onLoadPreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   },
 ) {
   /** 隐藏的侧栏不接管其他工作面的关闭命令。 */
@@ -83,6 +87,49 @@ export function SourceWorkspace(
   }, [props.onStateChange, props.preview, props.viewMode]);
   /** 外部预览到达但状态尚未同步时仍显示真实文件。 */
   const active = tabs.find((tab) => sourceWorkspaceTabId(tab.preview) === activeId) ?? tabs[0]!;
+  /** 异步读取按代次接纳，较早回执不能覆盖较新内容。 */
+  const readRevision = useRef(0);
+  /** 刷新反馈绑定文件身份，切换标签不显示其他文件的状态。 */
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<{ id: string; error: unknown } | null>(null);
+  /** 原标签原位接纳新正文，保留阅读模式、标签顺序与行定位。 */
+  async function refreshPreview(): Promise<void> {
+    if (!props.onLoadPreview) return;
+    const preview = active.preview;
+    const id = sourceWorkspaceTabId(preview);
+    const revision = ++readRevision.current;
+    setRefreshingId(id);
+    setRefreshError(null);
+    try {
+      const refreshed = await props.onLoadPreview(preview.resource);
+      if (revision !== readRevision.current) return;
+      props.onStateChange((current) =>
+        current
+          ? {
+              ...current,
+              tabs: current.tabs.map((tab) =>
+                sourceWorkspaceTabId(tab.preview) === id ? { ...tab, preview: refreshed.kind === 'source' && tab.preview.kind === 'source' ? { ...refreshed, location: tab.preview.location } : refreshed } : tab,
+              ),
+            }
+          : current,
+      );
+    } catch (error) {
+      if (revision === readRevision.current) setRefreshError({ id, error });
+    } finally {
+      if (revision === readRevision.current) setRefreshingId(null);
+    }
+  }
+  useFilePreviewRefresh(
+    props.onLoadPreview ? { kind: 'resource', projectId: active.preview.resource.projectId, conversationId: active.preview.resource.conversationId, resourceId: active.preview.resource.id } : null,
+    refreshPreview,
+    (error) => setRefreshError({ id: sourceWorkspaceTabId(active.preview), error }),
+  );
+  useEffect(
+    () => () => {
+      readRevision.current += 1;
+    },
+    [],
+  );
   /** 原生快捷键和关闭按钮共享同一标签更新，连续命令读取最新状态。 */
   function closeTab(id?: string): void {
     /** 仅最后一个标签需要关闭整个侧栏。 */
@@ -118,6 +165,9 @@ export function SourceWorkspace(
         {...props}
         workspaceRef={workspaceRef}
         preview={active.preview}
+        onRefresh={props.onLoadPreview ? refreshPreview : undefined}
+        refreshing={refreshingId === sourceWorkspaceTabId(active.preview)}
+        refreshError={refreshError?.id === sourceWorkspaceTabId(active.preview) ? refreshError.error : null}
         viewMode={active.mode}
         tabs={tabs.map((tab) => tab.preview)}
         onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: sourceWorkspaceTabId(preview) } : current))}
@@ -130,6 +180,12 @@ export function SourceWorkspace(
 
 /** 会话资源共用的预览入口，源码交给可视区域渲染，图片与 Markdown 保持原有展示。 */
 function SourceWorkspaceView(props: {
+  /** 刷新使用当前资源授权，不重新打开标签。 */
+  onRefresh?: () => void | Promise<void>;
+  /** 当前文件正在读取时提供忙碌状态并阻止重复点击。 */
+  refreshing?: boolean;
+  /** 刷新失败时保留原正文并显示具体原因。 */
+  refreshError?: unknown;
   /** 原生快捷键根据真实工作面的可见性确认归属。 */
   workspaceRef?: RefObject<HTMLElement | null>;
   /** 文件标题与浏览器标签共用会话顶栏位置。 */
@@ -258,7 +314,7 @@ function SourceWorkspaceView(props: {
   useEffect(() => {
     titleRef.current?.focus();
     titleRef.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [tabId, props.preview]);
+  }, [tabId, sourcePreview?.location]);
 
   /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
   const header = (
@@ -351,13 +407,13 @@ function SourceWorkspaceView(props: {
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
-      {openError ? (
+      {props.refreshError || openError ? (
         <p role="alert">
-          <VisibleApplicationError error={openError} language={zh ? 'zh-CN' : 'en'} />
+          <VisibleApplicationError error={props.refreshError ?? openError} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       <FileReviewContent
-        onSaved={() => props.onOpenFile?.(props.preview.resource)}
+        onSaved={props.onRefresh}
         previewRequest={
           props.preview.resource.kind === 'file'
             ? { kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id, comparison: 'head' }
@@ -371,6 +427,11 @@ function SourceWorkspaceView(props: {
           <>
             <FileWorkspaceToolbar path={displayPath} zh={zh}>
               {reviewActions}
+              {props.onRefresh ? (
+                <Button unstyled type="button" aria-label={zh ? '刷新文件' : 'Refresh file'} data-icon-tooltip={zh ? '刷新文件' : 'Refresh file'} aria-busy={props.refreshing} disabled={props.refreshing} onClick={() => props.onRefresh?.()}>
+                  <ArrowClockwise aria-hidden="true" />
+                </Button>
+              ) : null}
               {sourcePreview && props.preview.resource.kind === 'file' ? (
                 <FileSourceEditButton zh={zh} request={{ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id }} />
               ) : null}

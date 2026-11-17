@@ -37,6 +37,7 @@ import type { GitEnvironmentStatus, GitEnvironmentWorkspace } from '@zeus/shared
 import { platformShortcutLabel } from '../platform.js';
 import { conversationGitDeliveryTarget } from '../git/conversationGitDeliveryTarget.js';
 import { GitDeliveryProgress } from '../git/GitDeliveryProgress.js';
+import { GitDeliveryRunActions } from '../git/GitDeliveryRunActions.js';
 import { useGitDeliveryRuns } from '../git/useGitDeliveryRuns.js';
 import { Button } from '../ui/Button.js';
 
@@ -200,9 +201,9 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   /** 项目级单步交付没有组合运行，不读取其他会话的组合进度。 */
   const deliveryScopeId = deliveryTarget.taskId ?? deliveryTarget.conversationId ?? null;
   /** 只在卡片可见时订阅交付事件，不增加 Git 文件变化订阅。 */
-  const { runs: deliveryRuns, error: deliveryProgressError } = useGitDeliveryRuns(gitClient, props.conversation.projectId, deliveryScopeId, cardVisible);
-  /** 优先展示当前运行，再显示尚需用户处理的交付。 */
-  const deliveryRun = deliveryRuns.find((run) => run.state === 'queued' || run.state === 'running') ?? deliveryRuns.find((run) => run.state === 'attention');
+  const { runs: deliveryRuns, error: deliveryProgressError, refresh: refreshDelivery } = useGitDeliveryRuns(gitClient, props.conversation.projectId, deliveryScopeId, cardVisible);
+  /** 最后一次成功后不回显旧失败，环境卡片和交付窗口使用同一条记录。 */
+  const deliveryRun = deliveryRuns[0]?.state === 'succeeded' ? undefined : deliveryRuns[0];
   /** 浮动快捷面板退场不延长数据订阅；常驻模式继续保持原组件身份。 */
   const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLDivElement>(cardMounted);
   const popoverOpen = cardVisible && !persistent;
@@ -600,6 +601,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     {deliveryRun ? (
                       <div className="session-quick-actions-delivery-progress">
                         <GitDeliveryProgress run={deliveryRun} zh={zh} />
+                        {gitClient ? <GitDeliveryRunActions client={gitClient} run={deliveryRun} zh={zh} onUpdated={() => refreshDelivery()} /> : null}
                       </div>
                     ) : null}
                   </div>

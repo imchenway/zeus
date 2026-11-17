@@ -37,7 +37,7 @@ export function useGitDeliveryRuns(client: DeliveryProgressClient | undefined, p
     try {
       /** 接口按项目与任务或会话限定读取范围。 */
       const result = await client.loadGitDeliveryRuns(projectId, scopeId);
-      if (ticket === revision.current) setSnapshot({ client, projectId, scopeId, runs: result.items, error: null });
+      if (ticket === revision.current) setSnapshot({ client, projectId, scopeId, runs: result.items.slice(0, 1), error: null });
     } catch (error) {
       if (ticket === revision.current) {
         setSnapshot((current) => ({ client, projectId, scopeId, runs: current?.client === client && current.projectId === projectId && current.scopeId === scopeId ? current.runs : [], error }));
@@ -50,13 +50,13 @@ export function useGitDeliveryRuns(client: DeliveryProgressClient | undefined, p
   function acceptRun(run: GitDeliveryRun): void {
     if (!client || !scopeId) return;
     ++revision.current;
-    setSnapshot((current) => ({
+    setSnapshot({
       client,
       projectId,
       scopeId,
       error: null,
-      runs: [run, ...(current?.client === client && current.projectId === projectId && current.scopeId === scopeId ? current.runs.filter((item) => item.id !== run.id) : [])],
-    }));
+      runs: [run],
+    });
   }
 
   useEffect(() => {

@@ -42,6 +42,7 @@ import { FileWorkspaceToolbar } from './FileWorkspaceToolbar.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
 import { useFilePreviewDraft } from './useFilePreviewDraft.js';
+import { useFilePreviewRefresh } from './useFilePreviewRefresh.js';
 import { useGitBlame } from './useGitBlame.js';
 import type { PreparedFilePreview } from './preparedFilePreview.js';
 
@@ -285,8 +286,13 @@ function FilePreviewBody(props: {
   const [items, setItems] = useState<FilePreviewItem[] | null>(() => props.preparedPreview?.items ?? null);
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
-  /** 用户主动刷新次数。 */
+  /** 主动刷新和磁盘变更都重新读取当前授权版本。 */
   const [attempt, setAttempt] = useState(0);
+  useFilePreviewRefresh(
+    JSON.parse(props.identity) as FilePreviewRequest,
+    () => setAttempt((value) => value + 1),
+    (cause) => setError(userFacingErrorCause(cause)),
+  );
   /** 编码选择仅重载只读预览，不影响源码保存。 */
   const [textEncoding, setTextEncoding] = useReadingState<FilePreviewTextEncoding | ''>('encoding', () => (JSON.parse(props.identity) as FilePreviewRequest).textEncoding ?? '');
   /** 当前选择的版本侧。 */

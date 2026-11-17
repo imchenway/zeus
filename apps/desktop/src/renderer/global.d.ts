@@ -232,6 +232,10 @@ declare global {
 
       /** 跨入口共用的受授权文件预览。 */
       loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;
+      /** 按原授权监听当前文件；历史快照不会随工作区变化。 */
+      watchFilePreview: (input: FilePreviewRequest) => Promise<string | null>;
+      /** 当前窗口已授权文件的磁盘变更通知。 */
+      onFilePreviewChanged: (listener: (id: string) => void) => () => void;
       /** 读取当前授权文件版本的 Git 审阅，不重新传入磁盘路径。 */
       loadFilePreviewReview: (id: string) => Promise<import('@zeus/shared').FileReview | undefined>;
       /** 页面关闭和选择变化时撤销短期资源。 */

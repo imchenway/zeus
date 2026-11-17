@@ -3774,7 +3774,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     conversations,
     conversationSubmissions,
     commands: workspaceGitCommands,
+    conversationTurns,
     publish: publishRealtimeEvent,
+    waitForCommandExit: (id) => aiRuntimeManager.waitForSessionCompletion(id, 10_000),
     statusOptions: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).statuses,
     commandSecurity: (projectId) => readProjectConfig(projectId).security,
     finalizeTaskConflict: async (integrationId, conversationId) => {

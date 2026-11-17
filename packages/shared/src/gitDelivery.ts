@@ -125,6 +125,10 @@ export interface GitDeliveryRun {
   input: GitDeliveryInput;
   /** 有待处理项时为 attention，有 AI 活动时仍为 running。 */
   state: 'queued' | 'running' | 'attention' | 'succeeded';
+  /** 已接纳终止，正在等待当前写入及关联进程的停止结果。 */
+  stopping?: boolean;
+  /** 用户已终止后续步骤，原有成功回执仍可继续使用。 */
+  stopped?: boolean;
   /** 创建时间。 */
   createdAt: string;
   /** 最近变化时间。 */
