@@ -8,6 +8,16 @@ export const releaseCdnBaseUrl = 'https://zeus-download.hyphatech.cn/zeus';
 /** 可变下载入口与更新清单最多缓存一分钟，版本目录继续使用长期缓存。 */
 export const releaseCdnStableCacheControl = 'public,max-age=60,must-revalidate,no-transform';
 
+/** 并发发布操作全部结束后才返回或报错，防止清理临时文件时仍有上传在运行。 */
+export async function waitForReleaseOperations(operations) {
+  /** 保留任务顺序，同时收齐已启动操作的结果。 */
+  const results = await Promise.allSettled(operations);
+  /** 首个失败保留原始错误，且不会遗留后台写入。 */
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  return results.map((result) => result.value);
+}
+
 /** 固定下载名仅接受正式支持的平台与架构，不能构造任意 OSS 对象路径。 */
 export function stableReleaseArtifactFileName(version, fileName) {
   const prefix = `Zeus-${requiredVersion(version)}-`;

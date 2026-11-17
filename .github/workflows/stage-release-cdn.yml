@@ -1,0 +1,95 @@
+name: Stage Release CDN
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: 原构建制品所属的固定候选提交
+        required: true
+        type: string
+      tag:
+        description: 与候选版本一致的不可变发布标签
+        required: true
+        type: string
+      macos_from_release:
+        description: Windows 补发时复用已有 Release 的 macOS 安装包
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  stage-cdn:
+    name: stage-cdn-${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      # 一个上传失败不取消其他上传，已成功制品可供原运行恢复使用。
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin
+            arch: arm64
+            artifact: zeus-macos
+            suffix: ''
+            installer: arm64.dmg
+          - platform: win32
+            arch: x64
+            artifact: zeus-windows
+            suffix: -x64
+            installer: win32-x64.exe
+          - platform: win32
+            arch: arm64
+            artifact: zeus-windows
+            suffix: -arm64
+            installer: win32-arm64.exe
+    concurrency:
+      # 不同文件并发；同版本同文件由两个发布入口共同串行保护。
+      group: zeus-release-artifact-${{ inputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ${{ inputs.commit_sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      ALIYUN_OIDC_PROVIDER_ARN: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+      ALIYUN_ROLE_ARN: ${{ vars.ALIYUN_ROLE_ARN }}
+      ZEUS_OSS_BUCKET: ${{ vars.ZEUS_OSS_BUCKET }}
+      ZEUS_OSS_REGION: ${{ vars.ZEUS_OSS_REGION }}
+      ZEUS_DOWNLOAD_BASE_URL: ${{ vars.ZEUS_DOWNLOAD_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+      - name: 下载该架构的原构建制品
+        if: ${{ matrix.platform != 'darwin' || !inputs.macos_from_release }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ inputs.commit_sha }}${{ matrix.suffix }}
+          path: dist
+      - name: 复用已有 Release 的 macOS 制品
+        if: ${{ matrix.platform == 'darwin' && inputs.macos_from_release }}
+        run: gh release download "$RELEASE_TAG" --repo imchenway/zeus --pattern "Zeus-${RELEASE_TAG#v}-arm64.dmg" --pattern zeus-release-manifest.json --dir dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: ./.github/actions/setup-release-oss
+      - name: 申请该制品独立上传身份
+        id: oss_identity
+        # 60 分钟凭据覆盖单条最多 30 分钟的 OSS 命令。
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
+          audience: sts.aliyuncs.com
+          role-session-expiration: 3600
+      - name: 上传并核验该安装包
+        env:
+          # 每个 runner 的凭据和临时文件相互独立。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_identity.outputs.aliyun-security-token }}
+          INSTALLER: ${{ matrix.installer }}
+        run: node scripts/publish-release-cdn.mjs stage dist "Zeus-${RELEASE_TAG#v}-$INSTALLER"

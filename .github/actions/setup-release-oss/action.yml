@@ -1,0 +1,12 @@
+name: 安装固定版本 OSS 工具
+description: 下载并校验官方 ossutil，供制品上传和稳定清单更新共用
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 'https://gosspublic.alicdn.com/ossutil/v2/2.4.1/ossutil-2.4.1-linux-amd64.zip' -o "$RUNNER_TEMP/zeus-ossutil.zip"
+        printf '57ee4c56796a40144acd6b0b96b53b4ba75e5cec09c01d8d0313c09a5524022f  %s\n' "$RUNNER_TEMP/zeus-ossutil.zip" | sha256sum --check -
+        unzip -q "$RUNNER_TEMP/zeus-ossutil.zip" -d "$RUNNER_TEMP/zeus-ossutil"
+        chmod 755 "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64/ossutil"
+        printf '%s\n' "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64" >> "$GITHUB_PATH"

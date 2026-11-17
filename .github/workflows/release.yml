@@ -272,10 +272,23 @@ jobs:
             dist/homebrew/zeus.rb
           overwrite: true
 
+  # 三个固定版本安装包在独立 runner 上传，全部成功后才进入公开发布。
+  stage-cdn:
+    if: ${{ inputs.publish_release }}
+    needs: [preflight, verify, package-mac, package-windows]
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/stage-release-cdn.yml
+    with:
+      commit_sha: ${{ needs.preflight.outputs.commit_sha }}
+      tag: ${{ needs.preflight.outputs.tag }}
+
   publish:
     if: ${{ inputs.publish_release }}
     # 任一平台或架构构建失败均不创建公开标签和 Release。
-    needs: [preflight, verify, package-mac, package-windows]
+    needs: [preflight, verify, package-mac, package-windows, stage-cdn]
     runs-on: ubuntu-latest
     # 两个发布入口串行更新稳定清单，避免旧版本检查与写入交错。
     concurrency:
@@ -308,15 +321,11 @@ jobs:
           repository: imchenway/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: .tmp/homebrew-tap
-      - name: 下载已校验正式产物
+      - name: 并发下载 macOS 和 Windows 两个架构的正式产物
         uses: actions/download-artifact@v4
         with:
-          name: zeus-macos-${{ needs.preflight.outputs.commit_sha }}
-          path: dist
-      - name: 下载 Windows 两个架构的正式产物
-        uses: actions/download-artifact@v4
-        with:
-          pattern: zeus-windows-${{ needs.preflight.outputs.commit_sha }}-*
+          # download-artifact 原生并发下载匹配的三个附件，文件名由构建清单复验。
+          pattern: zeus-{macos,windows}-${{ needs.preflight.outputs.commit_sha }}*
           path: dist
           merge-multiple: true
       - uses: actions/setup-node@v4
@@ -356,15 +365,9 @@ jobs:
           git tag -a "$RELEASE_TAG" "$RELEASE_COMMIT" -m "Zeus $RELEASE_TAG"
           git push origin "refs/tags/$RELEASE_TAG"
       - name: 安装固定版本 OSS 上传工具
-        run: |
-          curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 'https://gosspublic.alicdn.com/ossutil/v2/2.4.1/ossutil-2.4.1-linux-amd64.zip' -o "$RUNNER_TEMP/zeus-ossutil.zip"
-          printf '57ee4c56796a40144acd6b0b96b53b4ba75e5cec09c01d8d0313c09a5524022f  %s\n' "$RUNNER_TEMP/zeus-ossutil.zip" | sha256sum --check -
-          unzip -q "$RUNNER_TEMP/zeus-ossutil.zip" -d "$RUNNER_TEMP/zeus-ossutil"
-          chmod 755 "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64/ossutil"
-          printf '%s\n' "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64" >> "$GITHUB_PATH"
-      - name: 申请阿里云短期上传身份
-        id: oss_identity
-        # 官方 MIT Action 固定到不可变提交。
+        uses: ./.github/actions/setup-release-oss
+      - name: 申请清单准备身份
+        id: oss_stage_identity
         uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
         with:
           oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
@@ -373,12 +376,11 @@ jobs:
           role-session-expiration: 1800
       - name: 准备并核验 CDN 固定版本制品
         env:
-          # 临时凭据只传入当前步骤的 ossutil 环境。
-          OSS_ACCESS_KEY_ID: ${{ steps.oss_identity.outputs.aliyun-access-key-id }}
-          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_identity.outputs.aliyun-access-key-secret }}
-          OSS_SESSION_TOKEN: ${{ steps.oss_identity.outputs.aliyun-security-token }}
-        run: |
-          node scripts/publish-release-cdn.mjs stage dist
+          # 大文件已由矩阵上传，此处只核验对象并补齐平台清单。
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_stage_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_stage_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_stage_identity.outputs.aliyun-security-token }}
+        run: node scripts/publish-release-cdn.mjs prepare-manifests dist
       - name: 发布或核对 GitHub Release
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -404,18 +406,8 @@ jobs:
             cat "$RUNNER_TEMP/zeus-release-read.log" >&2
             exit 1
           fi
-          # 同名资产只核对，不覆盖；未知上传结果直接停止，下次显式恢复先读现有事实。
-          for local_asset in "dist/Zeus-$version-arm64.dmg" "dist/Zeus-$version-win32-x64.exe" "dist/Zeus-$version-win32-arm64.exe" dist/zeus-release-manifest.json dist/zeus-release-manifest-win32.json; do
-            name="$(basename "$local_asset")"
-            digest="sha256:$(sha256sum "$local_asset" | awk '{print $1}')"
-            size="$(stat -c '%s' "$local_asset")"
-            release_json="$(gh release view "$RELEASE_TAG" --json assets)"
-            if ! printf '%s' "$release_json" | jq -e --arg name "$name" '.assets | any(.name == $name)' >/dev/null; then
-              gh release upload "$RELEASE_TAG" "$local_asset"
-            fi
-            gh release view "$RELEASE_TAG" --json assets |
-              jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
-          done
+          # 安装包并发上传并核验后，才并发公开平台清单。
+          node scripts/publish-release-assets.mjs dist
           echo "Zeus $version macOS、Windows 两个架构及平台清单均已就绪。"
       - name: 刷新稳定清单写入身份
         id: oss_activate_identity
@@ -426,27 +418,36 @@ jobs:
           role-to-assume: ${{ vars.ALIYUN_ROLE_ARN }}
           audience: sts.aliyuncs.com
           role-session-expiration: 1800
-      - name: 核对发布正文并激活 CDN 稳定清单
+      - name: 并发更新发布正文、CDN 稳定入口和 Homebrew
         env:
           # 临时凭据只传入当前步骤的 ossutil 环境。
           OSS_ACCESS_KEY_ID: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-id }}
           OSS_ACCESS_KEY_SECRET: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-secret }}
           OSS_SESSION_TOKEN: ${{ steps.oss_activate_identity.outputs.aliyun-security-token }}
         run: |
-          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md"
-          node scripts/publish-release-cdn.mjs activate dist
-      - name: 同步 Homebrew Cask
-        run: |
-          mkdir -p .tmp/homebrew-tap/Casks
-          cp dist/homebrew/zeus.rb .tmp/homebrew-tap/Casks/zeus.rb
-          cd .tmp/homebrew-tap
-          if [ -z "$(git status --porcelain -- Casks/zeus.rb)" ]; then
-            echo 'Homebrew Cask 已是当前版本，无需提交。'
-            exit 0
-          fi
-          git diff --check
-          git config user.name 'Zeus Release Bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git add Casks/zeus.rb
-          git commit -m "更新 Zeus $(ruby -ne 'puts $1 if $_ =~ /version \"([^\"]+)\"/' Casks/zeus.rb) Cask"
-          git push origin HEAD:main
+          # 固定版本 CDN 文件和 GitHub 资产均已回验，三个出口可以独立更新。
+          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md" &
+          notes_pid=$!
+          node scripts/publish-release-cdn.mjs activate dist &
+          cdn_pid=$!
+          (
+            mkdir -p .tmp/homebrew-tap/Casks
+            cp dist/homebrew/zeus.rb .tmp/homebrew-tap/Casks/zeus.rb
+            cd .tmp/homebrew-tap
+            if [ -z "$(git status --porcelain -- Casks/zeus.rb)" ]; then
+              echo 'Homebrew Cask 已是当前版本，无需提交。'
+              exit 0
+            fi
+            git diff --check
+            git config user.name 'Zeus Release Bot'
+            git config user.email 'actions@users.noreply.github.com'
+            git add Casks/zeus.rb
+            git commit -m "更新 Zeus $(ruby -ne 'puts $1 if $_ =~ /version \"([^\"]+)\"/' Casks/zeus.rb) Cask"
+            git push origin HEAD:main
+          ) &
+          homebrew_pid=$!
+          status=0
+          for pid in "$notes_pid" "$cdn_pid" "$homebrew_pid"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
