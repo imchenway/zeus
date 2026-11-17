@@ -781,6 +781,7 @@ async function ensureReleaseNotes(state) {
   writeState(state);
 }
 
+/** 从固定源提交准备版本并创建发布提交，恢复时复用已核对的候选。 */
 async function ensureReleaseCommit(state) {
   const currentHead = git(['rev-parse', 'HEAD']);
   if (state.releaseCommit) {
@@ -799,6 +800,8 @@ async function ensureReleaseCommit(state) {
   await runStage('写入版本与发布正文', 'pnpm', ['release:prepare'], {
     ...process.env,
     RELEASE_VERSION: state.version,
+    RELEASE_SOURCE_HEAD: state.sourceHead,
+    BASE_TAG: state.baseTag,
     RELEASE_NOTES_FILE: state.notesPath,
     APPLY_CHANGES: 'true',
     ZEUS_COMMAND_RUN_DIR: prepareDirectory,
