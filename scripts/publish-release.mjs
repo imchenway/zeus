@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import {
   parseBoolean,
+  readReleaseCdnFiles,
   releaseCdnBaseUrl,
   renderCdnReleaseNotes,
   requiredVersion,
@@ -85,7 +86,9 @@ async function main() {
 
   const localGateSummaryPath = optionalFile(process.env.LOCAL_GATE_SUMMARY_FILE, 'LOCAL_GATE_SUMMARY_FILE');
 
-  const preflight = collectPreflight({ releaseVersion, tag, requireAppleDistribution, localGateSummaryPath });
+  /** 发布前先检查部分上传留下的固定版本身份，避免打包后才发现旧候选占用。 */
+  const cdnFiles = await readReleaseCdnFiles(releaseVersion);
+  const preflight = collectPreflight({ releaseVersion, tag, requireAppleDistribution, localGateSummaryPath, cdnFiles });
   const planPath = join(outputDirectory, `Zeus-${releaseVersion}-publish-${applyRemote ? 'execution' : 'plan'}.md`);
   writeFileSync(planPath, buildPlan(preflight, { releaseVersion, tag, applyRemote, requireAppleDistribution, waitForCompletion }), { mode: 0o600 });
   console.log(`ZEUS_ARTIFACT_FILE=${planPath}`);
@@ -126,9 +129,8 @@ async function main() {
   }
   /** 同一快照决定活跃运行与原始发布运行，避免重新打包同版本制品。 */
   const workflowRuns = listReleaseRuns(preflight.headSha).value;
-  /** 尚未交付时优先续等同一候选的活跃运行。 */
-  let workflowRun = workflowRuns.find((run) => run.headSha === preflight.headSha && ['queued', 'in_progress', 'waiting', 'requested'].includes(run.status)) ?? null;
-  if (!workflowRun) workflowRun = resumeReleasePublication(workflowRuns, preflight.headSha);
+  /** 原始发布运行优先于后续活跃运行，不能让新构建绕过已绑定的制品。 */
+  let workflowRun = resumeReleasePublication(workflowRuns, preflight.headSha, cdnFiles.length > 0);
   if (!release.exists && !workflowRun) {
     const dispatchedAt = Date.now();
     dispatchReleaseWorkflow(tag, preflight.headSha, requireAppleDistribution);
@@ -235,6 +237,9 @@ function collectPreflight(input) {
 
   if (localTagSha && localTagSha !== headSha) blockers.push(`本地标签 ${input.tag} 指向其他提交：${localTagSha}`);
   if (remoteTagSha && remoteTagSha !== headSha) blockers.push(`远程标签 ${input.tag} 指向其他提交：${remoteTagSha}`);
+  for (const file of input.cdnFiles) {
+    if (file.sourceCommit !== headSha) blockers.push(`CDN ${input.tag}/${file.fileName} 已绑定其他候选 ${file.sourceCommit}；请通过 pnpm release 为修复提交准备新版本。`);
+  }
   if (release.exists && (!remoteTagSha || remoteTagSha !== headSha)) blockers.push(`GitHub Release ${input.tag} 存在，但远程标签未指向候选提交`);
   if (release.exists && (release.data.isDraft || release.data.isPrerelease)) blockers.push(`GitHub Release ${input.tag} 仍是草稿或预发布`);
   if (release.error) blockers.push(`无法确认 GitHub Release 是否存在：${release.error}`);
@@ -599,16 +604,21 @@ function listReleaseRuns(headSha) {
 }
 
 /** 复用最早进入 CDN 上传或公开发布的制品，只重跑失败作业；原制品过期时禁止重新打包。 */
-function resumeReleasePublication(workflowRuns, headSha) {
+function resumeReleasePublication(workflowRuns, headSha, hasStoredFiles) {
+  /** 尚未进入发布的活跃运行仅作后备，已有原始发布制品时不能抢占恢复入口。 */
+  let activeRun = null;
   for (const workflowRun of [...workflowRuns].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))) {
     /** 读取该运行的最新 attempt，避免对过时的失败状态重复提交重跑。 */
     const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,headSha,status,conclusion,url,attempt,jobs'], true);
     if (!result.ok || result.value?.headSha !== headSha || !Array.isArray(result.value.jobs) || !Number.isSafeInteger(result.value.attempt)) throw new Error(`无法确认原发布作业，未重新创建 Workflow：${result.error || workflowRun.url}`);
     /** 矩阵上传可能在 publish 启动前失败，也必须复用这一运行的原始构建。 */
     const publicationJobs = result.value.jobs.filter((job) => (job.name === 'publish' || job.name.startsWith('stage-cdn')) && job.conclusion !== 'skipped' && Date.parse(job.startedAt) > 0);
-    if (!publicationJobs.length) continue;
+    if (!publicationJobs.length) {
+      if (['queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(result.value.status)) activeRun ??= result.value;
+      continue;
+    }
     if (result.value.status !== 'completed' || result.value.conclusion === 'success') return result.value;
-    if (!['failure', 'cancelled'].includes(result.value.conclusion)) throw new Error(`原发布作业状态未知，未重新打包：${workflowRun.url}`);
+    if (!['failure', 'cancelled', 'timed_out'].includes(result.value.conclusion)) throw new Error(`原发布作业状态未知，未重新打包：${workflowRun.url}`);
     /** 发布作业下载原运行的附件，不接受其他运行的同名安装包。 */
     const artifacts = ghJson(['api', `repos/${repository}/actions/runs/${workflowRun.databaseId}/artifacts?per_page=100`], true);
     if (!artifacts.ok || !Array.isArray(artifacts.value?.artifacts)) throw new Error(`无法读取原构建制品，未重跑发布：${artifacts.error || workflowRun.url}`);
@@ -622,7 +632,8 @@ function resumeReleasePublication(workflowRuns, headSha) {
     run('gh', ['run', 'rerun', String(workflowRun.databaseId), '--repo', repository, '--failed']);
     return { ...result.value, attempt: result.value.attempt + 1 };
   }
-  return null;
+  if (hasStoredFiles) throw new Error('CDN 已有固定版本制品，但找不到原始发布运行；禁止重新打包覆盖同版本，请设置 RELEASE_VERSION 为更高的未占用版本后执行 pnpm release。');
+  return activeRun;
 }
 
 function dispatchReleaseWorkflow(tag, commitSha, requireAppleDistribution) {
