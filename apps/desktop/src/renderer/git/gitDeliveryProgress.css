@@ -16,6 +16,18 @@
 .git-delivery-progress[data-delivery-state='succeeded'] {
   --delivery-progress-color: var(--zeus-status-success-text, #268353);
 }
+/* 两个入口使用同一行控制按钮；窄卡片按实际宽度换行。 */
+.git-delivery-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-start: 8px;
+  min-inline-size: 0;
+}
+.git-delivery-run-actions > [role='alert'] {
+  flex-basis: 100%;
+}
 .git-delivery-progress-heading,
 .git-delivery-progress-caption {
   display: flex;

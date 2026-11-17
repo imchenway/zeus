@@ -396,6 +396,10 @@ export function createDesktopApi(transport: DesktopTransport) {
 
     // 预览只传递业务身份，资源地址与系统操作均由主进程授权。
     loadFilePreview: (input: unknown) => transport.invoke('zeus:file-preview:load', input),
+    /** 按原业务身份监听当前文件，返回独立的可释放令牌。 */
+    watchFilePreview: (input: unknown) => transport.invoke('zeus:file-preview:watch', input),
+    /** 文件变更只发布订阅令牌，不向渲染层开放路径。 */
+    onFilePreviewChanged: (listener: (id: string) => void) => transport.subscribe('zeus:file-preview:changed', listener),
     /** 已授权正文先显示，Git 审阅按当前窗口令牌独立补载。 */
     loadFilePreviewReview: (id: string) => transport.invoke('zeus:file-preview:review', id),
     /** 保存文件预览内容，使用固定命令身份。 */

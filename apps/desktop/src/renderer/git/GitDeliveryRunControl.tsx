@@ -12,6 +12,7 @@ import { ConflictAiPermissions, TaskGitConflictWorkspace } from '../task/TaskGit
 import { createConflictDocument, serializeConflictForGit, countUnresolvedConflictBlocks, type ConflictDocument } from '../task/taskConflictModel.js';
 import type { TaskIntegrationConflictFile } from '../session/sessionTypes.js';
 import { GitDeliveryProgress, gitDeliveryActionLabel as actionLabel } from './GitDeliveryProgress.js';
+import { GitDeliveryRunActions, GitDeliveryCleanupConfirmation } from './GitDeliveryRunActions.js';
 import { useGitDeliveryRuns } from './useGitDeliveryRuns.js';
 import { GitDeliveryCommandSelect } from './GitDeliveryCommandSelect.js';
 
@@ -23,6 +24,7 @@ export type GitDeliveryClient = Pick<
   | 'startGitDeliveryRun'
   | 'loadGitCommitModels'
   | 'resumeGitDeliveryRun'
+  | 'stopGitDeliveryRun'
   | 'acknowledgeGitDelivery'
   | 'loadGitDeliveryConflict'
   | 'saveGitDeliveryConflict'
@@ -85,8 +87,8 @@ export function GitDeliveryRunControl(props: {
   /** 当前是否有已接纳运行。 */
   const running = runs.some((run) => run.state === 'queued' || run.state === 'running');
 
-  /** 操作栏只保留进行中或待处理运行，成功历史不再占用交付空间。 */
-  const visibleRuns = runs.filter((run) => run.state !== 'succeeded').slice(0, 5);
+  /** 只显示最后一次交付，较早的失败不能重新成为可继续流程。 */
+  const visibleRuns = runs.slice(0, 1).filter((run) => run.state !== 'succeeded');
 
   /** 两个交付入口读取同一命令目录，聚焦或定义变化时重新核对可用项。 */
   useEffect(() => {
@@ -385,11 +387,7 @@ export function GitDeliveryRunControl(props: {
                   ))}
                 </ul>
               ) : null}
-              {run.state === 'attention' ? (
-                <Button size="compact" disabled={busy} onClick={() => resume(run)}>
-                  {props.zh ? '继续未完成步骤' : 'Continue remaining steps'}
-                </Button>
-              ) : null}
+              <GitDeliveryRunActions client={props.client} run={run} zh={props.zh} disabled={busy} onResume={resume} onUpdated={() => refresh()} />
             </section>
           );
         })}
@@ -415,34 +413,7 @@ export function GitDeliveryRunControl(props: {
             {summary || (props.zh ? '执行交付' : 'Run delivery')}
           </Button>
         </div>
-        {cleanupRun ? (
-          <FormDialog
-            danger
-            title={props.zh ? '确认任务结束清理' : 'Confirm task cleanup'}
-            description={
-              props.zh ? '该状态变更需要停止并归档任务会话，并永久移除任务工作树。未提交的修改会被删除。' : 'This status change stops and archives task sessions and permanently removes task worktrees, including uncommitted changes.'
-            }
-            zh={props.zh}
-            busy={busy}
-            submitLabel={props.zh ? '确认清理并继续' : 'Confirm cleanup and continue'}
-            onClose={() => setCleanupRun(null)}
-            onSubmit={(event) => {
-              event.preventDefault();
-              return resume(cleanupRun, true);
-            }}
-          >
-            {cleanupRun.steps
-              .filter((step) => step.cleanupConfirmation)
-              .map((step) => (
-                <p key={step.id}>
-                  {props.zh
-                    ? `有修改的工作区：${step.cleanupConfirmation!.dirtyWorkspaceCount}；活动会话：${step.cleanupConfirmation!.activeConversationCount}；活动运行：${step.cleanupConfirmation!.activeRuntimeSessionCount}`
-                    : `${step.cleanupConfirmation!.dirtyWorkspaceCount} modified worktrees; ${step.cleanupConfirmation!.activeConversationCount} active conversations; ${step.cleanupConfirmation!.activeRuntimeSessionCount} active runtimes`}
-                </p>
-              ))}
-            {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
-          </FormDialog>
-        ) : null}
+        {cleanupRun ? <GitDeliveryCleanupConfirmation run={cleanupRun} zh={props.zh} busy={busy} error={error} onClose={() => setCleanupRun(null)} onConfirm={() => resume(cleanupRun, true)} /> : null}
         {draft ? (
           <FormDialog
             title={props.zh ? '组合操作设置' : 'Combination settings'}

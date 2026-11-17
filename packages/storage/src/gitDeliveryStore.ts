@@ -236,13 +236,23 @@ export class GitDeliveryRepository {
   /** 列表仅查询指定的真实归属。 */
   list(projectId?: string, scopeId?: string): GitDeliveryRunRecord[] {
     return this.db
-      .select<{ id: string }>('SELECT id FROM git_delivery_runs WHERE (? IS NULL OR project_id = ?) AND (? IS NULL OR scope_id = ?) ORDER BY created_at DESC LIMIT 100', [
+      .select<{ id: string }>('SELECT id FROM git_delivery_runs WHERE (? IS NULL OR project_id = ?) AND (? IS NULL OR scope_id = ?) ORDER BY created_at DESC, rowid DESC LIMIT 100', [
         projectId ?? null,
         projectId ?? null,
         scopeId ?? null,
         scopeId ?? null,
       ])
       .map((row) => this.get(row.id)!);
+  }
+
+  /** 同毫秒接纳的运行按插入顺序确定最后一次，不回退到更早的未完成记录。 */
+  latest(projectId: string, scope: GitDeliveryRun['scope']): GitDeliveryRunRecord | null {
+    const row = this.db.select<{ id: string }>('SELECT id FROM git_delivery_runs WHERE project_id=? AND scope_kind=? AND scope_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1', [
+      projectId,
+      scope.kind,
+      scope.kind === 'task' ? scope.taskId : scope.conversationId,
+    ])[0];
+    return row ? (this.get(row.id) ?? null) : null;
   }
 
   /** 重启恢复不受历史列表数量限制。 */
@@ -293,6 +303,7 @@ export class GitDeliveryRepository {
       scope: run.scope,
       input: run.input,
       state: run.state,
+      stopped: run.steps.some((step) => step.result?.deliveryStopped === true),
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       steps: run.steps.map(({ id, repositoryId, repositoryName, action, commandDefinitionId, state, message, conversationId, integrationId, result, commandId }) => ({

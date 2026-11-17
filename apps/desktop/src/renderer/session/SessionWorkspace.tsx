@@ -3552,6 +3552,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           <SourceWorkspace
                             state={sourceWorkspaceState}
                             onStateChange={setSourceWorkspaceState}
+                            onLoadPreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
                             canSplit={browserLayoutWidth > 840}
                             toolbarHost={contextOpen ? contextToolbarHost : null}
                             preview={contextWorkspace.preview}

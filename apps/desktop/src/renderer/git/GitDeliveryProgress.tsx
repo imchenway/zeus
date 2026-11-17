@@ -27,34 +27,41 @@ export function GitDeliveryProgress({ run, zh }: { run: GitDeliveryRun; zh: bool
   /** 当前动作与仓库名就近显示，任务收尾无需仓库前缀。 */
   const action = step ? gitDeliveryActionLabel(step.action, zh) : '';
   /** 文案依据真实运行状态，不以进度条推测完成。 */
-  const label =
-    step?.state === 'unknown'
+  const label = run.stopping
+    ? zh
+      ? '正在终止'
+      : 'Stopping'
+    : run.state === 'queued'
       ? zh
-        ? '结果待核对'
-        : 'Outcome unknown'
-      : attention
+        ? '排队中'
+        : 'Queued'
+      : step?.state === 'unknown'
         ? zh
-          ? '需要处理'
-          : 'Needs attention'
-        : run.state === 'queued'
+          ? '结果待核对'
+          : 'Outcome unknown'
+        : run.stopped
           ? zh
-            ? '等待执行'
-            : 'Queued'
-          : run.state === 'succeeded'
+            ? '已终止'
+            : 'Stopped'
+          : attention
             ? zh
-              ? '已完成'
-              : 'Completed'
-            : step?.state === 'waiting'
-              ? step.action === 'command'
-                ? zh
-                  ? '命令运行中'
-                  : 'Command running'
+              ? '需要处理'
+              : 'Needs attention'
+            : run.state === 'succeeded'
+              ? zh
+                ? '已完成'
+                : 'Completed'
+              : step?.state === 'waiting'
+                ? step.action === 'command'
+                  ? zh
+                    ? '命令运行中'
+                    : 'Command running'
+                  : zh
+                    ? 'AI 处理中'
+                    : 'AI running'
                 : zh
-                  ? 'AI 处理中'
-                  : 'AI running'
-              : zh
-                ? '执行中'
-                : 'Running';
+                  ? '执行中'
+                  : 'Running';
   /** 命令名称由步骤快照提供，多仓交付保留当前仓库名称。 */
   const detail = step?.repositoryName && step.action !== 'task_status' && step.action !== 'conversation_archive' ? `${action} · ${step.repositoryName}` : action;
   /** 时间线摘要向辅助技术提供实际完成数量和当前动作。 */

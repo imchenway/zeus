@@ -3,9 +3,9 @@ import { openRegularFileNoFollow } from '@zeus/storage/platform-security';
 import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createReadStream, createWriteStream } from 'node:fs';
+import { constants, createReadStream, createWriteStream, watch, type FSWatcher } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -131,6 +131,8 @@ export function registerFilePreview(services: {
 }): void {
   /** 随机令牌只授予单个文件，绝不包含本地服务密钥。 */
   const grants = new Map<string, PreviewGrant>();
+  /** 文件监听使用独立令牌，正文重读和原子替换不会中断订阅。 */
+  const watches = new Map<string, { owner: number; watchers: FSWatcher[] }>();
   /** 避免重复安装窗口销毁监听。 */
   const owners = new Set<number>();
   /** 系统快速预览随页内资源关闭。 */
@@ -139,6 +141,11 @@ export function registerFilePreview(services: {
   /** 撤销令牌并删除本服务创建的历史副本。 */
   async function release(ids: string[], owner: number): Promise<void> {
     for (const id of ids) {
+      const subscription = watches.get(id);
+      if (subscription?.owner === owner) {
+        watches.delete(id);
+        for (const watcher of subscription.watchers) watcher.close();
+      }
       /** 当前窗口持有的资源授权。 */
       const grant = grants.get(id);
       if (!grant || grant.owner !== owner) continue;
@@ -152,6 +159,47 @@ export function registerFilePreview(services: {
       if (grant.temporary) await rm(grant.temporary, { recursive: true, force: true });
     }
   }
+
+  /** 窗口关闭后同时释放正文授权和目录监听。 */
+  function retainOwner(window: BrowserWindow): void {
+    if (owners.has(window.id)) return;
+    owners.add(window.id);
+    window.once('closed', () => {
+      owners.delete(window.id);
+      void release([...grants.keys(), ...watches.keys()], window.id);
+    });
+  }
+
+  ipcMain.handle('zeus:file-preview:watch', async (event, input: FilePreviewRequest) => {
+    const window = services.requireWindow(event);
+    retainOwner(window);
+    /** 路径只能由现有业务授权解析，不能接受渲染层提交的磁盘路径。 */
+    const intent = await services.resolve(input, window);
+    const id = randomUUID();
+    const watchers: FSWatcher[] = [];
+    try {
+      for (const source of intent.sides.slice(0, 2)) {
+        if (source.blob || source.sha256 || source.missing || source.reason || source.submodule) continue;
+        const path = await authorizedPath(source);
+        /** 监听父目录，文件被删除后重建或原子替换时仍能收到通知。 */
+        const watcher = watch(dirname(path), (_kind, name) => {
+          if ((!name || name.toString() === basename(path)) && !window.isDestroyed()) window.webContents.send('zeus:file-preview:changed', id);
+        });
+        watcher.on('error', (error) => {
+          watcher.close();
+          console.error('File preview watcher failed', error);
+        });
+        watchers.push(watcher);
+      }
+      if (window.isDestroyed()) throw new Error('文件预览窗口已关闭。');
+      if (!watchers.length) return null;
+      watches.set(id, { owner: window.id, watchers });
+      return id;
+    } catch (error) {
+      for (const watcher of watchers) watcher.close();
+      throw error;
+    }
+  });
 
   /** 流式请求和系统操作前再次确认授权及文件身份。 */
   async function currentPath(grant: PreviewGrant): Promise<string> {
@@ -227,13 +275,7 @@ export function registerFilePreview(services: {
   async function loadPreview(input: FilePreviewRequest, window: BrowserWindow): Promise<FilePreviewItem[]> {
     /** 一次读取固定两端关系。 */
     const batch = randomUUID();
-    if (!owners.has(window.id)) {
-      owners.add(window.id);
-      window.once('closed', () => {
-        owners.delete(window.id);
-        void release([...grants.keys()], window.id);
-      });
-    }
+    retainOwner(window);
     /** 由业务身份解析出的文件读取授权。 */
     const intent = await services.resolve(input, window);
     /** 文件数固定为一份或前后两份，避免批量预加载。 */

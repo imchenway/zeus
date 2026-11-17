@@ -36,6 +36,8 @@ export interface GitApiClient {
   startGitDeliveryRun(projectId: string, input: GitDeliveryInput, key: string): Promise<GitDeliveryRun>;
   /** 手动继续不重新执行已成功步骤。 */
   resumeGitDeliveryRun(projectId: string, runId: string, input?: { confirmWorktreeCleanup?: boolean }): Promise<GitDeliveryRun>;
+  /** 终止剩余流程，保留已完成步骤与原命令回执。 */
+  stopGitDeliveryRun(projectId: string, runId: string): Promise<GitDeliveryRun>;
   /** 仅确认用户看到的结果修订，不触发交付。 */
   acknowledgeGitDelivery(runId: string, expectedRevision: number): Promise<{ acknowledged: boolean }>;
   /** 普通会话复用冲突编辑器。 */
@@ -126,6 +128,8 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     startGitDeliveryRun: (projectId, input, key) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-runs`, { ...jsonRequest('POST', input), headers: { 'idempotency-key': key } }),
     resumeGitDeliveryRun: (projectId, runId, input = {}) =>
       transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-runs/${encodeURIComponent(runId)}/resume`, { ...jsonRequest('POST', input), headers: { 'idempotency-key': crypto.randomUUID() } }),
+    stopGitDeliveryRun: (projectId, runId) =>
+      transport.request(`/api/projects/${encodeURIComponent(projectId)}/git-delivery-runs/${encodeURIComponent(runId)}/stop`, { ...jsonRequest('POST', {}), headers: { 'idempotency-key': crypto.randomUUID() } }),
     acknowledgeGitDelivery: (runId, expectedRevision) =>
       transport.request(`/api/notifications/git-delivery/${encodeURIComponent(runId)}/read`, { ...jsonRequest('POST', { expectedRevision }), headers: { 'idempotency-key': crypto.randomUUID() } }),
     loadGitDeliveryConflict: (projectId, runId, stepId, path) =>
