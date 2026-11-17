@@ -2336,6 +2336,7 @@ function requireReviewableWork(options: TaskWorkManagementOptions, deliverable: 
   return { run, item };
 }
 
+/** 显式重试创建新运行，并在同一事务中关闭该工作的旧待办。 */
 function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number) {
   if (item.revision !== expectedRevision) throw new TaskWorkStoreError('ZEUS_TASK_WORK_REVISION_CONFLICT', '工作项已更新，请刷新后重试。');
   if (!['failed', 'blocked'].includes(item.status)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_NOT_RETRYABLE', '只有失败或已明确解除阻塞的工作项可以重试。');
@@ -2343,6 +2344,8 @@ function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRec
   if (!previous || previous.status === 'outcome_unknown') throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_UNKNOWN', '结果未知的运行不能自动重发。');
   const next = cloneRun(options, item, previous);
   const activeItem = options.items.update(item.id, { expectedRevision, status: 'active', currentRunId: next.id });
+  for (const decision of options.decisions.listByTask(item.taskId))
+    if (decision.workItemId === item.id && decision.status === 'pending') options.decisions.resolve(decision.id, decision.revision, { action: 'work_retried', runId: next.id }, 'dismissed');
   if (next.entrypointKind === 'command') {
     const dispatching = options.runs.update(next.id, { status: 'dispatching', startedAt: options.now().toISOString() });
     const waitingRun = options.runs.update(dispatching.id, { status: 'waiting_input' });
@@ -2566,19 +2569,36 @@ async function confirmAutomatedCommand(options: TaskWorkManagementOptions, decis
   await startCommandRun(options, item, run, parameters, { command } as TaskWorkPreview);
 }
 
+/** 人工核对未知结果后，Agent 恢复原会话的成果收集，命令按核对结果收口。 */
 function resolveUnknownOutcome(options: TaskWorkManagementOptions, decision: TaskWorkDecisionRecord, response: Record<string, unknown>): void {
   const run = decision.runId ? options.runs.getById(decision.runId) : undefined;
   const item = options.items.getById(decision.workItemId);
-  if (!run || !item || run.status !== 'outcome_unknown' || item.status !== 'blocked') throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_DECISION_STALE', '未知结果工作项已变化，请刷新后重试。');
+  if (!run || !item || item.currentRunId !== run.id || run.status !== 'outcome_unknown' || item.status !== 'blocked') throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_DECISION_STALE', '未知结果工作项已变化，请刷新后重试。');
   if (response.action === 'mark_succeeded') {
-    options.runs.update(run.id, { status: 'succeeded', completedAt: options.now().toISOString() });
-    options.items.update(item.id, { status: 'completed', completedAt: options.now().toISOString() });
+    if (run.entrypointKind === 'agent') {
+      requireRunnableTask(options, run.taskId);
+      /** 只接纳原任务会话的已完成事实，不用人工确认替代 Provider 结果。 */
+      const conversation = run.conversationId ? options.conversations.getById(run.conversationId) : undefined;
+      if (
+        !conversation ||
+        conversation.taskId !== run.taskId ||
+        conversation.projectId !== run.projectId ||
+        conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id), options.conversationTurns.listByConversation(conversation.id)).type !== 'completed'
+      )
+        throw new TaskWorkStoreError('ZEUS_TASK_WORK_AGENT_OUTCOME_UNCONFIRMED', '原 Agent 会话尚未确认完成，请先在原会话核对并恢复。');
+      /** 核对成功只恢复原运行的结果收集，后续仍检查自主目标、子工作和成果验收。 */
+      options.runs.update(run.id, { status: 'active', errorCode: null, errorMessage: null, completedAt: null });
+      options.items.update(item.id, { status: 'active', completedAt: null });
+    } else {
+      options.runs.update(run.id, { status: 'succeeded', completedAt: options.now().toISOString() });
+      options.items.update(item.id, { status: 'completed', completedAt: options.now().toISOString() });
+    }
   } else if (response.action === 'mark_failed') {
     options.runs.update(run.id, { status: 'failed', completedAt: options.now().toISOString() });
     options.items.update(item.id, { status: 'failed' });
-    createCommandFailureDecision(options, run, '管理者核对现场后确认该命令失败。', 'outcome_reconciled');
+    if (run.entrypointKind === 'command') createCommandFailureDecision(options, run, '管理者核对现场后确认该命令失败。', 'outcome_reconciled');
   } else {
-    throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_ACTION_INVALID', '请选择“确认成功”或“确认失败”；处置不会自动重发命令。', 400);
+    throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_ACTION_INVALID', '请选择“确认成功”或“确认失败”；处置不会自动重发本次执行。', 400);
   }
 }
 
@@ -2609,13 +2629,14 @@ function commandDecisionSnapshot(options: TaskWorkManagementOptions, run: TaskWo
   };
 }
 
+/** 先核对并记录当前待办，再原子更新工作，避免重试清理误关正在回复的待办。 */
 function resolveManagerDecision(options: TaskWorkManagementOptions, decision: TaskWorkDecisionRecord, expectedRevision: number, response: Record<string, unknown>) {
-  if (decision.kind === 'outcome_unknown') resolveUnknownOutcome(options, decision, response);
-  if (decision.kind === 'command_failure') retryFailedCommand(options, decision, response);
   const resolved = options.decisions.resolve(decision.id, expectedRevision, {
     responseSha256: sha256(canonicalJson(response)),
     responseRecordedBy: 'manager_action',
   });
+  if (decision.kind === 'outcome_unknown') resolveUnknownOutcome(options, decision, response);
+  if (decision.kind === 'command_failure') retryFailedCommand(options, decision, response);
   return resolved;
 }
 

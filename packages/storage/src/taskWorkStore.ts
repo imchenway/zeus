@@ -949,6 +949,7 @@ function assertWorkItemTransition(from: TaskWorkItemStatus, to: TaskWorkItemStat
   if (!allowed[from].includes(to)) conflict(`工作项状态不能从 ${from} 转为 ${to}。`);
 }
 
+/** 拒绝生命周期之外的状态转换，防止已结束的运行被普通调度重新启动。 */
 function assertRunTransition(from: TaskWorkRunStatus, to: TaskWorkRunStatus): void {
   if (from === to) return;
   const allowed: Record<TaskWorkRunStatus, readonly TaskWorkRunStatus[]> = {
@@ -959,7 +960,8 @@ function assertRunTransition(from: TaskWorkRunStatus, to: TaskWorkRunStatus): vo
     runtime_completed: ['succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     succeeded: [],
     failed: [],
-    outcome_unknown: ['succeeded', 'failed'],
+    // Agent 核对原会话完成后恢复成果收集，保留后续验收。
+    outcome_unknown: ['active', 'succeeded', 'failed'],
     cancelled: [],
   };
   if (!allowed[from].includes(to)) conflict(`工作运行状态不能从 ${from} 转为 ${to}。`);
