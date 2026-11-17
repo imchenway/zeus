@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /* global console, process */
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
@@ -23,6 +25,14 @@ import {
 const manifestNames = { darwin: 'zeus-release-manifest.json', win32: 'zeus-release-manifest-win32.json' };
 /** OSS 子进程异步执行，使不同对象的上传与核验可以重叠。 */
 const executeFile = promisify(execFile);
+/** 单条发布命令最多执行三十分钟，诊断日志与执行器共用这一时限。 */
+const releaseCommandTimeoutMs = 30 * 60_000;
+/** 每次连接 OSS 的等待上限，单位秒。 */
+const ossConnectTimeoutSeconds = 10;
+/** 单次 OSS 请求读写的超时上限，单位秒，不代表整份文件的上传时限。 */
+const ossReadWriteTimeoutSeconds = 60;
+/** 单次 OSS 请求失败后最多重试两次，全部重试仍受命令总时限约束。 */
+const ossRequestRetryTimes = 2;
 
 /** CI 的非密钥配置必须指向官方域名和有效的 OSS 空间，不允许临时镜像替代官方来源。 */
 export function releaseCdnConfiguration(env = process.env) {
@@ -43,6 +53,7 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
   requiredVersion(version);
   if (!/^[a-f0-9]{40}$/u.test(sourceCommit)) throw new Error('OSS 发布缺少固定候选提交。');
   if (artifactFileName !== undefined && (activate || requireStagedInstallers || typeof artifactFileName !== 'string' || !artifactFileName)) throw new Error('单制品上传只允许 stage 指定候选安装包。');
+  console.log(`OSS 超时设置：connect_timeout_seconds=${ossConnectTimeoutSeconds}，read_write_timeout_seconds=${ossReadWriteTimeoutSeconds}，retry_times=${ossRequestRetryTimes}，command_timeout_ms=${releaseCommandTimeoutMs}`);
   /** 单包上传只下载对应构建附件；完整发布仍要求三个正式安装包。 */
   let targets = Object.entries(manifestNames).map(([platform, fileName]) => ({ platform, fileName, architectures: platform === 'win32' ? ['x64', 'arm64'] : ['arm64'] }));
   if (artifactFileName !== undefined) {
@@ -111,20 +122,24 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
     for (const batch of [files.filter((file) => !file.platform), files.filter((file) => file.platform)]) {
       await waitForReleaseOperations(
         batch.map(async (file) => {
+          console.log(`CDN 制品准备开始：${file.fileName}，size_bytes=${file.size}`);
           /** CRC64 与 OSS 服务端计算值对账，避免对分片 ETag 错当 MD5，也避免回下载整个安装包。 */
           const crc64 = (await runOssutil(['hash', 'crc64', file.path])).match(/^\s*(\d+)\s/u)?.[1];
           if (!crc64) throw new Error(`无法计算制品 CRC64：${file.fileName}`);
           file.crc64 = crc64;
           /** 已有固定版本文件只核验，不覆盖；只有 stage 可以创建缺失文件。 */
           let headers = await headObject(file.key);
+          console.log(`OSS 对象状态：${file.key}，${headers ? '已存在，核验固定候选' : '不存在，需要上传'}`);
           if (!headers) {
             if (activate || (requireStagedInstallers && !file.platform)) throw new Error(`固定版本文件尚未准备完成：${file.key}`);
             await copyObject(file, file.key, true);
             headers = await headObject(file.key);
           }
           assertStoredFile(file, headers);
+          console.log(`OSS 制品核验通过，开始 CDN 回读：${file.fileName}`);
           /** 确认实际下载域名能访问该对象，而非只确认 OSS 内部写入成功。 */
           await assertPublicFile(file);
+          console.log(`CDN 制品准备完成：${file.fileName}`);
         }),
       );
     }
@@ -198,9 +213,29 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
     await rm(temporary, { recursive: true, force: true });
   }
 
-  /** 凭据只由环境传入 ossutil；日志关闭，地域和 HTTPS Endpoint 显式固定。 */
+  /** 复制命令独立记录信息级日志；机器读取的摘要和元数据输出不混入日志。 */
   function runOssutil(args) {
-    return execute('ossutil', [...args, '--region', configuration.region, '--endpoint', `https://oss-${configuration.region}.aliyuncs.com`, '--mode', 'StsToken', '--loglevel', 'off', '--quiet']);
+    /** 日志位于本次私有临时目录，避免并发命令混写或遗留原始请求信息。 */
+    const logPath = args[0] === 'cp' ? join(temporary, `ossutil-${randomUUID()}.log`) : null;
+    return execute('ossutil', [
+      ...args,
+      '--region',
+      configuration.region,
+      '--endpoint',
+      `https://oss-${configuration.region}.aliyuncs.com`,
+      '--mode',
+      'StsToken',
+      '--connect-timeout',
+      String(ossConnectTimeoutSeconds),
+      '--read-timeout',
+      String(ossReadWriteTimeoutSeconds),
+      '--retry-times',
+      String(ossRequestRetryTimes),
+      '--loglevel',
+      logPath ? 'info' : 'off',
+      ...(logPath ? ['--log-file', logPath] : []),
+      '--quiet',
+    ]);
   }
 
   /** 所有操作只能落在已授权的 zeus 对象前缀内。 */
@@ -271,9 +306,61 @@ function compareVersions(left, right) {
   return 0;
 }
 
-/** 子进程只输出业务结果；不会将环境或凭据拼入命令参数。 */
+/** 发布日志统一隐藏环境凭据、请求认证头和签名参数。 */
+function redactReleaseCommandOutput(value) {
+  /** 先脱敏完整输出，再由调用方截取尾部，避免截断后留下部分凭据。 */
+  let output = String(value ?? '');
+  for (const key of ['OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_SESSION_TOKEN', 'ALIBABACLOUD_ACCESS_KEY_ID', 'ALIBABACLOUD_ACCESS_KEY_SECRET', 'ALIBABACLOUD_SECURITY_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN']) {
+    if (process.env[key]) output = output.replaceAll(process.env[key], '[REDACTED]');
+  }
+  return output
+    .replace(/(authorization["']?\s*[:=]\s*)[^\r\n]*/giu, '$1[REDACTED]')
+    .replace(/((?:x-oss-security-token|security[-_]?token|ossaccesskeyid|x-oss-credential|x-oss-signature|signature)["']?\s*[:=]\s*["']?)[^\s"',;&]+/giu, '$1[REDACTED]');
+}
+
+/** 记录命令耗时和等待心跳；失败时保留退出状态及脱敏后的原生诊断。 */
 async function executeReleaseCommand(command, args) {
-  return (await executeFile(command, args, { encoding: 'utf8', timeout: 30 * 60_000, maxBuffer: 1024 * 1024 })).stdout;
+  /** 只记录操作和复制路径，不展开可能携带认证信息的完整命令参数。 */
+  const operation = redactReleaseCommandOutput(`${command} ${args.slice(0, args[0] === 'cp' ? 3 : 2).join(' ')}`);
+  /** 单调时钟提供不受系统校时影响的实际执行耗时。 */
+  const startedAt = performance.now();
+  console.log(`发布命令开始：${operation}，timeout_ms=${releaseCommandTimeoutMs}`);
+  /** 原生命令没有输出时，仍每分钟报告当前操作和实际等待时长。 */
+  const heartbeat = setInterval(() => console.log(`发布命令仍在执行：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}`), 60_000);
+  try {
+    /** stdout 原样返回给摘要和 JSON 解析，不将诊断日志写入机器输出。 */
+    const { stdout, stderr } = await executeFile(command, args, {
+      encoding: 'utf8',
+      timeout: releaseCommandTimeoutMs,
+      // 总时限到达后强制终止，避免子进程忽略终止请求而继续等待。
+      killSignal: 'SIGKILL',
+      maxBuffer: 1024 * 1024,
+    });
+    if (stderr.trim()) console.warn(`发布命令 stderr：${operation}\n${redactReleaseCommandOutput(stderr).slice(-32768)}`);
+    console.log(`发布命令完成：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}`);
+    return stdout;
+  } catch (error) {
+    /** 退出码、信号和 killed 分开记录，不把包装脚本退出码当作 OSS 错误码。 */
+    const details = [
+      `发布命令失败：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}，timeout_ms=${releaseCommandTimeoutMs}，code=${error.code ?? 'unknown'}，signal=${error.signal ?? 'none'}，killed=${error.killed ?? false}`,
+      redactReleaseCommandOutput(error.message).slice(-32768),
+    ];
+    for (const stream of ['stdout', 'stderr']) {
+      if (error[stream]) details.push(`${stream}（脱敏后最多保留末尾 32768 字符）：\n${redactReleaseCommandOutput(error[stream]).slice(-32768)}`);
+    }
+    /** OSS 原生日志补充重试和传输错误；日志不存在不覆盖最初的命令故障。 */
+    const logFileIndex = args.indexOf('--log-file');
+    if (logFileIndex >= 0) {
+      try {
+        details.push(`ossutil 日志（脱敏后最多保留末尾 32768 字符）：\n${redactReleaseCommandOutput(await readFile(args[logFileIndex + 1], 'utf8')).slice(-32768)}`);
+      } catch (logError) {
+        details.push(`ossutil 日志读取失败：${logError.code ?? logError.message}`);
+      }
+    }
+    throw new Error(redactReleaseCommandOutput(details.join('\n')), { cause: error });
+  } finally {
+    clearInterval(heartbeat);
+  }
 }
 
 /** 只有直接执行本脚本才写入 OSS；导入验证函数不会触发发布。 */
@@ -304,11 +391,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.log(`CDN ${mode} 完成：${JSON.stringify(result)}`);
   })().catch((error) => {
     /** SDK 错误可能含请求信息；输出前移除本次临时凭据。 */
-    let message = String(error.stderr || error.message || error);
-    for (const key of ['OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_SESSION_TOKEN']) {
-      if (process.env[key]) message = message.replaceAll(process.env[key], '[REDACTED]');
-    }
-    console.error(message);
+    console.error(redactReleaseCommandOutput(error.message || error));
     process.exitCode = 1;
   });
 }
