@@ -240,8 +240,22 @@ export interface TaskWorkManagementController {
   /** 自动领取只绑定现行安排中的待领分工。 */
   claimPlannedWork(taskId: string, employeeId: string): boolean;
   /** 自动化沿用原安排领取分工，回执固定到准确安排代次，不另建独立工作。 */
-  claimPlannedAutomationWork(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access' }): Promise<AutomationExecutionReference | null | undefined>;
-  createAutomatedWorkItem(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access' }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
+  claimPlannedAutomationWork(input: {
+    taskId: string;
+    employeeId: string;
+    sourceRef: string;
+    permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+    /** 统一自动化的新领取在接纳事务内复核当前控制状态。 */
+    assertCanAccept?: () => void;
+  }): Promise<AutomationExecutionReference | null | undefined>;
+  createAutomatedWorkItem(input: {
+    taskId: string;
+    employeeId: string;
+    sourceRef: string;
+    permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+    /** 统一自动化预检完成后，在创建工作前复核当前控制状态。 */
+    assertCanAccept?: () => void;
+  }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
   /** 接纳整个流程时固定最终模型配置，并检查全部节点 Skill。 */
   freezeWorkflowConfiguration(projectId: string, employeeId: string, settings: EmployeeWorkSettings, taskId?: string): Promise<EmployeeWorkSettings>;
   /** 数字团队按冻结节点创建工作项，旧自动调度器不会接管此来源。 */
@@ -794,7 +808,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       return true;
     },
     hasExistingTaskWork: (taskId) => options.items.listByTask(taskId).some((item) => !item.arrangement && item.status !== 'cancelled'),
-    claimPlannedAutomationWork: async ({ taskId, employeeId, sourceRef, permissionMode }) => {
+    claimPlannedAutomationWork: async ({ taskId, employeeId, sourceRef, permissionMode, assertCanAccept }) => {
       /** 固定来源命令先读原接纳回执，重启后不能领取另一代安排或另一组分工。 */
       const identity = `automation-planned:${sourceRef}`;
       const input = { taskId, employeeId, sourceRef, ...(permissionMode ? { permissionMode } : {}) };
@@ -814,6 +828,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         destinationId: 'task-work-automation-planned',
         resourceId: `task:${taskId}`,
         mutateBusinessState: (): AutomationExecutionReference | null => {
+          assertCanAccept?.();
           const task = requireTaskOrThrow(options, taskId);
           const plan = options.planning.get(taskId);
           const employee = requireEmployeeOrThrow(options, task.projectId, employeeId);
@@ -842,7 +857,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       return result.result;
     },
     hasAutomationSource: (sourceRef) => Boolean(options.items.getBySource('automation', sourceRef)),
-    createAutomatedWorkItem: async ({ taskId, employeeId, sourceRef, permissionMode }) => {
+    createAutomatedWorkItem: async ({ taskId, employeeId, sourceRef, permissionMode, assertCanAccept }) => {
       const replay = options.items.getBySource('automation', sourceRef);
       if (replay?.currentRunId) {
         const run = options.runs.getById(replay.currentRunId);
@@ -853,6 +868,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const preview = await resolvePreview(options, task, { employeeId, permissionMode, workspace: { mode: 'create' } });
       const blockers = preview.blockers;
       if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
+      assertCanAccept?.();
       const created = createWorkItemFromPreview(options, task, employee, preview, stableIdentity('task_work_item', sourceRef), { source: 'automation', sourceRef });
       await options.save();
       publishChanged(options, task.id, created.item.id, 'automation_created');
