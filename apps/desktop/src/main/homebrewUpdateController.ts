@@ -178,10 +178,10 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         await publishManualUpdate(update);
         return update;
       }
-      // 检查和下载不查询包管理器，安装方式只在用户发起安装后确定。
+      // 已下载后才查询安装管理方式，避免包管理器阻断检查和下载。
       if (prepared && samePreparedUpdate(prepared, update)) {
-        // 安装条件只决定已下载更新的后续动作，不阻止下载本身。
-        if (prepared.method === 'direct' && (await options.direct.manualInstallReason(update))) {
+        // Homebrew 管理的应用仍由 Homebrew 升级，不受直接替换 App 的条件限制。
+        if (prepared.method === 'direct' && (await options.direct.manualInstallReason(update)) && !(await options.homebrew?.isManaged())) {
           await publishManualUpdate(update);
           return update;
         }
@@ -231,7 +231,8 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         if (!result.accepted) throw new Error(result.reason);
         prepared = { method: 'direct', update: result.update };
         currentUpdate = result.update;
-        if (await options.direct.manualInstallReason(result.update)) {
+        // Homebrew 管理的应用保留重启安装入口，点击后复验管理记录并交接安装。
+        if ((await options.direct.manualInstallReason(result.update)) && !(await options.homebrew?.isManaged())) {
           await publishManualUpdate(result.update);
           return;
         }
