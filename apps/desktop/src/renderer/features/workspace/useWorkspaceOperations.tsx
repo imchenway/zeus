@@ -1970,7 +1970,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             handleMainNavigate('settings');
           },
           onSelectNewConversationProject: selectNewConversationProject,
-          onLoadNewConversationProjectGit: props.nativeConversationClient?.loadProjectGitWorkbench,
+          onLoadNewConversationProjectGit: props.nativeConversationClient ? (projectId) => props.nativeConversationClient!.loadProjectGitWorkbench(projectId, false) : undefined,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
           onSelectTask: (task) => {

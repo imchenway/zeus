@@ -9,6 +9,16 @@ const conversationAcceptanceMeasureName = 'zeus.renderer.conversation-submit-to-
 export type RendererPerformanceSample =
   | ({ kind: 'api' } & ZeusClientPerformanceSpan)
   | {
+      kind: 'interaction';
+      name: string;
+      interactionId: number;
+      startTimeMs: number;
+      durationMs: number;
+      inputDelayMs: number;
+      processingMs: number;
+      completedAt: string;
+    }
+  | {
       kind: 'conversation_acceptance';
       conversationId: string;
       clientUserMessageId: string;
@@ -48,6 +58,8 @@ export interface RendererPerformanceSnapshot {
   sampleCount: number;
   generatedAt: string;
   conversationNavigationLatency: RendererLatencyPercentiles;
+  /** Event Timing 只报告至少 16 ms 的交互，不能当作全部点击的耗时分布。 */
+  observedInteractionLatency?: RendererLatencyPercentiles;
   samples: RendererPerformanceSample[];
 }
 
@@ -98,6 +110,7 @@ export class RendererPerformanceCollector {
     if (typeof PerformanceObserver !== 'function') return;
     this.observeEntryType('longtask', 'long_task');
     this.observeEntryType('paint', 'paint');
+    this.observeInteractions();
     if (PerformanceObserver.supportedEntryTypes.includes('measure')) {
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
@@ -142,6 +155,7 @@ export class RendererPerformanceCollector {
       sampleCount: this.samples.length,
       generatedAt: new Date().toISOString(),
       conversationNavigationLatency: latencyPercentiles(conversationNavigationDurations),
+      observedInteractionLatency: latencyPercentiles(this.samples.flatMap((sample) => (sample.kind === 'interaction' ? [sample.durationMs] : []))),
       samples: [...this.samples],
     };
   }
@@ -149,6 +163,29 @@ export class RendererPerformanceCollector {
   disconnect(): void {
     for (const observer of this.observers) observer.disconnect();
     this.observers.length = 0;
+  }
+
+  /** 使用浏览器原生 Event Timing 分开记录输入排队、处理和下一帧呈现，不收集按键或 DOM。 */
+  private observeInteractions(): void {
+    if (!PerformanceObserver.supportedEntryTypes.includes('event')) return;
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as PerformanceEventTiming[]) {
+        const interactionId: unknown = Reflect.get(entry, 'interactionId');
+        if (typeof interactionId !== 'number' || interactionId <= 0) continue;
+        this.append({
+          kind: 'interaction',
+          name: entry.name,
+          interactionId,
+          startTimeMs: roundMetric(entry.startTime),
+          durationMs: roundMetric(entry.duration),
+          inputDelayMs: roundMetric(entry.processingStart - entry.startTime),
+          processingMs: roundMetric(entry.processingEnd - entry.processingStart),
+          completedAt: new Date().toISOString(),
+        });
+      }
+    });
+    observer.observe({ type: 'event', buffered: true, durationThreshold: 16 } as PerformanceObserverInit);
+    this.observers.push(observer);
   }
 
   private observeEntryType(entryType: string, kind: 'long_task' | 'paint'): void {

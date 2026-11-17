@@ -95,7 +95,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
       </p>
       <div className="model-setup-actions">
         {signedIn ? (
-          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.logoutAccount()}>
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => controller.logoutAccount()}>
             {zh ? '退出登录' : 'Sign out'}
           </Button>
         ) : controller.accountChecked ? (
@@ -104,12 +104,12 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           </Button>
         ) : null}
         {signedIn ? (
-          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.openUsageManagement()}>
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => controller.openUsageManagement()}>
             {zh ? '管理官方用量' : 'Manage official usage'}
           </Button>
         ) : null}
         {reconnectNeeded ? (
-          <Button variant="primary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'activating'} onClick={() => void controller.reconnectCodex()}>
+          <Button variant="primary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'activating'} onClick={() => controller.reconnectCodex()}>
             {zh ? '重新连接 Codex' : 'Reconnect Codex'}
           </Button>
         ) : null}
@@ -125,7 +125,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           <p className="codex-update-state" role="status" aria-live="polite">
             {updateLabel}
           </p>
-          <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => void controller.refreshCodexOverview('check_update')}>
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => controller.refreshCodexOverview('check_update')}>
             {zh ? '检测更新' : 'Check for updates'}
           </Button>
         </div>
@@ -137,7 +137,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
               ? '更新后将重新连接。若连接失败，请先重新连接；Zeus 不会自动降级或用旧数据覆盖对话。'
               : 'Updating reconnects Codex. If it fails, reconnect first; Zeus will not downgrade automatically or overwrite conversations with older data.'}
           </p>
-          <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => void controller.refreshCodexOverview('install_update')}>
+          <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => controller.refreshCodexOverview('install_update')}>
             {zh ? `安装 ${controller.updateCheck.latestVersion}` : `Install ${controller.updateCheck.latestVersion}`}
           </Button>
         </div>
@@ -241,7 +241,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
         <div className="model-setup-body">
           {c.step === 'choose' ? (
             <div className="model-setup-options">
-              <Button variant="secondary" onClick={() => void c.prepareCodex()} disabled={c.operation !== 'idle'}>
+              <Button variant="secondary" onClick={() => c.prepareCodex()} disabled={c.operation !== 'idle'}>
                 <strong>{zh ? '使用 Codex 订阅' : 'Use Codex subscription'}</strong>
                 <span>{zh ? '通过官方网页登录 ChatGPT 账号' : 'Sign in to ChatGPT on the official website'}</span>
               </Button>
@@ -314,21 +314,21 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                   <Button
                     disabled={c.operation !== 'idle'}
                     busy={c.operation === 'inspecting' || c.operation === 'authenticating' || c.operation === 'activating'}
-                    onClick={() => void (c.modelsPending ? c.retrySubscriptionModels() : c.prepareCodex())}
+                    onClick={() => (c.modelsPending ? c.retrySubscriptionModels() : c.prepareCodex())}
                   >
                     {c.modelsPending ? (zh ? '重试同步模型' : 'Retry model synchronization') : zh ? '登录 Codex 订阅' : 'Sign in with Codex subscription'}
                   </Button>
                   {c.modelsPending ? (
-                    <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.prepareCodex()}>
+                    <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => c.prepareCodex()}>
                       {zh ? '重新登录' : 'Sign in again'}
                     </Button>
                   ) : null}
-                  <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => void c.inspectConfig()}>
+                  <Button variant="secondary" disabled={c.operation !== 'idle'} onClick={() => c.inspectConfig()}>
                     {zh ? '导入已有配置（可选）' : 'Import configuration (optional)'}
                   </Button>
                 </>
               ) : !c.installationCheck ? (
-                <Button variant="secondary" disabled={c.operation !== 'idle'} busy={c.operation === 'detecting'} onClick={() => void c.checkInstallation()}>
+                <Button variant="secondary" disabled={c.operation !== 'idle'} busy={c.operation === 'detecting'} onClick={() => c.checkInstallation()}>
                   {zh ? '重新检测 Codex' : 'Check Codex again'}
                 </Button>
               ) : null}
@@ -353,7 +353,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
                 ))}
               </ul>
               <div className="model-setup-actions">
-                <Button disabled={c.operation !== 'idle'} busy={c.operation === 'importing'} onClick={() => void c.importConfig()}>
+                <Button disabled={c.operation !== 'idle'} busy={c.operation === 'importing'} onClick={() => c.importConfig()}>
                   {c.needsActivation ? (zh ? '重试启用' : 'Retry activation') : zh ? '导入并继续' : 'Import and continue'}
                 </Button>
                 {!c.needsActivation ? (

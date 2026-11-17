@@ -23,6 +23,7 @@ import { TerminalTabs } from '../features/runtime/TerminalTabs.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { observeTerminalTheme, terminalDisplayOptions } from '../features/runtime/terminalPresentation.js';
 import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from '../features/runtime/TerminalSearch.js';
+import { Button } from '../ui/Button.js';
 
 const integratedTerminalCommand = 'sh';
 const integratedTerminalScript = 'exec "${SHELL:-sh}" -l';
@@ -503,24 +504,24 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           closingId={closingSessionId}
           closeDisabled={starting || Boolean(closingSessionId)}
           onSelect={setActiveSessionId}
-          onNew={() => void startTerminal()}
+          onNew={() => startTerminal()}
           onClose={requestCloseSession}
         />
         <TerminalSearchButton search={search} language={props.language} />
-        <button type="button" className="zeus-terminal-action" aria-label={moveLabel} data-icon-tooltip={moveLabel} onClick={togglePosition}>
+        <Button unstyled type="button" className="zeus-terminal-action" aria-label={moveLabel} data-icon-tooltip={moveLabel} onClick={togglePosition}>
           {right ? <Rows aria-hidden="true" /> : <SidebarSimple aria-hidden="true" style={{ transform: 'scaleX(-1)' }} />}
-        </button>
-        <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} data-icon-tooltip={copy.closePanel} onClick={props.onClose}>
+        </Button>
+        <Button unstyled type="button" className="zeus-terminal-action" aria-label={copy.closePanel} data-icon-tooltip={copy.closePanel} onClick={props.onClose}>
           <X aria-hidden="true" />
-        </button>
+        </Button>
       </header>
       <TerminalSearchBar search={search} language={props.language} />
       {error ? (
         <div className="session-terminal-error" role="alert">
           <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-          <button type="button" onClick={() => setError(null)} aria-label={copy.cancel}>
+          <Button unstyled type="button" onClick={() => setError(null)} aria-label={copy.cancel}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       ) : null}
       <div ref={bodyRef} className="session-terminal-body" role="tabpanel" id={panelId} aria-labelledby={activeSessionId ? `${panelId}-${activeSessionId}` : undefined}>
@@ -532,9 +533,9 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             title={copy.unavailableTitle}
             detail={phase.reason}
             action={
-              <button type="button" onClick={() => void loadPanel()}>
+              <Button unstyled type="button" onClick={() => loadPanel()}>
                 {copy.retry}
-              </button>
+              </Button>
             }
           />
         ) : phase.kind === 'failed' ? (
@@ -543,9 +544,9 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             title={copy.startupFailed}
             detail={phase.message}
             action={
-              <button type="button" onClick={() => void loadPanel()}>
+              <Button unstyled type="button" onClick={() => loadPanel()}>
                 {copy.retry}
-              </button>
+              </Button>
             }
           />
         ) : activeSession ? (
@@ -569,9 +570,9 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             detail={error ?? undefined}
             action={
               error ? (
-                <button type="button" onClick={() => void startTerminal()} disabled={starting}>
+                <Button unstyled type="button" onClick={() => startTerminal()} disabled={starting}>
                   {copy.retry}
-                </button>
+                </Button>
               ) : undefined
             }
           />
@@ -581,10 +582,10 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             title={copy.permissionTitle}
             detail={copy.permissionBody}
             action={
-              <button type="button" onClick={() => void startTerminal()} disabled={starting} autoFocus>
+              <Button unstyled type="button" onClick={() => startTerminal()} disabled={starting} autoFocus>
                 {starting ? <CircleNotch aria-hidden="true" className="session-terminal-spinner" /> : <Plus aria-hidden="true" />}
                 {copy.allowAndStart}
-              </button>
+              </Button>
             }
           />
         )}

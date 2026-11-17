@@ -230,16 +230,16 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
       </header>
       <div className="model-setup-actions">
         {catalog?.account?.authenticated ? (
-          <Button variant="secondary" disabled={busy} onClick={() => void logout()}>
+          <Button variant="secondary" disabled={busy} onClick={() => logout()}>
             {zh ? '退出登录' : 'Sign out'}
           </Button>
         ) : (
-          <Button variant="primary" busy={busy && !accountLoading} disabled={busy || !props.client || Boolean(loginId)} onClick={() => void beginLogin()}>
+          <Button variant="primary" busy={busy && !accountLoading} disabled={busy || !props.client || Boolean(loginId)} onClick={() => beginLogin()}>
             {zh ? '登录 GitHub Copilot' : 'Sign in to GitHub Copilot'}
           </Button>
         )}
         {loginId ? (
-          <Button variant="secondary" disabled={busy} onClick={() => void cancelLogin()}>
+          <Button variant="secondary" disabled={busy} onClick={() => cancelLogin()}>
             {zh ? '取消登录' : 'Cancel sign-in'}
           </Button>
         ) : null}
@@ -249,19 +249,19 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
           {step.userCode ? (
             <>
               <strong data-zeus-selectable="text">{step.userCode}</strong>
-              <Button variant="secondary" size="compact" onClick={() => void copyUserCode()}>
+              <Button variant="secondary" size="compact" onClick={() => copyUserCode()}>
                 {copiedCode === step.userCode ? (zh ? '已复制' : 'Copied') : zh ? '复制验证码' : 'Copy code'}
               </Button>
             </>
           ) : null}
           {step.verificationUri || step.url ? (
-            <Button variant="secondary" onClick={() => void openVerificationPage()}>
+            <Button variant="secondary" onClick={() => openVerificationPage()}>
               {zh ? '打开 GitHub 授权页' : 'Open GitHub verification'}
             </Button>
           ) : null}
           {step.kind === 'input-required' ? <input aria-label={step.prompt ?? (zh ? '登录信息' : 'Sign-in input')} value={loginInput} onChange={(event) => setLoginInput(event.target.value)} /> : null}
           {step.kind !== 'awaiting' ? (
-            <Button variant="primary" onClick={() => void advanceLogin()}>
+            <Button variant="primary" onClick={() => advanceLogin()}>
               {zh ? '已完成授权' : 'Continue sign-in'}
             </Button>
           ) : (

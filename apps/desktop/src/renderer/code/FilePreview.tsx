@@ -89,9 +89,9 @@ export function PreviewIconButton({
   // 不把提示样式参数透传给原生按钮，所有已有提示使用统一气泡。
   void tooltip;
   return (
-    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} data-icon-tooltip={label}>
+    <Button unstyled {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} data-icon-tooltip={label}>
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -121,7 +121,7 @@ export function FileSourceEditButton(props: { request: FilePreviewRequest; zh: b
     }
   }
   return (
-    <PreviewIconButton label={props.zh ? '编辑工作区文件' : 'Edit workspace file'} disabled={busy} onClick={() => void openEditor()}>
+    <PreviewIconButton label={props.zh ? '编辑工作区文件' : 'Edit workspace file'} disabled={busy} onClick={() => openEditor()}>
       <PencilSimple size={16} aria-hidden="true" />
     </PreviewIconButton>
   );
@@ -479,7 +479,7 @@ function FilePreviewBody(props: {
           ))
         : null}
       {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
-        <PreviewIconButton label={props.zh ? '打开附件' : 'Open attachment'} onClick={() => void openAttachment()}>
+        <PreviewIconButton label={props.zh ? '打开附件' : 'Open attachment'} onClick={() => openAttachment()}>
           <ArrowSquareOut size={16} aria-hidden="true" />
         </PreviewIconButton>
       ) : null}
@@ -493,7 +493,7 @@ function FilePreviewBody(props: {
           label={editing.dirty ? (props.zh ? '请先保存或放弃 Diff 草稿' : 'Save or discard the diff draft first') : props.zh ? '在源码页编辑工作区文件' : 'Edit workspace file in Source'}
           disabled={editing.dirty || editing.saving}
           onClick={() => {
-            void window.zeus
+            return window.zeus
               ?.actOnFilePreview(editableItem.id, 'edit')
               .then(() => props.onClose?.())
               .catch((cause: unknown) => setError(userFacingErrorCause(cause)));
@@ -512,9 +512,9 @@ function FilePreviewBody(props: {
         {props.onClose ? (
           <header className="file-preview-dialog-header">
             <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
-            <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} data-icon-tooltip={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
+            <Button unstyled type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} data-icon-tooltip={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
               <X size={18} aria-hidden="true" />
-            </button>
+            </Button>
           </header>
         ) : null}
         {showDiff && error ? (
@@ -708,7 +708,7 @@ export function PreviewImage(props: {
             onError={() => {
               setFailed(true);
               setMenu(null);
-              props.onError?.();
+              return props.onError?.();
             }}
           />
         )}
@@ -717,9 +717,9 @@ export function PreviewImage(props: {
         ? createPortal(
             <MenuSurface className="zeus-file-copy-menu" aria-label={props.zh ? '图片操作' : 'Image actions'} style={{ left: menu.x, top: menu.y }} onClose={() => setMenu(null)} onContextMenu={(event) => event.preventDefault()}>
               {actions.map((value) => (
-                <button key={value} type="button" role="menuitem" onClick={() => void action(value)}>
+                <Button unstyled key={value} type="button" role="menuitem" onClick={() => action(value)}>
                   {labels[value]}
-                </button>
+                </Button>
               ))}
             </MenuSurface>,
             imageRef.current?.closest('[data-zeus-primitive="modal"]') ?? ownerDocument.body,
@@ -747,7 +747,24 @@ function FilePreviewContent(props: {
   /** 刷新和编辑操作与系统文件操作共用路径栏。 */ toolbar?: ReactNode;
 }) {
   /** 当前已授权的文件描述。 */
-  const item = props.item;
+  const [loadedReview, setLoadedReview] = useState<{ id: string; review: FileReview } | null>(null);
+  /** 审阅结果绑定预览令牌，切换文件后不会把旧 Git 信息贴到新正文。 */
+  const item = loadedReview?.id === props.item.id ? { ...props.item, review: loadedReview.review } : props.item;
+  useEffect(() => {
+    if (props.request.kind !== 'resource' || props.request.comparison || props.item.kind !== 'text' || !props.item.id || !window.zeus?.loadFilePreviewReview) return;
+    let active = true;
+    void window.zeus
+      .loadFilePreviewReview(props.item.id)
+      .then((review) => {
+        if (active && review) setLoadedReview({ id: props.item.id, review });
+      })
+      .catch((cause: unknown) => {
+        if (active) reportApplicationError(cause, { language: props.zh ? 'zh-CN' : 'en' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.item.id, props.item.kind, props.request.kind, props.request.kind === 'resource' ? props.request.comparison : undefined, props.zh]);
   /** 优先展示会话或仓库相对路径，打开操作仍只使用资源令牌。 */
   const displayPath = props.commentPath ?? ('path' in props.request ? props.request.path : (item.path ?? item.name));
   /** 阅读身份不使用每次读取都会更换的授权令牌。 */
@@ -799,17 +816,17 @@ function FilePreviewContent(props: {
                   ) : null}
                   {/* Quick Look 仅有 macOS 原生入口，其他系统使用相邻的打开文件操作。 */}
                   {isMacOSPlatform() ? (
-                    <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+                    <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => action('quick-look')}>
                       <Eye size={18} aria-hidden="true" />
                     </PreviewIconButton>
                   ) : null}
-                  <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
+                  <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => action('reveal')}>
                     <FolderOpen size={18} aria-hidden="true" />
                   </PreviewIconButton>
-                  <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
+                  <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => action('export')}>
                     <DownloadSimple size={18} aria-hidden="true" />
                   </PreviewIconButton>
-                  <Button size="compact" aria-label={props.zh ? '打开文件' : 'Open file'} onClick={() => void action('open')}>
+                  <Button size="compact" aria-label={props.zh ? '打开文件' : 'Open file'} onClick={() => action('open')}>
                     <ArrowSquareOut size={18} aria-hidden="true" />
                     {props.zh ? '打开' : 'Open'}
                   </Button>

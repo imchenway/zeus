@@ -14,17 +14,16 @@ const responseBytesLimit = 4 * 1024 * 1024;
 type SourceResponse = { status: number; text: string; contentType: string };
 
 /** 根据真实来源读取草稿；所有外部请求都是读取，不创建或回写第三方工作项。 */
-export async function extractThirdPartyTaskInfo(rawUrl: string, services?: ZentaoExtractServices): Promise<ThirdPartyTaskExtract> {
+export async function extractThirdPartyTaskInfo(rawUrl: string, services?: ZentaoExtractServices, onMetadata?: (extract: ThirdPartyTaskExtract) => void): Promise<ThirdPartyTaskExtract> {
   /** 读取前再次校验，不能信任渲染进程提交的来源地址。 */
   const link = parseThirdPartyTaskUrl(rawUrl);
   if (!link) return { kind: 'unsupported', sourceUrl: rawUrl };
   if (link.provider === 'zentao') {
     /** 禅道保留原来的凭据、字段拆分与附件下载逻辑。 */
-    const result = await extractZentaoTaskInfo(link.url, services);
+    const result = await extractZentaoTaskInfo(link.url, { ...services, onMetadata: (metadata) => onMetadata?.(normalizeZentaoExtract(metadata, link.url)) });
     if (result.kind === 'ok') {
       /** 禅道与新增来源一样保留详情地址，便于回看原始上下文。 */
-      const field = result.taskType === 'defect' ? 'reproductionSteps' : 'description';
-      return { ...result, provider: 'zentao', [field]: [result[field], `禅道: ${link.url}`].filter(Boolean).join('\n\n') };
+      return normalizeZentaoExtract(result, link.url);
     }
     return result.kind === 'login_required' ? { ...result, provider: 'zentao' } : result;
   }
@@ -57,6 +56,12 @@ export async function extractThirdPartyTaskInfo(rawUrl: string, services?: Zenta
 }
 
 /** GitHub 公共接口优先；私有 Issue 使用浏览器会话读取页面内同一工作项的预加载数据。 */
+/** 禅道各阶段保持同一字段口径和来源地址。 */
+function normalizeZentaoExtract(result: Extract<Awaited<ReturnType<typeof extractZentaoTaskInfo>>, { kind: 'ok' }>, url: string): Extract<ThirdPartyTaskExtract, { kind: 'ok' }> {
+  const field = result.taskType === 'defect' ? 'reproductionSteps' : 'description';
+  return { ...result, provider: 'zentao', [field]: [result[field], `禅道: ${url}`].filter(Boolean).join('\n\n') };
+}
+
 async function extractGithubIssue(link: Extract<ThirdPartyTaskLink, { apiUrl: string }>): Promise<ThirdPartyTaskExtract> {
   /** 匿名接口不携带浏览器凭据，也不会将 cookies 发送到 API 域名。 */
   const response = await fetchSource(link.apiUrl, false);

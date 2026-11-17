@@ -458,10 +458,10 @@ export function NetworkProxySettingsFields(props: {
                 setCheckError(null);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !disabled) void checkConnection();
+                if (event.key === 'Enter' && !disabled) return checkConnection();
               }}
             />
-            <Button disabled={disabled || !window.zeus?.checkNetworkProxyConnection} busy={checking} onClick={() => void checkConnection()}>
+            <Button disabled={disabled || !window.zeus?.checkNetworkProxyConnection} busy={checking} onClick={() => checkConnection()}>
               {checking ? (zh ? '检查中…' : 'Checking…') : zh ? '检查两条链路' : 'Check both paths'}
             </Button>
           </span>
@@ -500,7 +500,7 @@ export function NetworkProxySettingsFields(props: {
           title={zh ? '已启用供应商' : 'Enabled providers'}
           description={zh ? '仅验证文本请求，不验证图片或工具能力。' : 'Checks text requests only, not image or tool capabilities.'}
         >
-          <Button disabled={disabled || !props.client || loadingConnections} busy={checkingModelConnections} onClick={() => void checkModelConnections()}>
+          <Button disabled={disabled || !props.client || loadingConnections} busy={checkingModelConnections} onClick={() => checkModelConnections()}>
             {checkingModelConnections ? (zh ? `${completedModelChecks}/${modelConnectionRows.length} 已完成` : `${completedModelChecks}/${modelConnectionRows.length} complete`) : zh ? '验证真实请求' : 'Verify real requests'}
           </Button>
         </NativeControlRow>

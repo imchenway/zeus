@@ -3,6 +3,7 @@ import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { TaskWorkDeliverableRecord, TaskWorkReviewNote } from './digitalEmployeeContracts.js';
+import { Form } from '../../ui/Form.js';
 
 /** 审查在正文旁保留固定位置和解决状态，不另建一套成果版本。 */
 export function TaskWorkReviewPanel(props: {
@@ -118,7 +119,7 @@ export function TaskWorkReviewPanel(props: {
             </div>
             <p>{note.content}</p>
             {!props.readOnly && props.deliverable.status === 'submitted' ? (
-              <Button variant="secondary" size="compact" disabled={busy} onClick={() => void act(() => props.client.resolveTaskWorkReview(props.taskId, note, note.status !== 'resolved'))}>
+              <Button variant="secondary" size="compact" disabled={busy} onClick={() => act(() => props.client.resolveTaskWorkReview(props.taskId, note, note.status !== 'resolved'))}>
                 {note.status === 'resolved' ? '重新打开' : '标记已解决'}
               </Button>
             ) : null}
@@ -126,14 +127,14 @@ export function TaskWorkReviewPanel(props: {
         ))}
       </ul>
       {!props.readOnly && props.deliverable.status === 'submitted' ? (
-        <form
+        <Form
           onSubmit={(event) => {
             event.preventDefault();
             if (!content.trim()) {
               setError('请填写问题与建议后再添加审查意见。');
               return;
             }
-            void act(async () => {
+            return act(async () => {
               await props.client.addTaskWorkReview(props.taskId, props.deliverable, { anchor, content, blocking });
               setContent('');
               setAnchor('');
@@ -158,7 +159,7 @@ export function TaskWorkReviewPanel(props: {
               添加审查意见
             </Button>
           </footer>
-        </form>
+        </Form>
       ) : null}
     </section>
   );

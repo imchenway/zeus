@@ -9,6 +9,7 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
+import { Button } from '../ui/Button.js';
 
 /** 主会话和智能体共用信息浮层，环境字段保留各自已有的入口。 */
 interface RuntimeDetailsProps {
@@ -89,9 +90,9 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           : 'Cost details unavailable';
   return (
     <>
-      <button type="button" className="session-information-trigger" aria-label={title} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} data-icon-tooltip={title} popoverTarget={id} style={{ anchorName: anchor }}>
+      <Button unstyled type="button" className="session-information-trigger" aria-label={title} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} data-icon-tooltip={title} popoverTarget={id} style={{ anchorName: anchor }}>
         <Info aria-hidden="true" />
-      </button>
+      </Button>
       <PopoverSurface
         id={id}
         popover="auto"
@@ -103,9 +104,9 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
       >
         <header>
           <strong id={`${id}-title`}>{title}</strong>
-          <button type="button" popoverTarget={id} popoverTargetAction="hide" aria-label={zh ? '关闭会话信息' : 'Close conversation information'} data-icon-tooltip={zh ? '关闭' : 'Close'}>
+          <Button unstyled type="button" popoverTarget={id} popoverTargetAction="hide" aria-label={zh ? '关闭会话信息' : 'Close conversation information'} data-icon-tooltip={zh ? '关闭' : 'Close'}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </header>
         <dl className="session-information-metrics">
           <RuntimeUsageRow label={props.scope === 'subagent' ? (zh ? '智能体累计 Token' : 'Agent tokens') : zh ? '累计 Token' : 'Session tokens'} value={tokenText(props.runtime.usage.totalTokens, props.language)} hint={tokenHint} />
@@ -152,9 +153,9 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           {error ? (
             <div className="session-information-error">
               <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-              <button type="button" onClick={() => setReload((value) => value + 1)}>
+              <Button unstyled type="button" onClick={() => setReload((value) => value + 1)}>
                 {zh ? '重试' : 'Retry'}
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
@@ -277,7 +278,8 @@ export function RuntimeCopyButton(props: { text: string; label: string; copiedLa
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <button
+    <Button
+      unstyled
       type="button"
       className="session-runtime-copy-button"
       aria-label={copied ? props.copiedLabel : props.label}
@@ -286,6 +288,6 @@ export function RuntimeCopyButton(props: { text: string; label: string; copiedLa
       onClick={async () => setCopied(await copyText(props.text))}
     >
       {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
-    </button>
+    </Button>
   );
 }

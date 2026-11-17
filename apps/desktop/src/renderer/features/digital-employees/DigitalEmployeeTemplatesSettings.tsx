@@ -222,7 +222,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           <h2 className="settings-page-title">{zh ? '数字员工' : 'Digital employees'}</h2>
         </span>
         <span className="digital-employee-actions">
-          <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => void loadTemplates()}>
+          <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => loadTemplates()}>
             {zh ? '刷新' : 'Refresh'}
           </Button>
           <Button variant="primary" size="compact" disabled={busy || loadState !== 'ready'} onClick={beginCreate}>
@@ -244,7 +244,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
             event.preventDefault();
             if (busy) return;
             setPendingDelete(null);
-            void deleteEmployee(pendingDelete);
+            return deleteEmployee(pendingDelete);
           }}
         />
       ) : null}
@@ -265,7 +265,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           }}
         >
           <div className="digital-employee-template-picker" role="radiogroup" aria-label={zh ? '数字员工创建方式' : 'Digital employee creation options'}>
-            <button
+            <Button
+              unstyled
               type="button"
               role="radio"
               aria-checked={creationSource?.kind === 'blank'}
@@ -280,9 +281,10 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                 <small>{zh ? '从空白配置一名数字员工。' : 'Configure a digital employee from scratch.'}</small>
               </span>
               <em>{zh ? '空白' : 'Blank'}</em>
-            </button>
+            </Button>
             {builtInTemplates.map((template) => (
-              <button
+              <Button
+                unstyled
                 key={template.id}
                 type="button"
                 role="radio"
@@ -296,7 +298,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                   <small>{template.description || `${template.role} · ${template.domain || (zh ? '通用' : 'General')}`}</small>
                 </span>
                 <em>{zh ? '模板' : 'Template'}</em>
-              </button>
+              </Button>
             ))}
           </div>
         </FormDialog>
@@ -324,14 +326,15 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
             </p>
           ) : null}
           {loadState === 'failed' && employees.length === 0 ? (
-            <Button variant="secondary" size="compact" onClick={() => void loadTemplates()}>
+            <Button variant="secondary" size="compact" onClick={() => loadTemplates()}>
               {zh ? '重试' : 'Retry'}
             </Button>
           ) : null}
           {loadState === 'ready' && employees.length === 0 ? <p className="digital-employee-empty">{zh ? '尚未创建数字员工。' : 'No digital employees yet.'}</p> : null}
           {loadState === 'ready' && employees.length > 0 && visibleEmployees.length === 0 ? <p className="digital-employee-empty">{zh ? '没有匹配的数字员工。' : 'No matching digital employees.'}</p> : null}
           {visibleEmployees.map((employee) => (
-            <button
+            <Button
+              unstyled
               key={employee.id}
               type="button"
               className={`digital-employee-list-row ${editorTarget?.kind === 'employee' && editorTarget.record.id === employee.id ? 'is-selected' : ''}`}
@@ -344,7 +347,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                 <strong>{employee.name}</strong>
                 <small>{employee.role}</small>
               </span>
-            </button>
+            </Button>
           ))}
         </section>
 
@@ -383,7 +386,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                                 : 'Changes save automatically'}
                       </small>
                       {error ? (
-                        <Button size="compact" disabled={busy} onClick={() => (lastAction === 'delete' ? setPendingDelete(editorTarget.record) : void saveEmployee())}>
+                        <Button size="compact" disabled={busy} onClick={() => (lastAction === 'delete' ? setPendingDelete(editorTarget.record) : saveEmployee())}>
                           {lastAction === 'delete' ? (zh ? '重试删除' : 'Retry delete') : zh ? '重试保存' : 'Retry save'}
                         </Button>
                       ) : null}
@@ -399,7 +402,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                         const next = { ...draft, avatarId };
                         setDraft(next);
                         setSavedName(null);
-                        if (editorTarget.kind === 'employee') void saveEmployee(next);
+                        if (editorTarget.kind === 'employee') return saveEmployee(next);
                       }}
                     />
                   </details>
@@ -433,12 +436,12 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                   language={props.language}
                   disabled={busy}
                   onCommit={() => {
-                    if (editorTarget.kind === 'employee') void saveEmployee();
+                    if (editorTarget.kind === 'employee') return saveEmployee();
                   }}
                   onChange={(next, commit) => {
                     setDraft(next);
                     setSavedName(null);
-                    if (commit && editorTarget.kind === 'employee') void saveEmployee(next);
+                    if (commit && editorTarget.kind === 'employee') return saveEmployee(next);
                   }}
                 />
               ) : null}
@@ -453,7 +456,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                 <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
                   {zh ? '取消' : 'Cancel'}
                 </Button>
-                <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveEmployee()}>
+                <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => saveEmployee()}>
                   {zh ? '创建数字员工' : 'Create digital employee'}
                 </Button>
               </span>
@@ -486,7 +489,7 @@ function DigitalEmployeeProfileEditor(props: {
     <div
       className="digital-employee-form"
       onBlurCapture={(event) => {
-        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) props.onCommit();
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return props.onCommit();
       }}
     >
       <div className="digital-employee-form-grid">

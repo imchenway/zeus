@@ -1,5 +1,7 @@
 import { TextFilePreview } from '../code/TextFilePreview.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { CachedQuery } from '../cachedQuery.js';
+import { ResourceLoading } from '../ui/ResourceLoading.js';
 import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 import type { TaskApiClient } from '../features/tasks/taskApiClient.js';
 import type { CreateTaskStageRequest, TaskRecord, TaskStageDeliverableRecord, TaskStageRecord, TaskWorkflowSnapshot, UpdateTaskStageRequest } from '../features/tasks/taskContracts.js';
@@ -7,6 +9,7 @@ import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { compareModelOptions } from '../modelOptionPresentation.js';
+import { codexCapabilitiesChangedEvent, modelCatalogGeneration } from '../features/integrations/modelCatalogEvents.js';
 
 export type TaskWorkflowClient = Pick<
   TaskApiClient,
@@ -45,51 +48,61 @@ const stageStatusCopy = {
 
 export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
   const zh = props.language === 'zh-CN';
-  const [workflow, setWorkflow] = useState<TaskWorkflowSnapshot | null | undefined>(undefined);
+  /** 初读、手动刷新和轮询共用在途请求；切换任务后旧读取只能更新旧缓存。 */
+  const workflowQuery = useMemo(() => new CachedQuery(() => props.client.loadTaskWorkflow(props.task.id), 2_000), [props.client, props.task.id]);
+  const workflowSnapshot = useSyncExternalStore(workflowQuery.subscribe, workflowQuery.getSnapshot);
+  const workflow = workflowSnapshot.hasValue ? workflowSnapshot.value : undefined;
+  const currentQueryRef = useRef(workflowQuery);
+  currentQueryRef.current = workflowQuery;
   const [capabilities, setCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [editingStageId, setEditingStageId] = useState<string | null>(null);
   const [manualStageId, setManualStageId] = useState<string | null>(null);
   const [manualContent, setManualContent] = useState('');
-  const [openedDeliverable, setOpenedDeliverable] = useState<{ id: string; title: string; content: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** 阅读独立于工作流写操作，关闭或切换后不能被迟到正文重新打开。 */
+  const [openedDeliverable, setOpenedDeliverable] = useState<{ item: TaskStageDeliverableRecord; content?: string; error?: unknown } | null>(null);
+  const deliverableRequestRef = useRef(0);
+  /** 只保留最近一份正文，按客户端、任务及内容指纹命中，不复制大文本。 */
+  const deliverableCacheRef = useRef<{ client: TaskWorkflowClient; taskId: string; sha256: string; content: string } | null>(null);
+  const [operationError, setError] = useState<string | null>(null);
+  const error = operationError ?? (workflowSnapshot.error ? visibleError(workflowSnapshot.error, zh) : null);
 
   useEffect(() => {
-    let active = true;
-    setWorkflow(undefined);
+    /** 配置或登录变化后，下一次模型操作重新读取当前目录。 */
+    const invalidate = () => setCapabilities(null);
+    window.addEventListener(codexCapabilitiesChangedEvent, invalidate);
+    return () => window.removeEventListener(codexCapabilitiesChangedEvent, invalidate);
+  }, []);
+
+  useEffect(() => {
+    deliverableRequestRef.current += 1;
+    setError(null);
+    setBusyKey(null);
+    setCapabilities(null);
     setEditingStageId(null);
     setManualStageId(null);
     setOpenedDeliverable(null);
-    props.client
-      .loadTaskWorkflow(props.task.id)
-      .then((snapshot) => {
-        if (active) setWorkflow(snapshot);
-      })
-      .catch((caught) => {
-        if (active) setError(visibleError(caught, zh));
-      });
+    void workflowQuery.load().catch(() => undefined);
     return () => {
-      active = false;
+      deliverableRequestRef.current += 1;
     };
-  }, [props.client, props.task.id, zh]);
+  }, [workflowQuery, zh]);
 
   useEffect(() => {
     if (!workflow || workflow.workflow.status !== 'active') return;
     const timer = window.setInterval(() => {
-      void props.client
-        .loadTaskWorkflow(props.task.id)
-        .then(setWorkflow)
-        .catch(() => undefined);
+      void workflowQuery.load(true).catch(() => undefined);
     }, 8_000);
     return () => window.clearInterval(timer);
-  }, [props.client, props.task.id, workflow?.workflow.id, workflow?.workflow.status]);
+  }, [workflowQuery, workflow?.workflow.id, workflow?.workflow.status]);
 
   const acceptedCount = workflow?.stages.filter((stage) => stage.status === 'accepted' || stage.status === 'skipped').length ?? 0;
 
   async function ensureCapabilities(): Promise<CodexTaskPushCapabilities> {
     if (capabilities) return capabilities;
+    const generation = modelCatalogGeneration();
     const loaded = await props.loadCapabilities();
-    setCapabilities(loaded);
+    if (currentQueryRef.current === workflowQuery && generation === modelCatalogGeneration()) setCapabilities(loaded);
     return loaded;
   }
 
@@ -98,11 +111,11 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
     setError(null);
     try {
       const result = await operation();
-      if (result !== undefined) setWorkflow(result);
+      if (result !== undefined) workflowQuery.set(result);
     } catch (caught) {
-      setError(visibleError(caught, zh));
+      if (currentQueryRef.current === workflowQuery) setError(visibleError(caught, zh));
     } finally {
-      setBusyKey(null);
+      if (currentQueryRef.current === workflowQuery) setBusyKey(null);
     }
   }
 
@@ -144,10 +157,21 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
   }
 
   async function openDeliverable(deliverable: TaskStageDeliverableRecord): Promise<void> {
-    await run(`content:${deliverable.id}`, async () => {
+    const request = ++deliverableRequestRef.current;
+    const cached = deliverableCacheRef.current;
+    if (cached?.client === props.client && cached.taskId === props.task.id && cached.sha256 === deliverable.contentSha256) {
+      setOpenedDeliverable({ item: deliverable, content: cached.content });
+      return;
+    }
+    setOpenedDeliverable({ item: deliverable });
+    try {
       const loaded = await props.client.loadTaskStageDeliverableContent(props.task.id, deliverable.id);
-      setOpenedDeliverable({ id: deliverable.id, title: deliverable.title, content: loaded.content });
-    });
+      if (request !== deliverableRequestRef.current) return;
+      deliverableCacheRef.current = { client: props.client, taskId: props.task.id, sha256: deliverable.contentSha256, content: loaded.content };
+      setOpenedDeliverable({ item: deliverable, content: loaded.content });
+    } catch (caught) {
+      if (request === deliverableRequestRef.current) setOpenedDeliverable({ item: deliverable, error: caught });
+    }
   }
 
   if (error && workflow === undefined) {
@@ -177,7 +201,7 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
             <strong>{zh ? '阶段交付' : 'Stage delivery'}</strong>
             <small>{zh ? '计划 → 实施 → 代码审查' : 'Plan → Implement → Code review'}</small>
           </span>
-          <Button variant="secondary" size="compact" disabled={props.terminalReadOnly || busyKey !== null} onClick={() => void initialize()}>
+          <Button variant="secondary" size="compact" disabled={props.terminalReadOnly || busyKey !== null} onClick={() => initialize()}>
             {busyKey === 'initialize' ? (zh ? '正在启用…' : 'Enabling…') : zh ? '启用阶段工作流' : 'Enable workflow'}
           </Button>
         </span>
@@ -194,7 +218,7 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
             {acceptedCount}/{workflow.stages.length} · {workflow.workflow.status === 'completed' ? (zh ? '已完成' : 'Complete') : zh ? '进行中' : 'Active'}
           </small>
         </span>
-        <Button variant="secondary" size="compact" disabled={busyKey !== null} onClick={() => void run('refresh', () => props.client.loadTaskWorkflow(props.task.id))}>
+        <Button variant="secondary" size="compact" disabled={busyKey !== null} onClick={() => run('refresh', () => workflowQuery.load(true))}>
           {zh ? '刷新' : 'Refresh'}
         </Button>
       </span>
@@ -212,41 +236,59 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
             manualOpen={manualStageId === stage.id}
             manualContent={manualContent}
             onManualContent={setManualContent}
-            onBeginEdit={() => void beginEdit(stage)}
+            onBeginEdit={() => beginEdit(stage)}
             onCancelEdit={() => setEditingStageId(null)}
-            onUpdate={(patch) => void updateStage(stage, patch)}
-            onStart={() => void start(stage)}
+            onUpdate={(patch) => updateStage(stage, patch)}
+            onStart={() => start(stage)}
             onOpenConversation={(conversationId) => props.onOpenConversation(conversationId)}
-            onCapture={() => void run(`capture:${stage.id}`, () => props.client.captureTaskStageDeliverable(props.task.id, stage.id))}
+            onCapture={() => run(`capture:${stage.id}`, () => props.client.captureTaskStageDeliverable(props.task.id, stage.id))}
             onToggleManual={() => {
               setManualStageId((current) => (current === stage.id ? null : stage.id));
               setManualContent('');
             }}
             onSubmitManual={() =>
-              void run(`manual:${stage.id}`, async () => {
+              run(`manual:${stage.id}`, async () => {
                 const result = await props.client.createTaskStageDeliverable(props.task.id, stage.id, manualContent);
                 setManualStageId(null);
                 setManualContent('');
                 return result;
               })
             }
-            onAccept={(deliverable) => void run(`accept:${deliverable.id}`, () => props.client.acceptTaskStageDeliverable(props.task.id, deliverable.id, stage.revision))}
-            onRequestChanges={(deliverable) => void requestChanges(stage, deliverable)}
-            onSkip={() => void skip(stage)}
-            onOpenDeliverable={(deliverable) => void openDeliverable(deliverable)}
+            onAccept={(deliverable) => run(`accept:${deliverable.id}`, () => props.client.acceptTaskStageDeliverable(props.task.id, deliverable.id, stage.revision))}
+            onRequestChanges={(deliverable) => requestChanges(stage, deliverable)}
+            onSkip={() => skip(stage)}
+            onOpenDeliverable={(deliverable) => openDeliverable(deliverable)}
           />
         ))}
       </ol>
 
       {openedDeliverable ? (
-        <section className="task-workflow-deliverable-preview" aria-label={openedDeliverable.title}>
+        <section className="task-workflow-deliverable-preview" aria-label={openedDeliverable.item.title} aria-busy={openedDeliverable.content === undefined && !openedDeliverable.error}>
           <span className="task-detail-section-heading">
-            <strong>{openedDeliverable.title}</strong>
-            <Button variant="secondary" size="compact" onClick={() => setOpenedDeliverable(null)}>
+            <strong>{openedDeliverable.item.title}</strong>
+            <Button
+              variant="secondary"
+              size="compact"
+              onClick={() => {
+                deliverableRequestRef.current += 1;
+                setOpenedDeliverable(null);
+              }}
+            >
               {zh ? '关闭' : 'Close'}
             </Button>
           </span>
-          <TextFilePreview id={openedDeliverable.id} title={openedDeliverable.title} content={openedDeliverable.content} />
+          {openedDeliverable.error ? (
+            <>
+              <VisibleApplicationError error={openedDeliverable.error} language={zh ? 'zh-CN' : 'en'} />
+              <Button size="compact" onClick={() => openDeliverable(openedDeliverable.item)}>
+                {zh ? '重试' : 'Retry'}
+              </Button>
+            </>
+          ) : openedDeliverable.content === undefined ? (
+            <ResourceLoading label={zh ? '正在读取正文…' : 'Loading content…'} />
+          ) : (
+            <TextFilePreview id={openedDeliverable.item.id} title={openedDeliverable.item.title} content={openedDeliverable.content} />
+          )}
         </section>
       ) : null}
     </section>
@@ -319,7 +361,7 @@ function TaskStageItem(props: {
                 options={[{ value: '', label: zh ? '请选择模型' : 'Select a model', disabled: true }, ...modelOptions]}
                 onChange={(modelRef) => {
                   const model = props.models.find((candidate) => candidate.id === modelRef);
-                  props.onUpdate({
+                  return props.onUpdate({
                     modelRef,
                     agentKind: model?.agentKind === 'copilot' ? 'copilot' : model?.agentKind === 'pi' ? 'pi' : 'codex',
                     effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null,
@@ -380,7 +422,7 @@ function TaskStageItem(props: {
                 disabled={props.busy || promptDraft === stage.prompt}
                 onClick={() => {
                   props.onUpdate({ prompt: promptDraft });
-                  props.onCancelEdit();
+                  return props.onCancelEdit();
                 }}
               >
                 {zh ? '保存指令' : 'Save instructions'}
@@ -456,7 +498,7 @@ function TaskStageItem(props: {
           <ol className="task-workflow-deliverable-list">
             {[...stage.deliverables].reverse().map((deliverable) => (
               <li key={deliverable.id}>
-                <button type="button" onClick={() => props.onOpenDeliverable(deliverable)}>
+                <Button unstyled data-busy-behavior="background" type="button" onClick={() => props.onOpenDeliverable(deliverable)}>
                   <span>
                     <strong>
                       v{deliverable.version} · {deliverable.title}
@@ -464,7 +506,7 @@ function TaskStageItem(props: {
                     <small>{deliverable.summary || (zh ? '无摘要' : 'No summary')}</small>
                   </span>
                   <small>{deliverableStatus(deliverable.status, zh)}</small>
-                </button>
+                </Button>
               </li>
             ))}
           </ol>

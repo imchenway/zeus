@@ -157,12 +157,27 @@ export function createModelConnectionService(options: {
     },
   });
 
+  /** 仅缓存凭据是否存在；真实推理和密钥查看仍逐次读取 SecretStore。 */
+  const credentialStatus = new Map<string, { revision: string; expiresAt: number; value: Promise<boolean> }>();
+
+  /** 合并同一连接的钥匙串查询，展示状态最多复用一分钟。 */
+  function hasApiKey(record: ModelConnectionRecord): Promise<boolean> {
+    const cached = credentialStatus.get(record.id);
+    if (cached?.revision === record.updatedAt && cached.expiresAt > Date.now()) return cached.value;
+    const entry = { revision: record.updatedAt, expiresAt: Date.now() + 60_000, value: options.secretStore.getSecret(modelConnectionSecretAccount(record.id)).then(Boolean) };
+    credentialStatus.set(record.id, entry);
+    void entry.value.catch(() => {
+      if (credentialStatus.get(record.id) === entry) credentialStatus.delete(record.id);
+    });
+    return entry.value;
+  }
+
   async function hydrate(records = readStored()): Promise<ModelConnectionRecord[]> {
     return Promise.all(
       records.map(async (record) => ({
         ...record,
         pricingCatalog: pricing.read(record),
-        apiKeyConfigured: Boolean(await options.secretStore.getSecret(modelConnectionSecretAccount(record.id))),
+        apiKeyConfigured: await hasApiKey(record),
       })),
     );
   }
@@ -177,9 +192,14 @@ export function createModelConnectionService(options: {
   }
 
   async function requireConnection(id: string): Promise<ModelConnectionRecord> {
-    const connection = (await hydrate()).find((candidate) => candidate.id === id);
+    const connection = (await hydrate(readStored().filter((candidate) => candidate.id === id)))[0];
     if (!connection) throw serviceError('ZEUS_MODEL_CONNECTION_NOT_FOUND', '模型连接不存在。', 404);
     return connection;
+  }
+
+  /** 远端结果只能合并到发起时的配置，不能复活已删除连接或覆盖后续编辑。 */
+  function assertConnectionUnchanged(connection: ModelConnectionRecord): void {
+    if (readStored().find((item) => item.id === connection.id)?.updatedAt !== connection.updatedAt) throw serviceError('ZEUS_MODEL_CONNECTION_CHANGED', '模型连接已变化，请重新读取当前配置。', 409);
   }
 
   async function saveConnection(id: string, input: SaveModelConnectionRequest, existing?: ModelConnectionRecord): Promise<ModelConnectionRecord> {
@@ -203,7 +223,10 @@ export function createModelConnectionService(options: {
     const index = records.findIndex((candidate) => candidate.id === id);
     if (index >= 0) records[index] = record;
     else records.push(record);
-    if (apiKey) await options.secretStore.setSecret(modelConnectionSecretAccount(id), apiKey);
+    if (apiKey) {
+      await options.secretStore.setSecret(modelConnectionSecretAccount(id), apiKey);
+      credentialStatus.delete(id);
+    }
     await write(records);
     return { ...record, apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured), pricingCatalog: pricing.read(record) };
   }
@@ -273,12 +296,16 @@ export function createModelConnectionService(options: {
     async remove(id) {
       await requireConnection(id);
       await options.secretStore.deleteSecret(modelConnectionSecretAccount(id));
+      credentialStatus.delete(id);
       await write(readStored().filter((candidate) => candidate.id !== id));
     },
     async clearApiKey(id) {
       const existing = await requireConnection(id);
       await options.secretStore.deleteSecret(modelConnectionSecretAccount(id));
-      return { ...existing, apiKeyConfigured: false, updatedAt: now() };
+      credentialStatus.delete(id);
+      const updated = { ...existing, apiKeyConfigured: false, updatedAt: now() };
+      await write(readStored().map((connection) => (connection.id === id ? updated : connection)));
+      return updated;
     },
     async saveModelReasoningOptions(id, modelId, input) {
       const connection = await requireConnection(id);
@@ -311,6 +338,7 @@ export function createModelConnectionService(options: {
     async refreshModels(id) {
       const connection = await requireConnection(id);
       const modelIds = await fetchModelIds(connection);
+      assertConnectionUnchanged(connection);
       const thinkingFormat = connection.templateId === 'custom' ? 'openai' : modelConnectionTemplates[connection.templateId].thinkingFormat;
       const sync = syncDiscoveredModels(connection.models, modelIds, thinkingFormat, { templateId: connection.templateId, baseUrl: connection.baseUrl });
       const updated = await saveConnection(connection.id, { ...connection, models: sync.models }, connection);
@@ -342,6 +370,7 @@ export function createModelConnectionService(options: {
         }
       };
       await Promise.all(Array.from({ length: Math.max(1, Math.min(probeConcurrency, targets.length)) }, runWorker));
+      assertConnectionUnchanged(connection);
       const probedById = new Map(results.map((result) => [result.modelId, result]));
       const models = connection.models.map((model) => {
         const result = probedById.get(model.id);

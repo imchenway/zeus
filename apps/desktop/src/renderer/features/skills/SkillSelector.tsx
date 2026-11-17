@@ -4,6 +4,7 @@ import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwis
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
+import { Button } from '../../ui/Button.js';
 
 export const skillCatalogChangedEvent = 'zeus:skill-catalog-changed';
 
@@ -112,7 +113,8 @@ export function SkillSelector(props: {
       />
       {/* 目录失败不接管选择入口；只有独立的重试按钮等待刷新完成。 */}
       {error ? (
-        <button
+        <Button
+          unstyled
           type="button"
           className="zeus-select-trigger codex-skill-retry"
           data-icon-tooltip={error}
@@ -122,7 +124,7 @@ export function SkillSelector(props: {
         >
           <ArrowClockwiseIcon size={14} aria-hidden="true" />
           {loading ? (zh ? '重试中' : 'Retrying') : zh ? '重试' : 'Retry'}
-        </button>
+        </Button>
       ) : null}
     </span>
   );
@@ -150,7 +152,7 @@ export function SkillMultiSelector(props: {
         value={candidate}
         onChange={(skillId) => {
           setCandidate('');
-          if (skillId && !props.value.includes(skillId)) props.onChange([...props.value, skillId]);
+          if (skillId && !props.value.includes(skillId)) return props.onChange([...props.value, skillId]);
         }}
         language={props.language}
         disabled={props.disabled}
@@ -164,9 +166,9 @@ export function SkillMultiSelector(props: {
           return (
             <span key={skillId} data-icon-tooltip={skill ? skill.invocation : skillId}>
               <code>{skill?.name ?? (zh ? '原 Skill 已不可用' : 'Previous skill unavailable')}</code>
-              <button type="button" disabled={props.disabled} onClick={() => props.onChange(props.value.filter((id) => id !== skillId))}>
+              <Button unstyled type="button" disabled={props.disabled} onClick={() => props.onChange(props.value.filter((id) => id !== skillId))}>
                 {zh ? '移除' : 'Remove'}
-              </button>
+              </Button>
             </span>
           );
         })}

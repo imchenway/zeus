@@ -152,7 +152,7 @@ export function GoalPanel(props: GoalPanelProps) {
           <section className="session-goal-clear-confirm" role="alertdialog" aria-label={zh ? '确认清除目标' : 'Confirm goal clear'}>
             <strong>{zh ? '清除后将不再自动继续执行此目标' : 'Clearing the goal stops further automatic work toward it'}</strong>
             <p>{zh ? '当前轮次不会被中断；会话和目标时间线仍会保留，但目标不能直接恢复。' : 'The current turn will continue. Conversation and goal history remain, but the goal cannot be restored directly.'}</p>
-            <Button variant="danger" disabled={props.busy} onClick={() => void props.onClear?.(unfinished)}>
+            <Button variant="danger" disabled={props.busy} onClick={() => props.onClear?.(unfinished)}>
               {zh ? '确认清除' : 'Clear goal'}
             </Button>
             <Button disabled={props.busy} onClick={() => setConfirmClear(false)}>
@@ -189,17 +189,17 @@ export function GoalPanel(props: GoalPanelProps) {
             {zh ? '关闭' : 'Close'}
           </Button>
           {!readOnly && props.goal && props.goal.status === 'active' && props.onPause ? (
-            <Button size="compact" onClick={() => void props.onPause?.()} disabled={props.busy}>
+            <Button size="compact" onClick={() => props.onPause?.()} disabled={props.busy}>
               {zh ? '暂停执行' : 'Pause'}
             </Button>
           ) : null}
           {!readOnly && canResume ? (
-            <Button size="compact" variant={dirty ? 'secondary' : 'primary'} onClick={() => void props.onResume?.()} disabled={props.busy || dirty}>
+            <Button size="compact" variant={dirty ? 'secondary' : 'primary'} onClick={() => props.onResume?.()} disabled={props.busy || dirty}>
               {zh ? '继续执行' : 'Resume'}
             </Button>
           ) : null}
           {!readOnly && props.onSave && props.goal?.status !== 'complete' && (!props.goal || dirty) ? (
-            <Button size="compact" variant="primary" onClick={() => void props.onSave?.(objective.trim())} disabled={props.busy || !valid || objective.trim() === props.goal?.objective}>
+            <Button size="compact" variant="primary" onClick={() => props.onSave?.(objective.trim())} disabled={props.busy || !valid || objective.trim() === props.goal?.objective}>
               {props.goal ? (zh ? '保存修改' : 'Save changes') : zh ? '创建目标' : 'Create goal'}
             </Button>
           ) : null}
@@ -214,7 +214,7 @@ export function GoalRail(props: { goal: NativeGoalSnapshot; language: SessionUiL
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
   return (
-    <button type="button" className="session-goal-rail" aria-haspopup="dialog" onClick={props.onOpen}>
+    <Button unstyled type="button" className="session-goal-rail" aria-haspopup="dialog" onClick={props.onOpen}>
       <span className={`session-goal-status-dot is-${props.goal.status}`} aria-hidden="true" />
       <span className="session-goal-rail-copy">
         <strong>{statusLabels[props.goal.status][zh ? 'zh' : 'en']}</strong>
@@ -224,7 +224,7 @@ export function GoalRail(props: { goal: NativeGoalSnapshot; language: SessionUiL
         {formatDuration(props.goal.timeUsedSeconds, zh)} ·{' '}
         {props.goal.usageComplete === false ? (zh ? '用量回报不完整' : 'Incomplete usage') : `${new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { notation: 'compact' }).format(props.goal.tokensUsed)} ${zh ? '令牌' : 'tokens'}`}
       </span>
-    </button>
+    </Button>
   );
 }
 

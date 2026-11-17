@@ -5,6 +5,13 @@ import type { TaskRecord } from '../../apiClient.js';
 import type { TaskApiClient } from './taskApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
 
+/** 任务正文、摘要和写回执遵循同一修订顺序；省略字段不清空已知内容。 */
+export function mergeTaskProjection(current: TaskRecord | undefined, incoming: TaskRecord): TaskRecord {
+  if (!current || current === incoming) return incoming;
+  if (current?.updatedAt && incoming.updatedAt && current.updatedAt > incoming.updatedAt) return current;
+  return { ...current, ...incoming };
+}
+
 /** 项目分页分别记录未加载、加载中、已就绪与失败，旧页不冒充空列表。 */
 export interface TaskPageState {
   /** 页游标只属于当前时间条件。 */
@@ -66,8 +73,7 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
     for (const item of items) {
       if (this.removedIds.has(item.id)) continue;
       const current = merged.get(item.id);
-      if (current?.updatedAt && item.updatedAt && current.updatedAt > item.updatedAt) continue;
-      merged.set(item.id, { ...current, ...item });
+      merged.set(item.id, mergeTaskProjection(current, item));
     }
     this.publish({ ...this.snapshot, items: [...merged.values()], revision: this.snapshot.revision + 1 });
   }

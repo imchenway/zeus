@@ -53,7 +53,7 @@ export function EmployeeMemoryProposals(props: { client: DigitalEmployeeApiClien
             client={props.client}
             onSaved={(accepted) => {
               setRevision((value) => value + 1);
-              if (accepted) props.onAccepted();
+              if (accepted) return props.onAccepted();
             }}
           />
         ))}
@@ -136,10 +136,10 @@ function ProposalEditor(props: { proposal: EmployeeMemoryProposal; client: Digit
         </p>
       ) : null}
       <footer>
-        <Button size="compact" disabled={busy || !topic.trim() || !content.trim() || !reviewAfter} onClick={() => void decide(true)}>
+        <Button size="compact" disabled={busy || !topic.trim() || !content.trim() || !reviewAfter} onClick={() => decide(true)}>
           接纳为个人经验
         </Button>
-        <Button size="compact" variant="secondary" disabled={busy} onClick={() => void decide(false)}>
+        <Button size="compact" variant="secondary" disabled={busy} onClick={() => decide(false)}>
           不接纳
         </Button>
       </footer>

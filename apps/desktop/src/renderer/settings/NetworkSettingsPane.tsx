@@ -104,7 +104,7 @@ export function NetworkSettingsPane(props: {
         <div className="settings-heading-actions">
           <SettingsSaveStatus status={status} language={props.value.appLanguage} />
           {status === 'failed' ? (
-            <Button size="compact" onClick={() => void save()}>
+            <Button size="compact" onClick={() => save()}>
               {zh ? '重试' : 'Retry'}
             </Button>
           ) : null}
@@ -135,7 +135,7 @@ export function NetworkSettingsPane(props: {
         </div>
       </div>
       <div className="settings-group-stack">
-        <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} activeValue={activeProxy} disabled={!props.client} client={props.client} onChange={(networkProxy) => void save(networkProxy)} />
+        <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} activeValue={activeProxy} disabled={!props.client} client={props.client} onChange={(networkProxy) => save(networkProxy)} />
       </div>
     </section>
   );

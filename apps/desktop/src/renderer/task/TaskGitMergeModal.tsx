@@ -687,7 +687,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setBusyAction('loading');
     setError(null);
     try {
-      const snapshot = await props.client.loadProjectGitWorkbench(props.task.projectId);
+      const snapshot = await props.client.loadProjectGitWorkbench(props.task.projectId, false);
       const targets: NonNullable<typeof pushScope>['targets'] = [];
       for (const selectedId of selectedWorkspaceIds) {
         const workspace = workspaceDetails[selectedId];
@@ -1111,9 +1111,9 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           </span>
           {headerFeedback && feedback ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} compactResults /> : null}
           {!standaloneWindow ? (
-            <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
+            <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
               ×
-            </button>
+            </Button>
           ) : null}
         </header>
 
@@ -1174,12 +1174,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   onSelectFile={selectPreparedFile}
                   onPreloadFile={(id, path) => {
                     const target = fileDiffTarget(id, path);
-                    if (target) void readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
+                    if (target) return readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
                   }}
                   onToggleWorkspace={toggleWorkspaceSelection}
                   onToggleBranch={toggleBranchSelection}
                   onToggleFiles={toggleFileSelection}
-                  onOpenFile={(nextWorkspaceId, path) => void openFileDiff(nextWorkspaceId, path)}
+                  onOpenFile={(nextWorkspaceId, path) => openFileDiff(nextWorkspaceId, path)}
                   onCopyBranch={copyBranchName}
                 />
               }
@@ -1192,7 +1192,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   canGenerate={Boolean(commitGenerationSelection.length)}
                   onGenerate={() => {
                     if (busyAction === 'commit-message') commitGenerationController.current?.abort();
-                    else void generateCommitMessage();
+                    else return generateCommitMessage();
                   }}
                   message={generatedMessage ?? message}
                   onMessageChange={(value) => {
@@ -1203,7 +1203,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   }}
                   generationFeedback={commitGenerationFeedback}
                   commitCount={committableFileCount}
-                  onCommit={() => void commitSelected()}
+                  onCommit={() => commitSelected()}
                   commitFeedback={feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                   beforeCommit={
                     <>
@@ -1237,7 +1237,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                                 variant="primary"
                                 size="compact"
                                 busy={busyAction === 'ai'}
-                                onClick={() => void continueWorkspaceConflict(workspace)}
+                                onClick={() => continueWorkspaceConflict(workspace)}
                                 disabled={busy || Boolean(workspace.conflictRecovery.unavailableReason) || !workspace.conflictRecovery.conversationId}
                                 title={workspace.conflictRecovery.unavailableReason ?? undefined}
                               >
@@ -1262,7 +1262,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   onModeChange={setMode}
                   mergeCount={directoryUnavailable ? 0 : directoryWorkspaceIds.length}
                   mergeAll
-                  onMerge={(settings) => void mergeSelected(settings)}
+                  onMerge={(settings) => mergeSelected(settings)}
                   mergeIssues={
                     <>
                       {targetIssues.length > 0 ? (
@@ -1310,7 +1310,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   }
                   combination={props.client ? <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} onAccepted={props.onClose} input={directoryInput} /> : null}
                   pushCount={selectedPushCandidateCount}
-                  onPush={() => void openPush()}
+                  onPush={() => openPush()}
                 />
               }
               selectedFile={selectedFile}
@@ -1336,11 +1336,11 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             </Button>
             {conflictWorkspaceOpen && activeConflict ? (
               activeConflict.conflictFiles.length > 0 ? (
-                <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => void saveResolution()} disabled={!conflict || unresolvedConflictBlocks > 0}>
+                <Button variant="primary" size="regular" busy={busyAction === 'conflict'} onClick={() => saveResolution()} disabled={!conflict || unresolvedConflictBlocks > 0}>
                   {unresolvedConflictBlocks > 0 ? (zh ? `还有 ${unresolvedConflictBlocks} 个冲突未处理` : `${unresolvedConflictBlocks} conflict(s) unresolved`) : zh ? '保存该文件并继续' : 'Save file and continue'}
                 </Button>
               ) : (
-                <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => void finalize()}>
+                <Button variant="primary" size="regular" busy={busyAction === 'merge'} onClick={() => finalize()}>
                   {zh ? `完成合入 ${activeConflict.targetBranch}` : `Finish merging into ${activeConflict.targetBranch}`}
                 </Button>
               )

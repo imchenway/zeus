@@ -251,6 +251,8 @@ export function formatCodexCredits(value: string | number | null | undefined, la
 }
 
 export interface UsageOverviewSnapshot {
+  /** 当前正在后台读取的官方来源；不属于账本或持久化统计。 */
+  refreshingSources?: string[];
   providers: UsageProviderSummary[];
   updatedAt: string;
   providerCoverage: 'all-recorded' | 'codex-only-compatibility';

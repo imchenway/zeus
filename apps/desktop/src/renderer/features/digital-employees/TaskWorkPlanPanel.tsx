@@ -50,12 +50,12 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
             </Button>
           ) : null}
           {!props.readOnly && plan && plan.state === 'paused' ? (
-            <Button size="compact" disabled={busy} busy={props.management.busy === 'plan:running'} onClick={() => void control('running')}>
+            <Button size="compact" disabled={busy} busy={props.management.busy === 'plan:running'} onClick={() => control('running')}>
               继续执行
             </Button>
           ) : null}
           {!props.readOnly && plan?.state === 'running' ? (
-            <Button size="compact" variant="secondary" disabled={busy} onClick={() => void control('paused')}>
+            <Button size="compact" variant="secondary" disabled={busy} onClick={() => control('paused')}>
               暂停后续工作
             </Button>
           ) : null}
@@ -95,7 +95,7 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
                             disabled={busy}
                             allowUnassigned={false}
                             onChange={(employeeId) => {
-                              if (employeeId) void props.management.act(`assign:${item.id}`, () => props.client.assignPlannedTaskWork(props.taskId, item.id, item.revision, employeeId));
+                              if (employeeId) return props.management.act(`assign:${item.id}`, () => props.client.assignPlannedTaskWork(props.taskId, item.id, item.revision, employeeId));
                             }}
                           />
                         ) : employee ? (
@@ -128,7 +128,7 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
       ) : null}
       {plan?.state === 'paused' ? <p className="task-plan-note">后续分工暂停启动，已开始的工作继续运行。需要停止某份工作时，请在下方运行记录中操作。</p> : null}
       {plan?.state === 'running' && plan.stages.some((stage) => stage.items.some((item) => item.arrangement?.blockedReason && !item.currentRunId)) && !props.readOnly ? (
-        <Button variant="secondary" size="compact" disabled={busy} onClick={() => void control('running')}>
+        <Button variant="secondary" size="compact" disabled={busy} onClick={() => control('running')}>
           重新检查等待中的工作
         </Button>
       ) : null}
@@ -136,7 +136,7 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
         <details className="task-plan-more" open={stopOpen} onToggle={(event) => setStopOpen(event.currentTarget.open)}>
           <summary>结束本轮安排</summary>
           <p>不再启动后续分工，并请求停止已开始的工作。历史会话和成果仍保留；停止结果不确定时会保留原因。</p>
-          <Button variant="danger" size="compact" disabled={busy} onClick={() => void control('cancelled')}>
+          <Button variant="danger" size="compact" disabled={busy} onClick={() => control('cancelled')}>
             结束安排并停止工作
           </Button>
         </details>

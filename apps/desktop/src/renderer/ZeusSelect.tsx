@@ -4,6 +4,7 @@ import { PushPinIcon } from '@phosphor-icons/react/dist/csr/PushPin';
 import { useMotionPresence } from './ui/useMotionPresence.js';
 
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Button } from './ui/Button.js';
 
 export interface ZeusSelectOption<T extends string> {
   value: T;
@@ -570,7 +571,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                     </span>
                   ) : null}
                   <span className={props.pinning ? 'zeus-select-option-row' : undefined} role={props.pinning ? 'listitem' : 'presentation'}>
-                    <button
+                    <Button
+                      unstyled
                       ref={(element) => {
                         if (element) optionRefs.current.set(option.value, element);
                         else optionRefs.current.delete(option.value);
@@ -604,9 +606,10 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                       <span className="zeus-select-option-check" aria-hidden="true">
                         {selected ? '✓' : ''}
                       </span>
-                    </button>
+                    </Button>
                     {props.pinning && option.value && !option.disabled ? (
-                      <button
+                      <Button
+                        unstyled
                         type="button"
                         className="zeus-select-pin"
                         aria-label={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
@@ -615,7 +618,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                         onClick={(event) => togglePin(option, event.currentTarget)}
                       >
                         <PushPinIcon size={15} weight={pinned ? 'fill' : 'regular'} aria-hidden="true" />
-                      </button>
+                      </Button>
                     ) : null}
                   </span>
                 </Fragment>
@@ -645,7 +648,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
       ref={rootRef}
     >
       {/* 触发器只保留在业务布局中；popover 通过 portal 提升到应用壳层，禁止扩大表单滚动区域。 */}
-      <button
+      <Button
+        unstyled
         ref={triggerRef}
         type="button"
         className={props.triggerClassName ? `zeus-select-trigger ${props.triggerClassName}` : 'zeus-select-trigger'}
@@ -669,7 +673,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         {selectedOption?.color ? <span className="zeus-select-value-color" style={{ backgroundColor: selectedOption.color }} aria-hidden="true" /> : null}
         {props.hideSelectedLabel ? null : <span className="zeus-select-value">{props.triggerLabel ?? selectedOption?.label ?? props.value}</span>}
         <span className="zeus-select-chevron" aria-hidden="true" />
-      </button>
+      </Button>
       {popover && portalHost ? createPortal(popover, portalHost) : popover}
     </span>
   );

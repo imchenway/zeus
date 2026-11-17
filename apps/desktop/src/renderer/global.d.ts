@@ -178,7 +178,14 @@ declare global {
       loadProjectGitCommit: (input: { projectId: string; repositoryId: string; commitHash: string }) => Promise<import('./apiClient.js').ProjectGitCommitDetail>;
       /** 按指定远端目标读取待推送范围。 */
       loadProjectGitPushPreview: (input: { projectId: string; repositoryId: string; selection: import('./apiClient.js').ProjectGitPushPreviewInput }) => Promise<import('./apiClient.js').ProjectGitPushPreview>;
-      loadProjectGitComparisonDiff: (input: { projectId: string; repositoryId: string; ref: string; mode: 'current' | 'working-tree'; path?: string; summaryOnly?: boolean }) => Promise<import('./apiClient.js').GitDiffSummary>;
+      loadProjectGitComparisonDiff: (input: {
+        projectId: string;
+        repositoryId: string;
+        ref: string;
+        mode: 'current' | 'working-tree' | 'staged' | 'unstaged';
+        path?: string;
+        summaryOnly?: boolean;
+      }) => Promise<import('./apiClient.js').GitDiffSummary>;
       cancelProjectGitAction: (repositoryId: string) => Promise<{ cancelled: boolean }>;
       executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
       onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
@@ -226,6 +233,8 @@ declare global {
 
       /** 跨入口共用的受授权文件预览。 */
       loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;
+      /** 读取当前授权文件版本的 Git 审阅，不重新传入磁盘路径。 */
+      loadFilePreviewReview: (id: string) => Promise<import('@zeus/shared').FileReview | undefined>;
       /** 页面关闭和选择变化时撤销短期资源。 */
       releaseFilePreview: (ids: string[]) => Promise<void>;
       /** 用户主动请求系统查看或导出当前预览版本。 */
@@ -322,7 +331,7 @@ declare global {
       getTaskAttachmentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
       openTaskAttachment: (path: string) => Promise<{ opened: boolean; error?: string }>;
       /** 读取第三方任务详情，返回可编辑草稿。 */
-      parseThirdPartyTaskLink: (url: string) => Promise<ThirdPartyTaskExtract>;
+      parseThirdPartyTaskLink: (url: string, onMetadata?: (result: ThirdPartyTaskExtract) => void) => Promise<ThirdPartyTaskExtract>;
       /** 在共享登录状态的 Zeus 窗口打开来源页面。 */
       openThirdPartyTaskLogin: (url: string) => Promise<boolean>;
       exportSettingsSnapshotToFile: (snapshot: unknown) => Promise<{ saved: boolean; filePath: string | null }>;

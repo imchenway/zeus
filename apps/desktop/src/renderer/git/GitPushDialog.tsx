@@ -278,9 +278,9 @@ export function PushDialog(props: PushDialogProps) {
       <section className="git-push-dialog" data-modal-surface="dialog">
         <header className="git-push-heading">
           <strong>{resultMode ? (props.zh ? '推送结果' : 'Push results') : props.zh ? '推送提交' : 'Push Commits'}</strong>
-          <button type="button" aria-label={props.zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={locked}>
+          <Button unstyled type="button" aria-label={props.zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={locked}>
             <XIcon aria-hidden="true" />
-          </button>
+          </Button>
         </header>
         {resultMode ? (
           <main className="git-push-results" aria-live="polite">
@@ -313,7 +313,8 @@ export function PushDialog(props: PushDialogProps) {
                   return (
                     <section className="git-push-repository" key={key}>
                       <div className="git-push-repository-row" data-active={activeKey === key && !commitHash} data-unavailable={!available}>
-                        <button
+                        <Button
+                          unstyled
                           className="git-push-disclosure"
                           type="button"
                           aria-expanded={expanded.has(key)}
@@ -330,7 +331,7 @@ export function PushDialog(props: PushDialogProps) {
                           }
                         >
                           {expanded.has(key) ? <CaretDownIcon /> : <CaretRightIcon />}
-                        </button>
+                        </Button>
                         <input
                           type="checkbox"
                           aria-label={`${props.zh ? '推送' : 'Push'} ${owner.name} ${entry.sourceBranch}`}
@@ -338,13 +339,14 @@ export function PushDialog(props: PushDialogProps) {
                           disabled={locked || !available}
                           onChange={(event) => toggleEntry(entry, event.currentTarget.checked)}
                         />
-                        <button type="button" className="git-push-branch" onClick={() => inspect(entry)} disabled={locked} title={`${owner.name} · ${entry.sourceBranch}`}>
+                        <Button unstyled type="button" className="git-push-branch" onClick={() => inspect(entry)} disabled={locked} title={`${owner.name} · ${entry.sourceBranch}`}>
                           <i style={{ background: repositoryColor(owner.id) }} aria-hidden="true" />
                           <strong>{owner.name}</strong>
                           <span>{entry.sourceBranch || (props.zh ? '未检出分支' : 'No checked-out branch')}</span>
-                        </button>
+                        </Button>
                         <ArrowRightIcon className="git-push-arrow" aria-hidden="true" />
-                        <button
+                        <Button
+                          unstyled
                           type="button"
                           className="git-push-target"
                           disabled={locked || props.fixedTargets}
@@ -355,7 +357,7 @@ export function PushDialog(props: PushDialogProps) {
                           title={`${entry.remote} : ${entry.targetBranch}`}
                         >
                           {entry.remote ? `${entry.remote} : ${entry.targetBranch}` : props.zh ? '未配置远端' : 'No remote'}
-                        </button>
+                        </Button>
                         {state?.data ? <small className="git-push-count">{state.data.total}</small> : null}
                       </div>
                       {expanded.has(key) && available ? (
@@ -363,7 +365,8 @@ export function PushDialog(props: PushDialogProps) {
                           {state?.error ? <VisibleApplicationError error={state.error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
                           {!state?.data && !state?.error ? <p role="status">{props.zh ? '正在读取待推送提交…' : 'Loading outgoing commits…'}</p> : null}
                           {state?.data?.commits.map((commit) => (
-                            <button
+                            <Button
+                              unstyled
                               key={commit.hash}
                               type="button"
                               className="git-push-commit"
@@ -374,13 +377,13 @@ export function PushDialog(props: PushDialogProps) {
                             >
                               <span>{commit.subject}</span>
                               <small>{commit.shortHash}</small>
-                            </button>
+                            </Button>
                           ))}
                           {state?.data?.total === 0 ? <p>{props.zh ? '没有待推送提交' : 'No outgoing commits'}</p> : null}
                           {state?.data?.hasMore ? (
-                            <button className="git-push-link" type="button" disabled={locked || state.loading} onClick={() => void loadMore(entry)}>
+                            <Button unstyled className="git-push-link" type="button" disabled={locked || state.loading} onClick={() => loadMore(entry)}>
                               {state.loading ? (props.zh ? '正在读取…' : 'Loading…') : props.zh ? '加载更多提交' : 'Load more commits'}
-                            </button>
+                            </Button>
                           ) : null}
                         </div>
                       ) : null}
@@ -389,7 +392,8 @@ export function PushDialog(props: PushDialogProps) {
                 })}
               </div>
               <div className="git-push-repository-footer">
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="git-push-link"
                   disabled={locked}
@@ -401,11 +405,11 @@ export function PushDialog(props: PushDialogProps) {
                   }}
                 >
                   {props.zh ? '刷新预览' : 'Refresh preview'}
-                </button>
+                </Button>
                 {!props.fixedTargets ? (
-                  <button type="button" className="git-push-link" disabled={locked} onClick={() => setEditingTargets(true)}>
+                  <Button unstyled type="button" className="git-push-link" disabled={locked} onClick={() => setEditingTargets(true)}>
                     {props.zh ? '编辑所有目标' : 'Edit all targets'}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </section>
@@ -428,7 +432,7 @@ export function PushDialog(props: PushDialogProps) {
                     {props.zh ? '正在读取文件变化…' : 'Loading file changes…'}
                   </p>
                 ) : files.length ? (
-                  <PushFileTree files={files} prefix="" zh={props.zh} selectedPath={selectedFilePath} onSelect={setSelectedFilePath} onOpen={(path) => void openFileDiff(path)} />
+                  <PushFileTree files={files} prefix="" zh={props.zh} selectedPath={selectedFilePath} onSelect={setSelectedFilePath} onOpen={(path) => openFileDiff(path)} />
                 ) : (
                   <p className="git-push-empty">{props.zh ? '此范围没有文件净变化。' : 'No net file changes in this range.'}</p>
                 )}
@@ -476,7 +480,7 @@ export function PushDialog(props: PushDialogProps) {
             </Button>
             {!resultMode ? (
               <span className="git-push-split-button">
-                <Button variant="primary" busy={submitting} disabled={pushDisabled} onClick={() => void submit(false)}>
+                <Button variant="primary" busy={submitting} disabled={pushDisabled} onClick={() => submit(false)}>
                   {props.zh ? '推送' : 'Push'}
                 </Button>
                 {!props.fixedTargets ? (
@@ -510,7 +514,7 @@ export function PushDialog(props: PushDialogProps) {
                         onClick={(event) => {
                           event.currentTarget.closest('details')?.querySelector('summary')?.focus();
                           event.currentTarget.closest('details')?.removeAttribute('open');
-                          void submit(true);
+                          return submit(true);
                         }}
                       >
                         {props.zh ? '强制推送' : 'Force push'}
@@ -564,7 +568,9 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
           </li>
         ) : (
           <li key={name}>
-            <button
+            <Button
+              data-busy-behavior="background"
+              unstyled
               type="button"
               data-active={props.selectedPath === children[0]!.path}
               aria-pressed={props.selectedPath === children[0]!.path}
@@ -576,13 +582,13 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  props.onOpen(children[0]!.path);
+                  return props.onOpen(children[0]!.path);
                 }
               }}
             >
               <FileTypeIcon name={name} />
               <span data-file-status={children[0]!.file.changeType}>{name}</span>
-            </button>
+            </Button>
           </li>
         ),
       )}

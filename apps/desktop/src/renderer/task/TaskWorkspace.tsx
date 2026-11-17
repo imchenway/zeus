@@ -37,6 +37,7 @@ import {
 } from './taskWorkspaceModel.js';
 import { TaskDataTable } from './TaskDataTable.js';
 import type { TaskBoardSettingsSection } from './TaskBoardView.js';
+import { Button } from '../ui/Button.js';
 
 const LazyTaskBoardView = lazy(() => import('./TaskBoardView.js').then((module) => ({ default: module.TaskBoardView })));
 
@@ -371,7 +372,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     <section
       onScrollCapture={(event) => {
         const target = event.target as HTMLElement;
-        if (props.hasMoreTasks && !props.loadingMoreTasks && !props.taskPageError && target.scrollHeight - target.scrollTop - target.clientHeight < 160) props.onLoadMoreTasks?.();
+        if (props.hasMoreTasks && !props.loadingMoreTasks && !props.taskPageError && target.scrollHeight - target.scrollTop - target.clientHeight < 160) return props.onLoadMoreTasks?.();
       }}
       className="task-management-codex-layout task-table-only-layout task-table-layout"
       aria-label={props.copy.workbenchAria}
@@ -385,10 +386,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           <div className="task-filter-control-row task-filter-field task-table-status-segments" role="group" aria-label={props.copy.statusAria}>
             <span className="sr-only">{props.copy.statusTitle}</span>
             {statusSegmentOptions.map((status) => (
-              <button className="task-table-status-segment" type="button" aria-pressed={props.statusFilter === status} key={status || 'all'} onClick={() => props.onStatusFilterChange(status)}>
+              <Button unstyled className="task-table-status-segment" type="button" aria-pressed={props.statusFilter === status} key={status || 'all'} onClick={() => props.onStatusFilterChange(status)}>
                 {status !== '' && status !== 'unfinished' ? <span className="task-status-filter-dot" style={{ backgroundColor: statusColorById.get(status) ?? '#6b7280' }} aria-hidden="true" /> : null}
                 {statusLabel(status)}
-              </button>
+              </Button>
             ))}
           </div>
           {/* 截止筛选复用统一选择器的菜单、选中标记和键盘交互。 */}
@@ -399,7 +400,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             ariaLabel={isEnglishCopy ? 'Filter by deadline' : '按截止时间筛选'}
             value={props.deadlineFilter ?? 'all'}
             onChange={(value) => {
-              if (isTaskDeadlineFilter(value)) props.onDeadlineFilterChange?.(value);
+              if (isTaskDeadlineFilter(value)) return props.onDeadlineFilterChange?.(value);
             }}
             options={[
               { value: 'all', label: isEnglishCopy ? 'All deadlines' : '全部截止时间' },
@@ -411,31 +412,32 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           />
           <div className="task-table-view-actions" aria-label={isEnglishCopy ? 'Task view actions' : '任务视图动作'}>
             <div className="task-table-page-view-segments" role="group" aria-label={isEnglishCopy ? 'Task view' : '任务视图'}>
-              <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'list'} onClick={() => props.onPageViewModeChange('list')}>
+              <Button unstyled className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'list'} onClick={() => props.onPageViewModeChange('list')}>
                 {isEnglishCopy ? 'List' : '列表'}
-              </button>
-              <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'board'} onClick={() => props.onPageViewModeChange('board')}>
+              </Button>
+              <Button unstyled className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'board'} onClick={() => props.onPageViewModeChange('board')}>
                 {isEnglishCopy ? 'Board' : '看板'}
-              </button>
+              </Button>
             </div>
             {props.pageViewMode === 'board' ? (
               <>
                 {boardFilterCount > 0 ? (
-                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
+                  <Button unstyled className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
                     {isEnglishCopy ? `Filters ${boardFilterCount}` : `筛选 ${boardFilterCount}`}
-                  </button>
+                  </Button>
                 ) : null}
                 {boardSortCount > 0 ? (
-                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
+                  <Button unstyled className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('rules')}>
                     {isEnglishCopy ? `Sorts ${boardSortCount}` : `排序 ${boardSortCount}`}
-                  </button>
+                  </Button>
                 ) : null}
                 {boardHiddenCount > 0 ? (
-                  <button className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('layout')}>
+                  <Button unstyled className="task-table-view-pill task-table-board-state-trigger" type="button" onClick={() => setBoardSettingsSection('layout')}>
                     {isEnglishCopy ? `Hidden ${boardHiddenCount}` : `隐藏 ${boardHiddenCount}`}
-                  </button>
+                  </Button>
                 ) : null}
-                <button
+                <Button
+                  unstyled
                   className="task-table-view-pill task-table-board-settings-trigger"
                   type="button"
                   aria-haspopup="dialog"
@@ -446,14 +448,15 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 >
                   <GearSix aria-hidden="true" />
                   <span>{isEnglishCopy ? 'Settings' : '设置'}</span>
-                </button>
+                </Button>
               </>
             ) : null}
             {props.pageViewMode === 'list' ? (
               <>
                 <div className="task-table-field-settings">
                   {/* 列设置保留紧凑入口，通过原生顶层弹出面板展开。 */}
-                  <button
+                  <Button
+                    unstyled
                     className="task-table-view-pill task-table-view-pill-strong task-table-field-settings-trigger"
                     type="button"
                     aria-haspopup="dialog"
@@ -462,7 +465,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     data-icon-tooltip={props.copy.fieldSettingsAria}
                   >
                     <span className="task-table-field-settings-label">{columnViewActionLabel}</span>
-                  </button>
+                  </Button>
                   <section id={fieldSettingsId} popover="auto" className="task-table-field-settings-popover" role="dialog" aria-label={props.copy.fieldSettingsAria}>
                     {/* 字段弹层是有边界的 popover：标题说明固定、字段列表独立滚动、底部恢复动作固定，避免在小分辨率下被裁切。 */}
                     <header className="task-table-field-settings-heading">
@@ -498,14 +501,15 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                       })}
                     </div>
                     <footer className="task-table-field-settings-footer">
-                      <button type="button" className="task-table-field-reset" onClick={() => props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences())}>
+                      <Button unstyled type="button" className="task-table-field-reset" onClick={() => props.onTaskTableColumnsChange(normalizeTaskTableColumnPreferences())}>
                         {props.copy.restoreDefaultColumns}
-                      </button>
+                      </Button>
                     </footer>
                   </section>
                 </div>
                 {props.taskTableLayoutDirty ? (
-                  <button
+                  <Button
+                    unstyled
                     className="task-table-view-pill task-table-view-save-pill"
                     type="button"
                     onClick={props.onSaveTaskTableLayout}
@@ -513,25 +517,25 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     disabled={!props.onSaveTaskTableLayout || props.taskTableLayoutSaveBusy}
                   >
                     {props.taskTableLayoutSaveBusy ? (isEnglishCopy ? 'Saving…' : '正在保存…') : saveViewActionLabel}
-                  </button>
+                  </Button>
                 ) : (
                   <div className="task-table-more-settings">
-                    <button className="task-table-view-pill task-table-more-settings-trigger" type="button" aria-haspopup="menu" popoverTarget={moreSettingsId} disabled={!moreActionsAvailable} aria-disabled={!moreActionsAvailable}>
+                    <Button unstyled className="task-table-view-pill task-table-more-settings-trigger" type="button" aria-haspopup="menu" popoverTarget={moreSettingsId} disabled={!moreActionsAvailable} aria-disabled={!moreActionsAvailable}>
                       {moreViewActionLabel}
-                    </button>
+                    </Button>
                     {moreActionsAvailable ? (
                       <section ref={moreSettingsPopoverRef} id={moreSettingsId} popover="auto" className="task-table-view-more-panel" role="menu" aria-label={isEnglishCopy ? 'More task view actions' : '更多任务视图动作'}>
                         {filtersHaveValue ? (
-                          <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
+                          <Button unstyled className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreResetTaskFilters}>
                             <span>{props.copy.noResultsPrimaryAction}</span>
                             <small>{isEnglishCopy ? 'Reset search, status and tag filters.' : '重置搜索、状态和标签筛选'}</small>
-                          </button>
+                          </Button>
                         ) : null}
                         {columnsHaveCustomPreferences ? (
-                          <button className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
+                          <Button unstyled className="task-table-more-menu-action" type="button" role="menuitem" onClick={handleMoreRestoreDefaultColumns}>
                             <span>{resetColumnsActionLabel}</span>
                             <small>{isEnglishCopy ? 'Return task columns to the default view.' : '恢复默认任务列视图'}</small>
-                          </button>
+                          </Button>
                         ) : null}
                       </section>
                     ) : null}
@@ -542,13 +546,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           </div>
           <span className="task-table-create-actions">
             {props.onOpenZentaoImport ? (
-              <button className="task-table-new-task-button task-table-zentao-button" type="button" onClick={props.onOpenZentaoImport} disabled={!props.activeProjectId || props.creatingTaskBusy}>
+              <Button unstyled className="task-table-new-task-button task-table-zentao-button" type="button" onClick={props.onOpenZentaoImport} disabled={!props.activeProjectId || props.creatingTaskBusy}>
                 {isEnglishCopy ? 'Import ZenTao' : '从禅道导入'}
-              </button>
+              </Button>
             ) : null}
-            <button className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
+            <Button unstyled className="task-table-new-task-button" type="button" onClick={props.onCreateTask} disabled={!props.activeProjectId || props.creatingTaskBusy} {...props.controlBusyProps(props.creatingTaskBusy)}>
               {props.copy.newTask}
-            </button>
+            </Button>
           </span>
         </section>
         {props.pageViewMode === 'board' ? (
@@ -576,7 +580,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 props.onSearchChange('');
                 props.onStatusFilterChange('');
                 props.onTagFilterChange('');
-                props.onDeadlineFilterChange?.('all');
+                return props.onDeadlineFilterChange?.('all');
               }}
               onReload={() => props.onReloadTaskBoard?.()}
               onUpdateSettings={(settings) => {
@@ -596,17 +600,18 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
             {selectedVisibleCount > 0 ? (
               <section className="task-table-bulk-action-bar" aria-label={props.copy.bulkStatusTargetTitle}>
                 <strong className="task-table-bulk-count">{props.copy.bulkSelectedCount(selectedVisibleCount)}</strong>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="task-table-bulk-secondary-button"
                   disabled={bulkActionBusy || model.visibleTaskIds.length === 0}
                   onClick={() => props.onToggleAllVisibleTaskSelection?.(model.visibleTaskIds, !model.allVisibleSelected)}
                 >
                   {props.copy.selectAllVisibleTasks}
-                </button>
-                <button type="button" className="task-table-bulk-secondary-button" disabled={bulkActionBusy} onClick={() => props.onClearTaskSelection?.()}>
+                </Button>
+                <Button unstyled type="button" className="task-table-bulk-secondary-button" disabled={bulkActionBusy} onClick={() => props.onClearTaskSelection?.()}>
                   {props.copy.clearTaskSelection}
-                </button>
+                </Button>
                 <label className="task-table-bulk-status-control" aria-label={props.copy.bulkStatusTargetTitle}>
                   <span className="sr-only">{props.copy.bulkStatusTargetTitle}</span>
                   <ZeusSelect
@@ -625,7 +630,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   />
                 </label>
                 <span className="task-table-bulk-hint">{props.copy.bulkStatusSkippedHint(bulkTargetEligibility.eligibleTaskIds.length, bulkTargetEligibility.skippedTaskIds.length)}</span>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="task-table-bulk-apply-button"
                   disabled={bulkActionBusy || bulkTargetEligibility.eligibleTaskIds.length === 0}
@@ -633,8 +639,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   {...props.controlBusyProps(bulkActionBusy)}
                 >
                   {props.copy.bulkApplyStatus}
-                </button>
-                <button
+                </Button>
+                <Button
+                  unstyled
                   type="button"
                   className="task-table-bulk-delete-button"
                   disabled={bulkActionBusy || model.bulkDeleteEligibility.eligibleTaskIds.length === 0}
@@ -642,7 +649,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   {...props.controlBusyProps(bulkActionBusy)}
                 >
                   {props.copy.bulkDelete}
-                </button>
+                </Button>
                 {bulkActionStatus.message ? (
                   <span className={`task-table-bulk-status task-table-bulk-status-${bulkActionStatus.kind}`} role="status" aria-live="polite">
                     {bulkActionStatus.message}
@@ -684,9 +691,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     <small>{props.copy.taskListErrorHelp}</small>
                   </span>
                   <span className="task-list-state-action-rail">
-                    <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>
+                    <Button unstyled type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>
                       {props.copy.taskListErrorRetry}
-                    </button>
+                    </Button>
                   </span>
                 </section>
               ) : model.visibleTasks.length === 0 ? (
@@ -706,9 +713,9 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   </span>
                   {model.emptyState === 'no-results' ? (
                     <span className="task-empty-state-action-rail">
-                      <button className="task-empty-state-primary-action" type="button" onClick={handleResetTaskFilters}>
+                      <Button unstyled className="task-empty-state-primary-action" type="button" onClick={handleResetTaskFilters}>
                         {props.copy.noResultsPrimaryAction}
-                      </button>
+                      </Button>
                     </span>
                   ) : null}
                 </section>
@@ -719,13 +726,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 {props.loadingMoreTasks ? (
                   '正在读取更多任务…'
                 ) : props.taskPageError ? (
-                  <button type="button" onClick={props.onLoadMoreTasks}>
+                  <Button unstyled type="button" onClick={props.onLoadMoreTasks}>
                     读取失败，重试
-                  </button>
+                  </Button>
                 ) : (
-                  <button type="button" onClick={props.onLoadMoreTasks}>
+                  <Button unstyled type="button" onClick={props.onLoadMoreTasks}>
                     继续加载任务
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : null}

@@ -33,6 +33,8 @@ import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAp
 import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { SessionSweepText } from './SessionSweepText.js';
+import { Button } from '../ui/Button.js';
+import { Form } from '../ui/Form.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -649,7 +651,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {browserComments.length > 0 ? <BrowserCommentPreview comments={browserComments} zh={props.language === 'zh-CN'} /> : null}
       {editing ? (
-        <form className="session-user-message-editor" onSubmit={(event) => void submitEditedMessage(event)}>
+        <Form className="session-user-message-editor" onSubmit={(event) => submitEditedMessage(event)}>
           <label className="session-sr-only" htmlFor={`session-edit-${props.item.itemId}`}>
             {labels.editInput}
           </label>
@@ -669,14 +671,14 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           ) : null}
           <footer>
             <span />
-            <button type="button" onClick={cancelEditing} disabled={submittingEdit}>
+            <Button unstyled type="button" onClick={cancelEditing} disabled={submittingEdit}>
               {labels.cancelEdit}
-            </button>
-            <button type="submit" className="session-user-message-editor-submit" disabled={!editDraft.trim() || submittingEdit}>
+            </Button>
+            <Button unstyled type="submit" className="session-user-message-editor-submit" disabled={!editDraft.trim() || submittingEdit}>
               {labels.sendEdit}
-            </button>
+            </Button>
           </footer>
-        </form>
+        </Form>
       ) : props.questionAnswer ? (
         <AnsweredRequestHistory request={props.questionAnswer} language={props.language} />
       ) : recoveredRequestUserInput ? (
@@ -738,9 +740,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             />
           </AnimatedSize>
           {longUserMessage ? (
-            <button type="button" className="session-user-message-disclosure" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
+            <Button unstyled type="button" className="session-user-message-disclosure" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
               {expanded ? labels.collapse : labels.expand}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : role === 'notice' && visibleText ? (
@@ -786,20 +788,21 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         </span>
       ) : null}
       {expertFailed && props.onRetryExpertExecution ? (
-        <button
+        <Button
+          unstyled
           type="button"
           className="session-expert-retry"
           disabled={retryingExpert}
           onClick={() => {
             setRetryingExpert(true);
             setQueuedActionError(null);
-            void Promise.resolve(props.onRetryExpertExecution?.(expertExecutionId!))
+            return Promise.resolve(props.onRetryExpertExecution?.(expertExecutionId!))
               .catch(setQueuedActionError)
               .finally(() => setRetryingExpert(false));
           }}
         >
           {retryingExpert ? labels.retryingExpert : labels.retryExpert}
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -873,7 +876,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {showQueuedActions ? (
             <div className="session-queued-thread-actions" role="group" aria-label={labels.queuedActions} aria-busy={queuedAction !== null}>
               {props.onSteerQueuedSubmission ? (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-queued-thread-steer"
                   aria-disabled={Boolean(queuedAction || props.queuedSteerDisabledReason)}
@@ -881,24 +885,25 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
                   data-icon-tooltip={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
                   onClick={() => {
                     if (queuedAction || props.queuedSteerDisabledReason) return;
-                    void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
+                    return runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));
                   }}
                 >
                   <ArrowBendUpRight aria-hidden="true" weight="bold" />
                   {queuedAction === 'steer' ? labels.steeringQueued : labels.steerQueued}
-                </button>
+                </Button>
               ) : null}
               {props.onDeleteQueuedSubmission ? (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-queued-thread-delete"
                   disabled={queuedAction !== null}
                   aria-label={props.language === 'zh-CN' ? '删除排队消息' : 'Delete queued message'}
-                  onClick={() => void runQueuedAction('delete', () => props.onDeleteQueuedSubmission?.(props.queuedSubmissionId!))}
+                  onClick={() => runQueuedAction('delete', () => props.onDeleteQueuedSubmission?.(props.queuedSubmissionId!))}
                 >
                   <Trash aria-hidden="true" weight="regular" />
                   {queuedAction === 'delete' ? labels.deletingQueued : labels.deleteQueued}
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : null}
@@ -1324,7 +1329,8 @@ function CopyIconButton(props: { label: string; copiedLabel: string; text: strin
     return () => clearTimeout(timer);
   }, [copied]);
   return (
-    <button
+    <Button
+      unstyled
       type="button"
       className="session-copy-button"
       aria-label={copied ? props.copiedLabel : props.label}
@@ -1333,13 +1339,14 @@ function CopyIconButton(props: { label: string; copiedLabel: string; text: strin
       onClick={async () => setCopied(await copyText(props.text))}
     >
       {copied ? <MessageCheckIcon /> : <MessageCopyIcon />}
-    </button>
+    </Button>
   );
 }
 
 function MessageIconButton(props: { label: string; pressed?: boolean; expanded?: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button
+    <Button
+      unstyled
       type="button"
       className="session-message-action-button"
       aria-label={props.label}
@@ -1350,7 +1357,7 @@ function MessageIconButton(props: { label: string; pressed?: boolean; expanded?:
       onClick={props.onClick}
     >
       {props.children}
-    </button>
+    </Button>
   );
 }
 
@@ -1493,9 +1500,9 @@ function ItemAttachments(props: { item: NativeSessionItemBuffer; language: Sessi
             <small>{props.language === 'zh-CN' ? (restoring ? '正在恢复附件' : '附件暂不可用') : restoring ? 'Restoring attachments' : 'Attachments unavailable'}</small>
           </span>
           {!restoring && props.onLoadResources ? (
-            <button type="button" className="session-open-with-trigger" onClick={() => void props.onLoadResources?.(props.item.turnId)}>
+            <Button unstyled type="button" className="session-open-with-trigger" onClick={() => props.onLoadResources?.(props.item.turnId)}>
               {props.language === 'zh-CN' ? '重试' : 'Retry'}
-            </button>
+            </Button>
           ) : null}
           {restoring ? <ResourceLoading label={props.language === 'zh-CN' ? '正在恢复附件' : 'Restoring attachments'} overlay /> : null}
         </div>

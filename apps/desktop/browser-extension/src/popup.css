@@ -22,6 +22,8 @@ p {
   margin: 8px 0 12px;
 }
 button {
+  cursor: pointer;
+  position: relative;
   width: 100%;
   margin: 5px 0;
   padding: 8px 10px;
@@ -29,6 +31,59 @@ button {
   border-radius: 7px;
   background: ButtonFace;
   color: ButtonText;
+  transition:
+    background-color 80ms ease-out,
+    scale 40ms ease-out;
+}
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, ButtonFace 92%, CanvasText);
+}
+button:active:not(:disabled) {
+  scale: 0.98;
+}
+button:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+button[aria-busy='true'] {
+  cursor: progress;
+}
+button[aria-busy='true']::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  animation: permission-pending 900ms ease-in-out 120ms infinite;
+}
+@keyframes permission-pending {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+  button:active {
+    scale: none;
+  }
+  button[aria-busy='true']::after {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 .note {
   color: color-mix(in srgb, CanvasText 68%, transparent);

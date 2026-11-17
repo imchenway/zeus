@@ -2,6 +2,7 @@ import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/Lis
 import type { NativeCollaborationMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
+import { Button } from '../ui/Button.js';
 
 /** 展示计划模式是否仍在规划，正式计划只能通过确认动作进入实施。 */
 export function CollaborationModeControl(props: {
@@ -33,11 +34,20 @@ export function CollaborationModeControl(props: {
         : `Plan mode: off; ${action}`;
   return (
     <IconTooltip label={title}>
-      <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={accessibleLabel} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>
+      <Button
+        unstyled
+        type="button"
+        className="session-collaboration-mode"
+        data-active={plan || undefined}
+        aria-pressed={plan}
+        aria-label={accessibleLabel}
+        disabled={props.disabled}
+        onClick={() => props.onChange(plan ? 'default' : 'plan')}
+      >
         <span className="session-collaboration-mode-icon" aria-hidden="true">
           <ListChecks weight={plan ? 'bold' : 'regular'} />
         </span>
-      </button>
+      </Button>
     </IconTooltip>
   );
 }

@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { SelectionCommentEditor, selectionCommentEditorPoint, type SelectionOverlayBounds } from './SelectionCommentEditor.js';
+import { Button } from '../ui/Button.js';
 
 /** 评论入口保存松手点与选择终点的相对位置，布局变化后仍跟随原文。 */
 interface SelectionCandidate {
@@ -211,7 +212,8 @@ export function ResponseSelectionActions(props: {
             role="toolbar"
             aria-label={props.language === 'zh-CN' ? '选中文字操作' : 'Selected text actions'}
           >
-            <button
+            <Button
+              unstyled
               type="button"
               disabled={!props.onAddAnnotation}
               aria-label={props.language === 'zh-CN' ? '评论选中文字' : 'Comment on selected text'}
@@ -224,7 +226,7 @@ export function ResponseSelectionActions(props: {
               }}
             >
               <ChatTeardropDots aria-hidden="true" weight="regular" />
-            </button>
+            </Button>
             {props.onAskInSidebar ? (
               <SelectionQuestionActions
                 language={props.language}
@@ -239,7 +241,8 @@ export function ResponseSelectionActions(props: {
         ) : null}
       </MotionPresence>
       {markers.map(({ annotation, index, left, top }) => (
-        <button
+        <Button
+          unstyled
           data-icon-tooltip={props.language === 'zh-CN' ? `打开第 ${index + 1} 条评论` : `Open comment ${index + 1}`}
           type="button"
           key={annotation.id}
@@ -250,7 +253,7 @@ export function ResponseSelectionActions(props: {
           onClick={() => setEditingId(annotation.id)}
         >
           {index + 1}
-        </button>
+        </Button>
       ))}
       <MotionPresence>
         {editingAnnotation && editorPoint ? (

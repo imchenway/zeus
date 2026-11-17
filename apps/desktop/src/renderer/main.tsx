@@ -142,7 +142,7 @@ async function renderWithClient(
             onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
             onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
             onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
-            onParseThirdPartyTaskLink={(url) => window.zeus?.parseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+            onParseThirdPartyTaskLink={(url, onMetadata) => window.zeus?.parseThirdPartyTaskLink?.(url, onMetadata) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
             onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
             onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
             onCreateTaskFromTemplate={async (templateId, projectId, idempotencyKey) => {
@@ -635,25 +635,39 @@ function renderStartupFailure(error: unknown): void {
   const actions = document.createElement('div');
   actions.className = 'startup-failure-actions';
   const restart = startupFailureButton(zh ? '重新启动' : 'Restart', true);
+  /** 预加载缺失时，按钮不能接纳一个永远不会执行的操作。 */
+  const restartAction = window.zeus?.restartAfterStartupFailure;
+  restart.disabled = !restartAction;
   restart.onclick = async () => {
+    if (!restartAction) return;
     restart.disabled = true;
+    restart.setAttribute('aria-busy', 'true');
     restart.textContent = zh ? '正在重启…' : 'Restarting…';
     try {
-      await window.zeus?.restartAfterStartupFailure?.();
+      await restartAction();
     } catch (restartError) {
+      description.textContent = describeUserFacingError(restartError, startupLanguage).message;
       reportApplicationError(restartError, { language: zh ? 'zh-CN' : 'en' });
       restart.disabled = false;
+      restart.removeAttribute('aria-busy');
       restart.textContent = zh ? '重新启动' : 'Restart';
     }
   };
   const exit = startupFailureButton(zh ? '退出 Zeus' : 'Quit Zeus', false);
+  /** 网页降级面板没有原生退出能力时保持明确的不可用状态。 */
+  const exitAction = window.zeus?.exitAfterStartupFailure;
+  exit.disabled = !exitAction;
   exit.onclick = async () => {
+    if (!exitAction) return;
     exit.disabled = true;
+    exit.setAttribute('aria-busy', 'true');
     try {
-      await window.zeus?.exitAfterStartupFailure?.();
+      await exitAction();
     } catch (exitError) {
+      description.textContent = describeUserFacingError(exitError, startupLanguage).message;
       reportApplicationError(exitError, { language: zh ? 'zh-CN' : 'en' });
       exit.disabled = false;
+      exit.removeAttribute('aria-busy');
     }
   };
   actions.append(exit, restart);

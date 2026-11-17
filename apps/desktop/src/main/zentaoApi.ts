@@ -1,7 +1,10 @@
 import { net } from 'electron';
+import { createHash } from 'node:crypto';
 import { zentaoInstanceApiBase, type ZentaoLinkKind } from '@zeus/shared';
 
 const ZENTAO_API_TIMEOUT_MS = 12_000;
+/** 导入与连续读取复用短时令牌；凭据指纹变化或认证失败后重新交换。 */
+const tokens = new Map<string, { value: Promise<string>; token?: string; expiresAt: number }>();
 
 type ZentaoApiErrorCode = 'auth_failed' | 'api_unavailable' | 'not_found' | 'network' | 'invalid_response';
 
@@ -31,7 +34,30 @@ export interface ZentaoFileDownload {
 }
 
 /** 用账号密码换取访问令牌；令牌只存在于内存，绝不落盘或回传渲染层。 */
-export async function exchangeZentaoToken(endpoint: ZentaoRestEndpoint): Promise<string> {
+export function exchangeZentaoToken(endpoint: ZentaoRestEndpoint, rejectedToken?: string): Promise<string> {
+  const key = createHash('sha256')
+    .update(JSON.stringify([endpoint.host, endpoint.basePath, endpoint.account, endpoint.password]))
+    .digest('hex');
+  const cached = tokens.get(key);
+  if (cached && cached.expiresAt > Date.now() && (!rejectedToken || cached.token !== rejectedToken)) return cached.value;
+  const entry: { value: Promise<string>; token?: string; expiresAt: number } = { value: requestZentaoToken(endpoint), expiresAt: Infinity };
+  tokens.delete(key);
+  tokens.set(key, entry);
+  if (tokens.size > 16) tokens.delete(tokens.keys().next().value!);
+  void entry.value.then(
+    (token) => {
+      entry.token = token;
+      entry.expiresAt = Date.now() + 5 * 60_000;
+    },
+    () => {
+      if (tokens.get(key) === entry) tokens.delete(key);
+    },
+  );
+  return entry.value;
+}
+
+/** 唯一的令牌网络交换入口，失败不会进入展示或令牌缓存。 */
+async function requestZentaoToken(endpoint: ZentaoRestEndpoint): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ZENTAO_API_TIMEOUT_MS);
   try {
@@ -102,7 +128,7 @@ export async function attemptZentaoRestDetail(endpoint: ZentaoRestEndpoint, zent
       return { kind: 'ok', payload: await fetchZentaoDetail(endpoint, zentaoKind, objectId, token), token };
     } catch (error) {
       if (!(error instanceof ZentaoApiError) || error.code !== 'auth_failed') throw error;
-      const renewedToken = await exchangeZentaoToken(endpoint);
+      const renewedToken = await exchangeZentaoToken(endpoint, token);
       return { kind: 'ok', payload: await fetchZentaoDetail(endpoint, zentaoKind, objectId, renewedToken), token: renewedToken };
     }
   } catch (error) {

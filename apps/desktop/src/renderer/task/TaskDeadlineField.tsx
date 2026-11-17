@@ -76,7 +76,7 @@ export function TaskDeadlineField(props: {
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            void save();
+            return save();
           }}
         >
           {draft.page === 'deadline' ? (

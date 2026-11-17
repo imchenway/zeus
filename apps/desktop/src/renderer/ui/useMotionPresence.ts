@@ -18,6 +18,10 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
       /** 自然内容保持独立排版，同时覆盖 Markdown、图片和嵌套展开。 */
       const content = contentRef.current;
       if (!element || !content) return;
+      /** 开合与异步补载沿用共享时长，不另设一套动画节奏。 */
+      const style = getComputedStyle(element);
+      const duration = Number.parseFloat(style.getPropertyValue(open ? '--zeus-motion-duration-layer-enter' : '--zeus-motion-duration-layer-exit')) || (open ? 160 : 120);
+      const easing = style.getPropertyValue('--zeus-motion-ease-out').trim() || 'ease-out';
       /** 首次挂载和虚拟列表恢复不重复播放入场。 */
       let targetHeight = Number.parseFloat(element.style.blockSize);
       if (open) setRetained(true);
@@ -47,7 +51,7 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
             { blockSize: `${from}px`, opacity: 1, overflow: 'clip' },
             { blockSize: `${to}px`, opacity: 1, overflow: 'clip' },
           ],
-          { duration: open ? 280 : 220, easing: 'cubic-bezier(0.2, 0, 0.2, 1)' },
+          { duration, easing },
         );
         revealAnimation.current = animation;
         void animation.finished

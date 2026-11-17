@@ -17,6 +17,7 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { ResourceLoading } from './ResourceLoading.js';
 import { pendingResourceDisplayName } from './pendingResourcePolicy.js';
+import { Button } from './Button.js';
 
 export type PendingResourceKind = 'image' | 'file' | 'directory' | 'pasted_text';
 
@@ -146,14 +147,15 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     >
       {props.onActivate && !props.resource.pending ? (
         /* 预览只读取附件；提交中和只读界面只禁用移除操作。 */
-        <button
+        <Button
+          unstyled
           type="button"
           className="pending-resource-activate"
           aria-label={`${props.resource.reference ? `${typeLabel}: ` : ''}${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`}
           onClick={activate}
         >
           {visual}
-        </button>
+        </Button>
       ) : (
         visual
       )}
@@ -168,7 +170,8 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       {props.resource.kind === 'image' && props.resource.reference ? <small className="pending-resource-reference-label">{typeLabel}</small> : null}
       {props.resource.pending && !previewLoading ? <ResourceLoading label={loadingLabel} overlay /> : null}
       {props.onRemove && !props.resource.pending ? (
-        <button
+        <Button
+          unstyled
           type="button"
           className="pending-resource-remove"
           aria-label={`${props.language === 'zh-CN' ? '移除资源' : 'Remove resource'}: ${props.resource.name}`}
@@ -178,7 +181,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
           <span className="pending-resource-remove-glyph" aria-hidden="true">
             <X size={11} weight="bold" />
           </span>
-        </button>
+        </Button>
       ) : null}
     </li>
   );

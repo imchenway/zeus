@@ -109,11 +109,12 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     return (
       <div role="alert" className="system-window-error">
         {error}
-        <button type="button" onClick={() => closeRef.current?.()}>
+        <Button unstyled type="button" onClick={() => closeRef.current?.()}>
           关闭
-        </button>
+        </Button>
       </div>
     );
   return target ? <WindowDocumentContext.Provider value={target}>{props.children}</WindowDocumentContext.Provider> : null;
 }
 import { installFilePathActions } from './filePathActions.js';
+import { Button } from './Button.js';

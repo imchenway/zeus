@@ -31,11 +31,11 @@ export function WorkflowWaitResponse(props: { toolApproval?: boolean; disabled: 
         </label>
       ) : null}
       <div className="digital-team-inspector-actions">
-        <Button variant="primary" disabled={props.disabled || busy} onClick={() => void submit(true)}>
+        <Button variant="primary" disabled={props.disabled || busy} onClick={() => submit(true)}>
           {busy ? '提交中…' : props.toolApproval ? '批准工具调用' : '提交回应'}
         </Button>
         {props.toolApproval ? (
-          <Button disabled={props.disabled || busy} onClick={() => void submit(false)}>
+          <Button disabled={props.disabled || busy} onClick={() => submit(false)}>
             拒绝
           </Button>
         ) : null}

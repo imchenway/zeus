@@ -32,6 +32,7 @@ import type { DashboardClient } from '../../dashboardClient.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { Button } from '../../ui/Button.js';
+import { ResourceLoading } from '../../ui/ResourceLoading.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import type { TaskRecord } from '../tasks/taskContracts.js';
@@ -156,6 +157,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [canvasGeneration, setCanvasGeneration] = useState(0);
   /** 当前运行图。 */
   const [selectedRun, setSelectedRun] = useState<DigitalTeamRunProjection | null>(null);
+  /** 切换时立即展示目标运行身份，完整尝试历史在后台读取。 */
+  const [openingRunId, setOpeningRunId] = useState<string | null>(null);
+  const openingRunIdRef = useRef<string | null>(null);
   /** 异步读取不能覆盖人工操作刚接纳的更新修订。 */
   const selectedRunRef = useRef(selectedRun);
   selectedRunRef.current = selectedRun;
@@ -228,9 +232,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 当前选中业务节点。 */
   const selectedNode = draft.definition.nodes.find((node) => node.id === selectedNodeId) ?? null;
   /** 当前运行冻结图兼容 Core 投影的两个稳定字段名。 */
-  const selectedRunRecord = selectedRun?.run ?? null;
+  const selectedRunRecord = openingRunId ? (runs.find((run) => run.id === openingRunId) ?? null) : (selectedRun?.run ?? null);
   /** 受阻原因只来自准确运行的当前尝试，不使用历史失败推测现状。 */
-  const runBlocker = selectedRun ? getDigitalTeamRunBlocker(selectedRun, zh) : null;
+  const runBlocker = selectedRun && (!openingRunId || selectedRun.run.id === openingRunId) ? getDigitalTeamRunBlocker(selectedRun, zh) : null;
   /** 运行失败直接显示原因，避免成功创建提示掩盖后续派发失败。 */
   const runError = view === 'runs' && !runBlocker && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
   /** 运行提示使用创建时冻结的实际员工工作方式。 */
@@ -305,7 +309,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         rememberDigitalTeamDraftSelection(restoredDraft?.id ?? nextTemplate?.id ?? null);
         setCanvasGeneration((current) => current + 1);
         setDirty(nextDirty);
-        const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === selectedRun?.run.id) ?? (props.task ? visibleRuns[0] : null);
+        const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === (openingRunIdRef.current ?? selectedRun?.run.id)) ?? (props.task ? visibleRuns[0] : null);
         if (entrySelection?.kind === 'template' && nextTemplate?.id === entrySelection.templateId && nextTemplate.ready && !visibleRuns.some((run) => !terminalRunStatuses.has(run.status))) {
           setView('editor');
         } else if (entrySelection?.kind === 'run' && nextRun?.id === entrySelection.runId) setView('runs');
@@ -314,6 +318,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
         if (!mountedRef.current || revision !== loadRevisionRef.current) return;
         setSelectedRun((current) => (nextProjection && current?.run.id === nextProjection.run.id && current.run.revision > nextProjection.run.revision ? current : nextProjection));
+        openingRunIdRef.current = null;
+        setOpeningRunId(null);
         setSelectedNodeId(null);
       } catch (cause) {
         if (revision === loadRevisionRef.current) setError(userFacingErrorCause(cause));
@@ -723,6 +729,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 加载运行完整投影，运行图始终保持只读。 */
   const selectRun = async (runId: string): Promise<void> => {
     if (!api) return;
+    openingRunIdRef.current = runId;
+    setOpeningRunId(runId);
+    setSelectedNodeId(null);
     /** 后一次运行选择与项目刷新使先前读取回执失效。 */
     const revision = ++loadRevisionRef.current;
     runReadEpochRef.current += 1;
@@ -733,6 +742,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       const projection = await api.loadDigitalTeamRun(runId);
       if (!mountedRef.current || revision !== loadRevisionRef.current || projection.run.projectId !== projectId || (props.task && projection.run.taskId !== props.task.id)) return;
       setSelectedRun((current) => (current?.run.id === projection.run.id && current.run.revision > projection.run.revision ? current : projection));
+      openingRunIdRef.current = null;
+      setOpeningRunId(null);
       setSelectedNodeId(getDigitalTeamRunBlocker(projection, zh)?.nodeId ?? null);
     } catch (cause) {
       if (mountedRef.current && revision === loadRevisionRef.current) setError(userFacingErrorCause(cause));
@@ -860,12 +871,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             </Button>
           ) : null}
           <div className="digital-team-view-switch" aria-label={zh ? '数字团队视图' : 'Digital team view'}>
-            <button type="button" aria-pressed={view === 'editor'} onClick={() => setView('editor')}>
+            <Button unstyled type="button" aria-pressed={view === 'editor'} onClick={() => setView('editor')}>
               {zh ? '团队流程' : 'Workflow'}
-            </button>
-            <button type="button" aria-pressed={view === 'runs'} onClick={() => setView('runs')}>
+            </Button>
+            <Button unstyled type="button" aria-pressed={view === 'runs'} onClick={() => setView('runs')}>
               {zh ? '执行记录' : 'Runs'}
-            </button>
+            </Button>
           </div>
           <ZeusSelect
             ariaLabel={zh ? '任务运行项目' : 'Task project'}
@@ -885,7 +896,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             aria-label={zh ? '刷新数字团队数据' : 'Refresh digital team data'}
             data-icon-tooltip={zh ? '刷新数字团队数据' : 'Refresh digital team data'}
             disabled={loading || busy}
-            onClick={() => void refreshProject()}
+            onClick={() => refreshProject()}
           >
             <Refresh aria-hidden="true" />
           </Button>
@@ -1063,7 +1074,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   </div>
                 ) : null}
                 <div className="digital-team-template-actions">
-                  <Button size="compact" onClick={() => void copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
+                  <Button size="compact" onClick={() => copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
                     <Copy aria-hidden="true" />
                     {zh ? '复制团队' : 'Copy team'}
                   </Button>
@@ -1091,7 +1102,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                     </div>
                   ) : null}
                 </div>
-                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || !templateNeedsSave} onClick={() => void saveTemplate()}>
+                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || !templateNeedsSave} onClick={() => saveTemplate()}>
                   {zh ? '保存' : 'Save'}
                 </Button>
                 {dirty ? (
@@ -1104,8 +1115,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   variant="primary"
                   disabled={!draft.name.trim() || validationIssues.length > 0 || loading || busy || (props.task ? runs.some((run) => !terminalRunStatuses.has(run.status)) : !props.onCreateTask || !projectId)}
                   onClick={() => {
-                    if (props.task) void createRun();
-                    else void createTaskWithTeam();
+                    if (props.task) return createRun();
+                    else return createTaskWithTeam();
                   }}
                 >
                   <Play aria-hidden="true" />
@@ -1155,10 +1166,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               <p>{zh ? '尚未创建运行。' : 'No runs yet.'}</p>
             ) : (
               runs.map((run) => (
-                <button key={run.id} type="button" className={run.id === selectedRunRecord?.id ? 'is-active' : ''} aria-current={run.id === selectedRunRecord?.id ? 'true' : undefined} onClick={() => void selectRun(run.id)}>
+                <Button
+                  unstyled
+                  data-busy-behavior="background"
+                  key={run.id}
+                  type="button"
+                  className={run.id === selectedRunRecord?.id ? 'is-active' : ''}
+                  aria-current={run.id === selectedRunRecord?.id ? 'true' : undefined}
+                  onClick={() => selectRun(run.id)}
+                >
                   <strong>{runTitle(run)}</strong>
                   <small>{digitalTeamRunStatusLabel(run, zh)}</small>
-                </button>
+                </Button>
               ))
             )}
           </aside>
@@ -1174,13 +1193,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 ) : null}
               </div>
               {selectedRunRecord && !terminalRunStatuses.has(selectedRunRecord.status) ? (
-                <Button size="compact" busy={busy} onClick={() => void controlRun()}>
+                <Button size="compact" busy={busy} disabled={Boolean(openingRunId)} onClick={() => controlRun()}>
                   {selectedRunRecord.controlState === 'paused' ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
                   {selectedRunRecord.controlState === 'paused' ? (zh ? '继续' : 'Resume') : zh ? '暂停' : 'Pause'}
                 </Button>
               ) : null}
             </div>
-            {selectedRunRecord && runDefinition ? (
+            {selectedRunRecord && runDefinition && (!openingRunId || selectedRun?.run.id === openingRunId) ? (
               <WorkflowCanvas
                 key={selectedRunRecord.id}
                 definition={runDefinition}
@@ -1195,7 +1214,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               />
             ) : (
               <div className="digital-team-run-empty" role="status">
-                {zh ? '从左侧选择运行，查看冻结流程和真实节点状态。' : 'Select a run to view its frozen workflow and node states.'}
+                {openingRunId ? (
+                  loading ? (
+                    <ResourceLoading label={zh ? '正在读取运行…' : 'Loading run…'} />
+                  ) : zh ? (
+                    '未能读取运行，请重新选择。'
+                  ) : (
+                    'Unable to load run. Select it again.'
+                  )
+                ) : zh ? (
+                  '从左侧选择运行，查看冻结流程和真实节点状态。'
+                ) : (
+                  'Select a run to view its frozen workflow and node states.'
+                )}
               </div>
             )}
           </main>
@@ -1222,7 +1253,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             submitLabel={zh ? '确认删除' : 'Delete'}
             danger
             onClose={() => setPendingDelete(null)}
-            onSubmit={(event) => void deleteTemplate(event)}
+            onSubmit={(event) => deleteTemplate(event)}
           />
         ) : null}
       </MotionPresence>
@@ -1240,7 +1271,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               setRunDecision(null);
               setDecisionReason('');
             }}
-            onSubmit={(event) => void submitRunDecision(event)}
+            onSubmit={(event) => submitRunDecision(event)}
           >
             <label>
               <span>{zh ? '决定原因' : 'Decision reason'}</span>
@@ -1479,7 +1510,7 @@ function EmployeeNodeFields(props: {
               onChange={(employeeId) => {
                 const employee = props.employees.find((candidate) => candidate.id === employeeId);
                 if (!employee) return;
-                props.onChange({
+                return props.onChange({
                   ...props.node,
                   data: {
                     ...props.node.data,
@@ -1620,9 +1651,9 @@ function ValidationPanel(props: { issues: Array<{ code: string; message: string;
           <li key={key}>
             <span>{issue.code === unassignedEmployeeIssueCode ? '选择执行员工后即可使用团队。' : `${issue.message}${issue.count > 1 ? `（${issue.count} 处）` : ''}`}</span>
             {issue.nodeIds.length ? (
-              <button type="button" onClick={() => props.onSelectNode(issue.nodeIds[0])}>
+              <Button unstyled type="button" onClick={() => props.onSelectNode(issue.nodeIds[0])}>
                 {issue.code === unassignedEmployeeIssueCode ? '配置员工' : '定位'}
-              </button>
+              </Button>
             ) : null}
           </li>
         ))}
@@ -1687,7 +1718,7 @@ function RunInspector(props: {
           <dt>会话</dt>
           <dd>
             {props.attempt?.conversationId && props.onOpenConversation ? (
-              <Button size="compact" onClick={() => void props.onOpenConversation!(props.attempt!.conversationId!)}>
+              <Button size="compact" onClick={() => props.onOpenConversation!(props.attempt!.conversationId!)}>
                 打开会话
               </Button>
             ) : (

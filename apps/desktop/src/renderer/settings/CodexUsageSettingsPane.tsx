@@ -172,7 +172,7 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
           <h2 className="settings-page-title">{copy.title}</h2>
           <small>{snapshot ? formatUpdatedAt(snapshot.updatedAt, props.language) : null}</small>
         </span>
-        <Button size="compact" onClick={() => void load()} busy={loading}>
+        <Button size="compact" onClick={() => load()} busy={loading}>
           {loading ? copy.loading : copy.refresh}
         </Button>
       </header>
@@ -273,13 +273,13 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
             {props.providers.map((analytics) => (
               <tr key={analytics.provider.providerId}>
                 <th scope="row">
-                  <button type="button" className="codex-usage-provider-open" onClick={() => props.onSelect(analytics.provider.providerId)}>
+                  <Button data-busy-behavior="background" unstyled type="button" className="codex-usage-provider-open" onClick={() => props.onSelect(analytics.provider.providerId)}>
                     <strong>{analytics.provider.name}</strong>
                     <small>
                       {isCodexSubscriptionUsage(analytics.provider) ? (analytics.provider.planType ?? copy.subscription) : 'API'}
                       <span aria-hidden="true"> →</span>
                     </small>
-                  </button>
+                  </Button>
                 </th>
                 <td data-label={props.language === 'zh-CN' ? '当前范围 Token' : 'Range tokens'}>
                   <strong>{formatTokens(analytics.local.totals.totalTokens, props.language)}</strong>
@@ -399,9 +399,9 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
         <strong>{props.analytics.provider.name}</strong>
         <nav className="codex-usage-local-tab-list" role="tablist" aria-label={copy.local} onKeyDown={handleLocalUsageTabKeyDown}>
           {tabs.map((tab) => (
-            <button id={tabId(tab.id)} key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={panelId(tab.id)} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)}>
+            <Button unstyled id={tabId(tab.id)} key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={panelId(tab.id)} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)}>
               {tab.label}
-            </button>
+            </Button>
           ))}
         </nav>
         <em>{copy.onlyZeus}</em>

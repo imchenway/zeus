@@ -256,7 +256,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
           <p>{zh ? '管理自动化规则，在通知中心查看运行结果。' : 'Manage automation rules and view results in notifications.'}</p>
         </div>
         <div className="automations-header-actions">
-          <Button aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} busy={loading} disabled={loading || Boolean(busyId)}>
+          <Button aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => refresh()} busy={loading} disabled={loading || Boolean(busyId)}>
             <Refresh aria-hidden="true" />
             {zh ? '刷新' : 'Refresh'}
           </Button>
@@ -281,7 +281,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
           ) : tasks.length ? (
             tasks.map((task) => (
               <article className="automation-row" key={task.id} data-status={task.status}>
-                <button type="button" className="automation-row-main" disabled={Boolean(busyId)} onClick={() => startEdit(task)}>
+                <Button unstyled type="button" className="automation-row-main" disabled={Boolean(busyId)} onClick={() => startEdit(task)}>
                   <span className="automation-status-dot" aria-hidden="true" />
                   <span>
                     <strong>{task.name}</strong>
@@ -291,7 +291,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     {task.migrationIssue ? <small className="automation-warning">{task.migrationIssue}</small> : null}
                   </span>
                   <span className="automation-row-schedule">{scheduleLabel(task, zh)}</span>
-                </button>
+                </Button>
                 <div className="automation-row-actions">
                   {task.status === 'active' ? (
                     <Button
@@ -300,7 +300,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                       aria-label={`${zh ? '立即运行' : 'Run'} ${task.name}`}
                       busy={busyId === `run:${task.id}`}
                       disabled={Boolean(busyId)}
-                      onClick={() => void mutate(`run:${task.id}`, () => props.client!.runAutomation(task.id))}
+                      onClick={() => mutate(`run:${task.id}`, () => props.client!.runAutomation(task.id))}
                     >
                       <Play aria-hidden="true" />
                     </Button>
@@ -311,7 +311,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     aria-label={`${task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'} ${task.name}`}
                     busy={busyId === `status:${task.id}`}
                     disabled={Boolean(busyId)}
-                    onClick={() => void mutate(`status:${task.id}`, () => props.client!.setAutomationStatus(task.id, task.status === 'active' ? 'paused' : 'active'))}
+                    onClick={() => mutate(`status:${task.id}`, () => props.client!.setAutomationStatus(task.id, task.status === 'active' ? 'paused' : 'active'))}
                   >
                     {task.status === 'active' ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                   </Button>
@@ -343,7 +343,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
             submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !actionValid || !triggerValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
             onClose={() => setEditingId(null)}
-            onSubmit={(event) => void submit(event)}
+            onSubmit={(event) => submit(event)}
           >
             {error ? (
               <p className="automations-error" role="alert">
@@ -589,7 +589,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             onClose={() => setPendingDelete(null)}
             onSubmit={(event) => {
               event.preventDefault();
-              void mutate(`delete:${pendingDelete.id}`, () => props.client!.deleteAutomation(pendingDelete.id)).then((deleted) => {
+              return mutate(`delete:${pendingDelete.id}`, () => props.client!.deleteAutomation(pendingDelete.id)).then((deleted) => {
                 if (deleted) setPendingDelete(null);
               });
             }}

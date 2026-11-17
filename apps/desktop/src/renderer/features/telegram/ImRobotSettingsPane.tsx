@@ -1,7 +1,8 @@
 import { Collapsible } from '../../ui/Collapsible.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { CachedQuery } from '../../cachedQuery.js';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -29,7 +30,7 @@ export interface ImRobotSettingsPaneProps {
 }
 
 /** 区分正在执行的操作，统一阻止重复提交并显示进度。 */
-type AsyncAction = 'create' | 'pairing' | 'check' | 'update' | 'remove' | 'logs' | null;
+type AsyncAction = 'create' | 'pairing' | 'check' | 'update' | 'remove' | null;
 
 /** 管理机器人接入、私聊配对与连接维护的完整页面。 */
 export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
@@ -53,8 +54,8 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   /** 配对入口的剩余有效秒数。 */
   const [remainingSeconds, setRemainingSeconds] = useState(0);
-  /** 展开时加载的脱敏日志，空值表示收起。 */
-  const [logs, setLogs] = useState<ImTelegramConnectionLogEntry[] | null>(null);
+  /** 展开的日志属于具体查询，切换连接后不会显示上一连接的内容。 */
+  const [openedLogsQuery, setOpenedLogsQuery] = useState<CachedQuery<ImTelegramConnectionLogEntry[]> | null>(null);
   /** 当前异步操作，用于禁用控件。 */
   const [action, setAction] = useState<AsyncAction>(null);
   /** 显式操作的可见错误。 */
@@ -118,6 +119,14 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
 
   /** 当前仅支持一个 Telegram 连接。 */
   const connection = snapshot?.connections[0] ?? null;
+  /** 日志查询只以连接身份分区，不随连接快照修订重建。 */
+  const logsConnectionId = connection?.id;
+  /** 日志读取独立合并在途请求，不占用连接变更的忙碌状态。 */
+  const logsQuery = useMemo(() => new CachedQuery(() => (props.client && logsConnectionId ? props.client.loadTelegramImConnectionLogs(logsConnectionId) : Promise.resolve([])), 0), [props.client, logsConnectionId]);
+  /** 当前查询保留已读内容，刷新失败时仍可查看旧日志。 */
+  const logsSnapshot = useSyncExternalStore(logsQuery.subscribe, logsQuery.getSnapshot, logsQuery.getSnapshot);
+  /** 关闭面板不取消读取，重新打开时复用同一请求。 */
+  const logsOpen = openedLogsQuery === logsQuery;
   /** 从项目目录派生表单的配置选项。 */
   const selectedProject = options.find((option) => option.id === projectId) ?? null;
   /** 所选项目允许使用的智能体配置。 */
@@ -199,10 +208,10 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   );
 
   /** 验证密钥并创建需要私聊配对的连接。 */
-  const createConnection = (): void => {
+  const createConnection = (): void | Promise<void> => {
     if (!props.client || !projectId) return;
     const agentPreset = parseAgentPresetKey(presetKey);
-    void execute(
+    return execute(
       'create',
       () => props.client!.createTelegramImConnection({ projectId, agentPreset, ...(useLegacyToken ? { useLegacyToken: true } : { botToken: botToken.trim() }) }),
       async (created) => {
@@ -216,9 +225,9 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 撤销旧配对码并请求新的配对入口。 */
-  const recreatePairing = (): void => {
+  const recreatePairing = (): void | Promise<void> => {
     if (!props.client || !connection) return;
-    void execute(
+    return execute(
       'pairing',
       () => props.client!.recreateTelegramImPairing(connection.id),
       async (created) => {
@@ -230,9 +239,9 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 显式检查密钥和连接健康状况。 */
-  const checkConnection = (): void => {
+  const checkConnection = (): void | Promise<void> => {
     if (!props.client || !connection) return;
-    void execute(
+    return execute(
       'check',
       () => props.client!.checkTelegramImConnection(connection.id),
       (updated) => {
@@ -243,9 +252,9 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 服务端确认后更新配置，失败时保持已保存的选择。 */
-  const updatePreset = (value: string): void => {
+  const updatePreset = (value: string): void | Promise<void> => {
     if (!props.client || !connection) return;
-    void execute(
+    return execute(
       'update',
       () => props.client!.updateTelegramImConnection(connection.id, { expectedRevision: connection.revision, agentPreset: parseAgentPresetKey(value) }),
       (updated) => {
@@ -257,7 +266,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 开启远程审批前保留用户明确确认。 */
-  const updateRemoteApproval = (enabled: boolean): void => {
+  const updateRemoteApproval = (enabled: boolean): void | Promise<void> => {
     if (!props.client || !connection) return;
     if (
       enabled &&
@@ -268,7 +277,7 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
       )
     )
       return;
-    void execute(
+    return execute(
       'update',
       () => props.client!.updateTelegramImConnection(connection.id, { expectedRevision: connection.revision, remoteApprovalEnabled: enabled }),
       (updated) => {
@@ -279,18 +288,18 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 确认后移除接入并刷新页面，保留任务与会话历史。 */
-  const removeConnection = (): void => {
+  const removeConnection = (): void | Promise<void> => {
     if (!props.client || !connection) return;
     if (
       !window.confirm(zh ? '移除后将停止轮询、撤销配对并清除 Keychain Token；任务与会话历史会保留。确定移除？' : 'This stops polling, revokes pairing, and clears the Keychain token. Task and conversation history is preserved. Remove it?')
     )
       return;
-    void execute(
+    return execute(
       'remove',
       () => props.client!.removeTelegramImConnection(connection.id),
       async () => {
         setPairing(null);
-        setLogs(null);
+        setOpenedLogsQuery(null);
         setSnapshot((current) => (current ? { ...current, connections: [] } : current));
         setNotice(zh ? '连接已移除；任务与会话历史未删除。' : 'Connection removed. Task and conversation history was preserved.');
         await refresh();
@@ -299,13 +308,14 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
   };
 
   /** 按需读取或收起脱敏日志。 */
-  const loadLogs = (): void => {
+  const loadLogs = (): void | Promise<unknown> => {
     if (!props.client || !connection) return;
-    if (logs) {
-      setLogs(null);
+    if (logsOpen) {
+      setOpenedLogsQuery(null);
       return;
     }
-    void execute('logs', () => props.client!.loadTelegramImConnectionLogs(connection.id), setLogs);
+    setOpenedLogsQuery(logsQuery);
+    return logsQuery.load(true).catch(() => undefined);
   };
 
   return (
@@ -439,7 +449,10 @@ export function ImRobotSettingsPane(props: ImRobotSettingsPaneProps) {
             presetKey={presetKey}
             busy={busy}
             action={action}
-            logs={logs}
+            logs={logsOpen ? logsSnapshot.value : null}
+            logsOpen={logsOpen}
+            logsLoading={logsOpen && logsSnapshot.refreshing}
+            logsError={logsOpen && logsSnapshot.error ? errorMessage(logsSnapshot.error, zh ? 'zh-CN' : 'en') : null}
             onPresetChange={updatePreset}
             onRemoteApprovalChange={updateRemoteApproval}
             onCheck={checkConnection}
@@ -504,18 +517,18 @@ function PairingPanel(props: { zh: boolean; pairing: ImPairingSessionSnapshot | 
                 {props.zh ? '在 Telegram 中打开' : 'Open in Telegram'}
               </a>
             ) : null}
-            <button type="button" className="im-secondary-action" onClick={props.onRecreate} disabled={props.busy}>
+            <Button unstyled type="button" className="im-secondary-action" onClick={props.onRecreate} disabled={props.busy}>
               {props.zh ? '撤销并重新生成' : 'Revoke and regenerate'}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <div className="im-state-message danger">
           <WarningCircle aria-hidden="true" />
           {props.zh ? '应用重启后，请重新生成配对码。' : 'Generate a new pairing code after restarting the app.'}
-          <button type="button" className="im-secondary-action" onClick={props.onRecreate} disabled={props.busy}>
+          <Button unstyled type="button" className="im-secondary-action" onClick={props.onRecreate} disabled={props.busy}>
             {props.zh ? '重新生成' : 'Regenerate'}
-          </button>
+          </Button>
         </div>
       )}
     </section>
@@ -531,12 +544,15 @@ function ConnectionCard(props: {
   busy: boolean;
   action: AsyncAction;
   logs: ImTelegramConnectionLogEntry[] | null;
+  logsOpen: boolean;
+  logsLoading: boolean;
+  logsError: string | null;
   onPresetChange(value: string): void;
   onRemoteApprovalChange(enabled: boolean): void;
   onCheck(): void;
   onPair(): void;
   onRemove(): void;
-  onToggleLogs(): void;
+  onToggleLogs(): void | Promise<unknown>;
 }) {
   // 当前项目决定可选配置。
   const project = props.options.find((item) => item.id === props.connection.projectId);
@@ -685,9 +701,9 @@ function ConnectionCard(props: {
               {props.zh ? '重新配对' : 'Pair again'}
             </Button>
           ) : null}
-          <Button className="im-secondary-action" onClick={props.onToggleLogs} disabled={props.busy} busy={props.action === 'logs'} aria-expanded={props.logs !== null} aria-controls="im-connection-logs">
+          <Button className="im-secondary-action" onClick={props.onToggleLogs} data-busy-behavior="background" aria-busy={props.logsLoading} aria-expanded={props.logsOpen} aria-controls="im-connection-logs">
             <FileText aria-hidden="true" />
-            {props.action === 'logs' ? (props.zh ? '正在读取…' : 'Loading…') : props.logs ? (props.zh ? '收起日志' : 'Hide logs') : props.zh ? '查看日志' : 'View logs'}
+            {props.logsLoading ? (props.zh ? '正在读取…' : 'Loading…') : props.logsOpen ? (props.zh ? '收起日志' : 'Hide logs') : props.zh ? '查看日志' : 'View logs'}
           </Button>
           <Button className="im-secondary-action" onClick={props.onCheck} disabled={props.busy} busy={props.action === 'check'}>
             <ArrowsClockwise aria-hidden="true" />
@@ -695,9 +711,10 @@ function ConnectionCard(props: {
           </Button>
         </div>
       </footer>
-      <Collapsible open={Boolean(props.logs)}>
+      <Collapsible open={props.logsOpen}>
         <div id="im-connection-logs" className="im-log-list" role="region" aria-label={props.zh ? 'Telegram 脱敏连接日志' : 'Redacted Telegram connection logs'}>
           <p>{props.zh ? '连接日志中的敏感信息已隐藏。' : 'Sensitive details are hidden in these connection logs.'}</p>
+          {props.logsError ? <p role="alert">{props.logsError}</p> : null}
           {props.logs?.length ? (
             props.logs.slice(0, 20).map((entry) => (
               <div key={entry.id} className={entry.level}>
@@ -706,7 +723,9 @@ function ConnectionCard(props: {
                 <span>{entry.message}</span>
               </div>
             ))
-          ) : (
+          ) : props.logsLoading ? (
+            <span role="status">{props.zh ? '正在读取…' : 'Loading…'}</span>
+          ) : props.logsError ? null : (
             <span>{props.zh ? '暂无连接日志。' : 'No connection logs.'}</span>
           )}
         </div>

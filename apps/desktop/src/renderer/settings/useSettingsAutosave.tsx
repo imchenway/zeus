@@ -3,8 +3,11 @@ import { useRef, useState } from 'react';
 /** 设置编辑共用写入状态，成功静默，失败保留可恢复反馈。 */
 export type SettingsSaveState = 'idle' | 'saving' | 'saved' | 'failed';
 
+/** 同一设置入口跨页面共用待写队列，离开再返回不会倒序覆盖新输入。 */
+const scopedQueues = new WeakMap<object, Promise<unknown>>();
+
 /** 按交互顺序写入，失败不重放；调用方保留草稿并允许用户再次编辑。 */
-export function useSettingsAutosave() {
+export function useSettingsAutosave(scope?: object) {
   /** 队列在组件离开后仍完成已经确认的本地写入。 */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   /** 后来的修改不能被较早的回执标记为已保存。 */
@@ -18,7 +21,7 @@ export function useSettingsAutosave() {
     const current = ++revision.current;
     setStatus('saving');
     /** 队列中的失败被消费，因此不会阻断用户后续明确修改。 */
-    const result = queue.current.then(write).then(
+    const result = (scope ? (scopedQueues.get(scope) ?? queue.current) : queue.current).then(write).then(
       () => {
         if (revision.current === current) setStatus('saved');
         return true;
@@ -29,6 +32,13 @@ export function useSettingsAutosave() {
       },
     );
     queue.current = result;
+    if (scope) {
+      scopedQueues.set(scope, result);
+      /** 只清理自己仍持有的队尾，后来的输入继续按原顺序写入。 */
+      void result.finally(() => {
+        if (scopedQueues.get(scope) === result) scopedQueues.delete(scope);
+      });
+    }
     return result;
   }
 

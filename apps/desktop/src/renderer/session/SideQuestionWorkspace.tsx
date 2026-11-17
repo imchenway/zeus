@@ -192,12 +192,12 @@ export function SideQuestionWorkspace(props: {
     <header className="session-side-question-header">
       <strong>{zh ? '侧边栏提问' : 'Ask in sidebar'}</strong>
       <nav aria-label={zh ? '侧边栏会话操作' : 'Sidebar conversation actions'}>
-        <button type="button" aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
+        <Button unstyled type="button" aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
           {props.fullWidth ? <ArrowsInIcon /> : <ArrowsOutIcon />}
-        </button>
-        <button type="button" aria-label={zh ? '关闭侧边栏会话' : 'Close sidebar conversation'} onClick={props.onClose}>
+        </Button>
+        <Button unstyled type="button" aria-label={zh ? '关闭侧边栏会话' : 'Close sidebar conversation'} onClick={props.onClose}>
           <XIcon />
-        </button>
+        </Button>
       </nav>
     </header>
   );
@@ -211,7 +211,7 @@ export function SideQuestionWorkspace(props: {
         <div className="session-side-question-draft">
           <div className="session-side-question-space" />
           {error ? <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} /> : null}
-          {props.state.attempt && !busy ? <Button onClick={() => void submit()}>{zh ? '核对并继续' : 'Check and continue'}</Button> : null}
+          {props.state.attempt && !busy ? <Button onClick={() => submit()}>{zh ? '核对并继续' : 'Check and continue'}</Button> : null}
           <ConversationComposer
             state={state}
             language={props.language}

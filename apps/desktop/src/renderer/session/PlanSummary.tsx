@@ -11,6 +11,7 @@ import { ThumbsUpIcon as ThumbsUp } from '@phosphor-icons/react/dist/csr/ThumbsU
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
+import { Button } from '../ui/Button.js';
 
 /** 计划卡片复用右栏预览，卡片内部操作与正文选区保持独立。 */
 export function PlanSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean; panelOpen?: boolean; onOpenPanel?: (item: NativeSessionItemBuffer) => void }) {
@@ -32,17 +33,17 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
   const title = streaming ? (zh ? '正在编写计划' : 'Writing plan') : zh ? '计划' : 'Plan';
   /** 卡片操作使用原生按钮，父级点击不会接管其动作。 */
   const iconButton = (label: string, child: ReactNode, onClick: () => void, pressed?: boolean) => (
-    <button type="button" aria-label={label} data-icon-tooltip={label} aria-pressed={pressed} onClick={onClick}>
+    <Button unstyled type="button" aria-label={label} data-icon-tooltip={label} aria-pressed={pressed} onClick={onClick}>
       {child}
-    </button>
+    </Button>
   );
 
   if (props.panelOpen) {
     return (
-      <button type="button" className="session-plan-entry" onClick={() => props.onOpenPanel?.(props.item)}>
+      <Button unstyled type="button" className="session-plan-entry" onClick={() => props.onOpenPanel?.(props.item)}>
         <span>{title}</span>
         <SidebarSimple aria-hidden="true" />
-      </button>
+      </Button>
     );
   }
 
@@ -61,18 +62,19 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
         /** 拖选本卡片的文字只保留选区，不将鼠标释放视作预览操作。 */
         const selection = event.currentTarget.ownerDocument.defaultView?.getSelection();
         if (selection && !selection.isCollapsed && (event.currentTarget.contains(selection.anchorNode) || event.currentTarget.contains(selection.focusNode))) return;
-        props.onOpenPanel(props.item);
+        return props.onOpenPanel(props.item);
       }}
     >
       <header>
         <div className="session-plan-summary-heading">
-          <button type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} data-icon-tooltip={zh ? '在右侧打开计划' : 'Open plan at right'}>
+          <Button unstyled type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} data-icon-tooltip={zh ? '在右侧打开计划' : 'Open plan at right'}>
             <span className="session-plan-summary-symbol" aria-hidden="true">
               <Lightbulb />
             </span>
             <strong>{title}</strong>
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             data-icon-tooltip={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
             type="button"
             className="session-plan-summary-collapse"
@@ -82,7 +84,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
             aria-label={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
           >
             <CaretDown aria-hidden="true" />
-          </button>
+          </Button>
         </div>
         {!streaming ? (
           <nav aria-label={zh ? '计划操作' : 'Plan actions'}>

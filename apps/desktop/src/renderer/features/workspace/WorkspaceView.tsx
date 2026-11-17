@@ -315,7 +315,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setSessionDrawerTarget,
     setTaskCreateForm,
     setTaskDeleteDialogTaskId,
-    setTaskEvents,
     setTaskGitMergeTaskId,
     setTaskModelPushForm,
     setTaskSearchQuery,
@@ -408,6 +407,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openTaskCreateModal,
     openTaskCreateForTeam,
     openTaskDetailPane,
+    taskCopyLoading,
     openTaskGitDelivery,
     openTaskModelPush,
     openThirdPartyLinkInBrowser,
@@ -416,6 +416,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     readTaskCreateClipboardResources,
     refreshArchivedConversations,
     refreshNativeConversationChoices,
+    refreshOpenTaskEvents,
     refreshTaskModelPushRepository,
     removeTaskCreateAttachment,
     renameProjectDisplayName,
@@ -615,12 +616,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     });
   }
   /** 删除状态的替换关系随失败草稿保留，成功后才清除。 */
-  function saveTaskFields(patch: Pick<UpdateAppShellSettingsRequest, 'taskTableEnumSortOrders' | 'taskManagementStatusTemplate' | 'taskManagementStatusReplacements'>): void {
+  function saveTaskFields(patch: Pick<UpdateAppShellSettingsRequest, 'taskTableEnumSortOrders' | 'taskManagementStatusTemplate' | 'taskManagementStatusReplacements'>): void | Promise<boolean> {
     setAppShellSettings((current) => ({ ...current, ...patch }));
     /** 客户端串行保存，避免与通用设置互相覆盖。 */
     const client = props.nativeConversationClient?.settings;
     if (!client) return;
-    void taskAutosave.save(async () => {
+    return taskAutosave.save(async () => {
       await client.saveAppShellSettings({ ...patch, taskManagementStatusReplacements: patch.taskManagementStatusReplacements ?? state.taskManagementStatusReplacements });
       state.setTaskManagementStatusReplacements({});
     });
@@ -774,7 +775,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     <nav className="project-workspace-tool-rail" data-workspace-tool-slot="right" aria-label={codeWorkspaceZh ? '工作区工具' : 'Workspace tools'}>
       {projectToolsVisible && selectedProject ? (
         <>
-          <button
+          <Button
+            unstyled
             type="button"
             className={(activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'tasks' ? 'is-active' : ''}
             onClick={() => openProjectSection(selectedProject, 'tasks')}
@@ -785,8 +787,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-current={(activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'tasks' ? 'page' : undefined}
           >
             <ListChecksIcon aria-hidden="true" />
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={projectGitOpen ? 'is-active' : ''}
             onClick={toggleProjectGit}
@@ -798,8 +801,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-controls="project-tool-panel"
           >
             <GitBranchIcon aria-hidden="true" />
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={sourceVisible ? 'is-active' : ''}
             onClick={() => openProjectSection(selectedProject, 'code', 'source')}
@@ -810,8 +814,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-current={sourceVisible ? 'page' : undefined}
           >
             <CodeSimpleIcon aria-hidden="true" />
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={projectCommandsProjectId === selectedProject.id ? 'is-active' : ''}
             disabled={!props.commandClient}
@@ -824,7 +829,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-expanded={projectCommandsProjectId === selectedProject.id}
           >
             <TerminalIcon aria-hidden="true" />
-          </button>
+          </Button>
           {props.commandClient ? (
             <ProjectTerminalPanel
               key={selectedProject.id}
@@ -839,9 +844,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               }}
             />
           ) : (
-            <button type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
+            <Button unstyled type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
               <TerminalWindowIcon aria-hidden="true" />
-            </button>
+            </Button>
           )}
         </>
       ) : null}
@@ -884,7 +889,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         onClose={() => setSearchOpen(false)}
         onOpenProject={(project) => openProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks')}
         onOpenTask={openSearchedTask}
-        onOpenConversation={(conversation) => void selectNativeConversation(conversation)}
+        onOpenConversation={(conversation) => selectNativeConversation(conversation)}
         onOpenSourceMatch={openSourceMatch}
       />
       <MotionPresence>
@@ -936,7 +941,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             language={appShellSettings.appLanguage}
             onCancel={() => setTaskDeleteDialogTaskId(null)}
             onConfirm={(input) => {
-              if (taskDeleteDialogTaskId) void deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
+              if (taskDeleteDialogTaskId) return deleteTaskWithRelationshipStrategy(taskDeleteDialogTaskId, input);
             }}
           />
         ) : null}
@@ -1007,9 +1012,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               if (projectCreateError) setProjectCreateError(undefined);
             }}
             onStartTemporary={() => prepareNewConversationDraft(true)}
-            onChooseDirectory={() => void chooseProjectDirectoryForCreate()}
+            onChooseDirectory={() => chooseProjectDirectoryForCreate()}
             onClose={closeProjectCreateDialog}
-            onSubmit={(event) => void createCurrentProject(event)}
+            onSubmit={(event) => createCurrentProject(event)}
           />
         ) : null}
       </MotionPresence>
@@ -1120,14 +1125,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           createProjectBusy={creatingProjectBusy}
           onCreateProject={openProjectCreateDialog}
           onCreateConversation={() => prepareNewConversationDraft()}
-          onSelectConversation={(conversation) => void selectNativeConversation(conversation)}
+          onSelectConversation={(conversation) => selectNativeConversation(conversation)}
           onArchiveConversation={archiveConversation}
           onRenameConversation={props.nativeConversationClient ? renameConversation : undefined}
           onNavigate={handleMainNavigate}
-          onOpenAutomaticUpdate={() => void openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}
+          onOpenAutomaticUpdate={() => openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}
           onOpenProjectSection={openProjectSection}
           onTogglePinnedProject={togglePinnedProject}
-          onToggleProjectCollapsed={(projectId) => void toggleCollapsedProject(projectId)}
+          onToggleProjectCollapsed={(projectId) => toggleCollapsedProject(projectId)}
           onRevealProjectInFinder={(projectPath) => revealProjectInFinder(projectPath)}
           onRenameProject={(projectId, displayName) => renameProjectDisplayName(projectId, displayName)}
           onPrepareProjectDelete={setPendingProjectDeleteId}
@@ -1196,7 +1201,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       gitSnapshot={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : projectCodeGitSnapshot}
                       onPreferenceChange={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : (preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                       onDirtyChange={setSourceWorkspaceDirty}
-                      onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: activeSourceTarget?.project.localPath ?? selectedProject.localPath })}
+                      onOpenExternal={(relativePath, line) => props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: activeSourceTarget?.project.localPath ?? selectedProject.localPath })}
                     />
                   </Suspense>
                 </div>
@@ -1213,19 +1218,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     <VisibleApplicationError error={entry.error} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
                   </div>
                 ))}
-              <button type="button" onClick={() => setHomeRefreshRevision((revision) => revision + 1)}>
+              <Button unstyled type="button" onClick={() => setHomeRefreshRevision((revision) => revision + 1)}>
                 重试
-              </button>
+              </Button>
             </div>
           ) : null}
           <Suspense fallback={null}>
             {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
-              <ProjectStartGuide
-                language={appShellSettings.appLanguage}
-                busy={projectDirectoryChoosing || creatingProjectBusy}
-                available={Boolean(props.onCreateCurrentProject)}
-                onChooseFolder={() => void chooseProjectDirectoryForCreate()}
-              />
+              <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => chooseProjectDirectoryForCreate()} />
             ) : null}
             {activeNavTarget === 'skills' ? (
               <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} />
@@ -1267,6 +1267,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
                   error={taskCreateError}
                   busy={creatingTaskBusy}
+                  sourceLoading={taskCopyLoading}
                   titleInputRef={taskCreateTitleInputRef}
                   onFormChange={updateTaskCreateForm}
                   onTaskTypeChange={updateTaskCreateType}
@@ -1275,7 +1276,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   onAuthorizeFiles={authorizeTaskCreateFiles}
                   onMaterializeResources={materializeTaskCreateResources}
                   onReadClipboardResources={readTaskCreateClipboardResources}
-                  onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                  onParseThirdPartyLink={(url, onMetadata) => props.onParseThirdPartyTaskLink?.(url, onMetadata) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
                   onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
                   onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
                   onAddAttachments={addTaskCreateAttachments}
@@ -1283,7 +1284,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   onOpenAttachment={props.onOpenTaskAttachment}
                   onRemoveAttachment={removeTaskCreateAttachment}
                   onClose={closeTaskCreateModal}
-                  onSubmit={(event, pushAfterCreate) => void submitTaskCreateModal(event, pushAfterCreate)}
+                  onSubmit={(event, pushAfterCreate) => submitTaskCreateModal(event, pushAfterCreate)}
                 />
               ) : null}
             </MotionPresence>
@@ -1368,18 +1369,18 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
                           taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
                           onSearchChange={setTaskSearchQuery}
-                          onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
+                          onStatusFilterChange={(filter) => saveTaskStatusFilter(filter)}
                           onTagFilterChange={setTaskTagFilter}
                           onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ preferences })}
-                          onSaveTaskTableLayout={() => void saveTaskTableLayout()}
+                          onSaveTaskTableLayout={() => saveTaskTableLayout()}
                           onCreateTask={() => openTaskCreateModal()}
                           onOpenZentaoImport={zentaoInstances.length ? () => setZentaoImportOpen(true) : undefined}
-                          onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
-                          onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
+                          onOpenTaskDetail={(taskId, mode) => openTaskDetailPane(taskId, mode)}
+                          onPushTaskToNewConversation={(taskId) => openTaskModelPush(taskId)}
                           onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
                           onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
-                          onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
-                          onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
+                          onOpenTaskConversation={(taskId, conversationId) => openTaskConversationDrawer(taskId, conversationId)}
+                          onPageViewModeChange={(viewMode) => saveTaskPageViewMode(viewMode)}
                           onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
                           onUpdateTaskBoard={updateTaskBoardSettings}
                           onMoveTaskBoardTask={moveTaskBoardTask}
@@ -1387,10 +1388,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           onToggleTaskSelection={toggleTaskSelection}
                           onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
                           onClearTaskSelection={clearTaskSelection}
-                          onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
+                          onTaskStatusChange={(taskId, targetStatus) => updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
                           onTaskPriorityChange={updateTaskContent}
-                          onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
-                          onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
+                          onBulkTaskStatusChange={(targetStatus, taskIds) => runBulkTaskStatusChange(targetStatus, taskIds)}
+                          onBulkTaskDelete={(taskIds) => runBulkTaskDelete(taskIds)}
                           onRetryTaskList={activeProjectId ? () => void loadTaskPage(activeProjectId, true, taskSearchQuery.trim().toLowerCase(), state.taskDeadlineFilter) : undefined}
                           onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
                           controlBusyProps={controlBusyProps}
@@ -1429,12 +1430,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         skillClient={props.nativeConversationClient ?? null}
                         environmentClient={props.nativeConversationClient ?? null}
                         onChange={setTaskModelPushForm}
-                        onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
-                        onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
+                        onRefreshRepository={(repositoryId) => refreshTaskModelPushRepository(repositoryId)}
+                        onRefreshLocalRepositories={() => domainActions.refreshTaskModelPushRepositories()}
                         onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
-                        onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
+                        onRetryModels={() => domainActions.refreshTaskModelPushModels().catch(() => undefined)}
                         onClose={closeTaskModelPush}
-                        onSubmit={(event) => void submitTaskModelPush(event)}
+                        onSubmit={(event) => submitTaskModelPush(event)}
                       />
                     ) : null}
                   </MotionPresence>
@@ -1450,14 +1451,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         client={props.nativeConversationClient ?? null}
                         executionReady={executionHostSupportsConversationSource(props.executionHostTransition, 'conflict_resolution')}
                         onQueueConflictAiStart={persistPendingConflictAiStart}
-                        onChanged={() =>
-                          taskGitMergeTaskId
-                            ? Promise.all([
-                                refreshNativeConversationChoices(taskGitMergeTaskId),
-                                props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
-                              ]).then(() => undefined)
-                            : Promise.resolve()
-                        }
+                        onChanged={() => (taskGitMergeTaskId ? Promise.all([refreshNativeConversationChoices(taskGitMergeTaskId), refreshOpenTaskEvents(taskGitMergeTaskId)]).then(() => undefined) : Promise.resolve())}
                         onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
                         onClose={() => {
                           // 关闭后再刷新共享快照，避免提交过程中重置交付弹窗的文件选择。
@@ -1518,9 +1512,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             {/* Runtime 抽屉只表达真实运行能力和确认状态，按“状态、适配器、高风险、会话、日志”连续行组织。 */}
                             <div className="drawer-header-row">
                               <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeEnvironment}</strong>
-                              <button type="button" onClick={loadRuntimeStatus} disabled={!props.onLoadRuntimeStatus || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              <Button unstyled type="button" onClick={loadRuntimeStatus} disabled={!props.onLoadRuntimeStatus || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                 {sessionWorkspaceCopy.runtimeDrawer.refresh}
-                              </button>
+                              </Button>
                             </div>
                             <section className="runtime-status-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeStatus}>
                               <div className="runtime-capability-state-row">
@@ -1559,9 +1553,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                         <small>{formatRuntimeAdapterDetectionFacts(adapter, checked, appShellSettings.appLanguage)}</small>
                                       </span>
                                       <span className="runtime-row-command-rail">
-                                        <button type="button" onClick={() => checkRuntimeAdapter(adapter.id)} disabled={loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                        <Button unstyled type="button" onClick={() => checkRuntimeAdapter(adapter.id)} disabled={loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                           {sessionWorkspaceCopy.runtimeDrawer.checkAdapter}
-                                        </button>
+                                        </Button>
                                       </span>
                                     </div>
                                   );
@@ -1633,28 +1627,30 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                   </section>
                                 ) : null}
                                 <div className="runtime-generic-shell-command-rail">
-                                  <button
+                                  <Button
+                                    unstyled
                                     type="button"
                                     onClick={createGenericRuntimeConfirmation}
                                     disabled={!props.onCreateRuntimeConfirmation || !activeProjectId || !runtimeGenericShellCommand.trim() || loadingRuntimeBusy}
                                     {...controlBusyProps(loadingRuntimeBusy)}
                                   >
                                     {sessionWorkspaceCopy.runtimeDrawer.createGenericShellConfirmation}
-                                  </button>
+                                  </Button>
                                   {runtimeConfirmation?.status === 'pending' ? (
-                                    <button type="button" onClick={rejectGenericRuntimeConfirmation} disabled={!props.onRejectRuntimeOperation || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                    <Button unstyled type="button" onClick={rejectGenericRuntimeConfirmation} disabled={!props.onRejectRuntimeOperation || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                       {sessionWorkspaceCopy.runtimeDrawer.rejectGenericShellConfirmation}
-                                    </button>
+                                    </Button>
                                   ) : null}
                                   {runtimeConfirmation?.status !== 'rejected' ? (
-                                    <button
+                                    <Button
+                                      unstyled
                                       type="button"
                                       onClick={confirmAndStartGenericRuntime}
                                       disabled={!props.onConfirmRuntimeOperation || !runtimeConfirmation || runtimeConfirmation.status !== 'pending' || !genericShellCriticalConfirmed || loadingRuntimeBusy}
                                       {...controlBusyProps(loadingRuntimeBusy)}
                                     >
                                       {sessionWorkspaceCopy.runtimeDrawer.confirmAndStartGenericShell}
-                                    </button>
+                                    </Button>
                                   ) : null}
                                 </div>
                                 {runtimeConfirmation?.status === 'pending' ? (
@@ -1671,9 +1667,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             <section className="runtime-session-list runtime-session-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}>
                               <div className="drawer-header-row">
                                 <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}</strong>
-                                <button type="button" onClick={startRuntimeSession} disabled={!activeProjectId || !runtime.aiCli.available || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                <Button unstyled type="button" onClick={startRuntimeSession} disabled={!activeProjectId || !runtime.aiCli.available || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                   {sessionWorkspaceCopy.runtimeDrawer.startRuntimeSession}
-                                </button>
+                                </Button>
                               </div>
                               <div className="runtime-session-filter-grid runtime-session-filter-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionSearch}>
                                 {/* 会话筛选拆成显式搜索行和开关行，避免 label 把输入、复选框和布局语义混在一起。 */}
@@ -1694,9 +1690,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                   <input aria-label={sessionWorkspaceCopy.runtimeDrawer.showArchived} type="checkbox" checked={runtimeShowArchived} onChange={(event) => setRuntimeShowArchived(event.currentTarget.checked)} />
                                   <span>{sessionWorkspaceCopy.runtimeDrawer.showArchived}</span>
                                 </span>
-                                <button type="button" onClick={refreshRuntimeSessions} disabled={!props.onLoadRuntimeSessions || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                <Button unstyled type="button" onClick={refreshRuntimeSessions} disabled={!props.onLoadRuntimeSessions || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                   {sessionWorkspaceCopy.runtimeDrawer.applyFilters}
-                                </button>
+                                </Button>
                               </div>
                               {runtimeSessions.length === 0 ? (
                                 <span className="runtime-session-empty-row">{sessionWorkspaceCopy.runtimeDrawer.emptyRuntimeSessions}</span>
@@ -1713,32 +1709,32 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                     <div className="runtime-session-action-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionActionsAria}>
                                       {/* 会话行先暴露高频主操作，低频整理/导出/删除收进第二行动作，避免继续复用任务按钮堆。 */}
                                       <span className="runtime-session-primary-command-rail">
-                                        <button type="button" onClick={() => generateRuntimeSessionSummary(session.id)}>
+                                        <Button unstyled type="button" onClick={() => generateRuntimeSessionSummary(session.id)}>
                                           {sessionWorkspaceCopy.runtimeDrawer.generateSummary}
-                                        </button>
-                                        <button type="button" onClick={() => createTaskFromRuntimeSession(session)}>
+                                        </Button>
+                                        <Button unstyled type="button" onClick={() => createTaskFromRuntimeSession(session)}>
                                           {sessionWorkspaceCopy.runtimeDrawer.createTaskFromSession}
-                                        </button>
+                                        </Button>
                                       </span>
                                       <span className="runtime-session-secondary-command-rail">
-                                        <button type="button" onClick={() => setRuntimeSessionFavorite(session)}>
+                                        <Button unstyled type="button" onClick={() => setRuntimeSessionFavorite(session)}>
                                           {session.favorite ? sessionWorkspaceCopy.runtimeDrawer.unfavoriteSession : sessionWorkspaceCopy.runtimeDrawer.favoriteSession}
-                                        </button>
+                                        </Button>
                                         {session.archived ? (
-                                          <button type="button" onClick={() => restoreRuntimeSession(session.id)}>
+                                          <Button unstyled type="button" onClick={() => restoreRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.restoreSession}
-                                          </button>
+                                          </Button>
                                         ) : (
-                                          <button type="button" onClick={() => archiveRuntimeSession(session.id)}>
+                                          <Button unstyled type="button" onClick={() => archiveRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.archiveSession}
-                                          </button>
+                                          </Button>
                                         )}
-                                        <button type="button" onClick={() => exportRuntimeLogs(session.id)}>
+                                        <Button unstyled type="button" onClick={() => exportRuntimeLogs(session.id)}>
                                           {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
-                                        </button>
-                                        <button type="button" className="runtime-session-danger-action" onClick={() => deleteRuntimeSession(session.id)}>
+                                        </Button>
+                                        <Button unstyled type="button" className="runtime-session-danger-action" onClick={() => deleteRuntimeSession(session.id)}>
                                           {sessionWorkspaceCopy.runtimeDrawer.deleteSession}
-                                        </button>
+                                        </Button>
                                       </span>
                                     </div>
                                     {session.status === 'running' ? (
@@ -1751,24 +1747,24 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                           </span>
                                           <span className="runtime-session-compose-field">
                                             <input aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputAria} value={runtimeInput} onChange={(event) => setRuntimeInput(event.currentTarget.value)} />
-                                            <button type="button" onClick={() => sendRuntimeInput(session.id)} disabled={!runtimeInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                            <Button unstyled type="button" onClick={() => sendRuntimeInput(session.id)} disabled={!runtimeInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                               {sessionWorkspaceCopy.runtimeDrawer.sendRuntimeInput}
-                                            </button>
+                                            </Button>
                                           </span>
                                         </section>
                                         <span className="runtime-session-terminal-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.terminalControlsAria}>
-                                          <button type="button" onClick={() => interruptRuntimeSession(session.id)}>
+                                          <Button unstyled type="button" onClick={() => interruptRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.interrupt}
-                                          </button>
-                                          <button type="button" onClick={() => resizeRuntimeSession(session.id)}>
+                                          </Button>
+                                          <Button unstyled type="button" onClick={() => resizeRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.resizeTerminal}
-                                          </button>
-                                          <button type="button" onClick={() => loadRuntimeTerminalSnapshot(session.id)}>
+                                          </Button>
+                                          <Button unstyled type="button" onClick={() => loadRuntimeTerminalSnapshot(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.loadTerminalSnapshot}
-                                          </button>
-                                          <button type="button" className="runtime-session-stop-action" onClick={() => stopRuntimeSession(session.id)}>
+                                          </Button>
+                                          <Button unstyled type="button" className="runtime-session-stop-action" onClick={() => stopRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.stopSession}
-                                          </button>
+                                          </Button>
                                         </span>
                                       </section>
                                     ) : null}
@@ -1780,9 +1776,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                           <small>{sessionWorkspaceCopy.runtimeDrawer.orphanHelp}</small>
                                         </span>
                                         <span className="runtime-session-orphan-command-rail">
-                                          <button type="button" className="runtime-session-orphan-stop-action" onClick={() => stopRuntimeSession(session.id)}>
+                                          <Button unstyled type="button" className="runtime-session-orphan-stop-action" onClick={() => stopRuntimeSession(session.id)}>
                                             {sessionWorkspaceCopy.runtimeDrawer.orphanStop}
-                                          </button>
+                                          </Button>
                                         </span>
                                       </section>
                                     ) : null}
@@ -1799,16 +1795,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                   </span>
                                   <span className="runtime-log-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.logActionsAria}>
                                     {/* Runtime 日志抽屉只保留一条工具栏：搜索、复制、折叠和导出聚合到同一组，避免表单和按钮继续散落。 */}
-                                    <button type="button" onClick={copyRuntimeLogs}>
+                                    <Button unstyled type="button" onClick={copyRuntimeLogs}>
                                       {sessionWorkspaceCopy.runtimeDrawer.copyLogs}
-                                    </button>
-                                    <button type="button" onClick={() => setRuntimeLogsCollapsed((current) => !current)}>
+                                    </Button>
+                                    <Button unstyled type="button" onClick={() => setRuntimeLogsCollapsed((current) => !current)}>
                                       {runtimeLogsCollapsed ? sessionWorkspaceCopy.runtimeDrawer.expandLogs : sessionWorkspaceCopy.runtimeDrawer.collapseLogs}
-                                    </button>
+                                    </Button>
                                     <span className="sr-only">{sessionWorkspaceCopy.runtimeDrawer.expandLogs}</span>
-                                    <button type="button" onClick={() => exportRuntimeLogs(runtimeLogs[0]?.sessionId ?? '')}>
+                                    <Button unstyled type="button" onClick={() => exportRuntimeLogs(runtimeLogs[0]?.sessionId ?? '')}>
                                       {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
-                                    </button>
+                                    </Button>
                                   </span>
                                 </div>
                                 <section className="runtime-log-search-control-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.logSearchAria}>
@@ -1841,9 +1837,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-changes conversation-change-workbench" aria-label={secondaryDrawerCopy.changesLabel}>
                             <div className="drawer-header-row">
                               <strong>{gitDiffCopy.title}</strong>
-                              <button type="button" onClick={loadGitDiff} disabled={!props.onLoadGitDiff || loadingDiffBusy} {...controlBusyProps(loadingDiffBusy)}>
+                              <Button unstyled type="button" onClick={loadGitDiff} disabled={!props.onLoadGitDiff || loadingDiffBusy} {...controlBusyProps(loadingDiffBusy)}>
                                 {loadingDiffBusy ? secondaryDrawerCopy.loadingDiff : secondaryDrawerCopy.loadDiff}
-                              </button>
+                              </Button>
                             </div>
                             {changedFiles.length === 0 ? (
                               <section className="conversation-change-empty-row" aria-label={secondaryDrawerCopy.noLoadedChangesAria}>
@@ -1873,9 +1869,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             {/* 任务模板抽屉只负责选择真实模板并创建任务，模板说明和套用动作必须在同一行内可扫描。 */}
                             <div className="drawer-header-row">
                               <strong>{secondaryDrawerCopy.templatesLabel}</strong>
-                              <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
+                              <Button unstyled type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
                                 {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
-                              </button>
+                              </Button>
                             </div>
                             <section className="task-template-list" aria-label={secondaryDrawerCopy.templateListAria}>
                               {taskTemplates.length === 0 ? (
@@ -1885,9 +1881,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                     <span>{secondaryDrawerCopy.emptyTemplatesHelp}</span>
                                   </span>
                                   <span className="task-template-command-rail">
-                                    <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
+                                    <Button unstyled type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
                                       {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
-                                    </button>
+                                    </Button>
                                   </span>
                                 </div>
                               ) : (
@@ -1899,9 +1895,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                       <small>{template.builtIn ? secondaryDrawerCopy.builtInTemplate : secondaryDrawerCopy.projectTemplate}</small>
                                     </span>
                                     <span className="task-template-command-rail">
-                                      <button type="button" onClick={() => createTaskFromTemplate(template.id)}>
+                                      <Button unstyled type="button" onClick={() => createTaskFromTemplate(template.id)}>
                                         {secondaryDrawerCopy.applyTemplate}
-                                      </button>
+                                      </Button>
                                     </span>
                                   </div>
                                 ))
@@ -1931,7 +1927,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       size="compact"
                       disabled={!sessionDrawerReady}
                       onClick={() => {
-                        if (sessionDrawerReady && selectedNativeConversation) void openNativeConversationPage(selectedNativeConversation);
+                        if (sessionDrawerReady && selectedNativeConversation) return openNativeConversationPage(selectedNativeConversation);
                       }}
                     >
                       {appShellSettings.appLanguage === 'zh-CN' ? '进入会话页' : 'Open conversation page'}
@@ -1954,7 +1950,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
                       <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
                       {sessionDrawerTarget.taskId ? (
-                        <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(sessionDrawerTarget.taskId!, sessionDrawerTarget.conversationId)}>
+                        <Button variant="secondary" size="compact" onClick={() => openTaskConversationDrawer(sessionDrawerTarget.taskId!, sessionDrawerTarget.conversationId)}>
                           {taskWorkspaceCopy.taskConversationDrawerRetry}
                         </Button>
                       ) : null}
@@ -1986,10 +1982,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             {activeNavTarget === 'settings' ? (
               <section className="workspace-view workspace-view-settings settings-reference-shell" aria-label={settingsWorkspaceCopy.viewAria}>
                 <aside className="settings-sidebar-shell" aria-label={settingsWorkspaceCopy.categoryListAria}>
-                  <button type="button" className="settings-return-button" onClick={() => handleMainNavigate('projects')}>
+                  <Button unstyled type="button" className="settings-return-button" onClick={() => handleMainNavigate('projects')}>
                     <span aria-hidden="true">←</span>
                     <span>{settingsWorkspaceCopy.returnToApp}</span>
-                  </button>
+                  </Button>
                   <span className="settings-query-field">
                     <MagnifyingGlass aria-hidden="true" weight="regular" />
                     <input
@@ -2021,7 +2017,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           {group.group}
                         </span>
                         {group.items.map(([id, label, SectionIcon]) => (
-                          <button
+                          <Button
+                            unstyled
                             key={id}
                             id={`${settingsPanelId}-${id}`}
                             type="button"
@@ -2035,7 +2032,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           >
                             <SectionIcon className="settings-section-icon" weight="regular" aria-hidden="true" />
                             <span className="settings-section-label">{label}</span>
-                          </button>
+                          </Button>
                         ))}
                       </div>
                     ))}
@@ -2074,7 +2071,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <div className="task-fields-workspace">
                           <nav className="task-field-nav" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '任务字段' : 'Task fields'}>
                             {(['status', 'priority', 'runStatus'] as const).map((field) => (
-                              <button className="task-field-tab" key={field} type="button" aria-current={taskField === field ? 'page' : undefined} onClick={() => setTaskField(field)}>
+                              <Button unstyled className="task-field-tab" key={field} type="button" aria-current={taskField === field ? 'page' : undefined} onClick={() => setTaskField(field)}>
                                 {
                                   {
                                     status: appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task status',
@@ -2082,7 +2079,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                     runStatus: appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status',
                                   }[field]
                                 }
-                              </button>
+                              </Button>
                             ))}
                           </nav>
                           <fieldset className="task-field-detail" onInput={() => taskAutosave.reset()} disabled={taskAutosave.status === 'saving'}>
@@ -2212,9 +2209,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                   : 'Unable to load release and update status. Please retry.'}
                             </p>
                             {releaseLoadState === 'failed' ? (
-                              <button type="button" onClick={() => setReleaseLoadRevision((value) => value + 1)}>
+                              <Button unstyled type="button" onClick={() => setReleaseLoadRevision((value) => value + 1)}>
                                 {appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry'}
-                              </button>
+                              </Button>
                             ) : null}
                           </section>
                         ) : (
@@ -2231,9 +2228,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                   <small>{settingsWorkspaceCopy.release.installHelp()}</small>
                                 </span>
                                 <span className="release-update-command-rail">
-                                  <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
+                                  <Button unstyled type="button" onClick={() => checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
                                     {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
-                                  </button>
+                                  </Button>
                                 </span>
                               </section>
                               <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
@@ -2347,12 +2344,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               <small>{dataPortabilityStatusCopy}</small>
                             </span>
                             <span className="settings-row-action-rail">
-                              <button type="button" onClick={exportLocalSettings} disabled={!props.onExportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              <Button unstyled type="button" onClick={exportLocalSettings} disabled={!props.onExportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                 {settingsWorkspaceCopy.data.exportSettings}
-                              </button>
-                              <button type="button" onClick={importLocalSettings} disabled={!props.onImportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              </Button>
+                              <Button unstyled type="button" onClick={importLocalSettings} disabled={!props.onImportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                 {settingsWorkspaceCopy.data.importSettings}
-                              </button>
+                              </Button>
                             </span>
                           </section>
                           <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.cacheAria}>
@@ -2362,9 +2359,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </span>
                             <span className="settings-row-field" />
                             <span className="settings-row-action-rail">
-                              <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              <Button unstyled type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
                                 {settingsWorkspaceCopy.data.clearNetworkCache}
-                              </button>
+                              </Button>
                             </span>
                           </section>
                         </NativeSettingsPane>
@@ -2404,9 +2401,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             {archivedConversationLoadState === 'error' ? (
                               <span className="settings-archived-conversation-state" role="alert">
                                 <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
-                                <button type="button" onClick={() => void refreshArchivedConversations()}>
+                                <Button unstyled type="button" onClick={() => refreshArchivedConversations()}>
                                   {settingsWorkspaceCopy.data.retryArchivedConversations}
-                                </button>
+                                </Button>
                               </span>
                             ) : null}
                             {archiveActionError ? (
@@ -2437,9 +2434,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                       {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
                                     </time>
                                   </span>
-                                  <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
+                                  <Button unstyled type="button" disabled={restoringArchivedConversationId !== null} onClick={() => restoreArchivedConversation(conversation)}>
                                     {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
-                                  </button>
+                                  </Button>
                                 </span>
                               );
                             })}
@@ -2463,7 +2460,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         </ProjectToolsWorkspace>
       </section>
       <nav className="project-workspace-tool-rail project-workspace-search-rail" aria-label={codeWorkspaceZh ? '全局搜索' : 'Global search'}>
-        <button
+        <Button
+          unstyled
           type="button"
           className={searchOpen ? 'is-active' : ''}
           onClick={() => setSearchOpen(true)}
@@ -2475,7 +2473,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           aria-expanded={searchOpen}
         >
           <MagnifyingGlass aria-hidden="true" />
-        </button>
+        </Button>
       </nav>
       {projectToolRail}
     </main>

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Button } from './ui/Button.js';
 
 /** 错误页沿用应用支持的界面语言。 */
 type RendererCrashLanguage = 'zh-CN' | 'en-US';
@@ -84,9 +85,9 @@ export class RendererErrorBoundary extends Component<RendererErrorBoundaryProps,
             <p className="startup-failure-description">{copy.description}</p>
             <p className="startup-failure-log-hint">{copy.status}</p>
             <div className="startup-failure-actions">
-              <button className="startup-failure-button is-primary" type="button" onClick={() => window.location.reload()}>
+              <Button unstyled className="startup-failure-button is-primary" type="button" onClick={() => window.location.reload()}>
                 {copy.reload}
-              </button>
+              </Button>
             </div>
           </section>
         </main>

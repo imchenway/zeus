@@ -109,7 +109,7 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
           <Button onClick={() => setRevision((value) => value + 1)}>{zh ? '重新读取' : 'Retry loading'}</Button>
         </div>
       ) : (
-        <Button disabled={!props.client || command === null || saving.status === 'saving'} onClick={() => void save()}>
+        <Button disabled={!props.client || command === null || saving.status === 'saving'} onClick={() => save()}>
           {saving.status === 'saving' ? (zh ? '保存中…' : 'Saving…') : zh ? '保存终端设置' : 'Save terminal settings'}
         </Button>
       )}

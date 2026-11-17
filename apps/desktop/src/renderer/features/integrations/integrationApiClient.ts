@@ -17,6 +17,7 @@ import type {
 } from './integrationContracts.js';
 import { jsonRequest, ZeusApiError, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildIntegrationCommandRequest, integrationClientCommandTypes } from './integrationCommandClient.js';
+import { codexCapabilitiesChangedEvent } from './modelCatalogEvents.js';
 
 /** 禅道配置或认证结果变化后，工作区重新读取同一服务端状态。 */
 export const zentaoInstancesChangedEvent = 'zeus-zentao-instances-changed';
@@ -68,9 +69,30 @@ export interface IntegrationApiClient {
 }
 
 export function createIntegrationApiClient(transport: LocalApiTransport): IntegrationApiClient {
-  /** 尚未确认结果的任务写入保留原 Envelope，重新打开窗口也不会生成第二次写入。 */
+  /** 远端写入及付费探测保留原 Envelope，结果未知时不生成第二次操作。 */
   // ponytail: 此缓存限定在客户端生命周期；跨重启恢复原命令时应读取既有耐久回执，不新增重试队列。
-  const pendingZentaoWrites = new Map<string, { signature: string; body: Promise<object> }>();
+  const pendingIntegrationWrites = new Map<string, { signature: string; body: Promise<object> }>();
+  /** 保留结果未知的命令身份；只允许同一内容核对回执，不自动重放外部副作用。 */
+  async function retainedCommand(key: string | null, value: object, prepare: () => Promise<object>, path: string, method: 'POST' | 'PUT' | 'DELETE', waitForLateReceipt = false): Promise<unknown> {
+    const signature = JSON.stringify(value);
+    const previous = key ? pendingIntegrationWrites.get(key) : undefined;
+    if (previous && previous.signature !== signature) throw new ZeusApiError({ status: 409, error: 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN', recoveryRequired: true, message: '前次操作结果尚未确认，请先核对状态，勿重复提交。' });
+    const pending = previous ?? { signature, body: prepare() };
+    if (key) pendingIntegrationWrites.set(key, pending);
+    let sent = false;
+    try {
+      const body = await pending.body;
+      sent = true;
+      const result = await transport.request(path, { ...jsonRequest(method, body), waitForLateReceipt });
+      if (key && pendingIntegrationWrites.get(key) === pending) pendingIntegrationWrites.delete(key);
+      return result;
+    } catch (error) {
+      if (key && pendingIntegrationWrites.get(key) === pending && (!sent || (error instanceof ZeusApiError && error.status < 500 && !error.recoveryRequired && error.error !== 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN')))
+        pendingIntegrationWrites.delete(key);
+      throw error;
+    }
+  }
+
   const modelConnectionCommand = async <TInput extends object>(
     connectionId: string,
     commandType: Parameters<typeof buildIntegrationCommandRequest>[0]['commandType'],
@@ -79,14 +101,24 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     suffix: string,
     value: TInput,
   ) => {
-    const body = await buildIntegrationCommandRequest({
-      commandType,
-      scopeKind: commandType === integrationClientCommandTypes.modelConnectionApiKeyClear ? 'provider_account' : 'provider_configuration',
-      scopeId: () => (commandType === integrationClientCommandTypes.modelConnectionApiKeyClear ? `model_connection:${connectionId}:api_key` : connectionId),
-      operationPrefix: `model_connection_${operation}`,
+    const background = ['models_refresh', 'models_probe', 'pricing_refresh', 'diagnose'].includes(operation);
+    const result = await retainedCommand(
+      background ? `model:${connectionId}:${operation}` : null,
       value,
-    });
-    return transport.request(`${modelConnectionPath(connectionId)}${suffix}`, jsonRequest(method, body));
+      () =>
+        buildIntegrationCommandRequest({
+          commandType,
+          scopeKind: commandType === integrationClientCommandTypes.modelConnectionApiKeyClear ? 'provider_account' : 'provider_configuration',
+          scopeId: () => (commandType === integrationClientCommandTypes.modelConnectionApiKeyClear ? `model_connection:${connectionId}:api_key` : connectionId),
+          operationPrefix: `model_connection_${operation}`,
+          value,
+        }),
+      `${modelConnectionPath(connectionId)}${suffix}`,
+      method,
+      background,
+    );
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+    return result;
   };
 
   const zentaoCommand = async <TInput extends object>(
@@ -97,32 +129,22 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     suffix: string,
     value: TInput,
   ) => {
-    /** 只对远端业务写入保留命令；设置操作沿用既有机制。 */
-    const key = 'taskId' in value ? `${instanceId}:${operation}:${String(value.taskId)}` : null;
-    /** 操作内容绑定原命令身份，未知结果不能靠修改表单重新发送。 */
-    const signature = JSON.stringify(value);
-    const previous = key ? pendingZentaoWrites.get(key) : undefined;
-    if (previous && previous.signature !== signature) throw new ZeusApiError({ status: 409, error: 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN', recoveryRequired: true, message: '前次禅道写入结果尚未确认，请先到禅道核对，勿重复提交。' });
-    /** 同一操作在传输恢复和显式重读时始终复用原命令。 */
-    const pending = previous ?? {
-      signature,
-      body: buildIntegrationCommandRequest({
-        commandType,
-        scopeKind: 'integration_account',
-        scopeId: () => instanceId,
-        operationPrefix: `zentao_${operation}`,
-        value,
-      }),
-    };
-    if (key) pendingZentaoWrites.set(key, pending);
+    const key = 'taskId' in value ? `zentao:${instanceId}:${operation}:${String(value.taskId)}` : null;
     try {
-      /** 传输成功后才能解除本次写入保护。 */
-      const result = await transport.request(`${zentaoInstancePath(instanceId)}${suffix}`, jsonRequest(method, await pending.body));
-      if (key) pendingZentaoWrites.delete(key);
-      return result;
-    } catch (error) {
-      if (key && error instanceof ZeusApiError && error.status < 500 && !error.recoveryRequired && error.error !== 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN') pendingZentaoWrites.delete(key);
-      throw error;
+      return await retainedCommand(
+        key,
+        value,
+        () =>
+          buildIntegrationCommandRequest({
+            commandType,
+            scopeKind: 'integration_account',
+            scopeId: () => instanceId,
+            operationPrefix: `zentao_${operation}`,
+            value,
+          }),
+        `${zentaoInstancePath(instanceId)}${suffix}`,
+        method,
+      );
     } finally {
       if (typeof window !== 'undefined') window.dispatchEvent(new Event(zentaoInstancesChangedEvent));
     }

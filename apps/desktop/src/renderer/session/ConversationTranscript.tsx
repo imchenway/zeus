@@ -47,6 +47,7 @@ import { selectHasActiveProviderTurn, selectPendingExecutionMessage } from './se
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 import { ReadingStateScope, useReadingSnapshot, useReadingState } from '../ui/readingState.js';
+import { Button } from '../ui/Button.js';
 
 export interface ConversationTranscriptProps {
   /** 创建前使用原草稿身份读取系统消息，不借用尚未生成的会话或任务身份。 */
@@ -1577,15 +1578,16 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       {resourcePaging?.error ? (
         <div role="alert" className="session-resource-load-error">
           <span>{props.language === 'zh-CN' ? '链接与附件信息读取失败。' : 'Unable to load links and attachments.'}</span>
-          <button
+          <Button
+            unstyled
             type="button"
             disabled={resourcePaging.loading}
             onClick={() => {
-              void Promise.resolve(renderProps.onLoadConversationResources?.()).catch(() => undefined);
+              return Promise.resolve(renderProps.onLoadConversationResources?.()).catch(() => undefined);
             }}
           >
             {props.language === 'zh-CN' ? '重试' : 'Retry'}
-          </button>
+          </Button>
         </div>
       ) : null}
       <div
@@ -1711,9 +1713,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
             <ConversationNotice label={props.language === 'zh-CN' ? '连接失败' : 'Connection failed'}>
               <span>{props.language === 'zh-CN' ? '连接已断开。' : 'Connection lost.'}</span>
               {props.onReconnect ? (
-                <button type="button" onClick={() => void props.onReconnect?.()}>
+                <Button unstyled type="button" onClick={() => props.onReconnect?.()}>
                   {props.language === 'zh-CN' ? '重试' : 'Retry'}
-                </button>
+                </Button>
               ) : null}
             </ConversationNotice>
           ) : null}
@@ -1722,7 +1724,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         </section>
         {showNavigation ? <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} /> : null}
         <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
-        <button
+        <Button
+          unstyled
           type="button"
           className="session-return-latest"
           data-visible={returnToLatestVisible || undefined}
@@ -1741,7 +1744,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           }}
         >
           {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
-        </button>
+        </Button>
         <TranscriptHistoryLoading
           visible={!historyReady && (Boolean(props.historyLoading) || (!props.creationStatus && props.state.transportState !== 'failed'))}
           initializing={Boolean(props.state?.transcriptInitializing)}
@@ -1855,9 +1858,9 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
           <VisibleApplicationError error={props.status.errorCause ?? props.status.error ?? props.status.message} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </div>
         {props.status.onRetry ? (
-          <button type="button" onClick={() => void props.status.onRetry?.()}>
+          <Button unstyled type="button" onClick={() => props.status.onRetry?.()}>
             {props.status.retryLabel ?? (props.language === 'zh-CN' ? '重试' : 'Retry')}
-          </button>
+          </Button>
         ) : null}
       </section>
     );
@@ -1916,9 +1919,9 @@ export function SystemMessageNotice(props: { message: ConversationSystemMessageI
         <VisibleApplicationError error={props.message.detail} summary={props.message.summary} title={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       </span>
       {!props.message.recoveredAt && props.onRetry ? (
-        <button type="button" disabled={pending || props.busy} onClick={() => void retry()}>
+        <Button unstyled type="button" disabled={pending || props.busy} onClick={() => retry()}>
           {pending || props.busy ? (props.language === 'zh-CN' ? '正在重试…' : 'Retrying…') : props.language === 'zh-CN' ? '重试' : 'Retry'}
-        </button>
+        </Button>
       ) : null}
       {retryFailed ? <span role="status">{props.language === 'zh-CN' ? '重试未成功。' : 'Retry failed.'}</span> : null}
     </ConversationNotice>
@@ -1951,14 +1954,14 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
       <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
       <span className="session-message-delivery-actions">
         {retryError ? (
-          <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(retryError, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
+          <Button unstyled type="button" className="application-error-details-link" onClick={() => reportApplicationError(retryError, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
             {zh ? '重试失败原因' : 'Retry failure details'}
-          </button>
+          </Button>
         ) : null}
         {props.onRetry ? (
-          <button type="button" disabled={pending} onClick={() => void retry()}>
+          <Button unstyled type="button" disabled={pending} onClick={() => retry()}>
             {pending ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
-          </button>
+          </Button>
         ) : null}
       </span>
     </ConversationNotice>
@@ -2376,9 +2379,9 @@ function NavigationHistoryPlaceholder(props: {
     <section ref={ref} className="session-navigation-placeholder" aria-busy={status.loading}>
       {status.error && !props.onReadError ? <span role="alert">{status.error}</span> : null}
       {status.error && !props.onReadError ? (
-        <button type="button" onClick={() => setAttempt((current) => current + 1)}>
+        <Button unstyled type="button" onClick={() => setAttempt((current) => current + 1)}>
           {props.language === 'zh-CN' ? '重试' : 'Retry'}
-        </button>
+        </Button>
       ) : null}
     </section>
   );
@@ -2626,18 +2629,22 @@ function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage;
   /** 等待停止完成期间禁用重复操作。 */
   const [stopping, setStopping] = useState(false);
   /** 沿用当前轮次的停止操作，不改变回答或队列状态。 */
-  const stop = () => {
+  const stop = async () => {
     if (!props.onInterrupt || stopping) return;
     setStopping(true);
-    void Promise.resolve(props.onInterrupt(props.turnId)).finally(() => setStopping(false));
+    try {
+      await props.onInterrupt(props.turnId);
+    } finally {
+      setStopping(false);
+    }
   };
   return (
     <ConversationNotice deliveryState="unconfirmed" label={props.language === 'zh-CN' ? '问题暂不可用' : 'Question unavailable'}>
       <span>{props.language === 'zh-CN' ? 'AI 正在等待你的回答，但 Zeus 暂时无法显示可回答的问题。' : 'The AI is waiting for your answer, but Zeus cannot currently display a question you can respond to.'}</span>
       <div className="session-message-delivery-actions">
-        <button type="button" disabled={!props.onInterrupt || stopping} onClick={stop}>
+        <Button unstyled type="button" disabled={!props.onInterrupt || stopping} onClick={stop}>
           {stopping ? (props.language === 'zh-CN' ? '正在停止…' : 'Stopping…') : props.language === 'zh-CN' ? '停止当前任务' : 'Stop current turn'}
-        </button>
+        </Button>
       </div>
     </ConversationNotice>
   );
@@ -2749,19 +2756,19 @@ export function MessageDeliveryOutcomeFeedback(props: {
       {canRetry || canCancelLocalSend || feedbackError ? (
         <div className="session-message-delivery-actions">
           {feedbackError ? (
-            <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(feedbackError, { language: zh ? 'zh-CN' : 'en', summary: message, showDetails: true })}>
+            <Button unstyled type="button" className="application-error-details-link" onClick={() => reportApplicationError(feedbackError, { language: zh ? 'zh-CN' : 'en', summary: message, showDetails: true })}>
               {zh ? '查看原因' : 'View details'}
-            </button>
+            </Button>
           ) : null}
           {canRetry ? (
-            <button type="button" disabled={pendingAction !== null} onClick={() => void retryDelivery()}>
+            <Button unstyled type="button" disabled={pendingAction !== null} onClick={() => retryDelivery()}>
               {pendingAction === 'retry' ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
-            </button>
+            </Button>
           ) : null}
           {canCancelLocalSend ? (
-            <button type="button" disabled={pendingAction !== null} onClick={() => void cancelDelivery()}>
+            <Button unstyled type="button" disabled={pendingAction !== null} onClick={() => cancelDelivery()}>
               {pendingAction === 'cancel' ? (zh ? '正在取消…' : 'Cancelling…') : zh ? '取消发送' : 'Cancel send'}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}

@@ -1,4 +1,5 @@
 import type { GitFileStatusSummary, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
+import { CachedQuery } from '../cachedQuery.js';
 
 /** 源码与搜索共用项目相对路径，拒绝将上一项目的快照套到当前项目。 */
 export function projectGitFileStatuses(snapshot: ProjectGitWorkbenchSnapshot | null | undefined, projectId: string): Record<string, GitFileStatusSummary['category']> {
@@ -11,13 +12,11 @@ export function projectGitFileStatuses(snapshot: ProjectGitWorkbenchSnapshot | n
 }
 
 export interface ProjectGitQueryClient {
-  loadProjectGitWorkbench(projectId: string): Promise<ProjectGitWorkbenchSnapshot>;
+  loadProjectGitWorkbench(projectId: string, includePatches?: boolean): Promise<ProjectGitWorkbenchSnapshot>;
 }
 
-interface ProjectGitWorkbenchCacheEntry {
-  snapshot: ProjectGitWorkbenchSnapshot | null;
-  request: Promise<ProjectGitWorkbenchSnapshot> | null;
-}
+/** Git 快照与普通只读查询共用过期、在途去重和迟到回执规则。 */
+type ProjectGitWorkbenchCacheEntry = CachedQuery<ProjectGitWorkbenchSnapshot>;
 
 const projectGitWorkbenchCacheLimit = 3;
 const projectGitWorkbenchCache = new WeakMap<ProjectGitQueryClient, Map<string, ProjectGitWorkbenchCacheEntry>>();
@@ -34,7 +33,7 @@ export function projectGitWorkbenchCacheEntry(client: ProjectGitQueryClient, pro
     projectCache.set(projectId, current);
     return current;
   }
-  const created: ProjectGitWorkbenchCacheEntry = { snapshot: null, request: null };
+  const created = new CachedQuery(() => client.loadProjectGitWorkbench(projectId, false), 2_000);
   projectCache.set(projectId, created);
   // ponytail: 只保留最近 3 个项目；实测多项目往返仍冷加载时再改为按字节预算淘汰。
   const oldestProjectId = projectCache.keys().next().value;
@@ -43,48 +42,45 @@ export function projectGitWorkbenchCacheEntry(client: ProjectGitQueryClient, pro
 }
 
 export function readCachedProjectGitWorkbench(client: ProjectGitQueryClient, projectId: string): ProjectGitWorkbenchSnapshot | null {
-  return projectGitWorkbenchCacheEntry(client, projectId).snapshot;
+  return projectGitWorkbenchCacheEntry(client, projectId).getSnapshot().value;
 }
 
-export function requestProjectGitWorkbench(client: ProjectGitQueryClient, projectId: string): Promise<ProjectGitWorkbenchSnapshot> {
+export function requestProjectGitWorkbench(client: ProjectGitQueryClient, projectId: string, force = false): Promise<ProjectGitWorkbenchSnapshot> {
   const entry = projectGitWorkbenchCacheEntry(client, projectId);
-  if (entry.request) return entry.request;
-  const request = client
-    .loadProjectGitWorkbench(projectId)
-    .then((snapshot) => {
-      if (entry.request === request) entry.snapshot = snapshot;
-      return snapshot;
-    })
-    .finally(() => {
-      if (entry.request === request) entry.request = null;
-    });
-  entry.request = request;
-  return request;
+  if (force) entry.invalidate();
+  return entry.load(force);
 }
 
 /** 两个工作入口共享失效通知；外部文件变更按短窗口合并，避免频繁闪空列表。 */
-export function subscribeProjectGitRefresh(projectId: string, refresh: () => void): () => void {
+export function subscribeProjectGitRefresh(projectId: string, refresh: (force?: boolean) => void): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = () => {
+  let dirty = false;
+  const schedule = (force = false) => {
+    dirty ||= force;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') {
+        const force = dirty;
+        dirty = false;
+        refresh(force);
+      }
     }, 250);
   };
   const changed = (event: Event) => {
-    if ((event as CustomEvent<string>).detail === projectId) schedule();
+    if ((event as CustomEvent<string>).detail === projectId) schedule(true);
   };
   const unsubscribe = window.zeus?.onProjectSourceEvent?.((event) => {
-    if (event.projectId === projectId) schedule();
+    if (event.projectId === projectId) schedule(true);
   });
-  window.addEventListener('focus', schedule);
-  document.addEventListener('visibilitychange', schedule);
+  const wake = () => schedule();
+  window.addEventListener('focus', wake);
+  document.addEventListener('visibilitychange', wake);
   window.addEventListener('zeus:git-workbench-changed', changed);
   return () => {
     clearTimeout(timer);
     unsubscribe?.();
-    window.removeEventListener('focus', schedule);
-    document.removeEventListener('visibilitychange', schedule);
+    window.removeEventListener('focus', wake);
+    document.removeEventListener('visibilitychange', wake);
     window.removeEventListener('zeus:git-workbench-changed', changed);
   };
 }

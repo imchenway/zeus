@@ -20,7 +20,8 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
     <MenuSurface onClose={props.onClose} ref={ref} className="project-git-context-menu" role="menu" aria-label={props.title} style={{ left: props.x, top: props.y }} onContextMenu={(event) => event.preventDefault()}>
       <strong>{props.title}</strong>
       {props.items.map((item, index) => (
-        <button
+        <Button
+          unstyled
           key={index}
           type="button"
           role="menuitem"
@@ -29,7 +30,7 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
           onClick={() => {
             props.onClose();
             try {
-              void Promise.resolve(item.run()).catch(props.onError);
+              return Promise.resolve(item.run()).catch(props.onError);
             } catch (error) {
               props.onError(error);
             }
@@ -37,7 +38,7 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
         >
           <span>{item.label}</span>
           {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
-        </button>
+        </Button>
       ))}
     </MenuSurface>,
     props.anchor?.closest('[data-zeus-primitive=modal]') ?? document.querySelector('.macos-ai-app') ?? document.body,

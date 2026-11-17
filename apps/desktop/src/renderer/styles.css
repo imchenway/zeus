@@ -6559,18 +6559,27 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 }
 
 /* 提交动作阻止重复点击；只读取缩略图的资源入口继续允许打开附件。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(.resource-loading))) {
+.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not([data-busy-behavior='background'], :has(.resource-loading))) {
   background: var(--zeus-control-loading-bg);
   border-color: var(--zeus-control-loading-line);
   color: var(--zeus-control-loading-text);
   cursor: progress;
   opacity: 1;
+  position: relative;
   pointer-events: none;
 }
 
 /* 已有命令圆环或附件骨架的按钮，以及自带行末状态图标的会话行，不再追加圆点。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner, .resource-loading), .session-conversation-tree-row:has(> .session-conversation-status-icon)))::after {
+.macos-ai-app
+  :where(button, a):where([aria-busy='true'], [data-loading='true']):where(
+    :not([data-busy-behavior='background'], :has(> .session-command-spinner, .resource-loading), .session-conversation-tree-row:has(> .session-conversation-status-icon))
+  )::after {
   animation: zeus-control-loading-pulse 900ms ease-out infinite;
+  animation-delay: 120ms;
+  opacity: 0;
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
   background: var(--zeus-control-loading-dot);
   block-size: 5px;
   border-radius: 999px;
@@ -6623,6 +6632,7 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 
   .macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true'])::after {
     animation: none;
+    opacity: 0.6;
   }
 }
 

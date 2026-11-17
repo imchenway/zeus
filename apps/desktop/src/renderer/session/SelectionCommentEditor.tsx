@@ -2,6 +2,8 @@ import { type FormEvent, type KeyboardEvent, type RefObject, useEffect, useLayou
 import { selectionCommentIcons } from '../../preload/selectionCommentIcons.js';
 import { PopoverSurface } from '../ui/MotionPresence.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { Button } from '../ui/Button.js';
+import { Form } from '../ui/Form.js';
 
 /** 选区评论编辑框在视口中的位置和可用尺寸。 */
 export interface SelectionCommentEditorPoint {
@@ -124,12 +126,12 @@ export function SelectionCommentEditor(props: {
       aria-label={props.label}
       onKeyDown={handleCommentDismiss}
     >
-      <form className="session-response-annotation-row" onSubmit={submitComment}>
-        <button data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
+      <Form className="session-response-annotation-row" onSubmit={submitComment}>
+        <Button unstyled data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
           <svg aria-hidden="true" viewBox={selectionCommentIcons.viewBox} fill="currentColor">
             <path d={selectionCommentIcons.options} />
           </svg>
-        </button>
+        </Button>
         <textarea
           ref={textareaRef}
           autoFocus
@@ -140,26 +142,27 @@ export function SelectionCommentEditor(props: {
           onChange={(event) => setNote(event.currentTarget.value)}
           onKeyDown={handleCommentKeyDown}
         />
-        <button data-icon-tooltip={zh ? '完成评论' : 'Save comment'} type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
+        <Button unstyled data-icon-tooltip={zh ? '完成评论' : 'Save comment'} type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
           <svg aria-hidden="true" viewBox={selectionCommentIcons.viewBox} fill="currentColor">
             <path d={selectionCommentIcons.save} />
           </svg>
-        </button>
-      </form>
+        </Button>
+      </Form>
       {optionsOpen ? (
         <div className="session-response-annotation-options">
-          <button
+          <Button
+            unstyled
             type="button"
             onClick={() => {
               props.onRemove?.(props.id);
-              props.onClose();
+              return props.onClose();
             }}
           >
             {zh ? '删除' : 'Delete'}
-          </button>
-          <button type="button" onClick={props.onClose}>
+          </Button>
+          <Button unstyled type="button" onClick={props.onClose}>
             {zh ? '取消' : 'Cancel'}
-          </button>
+          </Button>
         </div>
       ) : null}
     </PopoverSurface>

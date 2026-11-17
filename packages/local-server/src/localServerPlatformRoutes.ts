@@ -535,6 +535,12 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   projects: ProjectRepository;
   settings: SettingRepository;
   settingsCommands: SettingsCommandApplication;
+  /** 官方来源在后台刷新，调用本身不等待公网。 */
+  scheduleOfficialUsageRefresh(input?: { maxAgeMs: number; includePricing: boolean }): void;
+  /** 仅返回当前仍在读取的官方数据来源。 */
+  usageRefreshingSources(): string[];
+  /** 关闭服务时等待实际在途来源，而非启动时的快照。 */
+  waitForUsageRefresh(): Promise<void>;
   /** 当前 Zeus 实际使用的全局规则目录。 */
   codexHome?: string;
   taskBoards: TaskBoardRepository;
@@ -789,7 +795,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     turnChangeSets,
     unavailableTaskWorkspaceSnapshot,
     usageOverviewService,
-    usageRefreshInFlight,
+    scheduleOfficialUsageRefresh,
+    usageRefreshingSources,
+    waitForUsageRefresh,
     workManagementCommands,
     workspaceGitCommands,
     zentaoCredentials,
@@ -1787,7 +1795,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     freezeBackgroundMutationSources: async () => {
       if (platformMutableState.usageRefreshTimer) clearInterval(platformMutableState.usageRefreshTimer);
       platformMutableState.usageRefreshTimer = undefined;
-      await usageRefreshInFlight?.catch(() => undefined);
+      await waitForUsageRefresh().catch(() => undefined);
       await closeHeavyWorkerJobs();
       commandCenter.close();
       await codexLegacyImportService?.close();
@@ -2423,7 +2431,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     try {
       /** 源码与通用文件审阅使用相同的授权和 Git 比较口径。 */
       const intent = toConversationResourceOpenIntent(record);
-      const preview = readConversationResourcePreview(resource, intent);
+      const preview = await readConversationResourcePreview(resource, intent);
       return { ...preview, review: await readConversationFileReview(resource, intent) };
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? String((error as Error & { code?: unknown }).code ?? '') : '';
@@ -2530,7 +2538,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.get('/api/projects/:projectId/conversations/:conversationId/turns/:turnId/change-set/:changeSetId/files/:fileId/preview', async (request: FastifyRequest<{ Params: TurnChangeFileOpenParams }>, reply) => {
     try {
       const grant = resolveTurnChangeFileOpenGrant(request.params);
-      return readConversationResourcePreview(grant.resource, grant.intent);
+      return await readConversationResourcePreview(grant.resource, grant.intent);
     } catch (error) {
       return sendTurnChangeFileOpenError(reply, error);
     }
@@ -2912,7 +2920,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (grant.kind === 'website') throw new Error('网站不是文件预览资源。');
         /** 已登记位置随通用预览返回，不依赖标题中的行号文字。 */
         const resource = toConversationResource(record);
-        const review = resource && resource.kind !== 'website' ? await readConversationFileReview(resource, grant) : undefined;
+        const review = resource?.kind === 'file' ? { location: resource.location } : undefined;
         // 预览格式依据真实文件名，正文链接标题可能完全省略扩展名。
         /** 当前文件位置完全来自会话授权，渲染层不能另指定路径。 */
         const root = String(grant.authority.allowedRoot || '');
@@ -4381,15 +4389,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   // 被动查看用量只能读取现有运行时或持久缓存，不得为了展示统计而启动外部 Codex。
   server.get('/api/codex/usage-summary', async () => codexUsageService.readSummary());
 
-  server.get('/api/usage-overview', async () => usageOverviewService.read());
+  server.get('/api/usage-overview', async () => ({ ...usageOverviewService.read(), refreshingSources: usageRefreshingSources() }));
 
   /** 显式显示或刷新才检查官方数据，普通读取始终无网络及持久化副作用。 */
   server.post('/api/usage-overview/refresh', async (request: FastifyRequest<{ Body: { force?: boolean } }>, reply) => {
     if (request.body?.force !== undefined && typeof request.body.force !== 'boolean') return reply.code(400).send({ error: 'ZEUS_USAGE_REFRESH_INVALID' });
     /** 各供应源独立刷新，Kilo 不以 Codex 运行状态作为查询前提。 */
     const maxAgeMs = request.body?.force === true ? 15_000 : 10 * 60_000;
-    await Promise.all([modelConnections.kiloUsage.refreshDue(maxAgeMs), codexAppServerManager.getState().type === 'ready' ? codexUsageService.refreshOfficialUsage(maxAgeMs) : Promise.resolve()]);
-    return usageOverviewService.read();
+    scheduleOfficialUsageRefresh({ maxAgeMs, includePricing: false });
+    return reply.code(202).send({ ...usageOverviewService.read(), refreshingSources: usageRefreshingSources() });
   });
 
   server.get(

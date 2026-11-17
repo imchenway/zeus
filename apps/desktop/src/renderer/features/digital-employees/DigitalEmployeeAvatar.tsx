@@ -1,4 +1,5 @@
 import { digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId } from '@zeus/shared';
+import { Button } from '../../ui/Button.js';
 /** 由构建器解析的本地头像地址。 */
 const loki = new URL('../../assets/digital-employees/loki.png', import.meta.url).href;
 /** 由构建器解析的本地头像地址。 */
@@ -25,7 +26,8 @@ export function EmployeeAvatarPicker(props: { avatarId?: DigitalEmployeeAvatarId
   return (
     <div className="employee-avatar-options" role="group" aria-label={props.language === 'zh-CN' ? '预置头像' : 'Preset portraits'}>
       {digitalEmployeeAvatarIds.map((id) => (
-        <button
+        <Button
+          unstyled
           key={id}
           type="button"
           className="employee-avatar-option"
@@ -36,7 +38,7 @@ export function EmployeeAvatarPicker(props: { avatarId?: DigitalEmployeeAvatarId
           onClick={() => props.onChange(id)}
         >
           <img src={portraits[id]} alt="" />
-        </button>
+        </Button>
       ))}
     </div>
   );

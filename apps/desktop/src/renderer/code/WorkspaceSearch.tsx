@@ -14,6 +14,7 @@ import { FileTypeIcon } from './FileTypeIcon.js';
 import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
 import './projectCodeSearch.css';
+import { Button } from '../ui/Button.js';
 
 /** 内容分类与项目范围独立，全部分类保留各类结果的来源。 */
 type SearchScope = 'all' | 'project' | 'task' | 'conversation' | 'source';
@@ -321,9 +322,9 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
           <section className="project-code-search-dialog zeus-solid-form-surface" data-modal-surface="dialog">
             <header className="project-code-search-heading">
               <strong id={`${id}-title`}>{zh ? '搜索' : 'Search'}</strong>
-              <button type="button" className="project-code-search-close" aria-label={zh ? '关闭搜索' : 'Close search'} onClick={props.onClose}>
+              <Button unstyled type="button" className="project-code-search-close" aria-label={zh ? '关闭搜索' : 'Close search'} onClick={props.onClose}>
                 <XIcon aria-hidden="true" />
-              </button>
+              </Button>
             </header>
             <div className="project-code-search-controls">
               <div className="project-code-search-field">
@@ -348,7 +349,8 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                   onKeyDown={handleResultKeys}
                 />
                 {query ? (
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     aria-label={zh ? '清空搜索' : 'Clear search'}
                     onClick={() => {
@@ -357,15 +359,15 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                     }}
                   >
                     <XIcon aria-hidden="true" />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
               <div className="workspace-search-filters">
                 <div className="workspace-search-scopes" role="group" aria-label={zh ? '搜索内容类型' : 'Content type'}>
                   {(Object.keys(labels) as SearchScope[]).map((value) => (
-                    <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>
+                    <Button unstyled key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>
                       {labels[value]}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 <ZeusSelect
@@ -389,9 +391,9 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                     </label>
                   </>
                 ) : null}
-                <button type="button" disabled={!hasQuery || loading} onClick={() => setRevision((value) => value + 1)}>
+                <Button unstyled type="button" disabled={!hasQuery || loading} onClick={() => setRevision((value) => value + 1)}>
                   {zh ? '重新搜索' : 'Refresh'}
-                </button>
+                </Button>
               </div>
             </div>
             <div className="project-code-search-status" role="status" aria-live="polite">
@@ -477,7 +479,8 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                         </span>
                       </div>
                     ) : null}
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       id={`${id}-match-${index}`}
                       data-file-root={selection.kind === 'source' ? selection.project.localPath : undefined}
@@ -501,7 +504,7 @@ export function WorkspaceSearch(props: WorkspaceSearchProps) {
                           <small>{description}</small>
                         </>
                       )}
-                    </button>
+                    </Button>
                   </Fragment>
                 );
               })}

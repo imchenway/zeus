@@ -6,6 +6,7 @@ import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import './terminal.css';
+import { Button } from '../../ui/Button.js';
 
 /** 两个终端入口共用搜索状态，绑定和释放只针对现有 xterm 实例。 */
 export function useTerminalSearch() {
@@ -96,9 +97,9 @@ export function TerminalSearchButton(props: { search: ReturnType<typeof useTermi
   /** 中英文入口共用相同操作和无障碍状态。 */
   const label = props.language === 'zh-CN' ? '搜索终端内容' : 'Search terminal contents';
   return (
-    <button className="zeus-terminal-action" type="button" data-icon-tooltip={label} aria-label={label} aria-expanded={props.search.open} disabled={!props.search.ready} onClick={props.search.openSearch}>
+    <Button unstyled className="zeus-terminal-action" type="button" data-icon-tooltip={label} aria-label={label} aria-expanded={props.search.open} disabled={!props.search.ready} onClick={props.search.openSearch}>
       <MagnifyingGlass aria-hidden="true" />
-    </button>
+    </Button>
   );
 }
 
@@ -127,15 +128,15 @@ export function TerminalSearchBar(props: { search: ReturnType<typeof useTerminal
         }}
       />
       {search.query && !search.found ? <span role="status">{zh ? '未找到' : 'No matches'}</span> : null}
-      <button type="button" aria-label={zh ? '上一个匹配' : 'Previous match'} data-icon-tooltip={zh ? '上一个匹配' : 'Previous match'} disabled={!search.query} onClick={() => search.find(search.query, true)}>
+      <Button unstyled type="button" aria-label={zh ? '上一个匹配' : 'Previous match'} data-icon-tooltip={zh ? '上一个匹配' : 'Previous match'} disabled={!search.query} onClick={() => search.find(search.query, true)}>
         <ArrowUp aria-hidden="true" />
-      </button>
-      <button type="button" aria-label={zh ? '下一个匹配' : 'Next match'} data-icon-tooltip={zh ? '下一个匹配' : 'Next match'} disabled={!search.query} onClick={() => search.find(search.query)}>
+      </Button>
+      <Button unstyled type="button" aria-label={zh ? '下一个匹配' : 'Next match'} data-icon-tooltip={zh ? '下一个匹配' : 'Next match'} disabled={!search.query} onClick={() => search.find(search.query)}>
         <ArrowDown aria-hidden="true" />
-      </button>
-      <button type="button" aria-label={zh ? '关闭搜索' : 'Close search'} data-icon-tooltip={zh ? '关闭搜索' : 'Close search'} onClick={search.closeSearch}>
+      </Button>
+      <Button unstyled type="button" aria-label={zh ? '关闭搜索' : 'Close search'} data-icon-tooltip={zh ? '关闭搜索' : 'Close search'} onClick={search.closeSearch}>
         <X aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   );
 }

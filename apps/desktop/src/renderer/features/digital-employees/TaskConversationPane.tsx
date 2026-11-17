@@ -235,23 +235,23 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
     return (
       <li key={member.id} className="task-conversation-member" data-selected={!creating && selectedMember?.id === member.id}>
         <div className="task-conversation-member-heading">
-          <button type="button" className="task-conversation-member-button" aria-current={!creating && selectedMember?.id === member.id ? 'true' : undefined} onClick={() => selectEntry(first, member.id)}>
+          <Button unstyled type="button" className="task-conversation-member-button" aria-current={!creating && selectedMember?.id === member.id ? 'true' : undefined} onClick={() => selectEntry(first, member.id)}>
             {member.employee ? <DigitalEmployeeAvatar {...member.employee} /> : null}
             <span>
               <strong>{member.employee?.name ?? first.title}</strong>
               <small data-icon-tooltip={first.title}>{first.title}</small>
             </span>
-          </button>
+          </Button>
         </div>
         <div className="task-conversation-member-status">{entryStatus(first)}</div>
         {multiple ? (
           <ul className="task-conversation-member-records">
             {member.entries.map((entry) => (
               <li key={entry.conversationId ?? entry.attemptIds?.[0] ?? entry.workRunIds?.[0] ?? entry.workItemIds?.[0] ?? entry.nodeIds?.[0]}>
-                <button type="button" aria-current={entry === selected ? 'true' : undefined} onClick={() => selectEntry(entry, member.id)}>
+                <Button unstyled type="button" aria-current={entry === selected ? 'true' : undefined} onClick={() => selectEntry(entry, member.id)}>
                   <span>{entry.title}</span>
                   <small>{new Date(entry.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'medium' })}</small>
-                </button>
+                </Button>
                 <div>{entryStatus(entry)}</div>
               </li>
             ))}
@@ -285,13 +285,13 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
           <ul className="task-conversation-members">{group.employees.filter((member) => member.employee || group.team).map(renderMember)}</ul>
           {!group.employees.length && props.loading ? <p className="task-conversation-navigation-empty">{zh ? '正在读取分工…' : 'Loading assignments…'}</p> : null}
           <nav className="task-conversation-navigation-actions" aria-label={zh ? '讨论与执行记录' : 'Discussions and executions'}>
-            <button type="button" aria-current={group.id === independentConversationGroupId && !selectedMember?.employee ? 'true' : undefined} onClick={openDiscussion}>
+            <Button unstyled type="button" aria-current={group.id === independentConversationGroupId && !selectedMember?.employee ? 'true' : undefined} onClick={openDiscussion}>
               {zh ? '任务讨论' : 'Task discussion'}
-            </button>
+            </Button>
             {discussionGroup.employees.some((member) => member.employee) && group.id !== independentConversationGroupId ? (
-              <button type="button" onClick={() => selectGroup(independentConversationGroupId)}>
+              <Button unstyled type="button" onClick={() => selectGroup(independentConversationGroupId)}>
                 {zh ? '独立工作' : 'Individual work'}
-              </button>
+              </Button>
             ) : null}
             {props.teams.length ? (
               <div className="task-conversation-history">
@@ -299,10 +299,10 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
                 {groups
                   .filter((entry) => entry.team)
                   .map((entry) => (
-                    <button key={entry.id} type="button" aria-current={group.id === entry.id ? 'true' : undefined} onClick={() => selectGroup(entry.id)}>
+                    <Button unstyled key={entry.id} type="button" aria-current={group.id === entry.id ? 'true' : undefined} onClick={() => selectGroup(entry.id)}>
                       <strong>{entry.name}</strong>
                       <small>{entry.description}</small>
-                    </button>
+                    </Button>
                   ))}
               </div>
             ) : null}
@@ -322,9 +322,9 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
                   <div className="task-conversation-work-state">
                     {entryStatus(selected)}
                     {group.team && props.onOpenTeamRun ? (
-                      <button type="button" onClick={() => props.onOpenTeamRun?.(group.team!.run.id)}>
+                      <Button unstyled type="button" onClick={() => props.onOpenTeamRun?.(group.team!.run.id)}>
                         {zh ? '查看分工' : 'View assignment'}
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 ) : null}
@@ -360,10 +360,10 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
         {!showingNew && !selectedMember?.employee && group.id === independentConversationGroupId && discussions.length > 1 ? (
           <nav className="task-conversation-discussions" aria-label={zh ? '任务会话' : 'Task conversations'}>
             {discussions.map((entry) => (
-              <button key={entry.conversationId} type="button" aria-current={entry.conversationId === target ? 'true' : undefined} onClick={() => selectEntry(entry, 'discussion')}>
+              <Button unstyled key={entry.conversationId} type="button" aria-current={entry.conversationId === target ? 'true' : undefined} onClick={() => selectEntry(entry, 'discussion')}>
                 <strong>{entry.title}</strong>
                 <small>{new Date(entry.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</small>
-              </button>
+              </Button>
             ))}
           </nav>
         ) : null}
@@ -372,7 +372,8 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             ? createPortal(
                 <MenuSurface id={menuId} className="task-conversation-menu" aria-label={zh ? '会话操作' : 'Conversation actions'} style={{ left: menu.left, top: menu.top }} onClose={() => setMenu(null)}>
                   {menuOptions.map((option) => (
-                    <button
+                    <Button
+                      unstyled
                       key={option.value}
                       type="button"
                       role="menuitem"
@@ -383,11 +384,11 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
                         }
                         if (option.value === 'reload') props.onReload?.();
                         if (option.value === 'team') props.onArrangeTeam?.();
-                        if (option.value === 'run' && group.team) props.onOpenTeamRun?.(group.team.run.id);
+                        if (option.value === 'run' && group.team) return props.onOpenTeamRun?.(group.team.run.id);
                       }}
                     >
                       {option.label}
-                    </button>
+                    </Button>
                   ))}
                 </MenuSurface>,
                 menuHost.current,

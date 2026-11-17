@@ -133,7 +133,8 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               setDraggedStatusId(null);
             }}
           >
-            <button
+            <Button
+              unstyled
               type="button"
               className="task-status-config-drag-handle"
               draggable
@@ -147,7 +148,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               onDragEnd={() => setDraggedStatusId(null)}
             >
               <span aria-hidden="true">⋮⋮</span>
-            </button>
+            </Button>
             <span className="task-status-config-rank" aria-hidden="true">
               {index + 1}
             </span>
@@ -170,7 +171,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                 aria-label={zh ? `修改状态 ${props.labelForStatus(status)} 的颜色` : `Change color for ${props.labelForStatus(status)}`}
                 onChange={(event) => {
                   const color = event.currentTarget.value;
-                  props.onChange({
+                  return props.onChange({
                     statuses: props.config.statuses.map((candidate) => (candidate.id === status.id ? { ...candidate, color } : { ...candidate })),
                     roles: { ...props.config.roles },
                   });
@@ -179,7 +180,8 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               <span aria-hidden="true">{status.color.toUpperCase()}</span>
             </label>
             <span className="task-status-config-actions">
-              <button
+              <Button
+                unstyled
                 data-icon-tooltip={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`}
                 type="button"
                 aria-label={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`}
@@ -187,8 +189,9 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                 onClick={() => props.onChange(moveStatus(props.config, status.id, index - 1))}
               >
                 ↑
-              </button>
-              <button
+              </Button>
+              <Button
+                unstyled
                 data-icon-tooltip={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`}
                 type="button"
                 aria-label={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`}
@@ -196,8 +199,9 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                 onClick={() => props.onChange(moveStatus(props.config, status.id, index + 1))}
               >
                 ↓
-              </button>
-              <button
+              </Button>
+              <Button
+                unstyled
                 type="button"
                 className="task-status-config-delete"
                 aria-label={zh ? `删除 ${props.labelForStatus(status)}` : `Delete ${props.labelForStatus(status)}`}
@@ -205,7 +209,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                 onClick={() => requestDelete(status)}
               >
                 ×
-              </button>
+              </Button>
             </span>
           </li>
         ))}

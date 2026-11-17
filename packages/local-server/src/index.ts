@@ -2084,30 +2084,40 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now,
   });
   let usageRefreshTimer: ReturnType<typeof setInterval> | undefined;
-  let usageRefreshInFlight: Promise<void> | undefined;
-  const refreshOfficialUsageInBackground = async (): Promise<void> => {
-    // 定价来自公开页面，不需要启动 Codex 或等待账户登录。
-    await Promise.all([codexUsageService.refreshMissingPricing(), modelConnections.pricing.refreshDue(), modelConnections.kiloUsage.refreshDue()]);
-    publishRealtimeEvent('usage.changed', { scope: 'official', updatedAt: now().toISOString() });
-    // 后台用量刷新只能复用已经由用户操作启动的 Codex，应用首次打开不得为读取用量而执行外部 CLI。
-    if (codexAppServerManager.getState().type !== 'ready') return;
-    const official = await codexUsageService.refreshOfficialUsage();
-    publishRealtimeEvent('usage.changed', { providerId: 'codex', scope: 'official', stale: official.stale, updatedAt: now().toISOString() });
-  };
-  const scheduleOfficialUsageRefresh = (): void => {
-    if (usageRefreshInFlight) return;
-    const refresh = refreshOfficialUsageInBackground();
-    usageRefreshInFlight = refresh;
-    void refresh
-      .catch(() => undefined)
-      .finally(() => {
-        if (usageRefreshInFlight === refresh) usageRefreshInFlight = undefined;
-      });
+  /** 每个来源独立去重，价格刷新不占用官方额度的刷新槽。 */
+  const usageRefreshes = new Map<string, Promise<unknown>>();
+  /** 只向额度面板公布业务数据来源的刷新状态。 */
+  const usageRefreshingSources = (): string[] => ['kilo', 'codex'].filter((source) => usageRefreshes.has(source));
+  /** 服务持有后台读取，每个来源完成后立即发布快照变化。 */
+  const scheduleOfficialUsageRefresh = (input?: { maxAgeMs: number; includePricing: boolean }): void => {
+    const maxAgeMs = input?.maxAgeMs ?? 10 * 60_000;
+    const sources: Array<[string, () => Promise<unknown>]> = [
+      ...(input?.includePricing !== false
+        ? ([
+            ['pricing', () => codexUsageService.refreshMissingPricing()],
+            ['model-pricing', () => modelConnections.pricing.refreshDue()],
+          ] as Array<[string, () => Promise<unknown>]>)
+        : []),
+      ['kilo', () => modelConnections.kiloUsage.refreshDue(maxAgeMs)],
+      ...(codexAppServerManager.getState().type === 'ready' ? ([['codex', () => codexUsageService.refreshOfficialUsage(maxAgeMs)]] as Array<[string, () => Promise<unknown>]>) : []),
+    ];
+    for (const [scope, read] of sources) {
+      if (usageRefreshes.has(scope)) continue;
+      const refresh = Promise.resolve()
+        .then(read)
+        .catch(() => undefined)
+        .finally(() => {
+          if (usageRefreshes.get(scope) === refresh) usageRefreshes.delete(scope);
+          publishRealtimeEvent('usage.changed', { scope, refreshingSources: usageRefreshingSources(), updatedAt: now().toISOString() });
+        });
+      usageRefreshes.set(scope, refresh);
+      publishRealtimeEvent('usage.changed', { scope, refreshingSources: usageRefreshingSources(), updatedAt: now().toISOString() });
+    }
   };
   if (!readOnlyValidation) {
     scheduleOfficialUsageRefresh();
     // 收起菜单栏后沿用后台调度，每十分钟更新一次，避免每分钟请求官方用量。
-    usageRefreshTimer = setInterval(scheduleOfficialUsageRefresh, 10 * 60_000);
+    usageRefreshTimer = setInterval(() => scheduleOfficialUsageRefresh(), 10 * 60_000);
     usageRefreshTimer.unref?.();
   }
   let codexNativeCoordinator: ReturnType<typeof createCodexNativeConversationCoordinator>;
@@ -4044,7 +4054,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     turnChangeSets,
     unavailableTaskWorkspaceSnapshot,
     usageOverviewService,
-    usageRefreshInFlight,
+    scheduleOfficialUsageRefresh,
+    usageRefreshingSources,
+    waitForUsageRefresh: async () => {
+      await Promise.allSettled(usageRefreshes.values());
+    },
     workManagementCommands,
     workspaceGitCommands,
     zentaoCredentials,

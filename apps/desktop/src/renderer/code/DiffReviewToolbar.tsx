@@ -3,6 +3,7 @@ import { ArrowUpIcon } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ArrowDownIcon } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { DotsThreeIcon } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { MenuSurface } from '../ui/MenuSurface.js';
+import { Button } from '../ui/Button.js';
 
 /** 全部差异入口使用同一组范围、定位与次要操作。 */
 export function DiffReviewToolbar(props: {
@@ -40,18 +41,26 @@ export function DiffReviewToolbar(props: {
   return (
     <div className="diff-review-toolbar" role="group" aria-label={props.zh ? '差异操作' : 'Diff actions'}>
       <span className="diff-review-range" role="group" aria-label={props.zh ? '显示范围' : 'Visible range'}>
-        <button type="button" aria-pressed={!props.full} onClick={() => props.onFullChange(false)}>
+        <Button unstyled type="button" aria-pressed={!props.full} onClick={() => props.onFullChange(false)}>
           {props.zh ? '差异附近' : 'Changes'}
-        </button>
-        <button type="button" aria-pressed={props.full} disabled={!props.fullAvailable} title={!props.fullAvailable ? (props.zh ? '完整文件不可用' : 'Complete files unavailable') : undefined} onClick={() => props.onFullChange(true)}>
+        </Button>
+        <Button
+          unstyled
+          type="button"
+          aria-pressed={props.full}
+          disabled={!props.fullAvailable}
+          title={!props.fullAvailable ? (props.zh ? '完整文件不可用' : 'Complete files unavailable') : undefined}
+          onClick={() => props.onFullChange(true)}
+        >
           {props.zh ? '全文' : 'Full file'}
-        </button>
+        </Button>
       </span>
       <span className="diff-review-navigation" role="group" aria-label={props.zh ? '定位差异' : 'Navigate changes'}>
-        <button type="button" aria-label={props.zh ? '上一处差异' : 'Previous change'} data-icon-tooltip={props.zh ? '上一处差异' : 'Previous change'} disabled={props.current <= 0} onClick={() => props.onNavigate(-1)}>
+        <Button unstyled type="button" aria-label={props.zh ? '上一处差异' : 'Previous change'} data-icon-tooltip={props.zh ? '上一处差异' : 'Previous change'} disabled={props.current <= 0} onClick={() => props.onNavigate(-1)}>
           <ArrowUpIcon size={16} aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           type="button"
           aria-label={props.zh ? '下一处差异' : 'Next change'}
           data-icon-tooltip={props.zh ? '下一处差异' : 'Next change'}
@@ -59,13 +68,14 @@ export function DiffReviewToolbar(props: {
           onClick={() => props.onNavigate(1)}
         >
           <ArrowDownIcon size={16} aria-hidden="true" />
-        </button>
+        </Button>
         <span className="diff-review-position" aria-live="polite">
           {props.current < 0 ? (props.zh ? `${props.count} 处差异` : `${props.count} changes`) : `${props.current + 1} / ${props.count}`}
         </span>
       </span>
       {hasOptions ? (
-        <button
+        <Button
+          unstyled
           ref={trigger}
           type="button"
           aria-label={props.zh ? '更多差异操作' : 'More diff actions'}
@@ -80,29 +90,29 @@ export function DiffReviewToolbar(props: {
           }}
         >
           <DotsThreeIcon size={18} aria-hidden="true" />
-        </button>
+        </Button>
       ) : null}
       {menu && hasOptions ? (
         <MenuSurface className="diff-review-menu" style={{ position: 'fixed', ...menu }} onClose={() => setMenu(null)}>
           {props.allowLayout ? (
             <>
-              <button type="button" role="menuitemradio" aria-checked={!props.unified} onClick={() => choose(() => props.onUnifiedChange(false))}>
+              <Button unstyled type="button" role="menuitemradio" aria-checked={!props.unified} onClick={() => choose(() => props.onUnifiedChange(false))}>
                 {props.zh ? '左右两栏' : 'Side by side'}
-              </button>
-              <button type="button" role="menuitemradio" aria-checked={props.unified} onClick={() => choose(() => props.onUnifiedChange(true))}>
+              </Button>
+              <Button unstyled type="button" role="menuitemradio" aria-checked={props.unified} onClick={() => choose(() => props.onUnifiedChange(true))}>
                 {props.zh ? '统一视图' : 'Unified view'}
-              </button>
+              </Button>
             </>
           ) : null}
           {props.onPreview ? (
-            <button type="button" role="menuitem" onClick={() => choose(props.onPreview!)}>
+            <Button unstyled type="button" role="menuitem" onClick={() => choose(props.onPreview!)}>
               {props.zh ? '内容预览' : 'Preview content'}
-            </button>
+            </Button>
           ) : null}
           {props.onRefresh ? (
-            <button type="button" role="menuitem" onClick={() => choose(props.onRefresh!)}>
+            <Button unstyled type="button" role="menuitem" onClick={() => choose(props.onRefresh!)}>
               {props.zh ? '刷新文件' : 'Refresh file'}
-            </button>
+            </Button>
           ) : null}
         </MenuSurface>
       ) : null}

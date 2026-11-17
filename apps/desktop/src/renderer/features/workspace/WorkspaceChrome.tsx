@@ -59,6 +59,7 @@ import {
   type RuntimeConfirmationStatusState,
   type WorkspaceViewId,
 } from './workspaceSupport.js';
+import { Form } from '../../ui/Form.js';
 
 /** 项目普通会话首屏数量，进行中的会话始终展示且不占额度。 */
 const defaultVisibleConversationCount = 6;
@@ -156,17 +157,18 @@ export function ProjectCreateDialog(props: {
       aria-labelledby="project-create-dialog-title"
       aria-describedby={describedBy}
     >
-      <form className="project-create-dialog zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
+      <Form className="project-create-dialog zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="project-create-dialog-header">
           <strong id="project-create-dialog-title">{props.copy.createDialogTitle}</strong>
-          <button type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
+          <Button unstyled type="button" className="project-create-dialog-close" aria-label={props.copy.createCancel} onClick={props.onClose} disabled={interactionBusy}>
             <X aria-hidden="true" weight="regular" />
-          </button>
+          </Button>
         </header>
         <div className="project-create-dialog-body">
           <section className="project-create-folder-field" aria-labelledby="project-create-folder-label">
             <strong id="project-create-folder-label">{props.copy.createFolderLabel}</strong>
-            <button
+            <Button
+              unstyled
               ref={directoryButtonRef}
               type="button"
               className="project-create-folder-picker"
@@ -183,7 +185,7 @@ export function ProjectCreateDialog(props: {
                 {props.form.localPath ? <small data-icon-tooltip={props.form.localPath}>{props.form.localPath}</small> : null}
               </span>
               <span className="project-create-folder-change">{props.form.localPath ? props.copy.createChangeFolder : props.copy.createSelectFolder}</span>
-            </button>
+            </Button>
             <p id="project-create-folder-help">{props.copy.createFolderHelp}</p>
           </section>
           <label className="project-create-name-field" htmlFor="project-create-name-input">
@@ -218,7 +220,7 @@ export function ProjectCreateDialog(props: {
             {props.busy ? props.copy.createSubmitting : props.copy.createSubmit}
           </Button>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
 }
@@ -255,13 +257,13 @@ export function ProjectRenameDialog(props: {
       aria-labelledby="project-rename-dialog-title"
       aria-describedby={describedBy}
     >
-      <form
+      <Form
         className="project-rename-dialog zeus-solid-form-surface"
         onSubmit={props.onSubmit}
         onKeyDown={(event) => {
           if (event.key !== 'Escape' || props.busy) return;
           event.stopPropagation();
-          props.onClose();
+          return props.onClose();
         }}
         data-modal-surface="dialog"
       >
@@ -270,9 +272,9 @@ export function ProjectRenameDialog(props: {
             <strong id="project-rename-dialog-title">{props.copy.renameDialogTitle}</strong>
             <small id="project-rename-dialog-help">{props.copy.renameDialogHelp}</small>
           </span>
-          <button type="button" className="project-rename-dialog-close" aria-label={props.copy.renameCancel} onClick={props.onClose} disabled={props.busy}>
+          <Button unstyled type="button" className="project-rename-dialog-close" aria-label={props.copy.renameCancel} onClick={props.onClose} disabled={props.busy}>
             <X aria-hidden="true" weight="regular" />
-          </button>
+          </Button>
         </header>
         <div className="project-rename-dialog-body">
           <label htmlFor="project-rename-input">{props.copy.renameLabel}</label>
@@ -299,7 +301,7 @@ export function ProjectRenameDialog(props: {
             {props.busy ? props.copy.renameSaving : props.copy.renameSave}
           </Button>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
   return surface;
@@ -397,7 +399,8 @@ export function ProjectWorkspaceNavigation(props: {
               const selectLabel = slotProject ? (zh ? `选择项目 ${slotProject.name}` : `Select project ${slotProject.name}`) : zh ? '尚未选择项目' : 'No project selected';
               return (
                 <span key={slot.id} className={`project-workspace-project-slot${active ? ' is-active' : ''}`} data-project-slot-id={slot.id}>
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     className="project-workspace-project-slot-primary"
                     aria-label={projectStatus ? `${selectLabel}，${projectStatus.label}` : selectLabel}
@@ -405,7 +408,7 @@ export function ProjectWorkspaceNavigation(props: {
                     aria-pressed={active}
                     aria-disabled={!slotProject || undefined}
                     onClick={() => {
-                      if (slotProject && slotProject.id !== props.project.id) props.onSelectProject(slotProject);
+                      if (slotProject && slotProject.id !== props.project.id) return props.onSelectProject(slotProject);
                     }}
                   />
                   <ZeusSelect
@@ -432,7 +435,7 @@ export function ProjectWorkspaceNavigation(props: {
                       const project = props.projects.find((item) => item.id === id);
                       if (!project) return;
                       setProjectSlots((current) => current.map((item) => (item.id === slot.id ? { ...item, projectId: project.id } : item)));
-                      if (project.id !== props.project.id) props.onSelectProject(project);
+                      if (project.id !== props.project.id) return props.onSelectProject(project);
                     }}
                     triggerLabel={slotProject?.name ?? (zh ? '选择项目' : 'Select project')}
                     triggerIcon={projectStatus ? <ConversationStatusIcon {...projectStatus} /> : <FolderOpen size={18} aria-hidden="true" />}
@@ -445,7 +448,8 @@ export function ProjectWorkspaceNavigation(props: {
                     popoverArrowAlignment="start"
                     size="compact"
                   />
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     className="project-workspace-project-slot-close"
                     disabled={projectSlots.length <= 1}
@@ -459,7 +463,7 @@ export function ProjectWorkspaceNavigation(props: {
                     }}
                   >
                     <X size={15} weight="regular" aria-hidden="true" />
-                  </button>
+                  </Button>
                 </span>
               );
             })}
@@ -492,22 +496,24 @@ export function ProjectWorkspaceNavigation(props: {
         </div>
       </header>
       <nav className="project-workspace-mode-rail" aria-label={zh ? '项目工作区' : 'Project workspace'}>
-        <button
+        <Button
+          data-busy-behavior="background"
+          unstyled
           data-icon-tooltip={conversationLabel}
           type="button"
           className={projectWorkspaceActive && props.section === 'sessions' ? 'is-active' : ''}
           aria-label={conversationTitle}
           aria-current={projectWorkspaceActive && props.section === 'sessions' ? 'page' : undefined}
           onClick={(event) => {
-            if (event.altKey) props.onCreateConversation();
-            else props.onOpen('sessions');
+            if (event.altKey) return props.onCreateConversation();
+            else return props.onOpen('sessions');
           }}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
             <ChatCircleDots size={18} weight="regular" />
           </span>
           <span className="project-workspace-mode-label">{conversationLabel}</span>
-        </button>
+        </Button>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
           /** 只对当前可见的项目页面显示选中态。 */
           const active = projectWorkspaceActive && props.section === item.section;
@@ -518,7 +524,9 @@ export function ProjectWorkspaceNavigation(props: {
           /** 浮层使用更接近桌面应用菜单的紧凑排版。 */
           const tooltipLabel = platformShortcutLabel(`${label}（⌘${item.shortcutKey}）`);
           return (
-            <button
+            <Button
+              data-busy-behavior="background"
+              unstyled
               data-icon-tooltip={tooltipLabel}
               key={item.id}
               type="button"
@@ -532,11 +540,12 @@ export function ProjectWorkspaceNavigation(props: {
                 {icons[item.id]}
               </span>
               <span className="project-workspace-mode-label">{label}</span>
-            </button>
+            </Button>
           );
         })}
         <span className="project-workspace-mode-rail-spacer" aria-hidden="true" />
-        <button
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '自动化' : 'Automations'}
           type="button"
           className={props.activeNavTarget === 'automations' ? 'is-active' : ''}
@@ -548,8 +557,9 @@ export function ProjectWorkspaceNavigation(props: {
             <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '自动化' : 'Automations'}</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '扩展管理' : 'Extensions'}
           type="button"
           className={props.activeNavTarget === 'skills' ? 'is-active' : ''}
@@ -561,9 +571,10 @@ export function ProjectWorkspaceNavigation(props: {
             <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
-        </button>
+        </Button>
         {/* 数字员工使用人物头像线框，并在全局导航中紧邻数字团队上方。 */}
-        <button
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '数字员工' : 'Digital employees'}
           type="button"
           className={props.activeNavTarget === 'digital-employees' ? 'is-active' : ''}
@@ -575,8 +586,9 @@ export function ProjectWorkspaceNavigation(props: {
             <UserCircleIcon size={18} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '数字员工' : 'Digital employees'}</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '数字团队' : 'Digital teams'}
           type="button"
           className={props.activeNavTarget === 'digital-teams' ? 'is-active' : ''}
@@ -588,8 +600,9 @@ export function ProjectWorkspaceNavigation(props: {
             <DigitalTeamIcon />
           </span>
           <span className="project-workspace-mode-label">{zh ? '数字团队' : 'Digital teams'}</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '设置' : 'Settings'}
           type="button"
           className={props.activeNavTarget === 'settings' ? 'is-active' : ''}
@@ -601,7 +614,7 @@ export function ProjectWorkspaceNavigation(props: {
             <GearSix size={18} weight="regular" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '设置' : 'Settings'}</span>
-        </button>
+        </Button>
       </nav>
     </>
   );
@@ -866,7 +879,7 @@ export function SidebarNav(props: {
             <strong className="project-sidebar-brand">Zeus</strong>
             {props.notificationCenter}
           </div>
-          <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
+          <Button unstyled type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
             <span className="project-quick-action-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" focusable="false">
                 <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
@@ -874,8 +887,9 @@ export function SidebarNav(props: {
               </svg>
             </span>
             <span className="project-quick-action-label">{copy.newChat}</span>
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={`project-quick-action${props.activeNavTarget === 'automations' ? ' is-active' : ''}`}
             aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined}
@@ -885,15 +899,22 @@ export function SidebarNav(props: {
               <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{props.appLanguage === 'zh-CN' ? '自动化' : 'Automations'}</span>
-          </button>
-          <button type="button" className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
+          </Button>
+          <Button
+            unstyled
+            type="button"
+            className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`}
+            aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined}
+            onClick={() => props.onNavigate('skills')}
+          >
             <span className="project-quick-action-icon" aria-hidden="true">
               <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{copy.skills}</span>
-          </button>
+          </Button>
           {/* 上游首页也保持员工在团队上方的相同顺序。 */}
-          <button
+          <Button
+            unstyled
             type="button"
             className={`project-quick-action${props.activeNavTarget === 'digital-employees' ? ' is-active' : ''}`}
             aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
@@ -903,8 +924,9 @@ export function SidebarNav(props: {
               <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{zh ? '数字员工' : 'Digital employees'}</span>
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={`project-quick-action${props.activeNavTarget === 'digital-teams' ? ' is-active' : ''}`}
             aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined}
@@ -914,12 +936,12 @@ export function SidebarNav(props: {
               <DigitalTeamIcon />
             </span>
             <span className="project-quick-action-label">{zh ? '数字团队' : 'Digital teams'}</span>
-          </button>
+          </Button>
         </nav>
       ) : (
         <nav className="project-quick-actions codex-source-list-quick-actions project-context-actions" aria-label={contextTitle}>
           {showConversationNavigation ? (
-            <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={props.createProjectBusy}>
+            <Button unstyled type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={props.createProjectBusy}>
               <span className="project-quick-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 20 20" focusable="false">
                   <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
@@ -927,7 +949,7 @@ export function SidebarNav(props: {
                 </svg>
               </span>
               <span className="project-quick-action-label">{copy.newChat}</span>
-            </button>
+            </Button>
           ) : null}
         </nav>
       )}
@@ -935,12 +957,20 @@ export function SidebarNav(props: {
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation} onScroll={handleSidebarScroll}>
         {/* 整栏切换分组，筛选和新建作为独立按钮覆盖在右侧。 */}
         <div className="project-quick-actions codex-source-list-quick-actions project-sidebar-group-header">
-          <button type="button" className="project-quick-action project-sidebar-group-toggle" aria-label={copy.projects} aria-expanded={projectsExpanded} aria-controls={projectsListId} onClick={() => setProjectsExpanded((value) => !value)}>
+          <Button
+            unstyled
+            type="button"
+            className="project-quick-action project-sidebar-group-toggle"
+            aria-label={copy.projects}
+            aria-expanded={projectsExpanded}
+            aria-controls={projectsListId}
+            onClick={() => setProjectsExpanded((value) => !value)}
+          >
             <span className="project-quick-action-icon" aria-hidden="true">
               <FoldersIcon weight="regular" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{copy.projects}</span>
-          </button>
+          </Button>
           <span className="project-sidebar-heading-actions">
             {showConversationNavigation ? (
               <ZeusSelect
@@ -963,7 +993,8 @@ export function SidebarNav(props: {
                 header={
                   <>
                     <span>{copy.conversationFilterTitle}</span>
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       className="project-conversation-filter-clear"
                       disabled={!hasStatusFilter}
@@ -973,7 +1004,7 @@ export function SidebarNav(props: {
                       }}
                     >
                       {copy.clearConversationSelection}
-                    </button>
+                    </Button>
                   </>
                 }
                 footer={
@@ -1014,7 +1045,8 @@ export function SidebarNav(props: {
                 size="compact"
               />
             ) : null}
-            <button
+            <Button
+              unstyled
               type="button"
               className="project-add-button"
               aria-label={copy.addProject}
@@ -1024,7 +1056,7 @@ export function SidebarNav(props: {
               {...controlBusyProps(props.createProjectBusy)}
             >
               <Plus aria-hidden="true" weight="regular" />
-            </button>
+            </Button>
           </span>
         </div>
         <Collapsible open={projectsExpanded} id={projectsListId}>
@@ -1060,21 +1092,23 @@ export function SidebarNav(props: {
                   >
                     {/* 项目菜单提升到应用壳层，位置由右键或键盘触发行决定，避免被侧栏滚动容器横向裁剪。 */}
                     {showConversationNavigation ? (
-                      <button
+                      <Button
+                        unstyled
                         type="button"
                         role="menuitem"
                         onClick={() => {
                           closeProjectContextMenu();
-                          props.onOpenProjectSection(project, 'tasks');
+                          return props.onOpenProjectSection(project, 'tasks');
                         }}
                       >
                         <span className="project-more-menu-icon" aria-hidden="true">
                           <WorkspaceTasksIcon weight="regular" />
                         </span>
                         <span>{copy.openProjectTasks}</span>
-                      </button>
+                      </Button>
                     ) : null}
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       role="menuitem"
                       onClick={() => {
@@ -1086,34 +1120,36 @@ export function SidebarNav(props: {
                         {pinned ? <PushPinSlash weight="regular" /> : <PushPin weight="regular" />}
                       </span>
                       <span>{pinned ? copy.unpinProject : copy.pinProject}</span>
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      unstyled
                       type="button"
                       role="menuitem"
                       onClick={() => {
                         closeProjectContextMenu();
-                        void props.onRevealProjectInFinder(project.localPath).catch(() => undefined);
+                        return props.onRevealProjectInFinder(project.localPath).catch(() => undefined);
                       }}
                     >
                       <span className="project-more-menu-icon" aria-hidden="true">
                         <FolderOpen weight="regular" />
                       </span>
                       <span>{copy.revealProjectInFinder}</span>
-                    </button>
-                    <button type="button" role="menuitem" onClick={() => openProjectRenameDialog(project)}>
+                    </Button>
+                    <Button unstyled type="button" role="menuitem" onClick={() => openProjectRenameDialog(project)}>
                       <span className="project-more-menu-icon" aria-hidden="true">
                         <PencilSimple weight="regular" />
                       </span>
                       <span>{copy.renameProject}</span>
-                    </button>
-                    <button type="button" role="menuitem" className="project-menu-remove-action" onClick={() => props.onPrepareProjectDelete(project.id)}>
+                    </Button>
+                    <Button unstyled type="button" role="menuitem" className="project-menu-remove-action" onClick={() => props.onPrepareProjectDelete(project.id)}>
                       <span className="project-more-menu-icon" aria-hidden="true">
                         <X weight="regular" />
                       </span>
                       <span>{copy.deleteProject}</span>
-                    </button>
+                    </Button>
                     {props.pendingProjectDeleteId === project.id ? (
-                      <button
+                      <Button
+                        unstyled
                         type="button"
                         role="menuitem"
                         className="danger-action project-menu-confirm-remove-action"
@@ -1126,7 +1162,7 @@ export function SidebarNav(props: {
                           <X weight="bold" />
                         </span>
                         <span>{copy.confirmDeleteProject}</span>
-                      </button>
+                      </Button>
                     ) : null}
                   </MenuSurface>
                 ) : null;
@@ -1231,20 +1267,21 @@ export function SidebarNav(props: {
         {/* 上游布局的全局入口已在顶部呈现，只有当前布局需要底部兜底。 */}
         {!props.activeProjectId && props.mainLayout !== 'upstream' ? (
           <nav className="project-global-tools" aria-label={copy.quickActionsLabel}>
-            <button type="button" className={props.activeNavTarget === 'automations' ? 'active' : ''} aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined} onClick={() => props.onNavigate('automations')}>
+            <Button unstyled type="button" className={props.activeNavTarget === 'automations' ? 'active' : ''} aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined} onClick={() => props.onNavigate('automations')}>
               <span aria-hidden="true">
                 <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {zh ? '自动化' : 'Automations'}
-            </button>
-            <button type="button" className={props.activeNavTarget === 'skills' ? 'active' : ''} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
+            </Button>
+            <Button unstyled type="button" className={props.activeNavTarget === 'skills' ? 'active' : ''} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
               <span aria-hidden="true">
                 <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {copy.skills}
-            </button>
+            </Button>
             {/* 无项目首页仍可管理全局员工。 */}
-            <button
+            <Button
+              unstyled
               type="button"
               className={props.activeNavTarget === 'digital-employees' ? 'active' : ''}
               aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
@@ -1254,23 +1291,29 @@ export function SidebarNav(props: {
                 <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {zh ? '数字员工' : 'Digital employees'}
-            </button>
-            <button type="button" className={props.activeNavTarget === 'digital-teams' ? 'active' : ''} aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined} onClick={() => props.onNavigate('digital-teams')}>
+            </Button>
+            <Button
+              unstyled
+              type="button"
+              className={props.activeNavTarget === 'digital-teams' ? 'active' : ''}
+              aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined}
+              onClick={() => props.onNavigate('digital-teams')}
+            >
               <span aria-hidden="true">
                 <DigitalTeamIcon />
               </span>
               {zh ? '数字团队' : 'Digital teams'}
-            </button>
+            </Button>
           </nav>
         ) : null}
         {props.mainLayout === 'upstream' || !props.activeProjectId ? (
           <section className="project-global-settings" aria-label={copy.globalSettingsLabel}>
-            <button type="button" className={props.activeNavTarget === 'settings' ? 'active' : ''} onClick={() => props.onNavigate('settings')}>
+            <Button unstyled type="button" className={props.activeNavTarget === 'settings' ? 'active' : ''} onClick={() => props.onNavigate('settings')}>
               <span aria-hidden="true">
                 <GearSix weight="regular" />
               </span>
               {copy.settings}
-            </button>
+            </Button>
           </section>
         ) : null}
       </footer>
@@ -1287,7 +1330,7 @@ export function SidebarNav(props: {
               if (projectRenameError) setProjectRenameError(undefined);
             }}
             onClose={closeProjectRenameDialog}
-            onSubmit={(event) => void submitProjectRename(event)}
+            onSubmit={(event) => submitProjectRename(event)}
           />
         ) : null}
       </MotionPresence>
@@ -1336,12 +1379,12 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
   const actionHint = zh ? '点击打开更新窗口' : 'Open the update window';
   return (
     <section className="automatic-update-indicator" data-phase={props.state.phase} aria-live="polite" aria-atomic="true">
-      <button type="button" data-icon-tooltip={`${props.state.detail} ${actionHint}`} aria-label={zh ? `${label}。${props.state.detail} ${actionHint}` : `${label}. ${props.state.detail} ${actionHint}`} onClick={props.onOpen}>
+      <Button unstyled type="button" data-icon-tooltip={`${props.state.detail} ${actionHint}`} aria-label={zh ? `${label}。${props.state.detail} ${actionHint}` : `${label}. ${props.state.detail} ${actionHint}`} onClick={props.onOpen}>
         <span className="automatic-update-indicator-icon" aria-hidden="true">
           {icon}
         </span>
         <span>{label}</span>
-      </button>
+      </Button>
     </section>
   );
 }
@@ -1356,9 +1399,9 @@ export function InlineRecoveryPrompt(props: { title: string; body: string; actio
       {props.actions.length > 0 ? (
         <span className="project-inline-recovery-command-rail">
           {props.actions.map((action) => (
-            <button key={action.label} type="button" onClick={action.onAction} disabled={action.disabled} {...controlBusyProps(action.busy === true)}>
+            <Button unstyled key={action.label} type="button" onClick={action.onAction} disabled={action.disabled} {...controlBusyProps(action.busy === true)}>
               {action.label}
-            </button>
+            </Button>
           ))}
         </span>
       ) : null}

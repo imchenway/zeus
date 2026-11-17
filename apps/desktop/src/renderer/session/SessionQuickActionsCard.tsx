@@ -38,6 +38,7 @@ import { platformShortcutLabel } from '../platform.js';
 import { conversationGitDeliveryTarget } from '../git/conversationGitDeliveryTarget.js';
 import { GitDeliveryProgress } from '../git/GitDeliveryProgress.js';
 import { useGitDeliveryRuns } from '../git/useGitDeliveryRuns.js';
+import { Button } from '../ui/Button.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -412,7 +413,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
         </span>
       ) : null}
       {persistent || props.suppressed ? null : (
-        <button
+        <Button
+          unstyled
           ref={triggerRef}
           type="button"
           className={`session-quick-actions-trigger ${open ? 'selected' : ''}`}
@@ -423,7 +425,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           onClick={() => setOpen((current) => !current)}
         >
           <Desktop aria-hidden="true" weight="regular" />
-        </button>
+        </Button>
       )}
 
       {cardPresent ? (
@@ -495,18 +497,19 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   </div>
 
                   {subagentCount > 0 && props.onOpenSubagents ? (
-                    <button type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
+                    <Button unstyled type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
                       <UsersThree aria-hidden="true" weight="regular" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '智能体' : 'Agents'}</strong>
                         <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
                       </span>
                       <ArrowSquareOut aria-hidden="true" weight="regular" />
-                    </button>
+                    </Button>
                   ) : null}
 
                   {props.onToggleSideQuestion ? (
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       className="session-quick-actions-row"
                       aria-label={zh ? '侧边栏会话' : 'Sidebar conversation'}
@@ -517,10 +520,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '侧边栏会话' : 'Sidebar conversation'}</strong>
                       </span>
-                    </button>
+                    </Button>
                   ) : null}
 
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     className="session-quick-actions-row"
                     aria-label={zh ? '浏览器' : 'Browser'}
@@ -533,10 +537,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '浏览器' : 'Browser'}</strong>
                     </span>
-                  </button>
+                  </Button>
 
                   {props.onToggleTerminal ? (
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       className="session-quick-actions-row"
                       aria-label={zh ? '会话终端' : 'Conversation terminal'}
@@ -549,19 +554,20 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '会话终端' : 'Conversation terminal'}</strong>
                       </span>
-                    </button>
+                    </Button>
                   ) : null}
 
-                  <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} data-icon-tooltip={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
+                  <Button unstyled type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} data-icon-tooltip={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
                     <FileCode aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '代码审查' : 'Code review'}</strong>
                     </span>
                     <ArrowSquareOut aria-hidden="true" weight="regular" />
-                  </button>
+                  </Button>
 
                   <div className="session-quick-actions-delivery">
-                    <button
+                    <Button
+                      unstyled
                       type="button"
                       className="session-quick-actions-row"
                       disabled={!canOpenDelivery || openingDelivery?.conversationId === props.conversation.id}
@@ -588,7 +594,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                           />
                         </IconTooltip>
                       )}
-                    </button>
+                    </Button>
                     {deliveryRun ? (
                       <div className="session-quick-actions-delivery-progress">
                         <GitDeliveryProgress run={deliveryRun} zh={zh} />
@@ -601,9 +607,9 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   <header>
                     <strong>{zh ? '来源' : 'Sources'}</strong>
                     {props.onAddSources ? (
-                      <button type="button" aria-label={zh ? '添加来源' : 'Add source'} data-icon-tooltip={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => void props.onAddSources?.()}>
+                      <Button unstyled type="button" aria-label={zh ? '添加来源' : 'Add source'} data-icon-tooltip={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => props.onAddSources?.()}>
                         <Plus aria-hidden="true" weight="regular" />
-                      </button>
+                      </Button>
                     ) : null}
                   </header>
                   {visibleSources.length > 0 ? (
@@ -611,10 +617,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       {visibleSources.map((source) => (
                         <li key={source.id}>
                           {source.resource && props.onOpenSource ? (
-                            <button type="button" data-icon-tooltip={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
+                            <Button unstyled type="button" data-icon-tooltip={source.label} onClick={() => props.onOpenSource?.(source.resource as ConversationResource)}>
                               <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
                               <span className="session-quick-actions-source-label">{source.label}</span>
-                            </button>
+                            </Button>
                           ) : (
                             <span data-icon-tooltip={source.label}>
                               <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
@@ -628,10 +634,10 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <p>{zh ? '当前会话还没有来源。' : 'No sources in this conversation yet.'}</p>
                   )}
                   {sources.length > DEFAULT_VISIBLE_SOURCE_COUNT ? (
-                    <button type="button" className="session-quick-actions-view-all" aria-expanded={showAllSources} onClick={() => setShowAllSources((current) => !current)}>
+                    <Button unstyled type="button" className="session-quick-actions-view-all" aria-expanded={showAllSources} onClick={() => setShowAllSources((current) => !current)}>
                       <ShareNetwork aria-hidden="true" weight="regular" />
                       <span>{showAllSources ? (zh ? '收起' : 'Show less') : zh ? '查看全部' : 'View all'}</span>
-                    </button>
+                    </Button>
                   ) : null}
                 </section>
 

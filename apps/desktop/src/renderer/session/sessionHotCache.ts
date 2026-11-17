@@ -1,4 +1,4 @@
-import { emptyConversationContextDraft } from '@zeus/shared';
+import { emptyConversationContextDraft, sessionViewCacheSchemaGeneration } from '@zeus/shared';
 import type { NativeSessionState } from './sessionTypes.js';
 import { resumeCachedConversationSnapshot } from './conversationSnapshotV2Adapter.js';
 import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
@@ -12,7 +12,7 @@ export const sessionHotCacheEntryByteLimit = 8 * 1024 * 1024;
 /** 磁盘显示缓存允许保留的最大会话数。 */
 export const sessionViewCacheMaximumEntries = 32;
 /** 仅恢复在截断前已经采用用户展示正文的缓存，旧执行正文缓存由权威快照重建。 */
-export const sessionViewCacheSchemaGeneration = 'zeus-session-visible-content-cache';
+export { sessionViewCacheSchemaGeneration } from '@zeus/shared';
 /** 磁盘显示缓存的最长保留时间。 */
 export const sessionViewCacheMaximumAgeMs = 14 * 24 * 60 * 60 * 1000;
 

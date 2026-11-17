@@ -15,6 +15,8 @@ import type { NativeConversationAttachment, NativeQueuedSubmission, NativeSessio
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { formatAsyncQuestionAnswer } from '@zeus/shared';
+import { Form } from '../ui/Form.js';
+import { Button } from '../ui/Button.js';
 
 /** 输入框上方排队卡片所需的权威操作。 */
 export interface QueuedConversationMessagesProps {
@@ -267,10 +269,11 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 )}
                 {editingId === submission.id ? null : (
                   <footer className="session-queued-message-actions">
-                    <button type="button" data-icon-tooltip={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
+                    <Button unstyled type="button" data-icon-tooltip={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
                       <PencilSimple aria-hidden="true" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      unstyled
                       type="button"
                       className="session-queued-message-steer"
                       data-icon-tooltip={steerReason ?? sendLabel}
@@ -278,27 +281,28 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       aria-disabled={Boolean(!submissionWritable || busy || !sendAction || steerReason)}
                       onClick={() => {
                         if (!submissionWritable || busy || !sendAction || steerReason) return;
-                        void runAction(submission.id, resumable ? 'resume' : 'steer', sendAction);
+                        return runAction(submission.id, resumable ? 'resume' : 'steer', sendAction);
                       }}
                     >
                       <ArrowBendUpRight aria-hidden="true" weight="bold" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      unstyled
                       type="button"
                       className="session-queued-message-delete"
                       data-icon-tooltip={copy.remove}
                       aria-label={copy.remove}
-                      onClick={() => void runAction(submission.id, 'delete', () => props.onDelete?.(submission.id))}
+                      onClick={() => runAction(submission.id, 'delete', () => props.onDelete?.(submission.id))}
                       disabled={!submissionWritable || busy || !props.onDelete}
                     >
                       <Trash aria-hidden="true" />
-                    </button>
-                    <button type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={(event) => reorder(submission, -1, event.currentTarget)} disabled={!submissionWritable || !canMoveUp}>
+                    </Button>
+                    <Button unstyled type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={(event) => reorder(submission, -1, event.currentTarget)} disabled={!submissionWritable || !canMoveUp}>
                       <ArrowUp aria-hidden="true" />
-                    </button>
-                    <button type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={(event) => reorder(submission, 1, event.currentTarget)} disabled={!submissionWritable || !canMoveDown}>
+                    </Button>
+                    <Button unstyled type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={(event) => reorder(submission, 1, event.currentTarget)} disabled={!submissionWritable || !canMoveDown}>
                       <ArrowDown aria-hidden="true" />
-                    </button>
+                    </Button>
                   </footer>
                 )}
                 {rowError ? (
@@ -368,13 +372,13 @@ function QueuedMessageEditor(props: {
   }, []);
 
   /** 表单和快捷键使用同一保存门禁。 */
-  function submit(event: FormEvent<HTMLFormElement>): void {
+  function submit(event: FormEvent<HTMLFormElement>): void | Promise<void> {
     event.preventDefault();
-    if (!saveDisabled) void props.onSave(draft, attachments);
+    if (!saveDisabled) return props.onSave(draft, attachments);
   }
 
   return (
-    <form
+    <Form
       className="session-queued-message-editor"
       onSubmit={submit}
       aria-busy={props.busy || inputResources.processing || undefined}
@@ -411,7 +415,7 @@ function QueuedMessageEditor(props: {
           if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
-            props.onCancel();
+            return props.onCancel();
           } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
             if (!saveDisabled) event.currentTarget.form?.requestSubmit();
@@ -420,17 +424,17 @@ function QueuedMessageEditor(props: {
       />
       <footer>
         <small aria-hidden="true">{copy.editShortcut}</small>
-        <button type="button" data-icon-tooltip={copy.addAttachments} aria-label={copy.addAttachments} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
+        <Button unstyled type="button" data-icon-tooltip={copy.addAttachments} aria-label={copy.addAttachments} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
           <Paperclip aria-hidden="true" />
-        </button>
-        <button type="button" className="session-queued-message-editor-cancel" onClick={props.onCancel} disabled={props.busy}>
+        </Button>
+        <Button unstyled type="button" className="session-queued-message-editor-cancel" onClick={props.onCancel} disabled={props.busy}>
           {copy.cancel}
-        </button>
-        <button type="submit" className="session-queued-message-editor-save" disabled={saveDisabled}>
+        </Button>
+        <Button unstyled type="submit" className="session-queued-message-editor-save" disabled={saveDisabled}>
           {copy.save}
-        </button>
+        </Button>
       </footer>
-    </form>
+    </Form>
   );
 }
 

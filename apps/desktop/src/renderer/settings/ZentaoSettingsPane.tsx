@@ -235,7 +235,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
         <nav className="model-connection-list" aria-label={zh ? '禅道实例列表' : 'ZenTao instance list'}>
           {instances.length === 0 ? <p>{zh ? '还没有禅道实例。' : 'No ZenTao instances yet.'}</p> : null}
           {instances.map((instance) => (
-            <button key={instance.id} type="button" className={draft.id === instance.id ? 'selected' : ''} aria-current={draft.id === instance.id ? 'true' : undefined} disabled={busy} onClick={() => selectInstance(instance)}>
+            <Button unstyled key={instance.id} type="button" className={draft.id === instance.id ? 'selected' : ''} aria-current={draft.id === instance.id ? 'true' : undefined} disabled={busy} onClick={() => selectInstance(instance)}>
               <span>
                 <strong>{instance.host}</strong>
                 <small>{instance.account || (zh ? '未配置账号' : 'No account')}</small>
@@ -243,7 +243,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
               <em data-configured={instance.authenticationStatus === 'authenticated' || undefined}>
                 {instance.authenticationStatus === 'authenticated' ? (zh ? '已登录' : 'Signed in') : instance.passwordConfigured ? (zh ? '未登录 · 密码已保存' : 'Signed out · password saved') : zh ? '未登录' : 'Signed out'}
               </em>
-            </button>
+            </Button>
           ))}
         </nav>
 
@@ -251,7 +251,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           onInput={() => setSaveState('idle')}
           disabled={busy}
           onBlurCapture={(event) => {
-            if (draft.id && event.target instanceof HTMLInputElement) void save();
+            if (draft.id && event.target instanceof HTMLInputElement) return save();
           }}
           className="model-connection-editor"
           aria-label={zh ? '禅道实例编辑器' : 'ZenTao instance editor'}
@@ -301,7 +301,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
                   aria-pressed={passwordVisible}
                   disabled={!draft.account.trim() || busy}
                   busy={status === 'revealing'}
-                  onClick={() => void togglePassword()}
+                  onClick={() => togglePassword()}
                 >
                   {passwordVisible ? <EyeSlashIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}
                 </Button>
@@ -312,17 +312,17 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
 
           <footer className="model-connection-actions">
             {!draft.id || saveState === 'failed' ? (
-              <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.baseUrl.trim()}>
+              <Button variant="primary" size="compact" onClick={() => save()} disabled={busy || !draft.baseUrl.trim()}>
                 {draft.id ? (zh ? '重试保存' : 'Retry save') : zh ? '创建实例' : 'Create instance'}
               </Button>
             ) : null}
             {draft.id ? (
-              <Button variant="secondary" size="compact" onClick={() => void verify()} disabled={busy} busy={status === 'verifying'}>
+              <Button variant="secondary" size="compact" onClick={() => verify()} disabled={busy} busy={status === 'verifying'}>
                 {zh ? '验证登录' : 'Verify sign-in'}
               </Button>
             ) : null}
             {draft.id && current?.passwordConfigured ? (
-              <Button variant="secondary" size="compact" onClick={() => void clearPassword()} disabled={busy}>
+              <Button variant="secondary" size="compact" onClick={() => clearPassword()} disabled={busy}>
                 {zh ? '清除密码' : 'Clear password'}
               </Button>
             ) : null}
@@ -336,7 +336,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           {draft.id && confirmDelete ? (
             <div className="model-connection-enabled" role="alert">
               <span>{zh ? '删除后会失去该实例配置，任务解析将回退为浏览器登录或手动填写。' : 'Deleting removes this instance configuration; task parsing falls back to browser sign-in or manual entry.'}</span>
-              <Button variant="primary" size="compact" onClick={() => void removeInstance()} disabled={busy} busy={status === 'deleting'}>
+              <Button variant="primary" size="compact" onClick={() => removeInstance()} disabled={busy} busy={status === 'deleting'}>
                 {zh ? '确认删除' : 'Confirm delete'}
               </Button>
               <Button variant="secondary" size="compact" onClick={() => setConfirmDelete(false)} disabled={busy}>

@@ -7,6 +7,7 @@ import { HandPalmIcon as HandPalm } from '@phosphor-icons/react/dist/csr/HandPal
 import { PreviewImage } from '../code/FilePreview.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
+import { Button } from '../ui/Button.js';
 
 /** 会话环境信息下展示最近一次观察，更新不触发整个会话重新渲染。 */
 export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean }) {
@@ -132,14 +133,15 @@ export function SessionComputerPreview(props: { conversationId: string; language
         <>
           <div className="session-computer-preview-image">
             {preview.imageUrl && failedImage !== preview.imageUrl ? (
-              <button
+              <Button
+                unstyled
                 type="button"
                 className="session-computer-preview-open"
                 aria-label={zh ? `预览 ${preview.appName} 完整画面` : `Preview full capture of ${preview.appName}`}
                 onClick={() => setExpanded({ url: preview.imageUrl!, name: preview.appName })}
               >
                 <img src={preview.imageUrl} alt={zh ? `${preview.appName} 上次观察画面` : `Last observed view of ${preview.appName}`} draggable={false} onError={() => setFailedImage(preview.imageUrl)} />
-              </button>
+              </Button>
             ) : (
               <p role="status">
                 {preview.imageUrl && failedImage === preview.imageUrl
@@ -152,19 +154,20 @@ export function SessionComputerPreview(props: { conversationId: string; language
               </p>
             )}
             <div className="session-computer-preview-controls">
-              <button
+              <Button
+                unstyled
                 type="button"
                 disabled={busy}
                 aria-busy={busy || undefined}
                 aria-label={zh ? '停止本会话屏幕控制' : 'Stop screen control for this conversation'}
                 data-icon-tooltip={zh ? '停止屏幕控制' : 'Stop screen control'}
-                onClick={() => void stopControl()}
+                onClick={() => stopControl()}
               >
                 <X aria-hidden="true" />
-              </button>
-              <button type="button" popoverTarget={infoId} aria-haspopup="dialog" aria-label={zh ? '屏幕控制详情' : 'Screen control details'} data-icon-tooltip={zh ? '屏幕控制详情' : 'Screen control details'}>
+              </Button>
+              <Button unstyled type="button" popoverTarget={infoId} aria-haspopup="dialog" aria-label={zh ? '屏幕控制详情' : 'Screen control details'} data-icon-tooltip={zh ? '屏幕控制详情' : 'Screen control details'}>
                 <HandPalm aria-hidden="true" />
-              </button>
+              </Button>
               <PopoverSurface id={infoId} popover="auto" role="dialog" aria-label={zh ? '屏幕控制详情' : 'Screen control details'} className="session-computer-preview-info">
                 <strong>{preview.appName}</strong>
                 <span>{preview.windowTitle || preview.appName}</span>
@@ -196,9 +199,9 @@ export function SessionComputerPreview(props: { conversationId: string; language
               <div className="file-preview file-preview-simple-image">
                 <header className="file-preview-dialog-header">
                   <strong>{expanded.name}</strong>
-                  <button type="button" className="file-preview-close" aria-label={zh ? '关闭' : 'Close'} onClick={() => setExpanded(null)}>
+                  <Button unstyled type="button" className="file-preview-close" aria-label={zh ? '关闭' : 'Close'} onClick={() => setExpanded(null)}>
                     <X size={18} aria-hidden="true" />
-                  </button>
+                  </Button>
                 </header>
                 <PreviewImage url={expanded.url} name={expanded.name} zh={zh} compact />
               </div>

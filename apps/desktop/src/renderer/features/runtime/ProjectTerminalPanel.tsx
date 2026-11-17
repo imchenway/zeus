@@ -12,6 +12,7 @@ import { TerminalTabs } from './TerminalTabs.js';
 import { observeTerminalTheme, terminalDisplayOptions } from './terminalPresentation.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from './TerminalSearch.js';
+import { Button } from '../../ui/Button.js';
 
 /** 终端面板状态持久化存储键前缀。 */
 const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
@@ -260,7 +261,8 @@ export function ProjectTerminalPanel(props: {
 
   return (
     <>
-      <button
+      <Button
+        unstyled
         ref={entryRef}
         type="button"
         className={open ? 'is-active' : ''}
@@ -274,7 +276,7 @@ export function ProjectTerminalPanel(props: {
         aria-expanded={open}
       >
         <TerminalWindowIcon aria-hidden="true" />
-      </button>
+      </Button>
       {opened && props.dockHost
         ? createPortal(
             <TerminalDock open={open} heightShare={heightShare} label={zh ? '项目终端' : 'Project terminal'} search={search}>
@@ -320,30 +322,31 @@ export function ProjectTerminalPanel(props: {
                   closingId={closingId}
                   closeDisabled={busy || loadFailed}
                   onSelect={setSelectedId}
-                  onNew={() => void start()}
-                  onClose={(session) => void closeTab(session)}
+                  onNew={() => start()}
+                  onClose={(session) => closeTab(session)}
                 />
                 <TerminalSearchButton search={search} language={props.language} />
                 {selected ? (
                   <>
-                    <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
+                    <Button unstyled className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
                       <ArrowClockwise aria-hidden="true" />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      unstyled
                       className="zeus-terminal-action"
                       type="button"
                       data-icon-tooltip={zh ? '结束会话' : 'End session'}
                       aria-label={zh ? '结束会话' : 'End session'}
                       disabled={busy || loadFailed || !['running', 'orphan_detected'].includes(selected.status)}
-                      onClick={() => void stop()}
+                      onClick={() => stop()}
                     >
                       <Stop aria-hidden="true" />
-                    </button>
+                    </Button>
                   </>
                 ) : null}
-                <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
+                <Button unstyled className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
                   <X aria-hidden="true" />
-                </button>
+                </Button>
               </header>
               <TerminalSearchBar search={search} language={props.language} />
               <div className="project-terminal-content" role="tabpanel" id={panelId} aria-labelledby={selectedId ? `${panelId}-${selectedId}` : undefined}>

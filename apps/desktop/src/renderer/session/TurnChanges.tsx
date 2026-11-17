@@ -28,6 +28,7 @@ import { CodeCommentPanel } from './CodeCommentPanel.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskGitDiffTable } from '../task/TaskGitDiffTable.js';
 import type { TaskGitFileDiff } from './sessionTypes.js';
+import { Button } from '../ui/Button.js';
 
 type ChangeAction = 'undo' | 'reapply';
 
@@ -94,7 +95,8 @@ export function TurnChangeCard(props: {
         </span>
         <nav aria-label={zh ? '文件变更操作' : 'File change actions'}>
           {hiddenCount > 0 || (expanded && changeSet.files.length > 3) ? (
-            <button
+            <Button
+              unstyled
               type="button"
               className="session-turn-change-more"
               aria-expanded={expanded}
@@ -103,23 +105,24 @@ export function TurnChangeCard(props: {
               onClick={() => setExpanded((value) => !value)}
             >
               <CaretDown aria-hidden="true" data-expanded={expanded || undefined} />
-            </button>
+            </Button>
           ) : null}
           {action ? (
-            <button
+            <Button
+              unstyled
               type="button"
               className="session-turn-change-undo"
               data-icon-tooltip={zh ? '仅操作此卡片列出的已记录变更' : 'Only affects recorded changes listed in this card'}
               disabled={Boolean(busy) || !props.onOperate}
-              onClick={() => void operate()}
+              onClick={() => operate()}
             >
               {action === 'undo' ? <ArrowCounterClockwise aria-hidden="true" /> : <ArrowClockwise aria-hidden="true" />}
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
-            </button>
+            </Button>
           ) : null}
-          <button type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0} onClick={() => props.onReview?.(changeSet)}>
+          <Button unstyled type="button" className="session-turn-change-review" disabled={!props.onReview || changeSet.files.length === 0} onClick={() => props.onReview?.(changeSet)}>
             {zh ? '审核' : 'Review'}
-          </button>
+          </Button>
         </nav>
       </header>
       {/* 不可恢复只影响操作能力；真正的操作冲突才显示错误。 */}
@@ -138,7 +141,8 @@ export function TurnChangeCard(props: {
           <ul className="session-turn-change-files">
             {visibleFiles.map((file) => (
               <li key={file.id}>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   data-file-path={file.newPath ?? file.oldPath ?? undefined}
                   aria-label={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`}
@@ -153,7 +157,7 @@ export function TurnChangeCard(props: {
                     {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
                     {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
                   </span>
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -341,7 +345,8 @@ export function TurnDiffWorkspace(props: {
       return (
         <>
           {activePath && canComment ? (
-            <button
+            <Button
+              unstyled
               type="button"
               className="session-code-comment-add"
               aria-label={zh ? `评论${side === 'left' ? '旧' : '新'}文件第 ${line} 行` : `Comment on ${side === 'left' ? 'old' : 'new'} line ${line}`}
@@ -359,15 +364,16 @@ export function TurnDiffWorkspace(props: {
             />
           ) : null}
           {side === currentSide && activeFile && canOpen ? (
-            <button
+            <Button
+              unstyled
               data-icon-tooltip={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`}
               type="button"
               className="session-diff-line-number"
               aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`}
-              onClick={() => void openFile(activeFile, line)}
+              onClick={() => openFile(activeFile, line)}
             >
               {line}
-            </button>
+            </Button>
           ) : (
             <span className="session-diff-line-number">{line}</span>
           )}
@@ -406,12 +412,12 @@ export function TurnDiffWorkspace(props: {
                 <strong>{zh ? '本地评论' : 'Local comment'}</strong>
                 <span>{comment.body}</span>
                 <span className="session-saved-code-comment-actions">
-                  <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                  <Button unstyled type="button" onClick={() => setEditingCommentId(comment.id)}>
                     {zh ? '编辑' : 'Edit'}
-                  </button>
-                  <button type="button" onClick={() => callbacksRef.current.onCommentsChange?.((callbacksRef.current.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
+                  </Button>
+                  <Button unstyled type="button" onClick={() => callbacksRef.current.onCommentsChange?.((callbacksRef.current.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
                     {zh ? '删除' : 'Delete'}
-                  </button>
+                  </Button>
                 </span>
               </span>
             ),
@@ -435,22 +441,23 @@ export function TurnDiffWorkspace(props: {
         </span>
         <nav aria-label={zh ? '变更审核操作' : 'Change review actions'}>
           {action ? (
-            <button type="button" className="session-context-text-action" disabled={Boolean(busy) || !props.onOperate} onClick={() => void operate()}>
+            <Button unstyled type="button" className="session-context-text-action" disabled={Boolean(busy) || !props.onOperate} onClick={() => operate()}>
               {action === 'undo' ? <ArrowCounterClockwise aria-hidden="true" /> : <ArrowClockwise aria-hidden="true" />}
               <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
+            unstyled
             type="button"
             aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
             data-icon-tooltip={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
             onClick={() => props.onFullWidthChange(!props.fullWidth)}
           >
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-          </button>
-          <button type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          </Button>
+          <Button unstyled type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </nav>
       </header>
       {/* 审核不展示撤销资格提示，实际操作冲突继续显示错误。 */}
@@ -509,10 +516,10 @@ export function TurnDiffWorkspace(props: {
                 </strong>
                 <span>
                   {props.onOpenFile ? (
-                    <button type="button" className="session-turn-diff-open-file" onClick={() => void openFile(activeFile)}>
+                    <Button unstyled type="button" className="session-turn-diff-open-file" onClick={() => openFile(activeFile)}>
                       <FileCode aria-hidden="true" />
                       <span>{zh ? '打开当前文件' : 'Open current file'}</span>
-                    </button>
+                    </Button>
                   ) : null}
                 </span>
               </header>
@@ -539,9 +546,9 @@ export function TurnDiffWorkspace(props: {
                             ? '差异正文尚未加载。'
                             : 'The diff has not been loaded yet.'}
                       {props.onLoad ? (
-                        <button type="button" disabled={props.loading} onClick={props.onLoad}>
+                        <Button unstyled type="button" disabled={props.loading} onClick={props.onLoad}>
                           {zh ? '加载差异' : 'Load diff'}
-                        </button>
+                        </Button>
                       ) : null}
                     </p>
                   ) : !activeFile.unifiedDiff ? (
@@ -597,7 +604,9 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
             </details>
           ) : (
             files.map(({ file }) => (
-              <button
+              <Button
+                data-busy-behavior="background"
+                unstyled
                 type="button"
                 className="session-turn-diff-file"
                 data-file-path={file.newPath ?? file.oldPath ?? undefined}
@@ -618,7 +627,7 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
                     {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
                   </small>
                 ) : null}
-              </button>
+              </Button>
             ))
           )}
         </li>

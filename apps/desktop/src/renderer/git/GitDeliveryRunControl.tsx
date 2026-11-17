@@ -331,7 +331,7 @@ export function GitDeliveryRunControl(props: {
               size="compact"
               onClick={() => {
                 setError(null);
-                void refresh().catch((reason) => setError(reason));
+                return refresh().catch((reason) => setError(reason));
               }}
             >
               {props.zh ? '重新读取' : 'Reload'}
@@ -372,12 +372,12 @@ export function GitDeliveryRunControl(props: {
                         </small>
                       ) : null}
                       {step.conversationId ? (
-                        <Button size="compact" onClick={() => void openConversation(run, step.conversationId!)}>
+                        <Button size="compact" onClick={() => openConversation(run, step.conversationId!)}>
                           {props.zh ? '打开冲突会话' : 'Open conflict conversation'}
                         </Button>
                       ) : null}
                       {step.action === 'merge' && ['attention', 'waiting'].includes(step.state) ? (
-                        <Button size="compact" disabled={busy} onClick={() => void openConflict(run, step)}>
+                        <Button size="compact" disabled={busy} onClick={() => openConflict(run, step)}>
                           {props.zh ? '处理冲突' : 'Resolve conflicts'}
                         </Button>
                       ) : null}
@@ -386,7 +386,7 @@ export function GitDeliveryRunControl(props: {
                 </ul>
               ) : null}
               {run.state === 'attention' ? (
-                <Button size="compact" disabled={busy} onClick={() => void resume(run)}>
+                <Button size="compact" disabled={busy} onClick={() => resume(run)}>
                   {props.zh ? '继续未完成步骤' : 'Continue remaining steps'}
                 </Button>
               ) : null}
@@ -410,7 +410,7 @@ export function GitDeliveryRunControl(props: {
                     : 'Archive conversation after delivery succeeds'
                   : undefined
             }
-            onClick={() => void start()}
+            onClick={() => start()}
           >
             {summary || (props.zh ? '执行交付' : 'Run delivery')}
           </Button>
@@ -428,7 +428,7 @@ export function GitDeliveryRunControl(props: {
             onClose={() => setCleanupRun(null)}
             onSubmit={(event) => {
               event.preventDefault();
-              void resume(cleanupRun, true);
+              return resume(cleanupRun, true);
             }}
           >
             {cleanupRun.steps
@@ -483,7 +483,7 @@ export function GitDeliveryRunControl(props: {
             }}
             onSubmit={(event) => {
               event.preventDefault();
-              void saveConflict();
+              return saveConflict();
             }}
           >
             {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
@@ -497,7 +497,7 @@ export function GitDeliveryRunControl(props: {
                 taskBranch={conflict.sourceBranch}
                 conflictPath={conflict.file?.path ?? ''}
                 conflict={document}
-                onSelectPath={(path) => void openConflict(conflict.run, conflict.step, path)}
+                onSelectPath={(path) => openConflict(conflict.run, conflict.step, path)}
                 onDocumentChange={setDocument}
                 skillClient={props.client}
                 projectId={props.projectId}
@@ -515,7 +515,7 @@ export function GitDeliveryRunControl(props: {
                   onClick={() => {
                     const run = conflict.run;
                     setConflict(null);
-                    void resume(run);
+                    return resume(run);
                   }}
                 >
                   {props.zh ? '继续交付' : 'Continue delivery'}

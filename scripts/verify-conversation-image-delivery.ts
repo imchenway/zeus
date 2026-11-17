@@ -85,7 +85,7 @@ try {
   const resource = toConversationResource(record);
   assert.ok(resource?.kind === 'attachment' && resource.previewKind === 'image');
   /** 正式预览入口验证归档授权并读取字节。 */
-  const preview = readConversationResourcePreview(resource, toConversationResourceOpenIntent(record));
+  const preview = await readConversationResourcePreview(resource, toConversationResourceOpenIntent(record));
   assert.equal(preview.kind, 'image');
   assert.deepEqual(readFileSync(JSON.parse(record.targetJson).absolutePath), png);
   assert.equal(normalize(source)[0]?.id, record.id);
@@ -155,7 +155,7 @@ async function verifyDeliveryLifecycle(source: string): Promise<void> {
   const blockedRecord = { ...blocked, createdAt: item.updatedAt, updatedAt: item.updatedAt };
   assert.throws(() => toConversationResourceOpenIntent(blockedRecord));
   rmSync(brokenRoot);
-  assert.equal(readConversationResourcePreview(toConversationResource(blockedRecord) as Exclude<ReturnType<typeof toConversationResource>, null | { kind: 'website' }>, toConversationResourceOpenIntent(blockedRecord)).kind, 'image');
+  assert.equal((await readConversationResourcePreview(toConversationResource(blockedRecord) as Exclude<ReturnType<typeof toConversationResource>, null | { kind: 'website' }>, toConversationResourceOpenIntent(blockedRecord))).kind, 'image');
   /** 生成工具交付也冻结到受管目录，原工具图片清除后仍可预览。 */
   const generatedRoot = join(root, 'generated');
   const generatedPath = join(generatedRoot, item.providerThreadId, 'generated.png');
@@ -219,7 +219,7 @@ async function verifyDeliveryLifecycle(source: string): Promise<void> {
     const persisted = repository.getById(late.id)!;
     assert.equal(JSON.parse(persisted.authorityJson).imageArchive.sourcePath, latePath);
     writeFileSync(latePath, png);
-    assert.equal(readConversationResourcePreview(toConversationResource(persisted) as Exclude<ReturnType<typeof toConversationResource>, null | { kind: 'website' }>, toConversationResourceOpenIntent(persisted)).kind, 'image');
+    assert.equal((await readConversationResourcePreview(toConversationResource(persisted) as Exclude<ReturnType<typeof toConversationResource>, null | { kind: 'website' }>, toConversationResourceOpenIntent(persisted))).kind, 'image');
     const page = new ConversationSnapshotV2Repository(database).listResourcePage({ conversationId: item.conversationId });
     assert.equal(page.items.find((entry) => entry.id === late.id)?.sourceReference, latePath);
     rmSync(latePath);
