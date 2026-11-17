@@ -4104,15 +4104,24 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     await recoverAcceptedSdkTurnsAfterRestart();
     await reconcilePausedTurnsAfterRestart();
+    if (codexNativeEnabled) {
+      // 线程归属与已落库回执先在本地恢复，联网核对由各会话的派发入口单独等待。
+      conversationTurns.restoreAcceptedThreadBindings();
+      await codexNativeCoordinator.reconcilePersistedTerminalSubmissions();
+    }
   }
-  if (!readOnlyValidation) await db.save();
+  if (!readOnlyValidation) {
+    // 全局门禁只等待本地恢复与宿主交接，不等待旧 Provider 的联网恢复。
+    conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
+    await db.save();
+  }
   // 所有组合根初始化完成后再启动后台投影；启动失败时不能让异步扫描访问已回滚关闭的数据库，
   // 更不能用次生 “SQLite 已关闭” 覆盖真正的启动错误。
   if (!readOnlyValidation) {
-    if (!executionHostDispatchMayResume) platformRoutes.recover();
+    platformRoutes.recover();
     taskEventFileProjection.recover();
   }
-  /** 本地首页先就绪，联网恢复在后台完成；恢复核对前保持原有调度限制。 */
+  /** 旧会话在后台核对 Provider，新会话只等待自己的运行环境。 */
   async function recoverStartupProviders(): Promise<void> {
     if (executionHostDispatchMayResume && codexNativeEnabled && codexRemoteControlEnabled) {
       await codexAppServerManager
@@ -4205,40 +4214,38 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     // 写出结果未知的候选线程仍需核对原消息身份，不能在首页开放后直接重发。
     await recoverUnifiedOutcomeUnknownSwitches();
     if (startupRecoveryStopping) return;
-    conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
-    if (!readOnlyValidation) await db.save();
     if (!readOnlyValidation && executionHostDispatchMayResume) {
       await piNativeCoordinator.recoverGoals();
       await copilotNativeCoordinator.recoverGoals();
       if (startupRecoveryStopping) return;
       await recoverExpertRounds();
-      const queuedConversationIds = new Set(
-        conversationSubmissions
-          .listRecoverable()
-          .filter((submission) => submission.status === 'queued')
-          .map((submission) => submission.conversationId),
-      );
-      for (const conversationId of queuedConversationIds) {
-        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
-      }
     }
-    if (!startupRecoveryStopping) platformRoutes.recover();
   }
 
   if (!readOnlyValidation && executionHostDispatchMayResume) {
     conversationTitles.recover();
     startupRecovery = recoverStartupProviders().catch(async (error: unknown) => {
       if (startupRecoveryStopping) return;
-      // 远端恢复失败只阻止调度，主页和已有本地记录仍可读取。
+      // 远端恢复失败保留诊断，不关闭已经完成本地恢复的消息派发。
       auditLogs.append({
         actorType: 'system',
         action: 'conversation.startup_recovery.failed',
         resourceType: 'conversation',
-        payload: { errorType: error instanceof Error ? error.name : typeof error },
+        payload: { errorType: error instanceof Error ? error.name : typeof error, cause: userFacingErrorCause(error) },
         createdAt: now().toISOString(),
       });
       await db.save();
     });
+    /** 每个会话独立唤醒，不能等旧 Provider 或目标恢复完成才消费新队首。 */
+    const queuedConversationIds = new Set(
+      conversationSubmissions
+        .listRecoverable()
+        .filter((submission) => submission.status === 'queued')
+        .map((submission) => submission.conversationId),
+    );
+    for (const conversationId of queuedConversationIds) {
+      queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
+    }
   }
   traceStartup('routes_ready');
   return server;

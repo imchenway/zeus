@@ -71,17 +71,20 @@ export function hasUnfinishedConversationTurn(state: NativeSessionState): boolea
   return turnIds.some((id) => Boolean(id && !state.terminalTurnIds[id]));
 }
 
-/** 只有被未结束轮次、前序消息或明确等待原因阻塞的提交才展示排队。 */
+/** 只有等待未结束轮次或前序消息的提交才展示排队，首条消息的准备状态留在用户气泡。 */
 export function isSubmissionWaitingInQueue(state: NativeSessionState, submission: NativeQueuedSubmission | null): boolean {
   /** 提交和轮次终态必须来自同一份显示快照。 */
   const queue = state.queue;
   if (!queue || !submission || submission.providerTurnId) return false;
-  if (submission.status === 'paused') return true;
-  if (submission.status !== 'queued') return false;
+  // 失败与送达待核对属于原用户气泡，不能被暂停状态重新归入排队区。
+  if (submission.error || ['outcome_unknown', 'recovery_required', 'recovered_unsent', 'preflight_failed', 'runtime_rejected'].includes(submission.pausedReason ?? '')) return false;
+  // 用户中断后的待发队首保留原有继续入口，准备和恢复暂停不把首条消息移出正文。
+  if (submission.status === 'paused' && submission.pausedReason === 'interrupted') return true;
+  if (submission.status !== 'queued' && submission.status !== 'paused') return false;
   if (queue.state.type === 'dispatching') return queue.state.submissionId !== submission.id;
   /** 已完成轮次留下的旧提交不再占据等待队首；未知送达和明确暂停仍保留。 */
   const firstWaiting = visibleQueuedSubmissions(queue).find((candidate) => !candidate.providerTurnId || !state.terminalTurnIds[candidate.providerTurnId]);
-  return queue.state.type === 'paused' || hasUnfinishedConversationTurn(state) || Boolean(queue.waitReason && !['dispatch_pending', 'current_turn'].includes(queue.waitReason)) || firstWaiting?.id !== submission.id;
+  return hasUnfinishedConversationTurn(state) || firstWaiting?.id !== submission.id;
 }
 
 /** 输入框卡片立即接管活跃轮次后的本地消息；权威队列到达后再开放操作。 */
@@ -90,21 +93,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
   if (state.snapshot?.providerState === 'failed' || state.snapshot?.providerState === 'closed') return [];
   /** 已落库的普通等待项保持服务端顺序与完整操作能力。 */
   const durable = visibleQueuedSubmissions(state.queue)
-    .filter(
-      (submission) =>
-        !submission.internalOperation &&
-        !submission.controlAction &&
-        !submission.providerTurnId &&
-        (submission.status === 'queued' || submission.status === 'paused') &&
-        submission.pausedReason !== 'outcome_unknown' &&
-        submission.pausedReason !== 'recovery_required' &&
-        submission.pausedReason !== 'recovered_unsent' &&
-        // 发送失败留在原消息旁，不能退回普通排队卡片。
-        !submission.error &&
-        submission.pausedReason !== 'preflight_failed' &&
-        submission.pausedReason !== 'runtime_rejected' &&
-        isSubmissionWaitingInQueue(state, submission),
-    )
+    .filter((submission) => !submission.internalOperation && !submission.controlAction && isSubmissionWaitingInQueue(state, submission))
     .map((submission) => ({ ...submission, localOnly: false }));
   /** 所有权威提交身份用于在实时事件到达时原位替换本地投影。 */
   const durableSubmissionIds = new Set((state.queue?.submissions ?? []).map((submission) => submission.id));
@@ -116,7 +105,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
     const item = state.items[key];
     if (!item || !item.optimistic || item.type !== 'userMessage' || item.payload.delivery !== 'queue' || item.payload.queuedForActiveTurn !== true) return [];
     // 首次提交已冻结等待关系；轮次尚未建立或已结束时，仍由权威提交回执接管，不能提前退回正文。
-    if (item.status !== 'pending' && item.status !== 'queued') return [];
+    if ((item.status !== 'pending' && item.status !== 'queued') || item.payload.deliveryError || item.payload.error) return [];
     /** 本地客户端身份是等待接纳期间唯一可依赖的去重键。 */
     const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
     if (!clientUserMessageId || durableClientMessageIds.has(clientUserMessageId)) return [];
