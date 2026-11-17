@@ -76,7 +76,7 @@ export function createBrowserPageTranslation(options: {
 
   /** DOM 错误和服务错误都进入可见失败状态。 */
   function fail(run: Run, cause: unknown): void {
-    if (active !== run) return;
+    if (active !== run || run.error) return;
     /** 导航或还原不显示为服务故障。 */
     const error = cause instanceof Error ? cause : new Error('翻译失败，请重试。');
     if (error.message === 'Request terminated') return;

@@ -119,8 +119,11 @@ export function registerBrowserTranslationRoutes(options: {
       return { segments: translatedSegments(result, input.segments) };
     } catch (error) {
       // 供应商响应可能带凭据或正文，只返回当前操作的失败原因。
+      /** 仅限流响应携带重试期限；取消优先沿用原有超时语义。 */
+      const retryAt = !signal.aborted && error instanceof BrowserFreeTranslationError ? error.retryAt : undefined;
+      if (retryAt !== undefined) reply.header('retry-after', Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)));
       return reply
-        .code(signal.aborted ? 504 : 502)
+        .code(signal.aborted ? 504 : retryAt !== undefined ? 429 : 502)
         .send({ message: signal.aborted ? '翻译已取消或超时，原文仍保留。' : error instanceof BrowserFreeTranslationError ? error.message : '翻译失败或返回内容不完整，原文仍保留。请重试或更换翻译服务。' });
     } finally {
       reply.raw.off('close', disconnect);

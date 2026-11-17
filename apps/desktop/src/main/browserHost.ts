@@ -473,7 +473,20 @@ export class BrowserHost implements BrowserAutomationPort {
       const tabId = requireNonEmptyString(value.tabId, 'tabId');
       const visible = value.visible === true;
       const bounds = normalizeBounds(value.bounds);
-      return { applied: await this.setLayout(window, conversationId, tabId, bounds, visible) };
+      /** 只捕获当前窗口正在展示的同一标签，不读取其他会话的页面。 */
+      const tab = this.tabs.get(tabId);
+      /** 截图与隐藏并行，不能让原生网页等待截图期间盖住弹窗。 */
+      const preview = value.capturePreview === true && !visible && this.visibleTabByWindow.get(window.id) === tabId && tab?.snapshot.conversationId === conversationId && tab.view && !tab.view.webContents.isDestroyed()
+        ? tab.view.webContents.capturePage(undefined, { stayHidden: true }).then((image) => image.isEmpty() ? undefined : image.toDataURL()).catch((error) => {
+            console.warn('Browser overlay preview capture failed', error);
+            return undefined;
+          })
+        : undefined;
+      /** 布局继续使用原有会话校验及网页实例；截图不写入文件或持久状态。 */
+      const applied = await this.setLayout(window, conversationId, tabId, bounds, visible);
+      /** 一次遮挡只返回当前可视区画面，恢复后由 Renderer 释放。 */
+      const previewImageUrl = await preview;
+      return { applied, ...(previewImageUrl ? { previewImageUrl } : {}) };
     });
     ipcMain.handle('zeus:browser:prepare-comments', async (event, input: unknown) => {
       this.requireRendererWindow(event);
@@ -654,8 +667,6 @@ export class BrowserHost implements BrowserAutomationPort {
         translation: { state: value.state as 'working' | 'ready' | 'error', serviceLabel: tab.snapshot.translation.serviceLabel, ...(typeof value.message === 'string' ? { message: value.message.slice(0, 500) } : {}) },
       };
       this.emitSnapshot(tab.snapshot.conversationId);
-      if (value.state === 'error')
-        this.emit({ type: 'error', conversationId: tab.snapshot.conversationId, tabId: tab.snapshot.id, message: tab.snapshot.translation!.message || this.text('翻译失败，请重试。', 'Translation failed. Retry.') });
     });
     ipcMain.handle('zeus:browser-page:get-state', (event) => {
       const tab = this.requirePageTab(event);

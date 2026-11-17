@@ -1,6 +1,7 @@
 /** Page-runtime messages; the KISS extension settings UI is not included in Zeus. */
 const messages = {
   copy: '复制',
+  translation_retry: '翻译失败，点击重试',
   favorite_word_lookup_loading: '正在查询…',
   favorite_word_lookup_unavailable: '当前不支持词典查询。',
   favorite_word_lookup_failed: '词典查询失败。',

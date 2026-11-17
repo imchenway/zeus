@@ -8077,6 +8077,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   position: relative;
 }
 
+/* 网页快照只作浮层背景，不参与焦点、鼠标操作或布局测量。 */
+.session-codex-parity-v1 .browser-native-viewport-preview {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
 .session-codex-parity-v1 .browser-comments-rail {
   background: var(--session-sidebar);
   border-inline-start: 0;

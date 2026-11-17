@@ -158,6 +158,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const [staging, setStaging] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  /** 原生网页为浮层让位时，保留当前标签的无交互画面。 */
+  const [viewportPreview, setViewportPreview] = useState<{ tabId: string; imageUrl: string } | null>(null);
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
 
@@ -254,6 +256,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     if (!bridge?.setBrowserLayout || !viewport || !tabId) return;
     // 只保留最新一帧的显示请求，弹窗出现时立即取消。
     let frame = 0;
+    /** 旧标签或旧布局订阅返回的截图不能写入当前工作面。 */
+    let disposed = false;
     // 复用公共浮层标记，同时识别门户和应用内部挂载的菜单。
     const overlaySelector = '[data-motion-surface="popover"], [data-zeus-primitive="modal"], [data-zeus-primitive="drawer"], [data-zeus-primitive="overlay"]';
     // 只订阅存活浮层的尺寸，移除后解除观察，避免长期保留菜单节点。
@@ -278,13 +282,22 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       if (closedTabIdsRef.current.has(tabId)) return;
       // 恢复时使用当前布局，保持弹窗期间缩放后的网页位置正确。
       const rect = viewport.getBoundingClientRect();
+      /** 零尺寸及被浮层遮挡的网页继续立即隐藏。 */
+      const visible = !isSuspended() && rect.width > 0 && rect.height > 0;
       void bridge.setBrowserLayout!({
         conversationId: props.conversationId,
         tabId,
         // 无剩余空间时隐藏原生网页，不能把零高区域归一化为可见窗口。
-        visible: !isSuspended() && rect.width > 0 && rect.height > 0,
+        visible,
+        capturePreview: !visible && rect.width > 0 && rect.height > 0,
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      }).catch(setError);
+      }).then((result) => {
+        if (disposed) return;
+        if (visible && result.applied && !isSuspended()) setViewportPreview(null);
+        else if (result.previewImageUrl && isSuspended()) setViewportPreview({ tabId, imageUrl: result.previewImageUrl });
+      }).catch((layoutError) => {
+        if (!disposed) setError(layoutError);
+      });
     };
     // 隐藏立即提交，显示仍合并到下一帧，并在提交前再次检查遮挡条件。
     const apply = (): void => {
@@ -325,6 +338,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     window.addEventListener('resize', apply);
     apply();
     return () => {
+      disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
       overlayObserver.disconnect();
@@ -558,6 +572,11 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
+      {activeTab.translation?.state === 'error' ? (
+        <p role="alert">
+          <VisibleApplicationError error={activeTab.translation.message || labels.retryTranslation} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
 
       {activeTab.annotationMode && draftComments.length > 0 ? (
         <div className="browser-toolbar browser-annotation-toolbar">
@@ -713,7 +732,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       ) : null}
 
       <div className="browser-content-row">
-        <div ref={viewportRef} className="browser-native-viewport" aria-label={activeTab.title || activeTab.url} />
+        <div ref={viewportRef} className="browser-native-viewport" aria-label={activeTab.title || activeTab.url}>
+          {viewportPreview?.tabId === activeTab.id ? <img className="browser-native-viewport-preview" src={viewportPreview.imageUrl} alt="" aria-hidden="true" draggable={false} /> : null}
+        </div>
         {commentsOpen || snapshot.pendingApprovals.length ? (
           <aside className="browser-comments-rail" aria-label={labels.comments}>
             {snapshot.pendingApprovals.map((request) => (

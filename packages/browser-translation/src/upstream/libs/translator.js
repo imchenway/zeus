@@ -2819,6 +2819,7 @@ export class Translator {
     retryIcon.classList.add(Translator.KISS_CLASS.retry);
     retryIcon.setAttribute('role', 'button');
     retryIcon.setAttribute('tabindex', '0');
+    retryIcon.setAttribute('aria-label', i18n('translation_retry', 'Translation failed. Retry.'));
 
     const panel = document.createElement('span');
     panel.className = 'notranslate';
