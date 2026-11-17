@@ -28,6 +28,8 @@ interface SubagentWorkspaceProps {
   onClose: () => void;
   loadList: () => Promise<NativeSubagentListSnapshot>;
   loadThread: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
+  /** 操作代理通过已有中断命令停止，不给原生线程猜测产品身份。 */
+  onStopOperationAgent?: (threadId: string) => Promise<void>;
 }
 
 /** 原生运行状态决定刷新周期，不由正文内容推断完成。 */
@@ -46,6 +48,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const [loadingList, setLoadingList] = useState(!props.initialSnapshot);
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  /** 停止请求在回执前禁止重复点击。 */
+  const [stopping, setStopping] = useState(false);
   const listRequestRef = useRef(0);
   const threadRequestRef = useRef(0);
   const loadListRef = useRef(props.loadList);
@@ -204,6 +208,23 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           </span>
         </span>
         <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
+          {selectedAgent?.operation && activeStatuses.has(selectedAgent.status) && props.onStopOperationAgent ? (
+            <Button
+              unstyled
+              type="button"
+              disabled={stopping}
+              aria-busy={stopping}
+              onClick={() => {
+                setStopping(true);
+                return props.onStopOperationAgent!(selectedAgent.id)
+                  .then(() => refreshList(false))
+                  .catch(setError)
+                  .finally(() => setStopping(false));
+              }}
+            >
+              {zh ? '停止' : 'Stop'}
+            </Button>
+          ) : null}
           <Button
             unstyled
             type="button"

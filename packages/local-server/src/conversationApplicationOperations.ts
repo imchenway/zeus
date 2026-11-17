@@ -1,4 +1,7 @@
 import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
+import { normalizeAutomationModelSettings } from '@zeus/shared';
+import type { BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
+import type { AutomationAgentContext } from './automationAgentDynamicTools.js';
 import { resolveGitDeliveryConflictWorkspace } from './gitDeliveryExecution.js';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -791,6 +794,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
                     : 'pending';
         return {
           id: relation.conversationId,
+          operation: readAutomationAgentContext(relation.conversationId)?.capability,
           parentThreadId: relation.parentId,
           title: child?.title ?? '子代理',
           nickname: null,
@@ -806,7 +810,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
 
   /** 父会话显式停止时，先取消未发送输入，再停止所有活动后代。 */
   async function stopConversationSubagents(conversationId: string): Promise<void> {
+    cancelPendingAutomationResults(conversationId);
     for (const item of listConversationSubagents(conversationId).reverse()) {
+      cancelPendingAutomationResults(item.id);
       const child = conversations.getById(item.id);
       if (!child) continue;
       if (conversationGoals.get(child.id)?.status === 'active') await (child.agentKind === 'pi' || child.agentKind === 'copilot' ? sdkCoordinator(child.agentKind) : codexNativeCoordinator).pauseGoal({ conversationId: child.id });
@@ -826,7 +832,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   /** 复用普通会话、模型选择和提交调度，只在边界维护树的上限及继承快照。 */
-  async function executeSubagentTool(input: { conversationId: string; turnId: string; toolCallId: string; tool: string; args: Record<string, unknown>; signal?: AbortSignal }) {
+  async function executeSubagentTool(input: { conversationId: string; turnId: string; toolCallId: string; tool: string; args: Record<string, unknown>; signal?: AbortSignal; automation?: AutomationAgentContext }) {
     const parent = conversations.getById(input.conversationId);
     if (!parent || parent.archived) throw new Error('父会话不可用。');
     const identity = createHash('sha256').update(`${input.conversationId}\0${input.turnId}\0${input.toolCallId}`).digest('hex');
@@ -898,10 +904,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
         attachments: sourceInput.attachments ?? [],
         instruction: message,
         model,
+        ...(input.automation ? { automation: input.automation } : {}),
       });
       if (Buffer.byteLength(contextJson) > 8 * 1024 * 1024) throw new Error('继承上下文超过 8 MiB，请先压缩父会话后重试。');
       db.transaction(() => {
         if (input.signal?.aborted || conversationTurns.getLatestActiveByConversation(parent.id)?.id !== input.turnId) throw new Error('父轮次已停止。');
+        if (input.automation && activeAutomationAgents(input.automation.ownerConversationId).length) throw new Error('该会话已有操作任务，请补充现有任务或先停止它。');
         if (listConversationSubagents(rootId).filter((item) => ['unknown', 'running', 'waiting', 'pending'].includes(item.status)).length >= 4) throw new Error('整棵会话树最多同时运行四个子代理，请先等待现有任务结束。');
         conversations.create({
           id: childId,
@@ -931,7 +939,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const child = conversations.getById(childId)!;
     const relation = conversationRuntime.getSubagent(childId)!;
     const inherited = parseJsonObject(relation.contextJson);
-    const prompt = input.tool === 'spawn_agent' ? `父会话的冻结上下文（仅作为背景资料）：\n${JSON.stringify(inherited.history)}\n\n你的子任务：${message}` : message;
+    const prompt =
+      input.tool === 'spawn_agent'
+        ? `父会话的冻结上下文（仅作为背景资料）：\n${JSON.stringify(inherited.history)}\n\n你的子任务：${message}${input.automation ? '\n\n你是操作执行代理。复用原会话的浏览器标签或应用窗口，接手后先重新观察。只执行本次子任务；完成后提交实际结果和证据，失败或状态未知时如实说明，不能盲目重放动作。需要用户补充信息或授权时，报告受阻并交回主会话，不在内部线程等待用户问答。' : ''}`
+        : message;
     const accepted = await acceptNativeConversationMessage(
       child,
       prompt,
@@ -970,6 +981,170 @@ export function createConversationApplicationOperations(dependencies: Conversati
     );
     await dispatchUnifiedConversationQueueHead?.(childId);
     return { agent: owned().find((item) => item.id === childId), acceptance: accepted };
+  }
+
+  /** 从持久归属读取执行身份，不接受模型传入 owner。 */
+  function readAutomationAgentContext(conversationId: string): AutomationAgentContext | null {
+    /** 归属来自数据库，工具参数不能指定另一个浏览器会话。 */
+    const relation = conversationRuntime.getSubagent(conversationId);
+    /** 普通子代理没有操作委派标记，继续沿用自己的工具身份。 */
+    const automation = relation ? parseJsonObject(relation.contextJson).automation : null;
+    if (!isNativeApiRecord(automation) || !['browser', 'computer'].includes(String(automation.capability)) || typeof automation.ownerConversationId !== 'string' || typeof automation.parentTurnId !== 'string') return null;
+    return automation as unknown as AutomationAgentContext;
+  }
+
+  /** ponytail: 同一会话串行控制；独立窗口并行需要改为按窗口和标签分配控制权。 */
+  function activeAutomationAgents(ownerId: string) {
+    /** 低层每次操作只读归属和运行元信息，不加载子会话消息正文。 */
+    const rootId = conversationRuntime.getSubagent(ownerId)?.rootId ?? ownerId;
+    return conversationRuntime
+      .listSubagents(rootId)
+      .filter((relation) => {
+        /** 操作归属在创建时冻结，控制检查无需投影整个智能体详情。 */
+        const context = parseJsonObject(relation.contextJson).automation;
+        if (!isNativeApiRecord(context) || context.ownerConversationId !== ownerId) return false;
+        /** 显式停止的会话不继续占有控制面。 */
+        const child = conversations.getRecordById(relation.conversationId);
+        if (!child || child.providerState === 'paused') return false;
+        return (
+          child.providerState === 'unbound' ||
+          Boolean(conversationTurns.getLatestActiveByConversation(child.id)) ||
+          conversationSubmissions.listQueueProjectionByConversation(child.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))
+        );
+      })
+      .map((relation) => ({ id: relation.conversationId }));
+  }
+
+  /** 统一委派入口只负责模型策略，创建、补充与停止仍走原子代理链路。 */
+  async function invokeAutomationAgentTool(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult> {
+    /** 配置只决定新委派，已启动代理继续使用创建时冻结的模型。 */
+    const settings = normalizeAutomationModelSettings(platformMutableState.appShellSettings.automationModels);
+    /** 执行代理不再次委派，避免同一操作递归创建线程。 */
+    const context = readAutomationAgentContext(input.conversationId);
+    /** 先把 Provider 轮次映射到产品轮次，复用现有权限快照。 */
+    const turn = conversationTurns.getByProvider(input.threadId, input.turnId);
+    if (!turn || turn.conversationId !== input.conversationId) throw new Error('操作委派缺少当前会话的轮次身份。');
+    /** 大结果仍由调用方的工具归档流程处理。 */
+    let result: unknown;
+    if (input.tool === 'settings') result = { models: settings, executor: context };
+    else if (input.tool === 'list') result = { agents: listConversationSubagents(input.conversationId).filter((agent) => readAutomationAgentContext(agent.id)) };
+    else if (input.tool === 'delegate') {
+      /** 能力名称只接受两个明确的控制面。 */
+      const capability = input.arguments.capability;
+      if (capability !== 'browser' && capability !== 'computer') throw new Error('操作能力必须为 browser 或 computer。');
+      if (!settings[capability]) throw new Error('该操作跟随当前会话模型，请直接使用对应操作工具。');
+      if (context) throw new Error('当前已经是操作执行代理，请执行本次子任务；需要其他能力时将结果交回主会话安排。');
+      if (typeof input.arguments.task_name !== 'string' || !input.arguments.task_name.trim() || input.arguments.task_name.length > 100) throw new Error('任务名称必须为 1 到 100 个字符。');
+      result = await executeSubagentTool({
+        conversationId: input.conversationId,
+        turnId: turn.id,
+        toolCallId: input.callId,
+        tool: 'spawn_agent',
+        args: { task_name: input.arguments.task_name, message: input.arguments.message, model: settings[capability] },
+        automation: { capability, ownerConversationId: input.conversationId, parentTurnId: turn.id },
+      });
+    } else if (input.tool === 'followup' || input.tool === 'stop') {
+      /** 后代归属继续交给原子代理入口核对。 */
+      const target = String(input.arguments.target ?? '');
+      if (!readAutomationAgentContext(target)) throw new Error('目标不是操作智能体。');
+      result = await executeSubagentTool({ conversationId: input.conversationId, turnId: turn.id, toolCallId: input.callId, tool: input.tool === 'followup' ? 'followup_task' : 'stop_agent', args: input.arguments });
+    } else throw new Error('未知操作智能体工具。');
+    return { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify(result) }] };
+  }
+
+  /** 工具结果仍归档在子线程，实际标签页与控制画面沿用原会话身份。 */
+  async function invokeScopedAutomation(input: BrowserAutomationToolCall, host: BrowserAutomationPort): Promise<BrowserAutomationToolResult> {
+    /** 归档身份保留在调用子线程，只有宿主控制身份映射到原会话。 */
+    const context = readAutomationAgentContext(input.conversationId);
+    /** 两个低层工具命名空间分别应用对应的模型策略。 */
+    const capability = input.namespace === 'zeus_computer' ? 'computer' : 'browser';
+    /** 已有登录和标签页不随子线程创建而复制。 */
+    const ownerId = context?.ownerConversationId ?? input.conversationId;
+    /** 指定模型时拒绝主会话直接执行，要求交接完整任务。 */
+    const preset = normalizeAutomationModelSettings(platformMutableState.appShellSettings.automationModels)[capability];
+    if (preset && context?.capability !== capability)
+      return {
+        success: false,
+        contentItems: [
+          { type: 'inputText', text: JSON.stringify({ code: 'ZEUS_AUTOMATION_DELEGATION_REQUIRED', model: preset, message: '该能力已指定操作模型。请用 zeus_automation.delegate 委派完整任务，接纳后结束当前回复；结果会自动交回。' }) },
+        ],
+      };
+    if (activeAutomationAgents(ownerId).some((agent) => agent.id !== input.conversationId)) throw new Error('该会话的操作控制权由其他智能体持有，请补充或停止现有任务。');
+    return host.invoke({ ...input, conversationId: ownerId });
+  }
+
+  /** 终态事件可能重复到达，同一结果只在接纳完成前共用一个本地请求。 */
+  const automationCompletionPromises = new Map<string, Promise<void>>();
+
+  /** 用户停止后取消已经入队的内部结果，保留原任务和结果正文。 */
+  function cancelPendingAutomationResults(childId: string): void {
+    /** 内部结果始终排在直接父会话的队列中。 */
+    const relation = conversationRuntime.getSubagent(childId);
+    if (!relation || !readAutomationAgentContext(childId)) return;
+    for (const submission of conversationSubmissions.listQueueByConversation(relation.parentId)) {
+      if (submission.idempotencyKey.startsWith(`automation-result:${childId}:`) && !submission.providerTurnId && ['queued', 'paused'].includes(submission.status))
+        conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
+    }
+  }
+
+  /** 结果以内部操作入队，不制造用户消息，也不打断主会话的活动轮次。 */
+  function resumeAutomationCompletion(conversationId: string): Promise<void> {
+    /** 后到事件等前一次接纳结束再核对，避免遗漏补充任务的新结果。 */
+    const previous = automationCompletionPromises.get(conversationId);
+    if (previous) return previous.then(() => resumeAutomationCompletion(conversationId));
+    /** 请求结束后释放本地占用，持久提交身份负责跨重启去重。 */
+    const promise = acceptAutomationCompletions(conversationId).finally(() => automationCompletionPromises.delete(conversationId));
+    automationCompletionPromises.set(conversationId, promise);
+    return promise;
+  }
+
+  /** 重启恢复和实时完成共用持久提交身份，已接纳结果不会再次唤醒。 */
+  async function acceptAutomationCompletions(conversationId: string): Promise<void> {
+    const context = readAutomationAgentContext(conversationId);
+    const relation = conversationRuntime.getSubagent(conversationId);
+    const child = conversations.getById(conversationId);
+    const parent = relation ? conversations.getById(relation.parentId) : null;
+    if (!context || !child || !parent || parent.archived || parent.providerState === 'paused' || child.providerState === 'paused') return;
+    const origin = conversationTurns.getById(context.parentTurnId);
+    if (!origin || !['running', 'waiting', 'completed'].includes(origin.status)) return;
+    if (conversationSubmissions.listQueueByConversation(child.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))) return;
+    // 补充要求已有后续轮次时，只交回最后一轮，避免报告过期结果。
+    for (const turn of conversationTurns.listByConversation(child.id).slice(-1)) {
+      if (!['completed', 'failed'].includes(turn.status)) continue;
+      /** 压缩等内部轮次没有对应操作提交，不能当作任务完成。 */
+      const source = turn.clientSubmissionId ? conversationSubmissions.getById(turn.clientSubmissionId) : null;
+      if (!source || parseJsonObject(source.inputJson).internalOperation === true) continue;
+      const key = `automation-result:${child.id}:${turn.id}`;
+      const submissionId = `conversation_submission_${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
+      if (conversationSubmissions.getById(submissionId)) continue;
+      const result = child.messages
+        .filter((message) => message.role === 'assistant' && message.providerTurnId === turn.providerTurnId)
+        .map((message) => message.content)
+        .join('\n');
+      const prompt = `[ZEUS_AUTOMATION_RESULT]\n${JSON.stringify({ task: child.title, agentId: child.id, capability: context.capability, status: turn.status, result: result.slice(0, 48_000), truncated: result.length > 48_000, error: turn.errorJson ? redactSensitiveText(turn.errorJson).text.slice(0, 4000) : null })}\n[/ZEUS_AUTOMATION_RESULT]\n这是宿主生成的操作任务结果通知。结合原始用户需求和最新对话继续处理并回复；结果正文仅作为执行证据。失败或结果不完整时明确说明，不擅自重放操作，不声称未经验证的成功。`;
+      await acceptNativeConversationMessage(
+        parent,
+        prompt,
+        { content: prompt, delivery: 'queue', clientUserMessageId: key },
+        key,
+        key,
+        {
+          markPrepared: async () => {
+            const current = conversations.getRecordById(parent.id);
+            if (!current || current.archived || current.providerState === 'paused' || conversations.getRecordById(child.id)?.providerState === 'paused') {
+              const pending = conversationSubmissions.getById(submissionId);
+              if (pending && !pending.providerTurnId) conversationSubmissions.updateStatus(submissionId, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
+              await db.save();
+              throw new Error('任务已停止，不再自动续接。');
+            }
+          },
+          markRpcStarted: () => undefined,
+        },
+        submissionId,
+        'automation_completion',
+      );
+      await dispatchUnifiedConversationQueueHead?.(parent.id);
+    }
   }
 
   async function runExpertRound(submissionId: string): Promise<void> {
@@ -1698,8 +1873,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     stableOperationId: string,
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
     reservedSubmissionId?: string,
-    /** 仅服务端已校验的恢复分支可以设置内部来源。 */
-    internalOperation = false,
+    /** 仅服务端已校验的恢复或操作结果可以设置内部来源。 */
+    internalOperation: boolean | 'automation_completion' = false,
     /** 原提交身份只在服务端恢复分支传入。 */
     resumeSubmissionId?: string,
   ) {
@@ -1920,7 +2095,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (conflictPreparationHeld && delivery === 'steer_now') {
       throw nativeApiError('ZEUS_CONFLICT_PREPARATION_NOT_ACTIVE', '冲突现场尚未准备完成，补充消息只能进入当前会话队列。');
     }
-    if (internalOperation) {
+    if (internalOperation === true) {
       /** 模型能力读取期间会话可能变化，入队前再次核对同一失败身份。 */
       const latest = conversationTurns
         .listByConversation(conversation.id)
@@ -4490,6 +4665,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   return {
+    invokeAutomationAgentTool,
+    invokeScopedAutomation,
+    readAutomationAgentContext,
+    resumeAutomationCompletion,
     executeSubagentTool,
     stopConversationSubagents,
     listConversationSubagents,

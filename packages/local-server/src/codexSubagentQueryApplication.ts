@@ -362,6 +362,8 @@ export class CodexSubagentQueryApplication {
 }
 
 export interface ConversationSubagentSummary {
+  /** 宿主确认的操作代理能力，用于展示对应停止入口。 */
+  operation?: 'browser' | 'computer';
   id: string;
   parentThreadId: string | null;
   title: string;

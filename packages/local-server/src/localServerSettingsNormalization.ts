@@ -5,6 +5,7 @@ import {
   isTaskStatusFilter,
   normalizeNetworkProxySettings,
   normalizeInputSuggestionSettings,
+  normalizeAutomationModelSettings,
   normalizeSidebarConversationFilters,
   normalizeTaskBranchPrefix,
   normalizeTaskManagementStatusConfig,
@@ -326,6 +327,8 @@ export function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
 }
 
 export interface AppShellSettingsSnapshot {
+  /** 操作任务的独立模型；空值跟随主会话。 */
+  automationModels?: import('@zeus/shared').AutomationModelSettings;
   /** 旧设置缺省关闭，不随主会话模型变化。 */
   inputSuggestions?: import('@zeus/shared').InputSuggestionSettings;
   /** 完全退出并重开应用后使用的网络代理。 */
@@ -373,6 +376,8 @@ export interface AppShellSettingsSnapshot {
 }
 
 export interface UpdateAppShellSettingsBody {
+  /** 只更新操作模型，不改变主会话的模型偏好。 */
+  automationModels?: Partial<import('@zeus/shared').AutomationModelSettings>;
   /** 只更新专用建议设置，不改变 Provider 配置。 */
   inputSuggestions?: import('@zeus/shared').InputSuggestionSettings;
   /** 省略时保留当前代理；显式提交和导入均经过相同校验。 */
@@ -528,6 +533,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
   return {
     networkProxy: normalizeNetworkProxySettings(value?.networkProxy),
     inputSuggestions: normalizeInputSuggestionSettings(value?.inputSuggestions),
+    automationModels: normalizeAutomationModelSettings(value?.automationModels),
     appLanguage,
     appearance,
     mainLayout,
@@ -566,6 +572,8 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
 }
 
 export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: UpdateAppShellSettingsBody, identities: SettingsIdentityCatalog): AppShellSettingsSnapshot {
+  // 先校验补丁，再合并服务端当前值；另一能力的模型不会被旧界面快照覆盖。
+  if (input.automationModels !== undefined) normalizeAutomationModelSettings(input.automationModels);
   // 接入设置只接受显式合法值；普通设置省略字段时保留原状态。
   if (input.modelSetupStatus !== undefined && input.modelSetupStatus !== null && !['pending', 'skipped', 'completed'].includes(input.modelSetupStatus)) {
     throw new SettingsCommandApplicationError('ZEUS_MODEL_SETUP_INVALID', '模型接入状态无效。', 400);
@@ -578,6 +586,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       ...current,
       networkProxy: input.networkProxy === undefined ? current.networkProxy : normalizeNetworkProxySettings(input.networkProxy),
       inputSuggestions: input.inputSuggestions === undefined ? current.inputSuggestions : normalizeInputSuggestionSettings(input.inputSuggestions),
+      automationModels: input.automationModels === undefined ? current.automationModels : normalizeAutomationModelSettings({ ...current.automationModels, ...input.automationModels }),
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
       mainLayout: input.mainLayout === 'upstream' || input.mainLayout === 'current' ? input.mainLayout : current.mainLayout,

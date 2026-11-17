@@ -69,6 +69,10 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   recordDispatchPerformance?: (sample: ConversationDispatchPerformanceSample) => void;
   now: () => string;
   browserAutomation?: BrowserAutomationPort;
+  /** 操作模型委派复用宿主管理的普通子代理。 */
+  automationAgents?: Pick<BrowserAutomationPort, 'invoke'>;
+  /** 主会话停止时联动停止已接纳的子任务。 */
+  stopSubagents?(conversationId: string): Promise<void>;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
   /** 具备产品来源查询时，向模型注册只读历史入口。 */

@@ -71,6 +71,8 @@ interface SessionQuickActionsCardProps {
   onToggleTerminal?: (trigger: HTMLButtonElement) => void;
   subagentCount?: number;
   onOpenSubagents?: (trigger: HTMLButtonElement) => void;
+  /** 屏幕控制停止时同步结束该会话的操作模型。 */
+  onStopOperationAgent?: () => Promise<void>;
   onStartCodeReview?: (
     selection: SessionCodeReviewSelection,
   ) => void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string } | Promise<void | boolean | { state: 'preparing'; cancel: () => void } | { state: 'failed'; message: string }>;
@@ -644,7 +646,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 {workspaceState === 'error' ? <p role="status">{zh ? '显示最近一次读取的目录与分支。' : 'Shows the most recently loaded folder and branch.'}</p> : null}
               </Collapsible>
             </section>
-            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} />
+            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} onStopOperationAgent={props.onStopOperationAgent} />
           </div>
         </SessionQuickActionsCardMount>
       ) : null}

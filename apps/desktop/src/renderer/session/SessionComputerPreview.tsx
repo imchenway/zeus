@@ -10,7 +10,7 @@ import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { Button } from '../ui/Button.js';
 
 /** 会话环境信息下展示最近一次观察，更新不触发整个会话重新渲染。 */
-export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean }) {
+export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean; onStopOperationAgent?: () => Promise<void> }) {
   /** 每个预览独立关联原生详情浮层，浏览器以触发按钮作为定位锚点。 */
   const infoId = useId();
   /** 仅保留本会话最新的有界缩略图。 */
@@ -96,6 +96,7 @@ export function SessionComputerPreview(props: { conversationId: string; language
     setError(null);
     try {
       await window.zeus.stopComputerUse(identity);
+      await props.onStopOperationAgent?.();
       setPreview((current) => (current?.conversationId === identity.conversationId && current.sessionId === identity.sessionId ? null : current));
     } catch (failure) {
       if (stopRequest.current === identity) setError({ ...identity, message: failure instanceof Error ? failure.message : String(failure) });

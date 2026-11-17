@@ -296,6 +296,8 @@ export interface SessionWorkspaceActions {
   onLoadConversationInformation?: (signal: AbortSignal) => Promise<import('@zeus/shared').ConversationInformation>;
   onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
+  /** 停止操作代理沿用现有队列取消与轮次中断命令。 */
+  onStopOperationAgent?: (threadId?: string) => Promise<void>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLoadEarlierHistory?: () => void | Promise<void>;
   /** 深历史展开时保留从头或从尾读取的明确意图。 */
@@ -615,6 +617,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [controller, props.conversation.id, props.conversation.archived, props.onArchivedSideQuestion, state.snapshot?.archived]);
   const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
   const subagentListSnapshot = subagentScope.conversationId === props.conversation.id ? subagentScope.snapshot : null;
+  /** 工具完成后补读托管子代理，流式文字增量不触发额外查询。 */
+  const subagentReadRevision = Object.values(state.items)
+    .filter((item) => item.status === 'completed' || item.status === 'failed')
+    .map((item) => `${item.key}:${item.status}`)
+    .join('|');
   useEffect(() => {
     const loadSubagents = props.client.loadNativeSubagents;
     if (!loadSubagents || props.conversation.transportKind !== 'codex_native') return;
@@ -630,7 +637,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     return () => {
       active = false;
     };
-  }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind]);
+  }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind, subagentReadRevision]);
   const [capabilitiesScope, setCapabilitiesScope] = useState<ScopedConversationCapabilities>(() => ({
     projectId: props.conversation.projectId,
     value: props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, props.conversation.projectId),
@@ -836,6 +843,21 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         ? {
             onLoadSubagents: () => props.client.loadNativeSubagents!(projectId, conversationId),
             onLoadSubagentThread: (threadId: string) => props.client.loadNativeSubagentThread!(projectId, conversationId, threadId),
+            onStopOperationAgent: async (threadId?: string) => {
+              /** 仅处理服务端确认归属当前会话的操作代理。 */
+              const snapshot = await props.client.loadNativeSubagents!(projectId, conversationId);
+              for (const agent of snapshot.items.filter((item) => item.operation && (!threadId || item.id === threadId) && ['pending', 'running', 'waiting'].includes(item.status))) {
+                /** 先取消未发送输入，停止当前轮次后不能继续旧补充任务。 */
+                const queue = await props.client.loadNativeConversationQueueV2(projectId, agent.id);
+                for (const submission of queue.submissions.filter((item) => !item.providerTurnId && ['queued', 'paused'].includes(item.status))) await props.client.deleteNativeQueuedSubmission(projectId, agent.id, submission.id);
+                /** 子线程详情提供真实 Provider 轮次身份，不使用父轮次猜测。 */
+                const thread = await props.client.loadNativeSubagentThread!(projectId, conversationId, agent.id);
+                /** 只中断仍在执行的轮次，结束的线程保留原结果。 */
+                const active = [...thread.turns].reverse().find((turn) => ['running', 'waiting', 'inProgress', 'in_progress'].includes(turn.status));
+                if (active) await props.client.interruptNativeTurn(projectId, agent.id, active.id);
+              }
+              setSubagentScope({ conversationId, snapshot: await props.client.loadNativeSubagents!(projectId, conversationId) });
+            },
           }
         : {}),
       onStartConversation: props.onStartConversation,
@@ -3197,6 +3219,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       : undefined
                   }
                   subagentCount={subagentThreadIds.length}
+                  onStopOperationAgent={actions.onStopOperationAgent}
                   onOpenSubagents={
                     actions.onLoadSubagents && actions.onLoadSubagentThread
                       ? (trigger) => {
@@ -3504,6 +3527,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             onClose={closeContextWorkspace}
                             loadList={actions.onLoadSubagents}
                             loadThread={actions.onLoadSubagentThread}
+                            onStopOperationAgent={actions.onStopOperationAgent}
                           />
                         ) : null}
                         {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (

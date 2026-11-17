@@ -5,9 +5,18 @@ import type { ZeusBrowserSettings, ZeusComputerSettings, ZeusRetiredNativeRuntim
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { BrowserPasswordsSection } from './BrowserPasswordsSection.js';
+import { AutomationModelSettings } from './AutomationModelSettings.js';
+import type { AppShellSettings } from '../features/settings/settingsContracts.js';
+import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 
 interface BrowserSettingsPaneProps {
   language: 'zh-CN' | 'en-US';
+  /** 操作模型沿用全局应用设置，与原生浏览器资料分开。 */
+  appSettings: AppShellSettings;
+  /** 复用设置命令的串行保存。 */
+  client: SettingsApiClient | null;
+  /** 更新主界面的操作模型快照。 */
+  onAppSettingsChange: (update: (value: AppShellSettings) => AppShellSettings) => unknown;
 }
 const copy = {
   'zh-CN': {
@@ -329,6 +338,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
     return (
       <section className="settings-product-pane browser-settings-product-pane" aria-label={labels.title}>
         <h2 className="settings-page-title">{labels.title}</h2>
+        <AutomationModelSettings value={props.appSettings} client={props.client} onChange={props.onAppSettingsChange} />
         <p className="browser-settings-status" role={error ? 'alert' : 'status'}>
           {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : labels.loading}
         </p>
@@ -344,6 +354,7 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         </span>
         <SettingsSaveStatus language={props.language} status={saving.status} />
       </header>
+      <AutomationModelSettings value={props.appSettings} client={props.client} onChange={props.onAppSettingsChange} />
       <section className="settings-product-section">
         <h3>{props.language === 'zh-CN' ? '打开方式' : 'Open preferences'}</h3>
         <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '打开方式' : 'Open preferences'}>
