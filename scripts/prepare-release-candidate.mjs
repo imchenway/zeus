@@ -15,17 +15,25 @@ try {
   process.exitCode = 1;
 }
 
+/** 核对公开基线与固定源候选，再写入目标版本和发布正文。 */
 function main() {
   const releaseVersion = requiredVersion(process.env.RELEASE_VERSION);
   const sourceNotesPath = requiredFile(process.env.RELEASE_NOTES_FILE, 'RELEASE_NOTES_FILE');
   const applyChanges = parseBoolean('APPLY_CHANGES', process.env.APPLY_CHANGES, false);
   const latestTag = resolveLatestStableTag();
   const baseVersion = latestTag.slice(1);
+  /** 编排流程绑定的源提交决定可升级的包版本，失败候选顺延时不必等于公开基线。 */
+  const sourceHead = process.env.RELEASE_SOURCE_HEAD?.trim();
+  if (sourceHead && sourceHead !== git(['rev-parse', 'HEAD'])) throw new Error('发布候选源提交与当前 HEAD 不一致，拒绝准备版本。');
+  /** 独立执行未绑定源提交时，继续只允许从稳定基线准备候选。 */
+  const sourceVersion = sourceHead ? requiredVersion(JSON.parse(git(['show', `${sourceHead}:package.json`])).version, '候选源版本') : baseVersion;
   const targetNotesPath = join(repositoryRoot, 'releases', `v${releaseVersion}.md`);
   /** 加速链接属于固定候选正文，发布、恢复和验收使用同一份完整内容。 */
   const sourceNotes = renderCdnReleaseNotes(readFileSync(sourceNotesPath, 'utf8'), releaseVersion);
 
   assertVersionAfterTag(releaseVersion, latestTag, '。');
+  if (sourceVersion !== releaseVersion) assertVersionAfterTag(releaseVersion, `v${sourceVersion}`, '。');
+  git(['merge-base', '--is-ancestor', latestTag, sourceHead || 'HEAD']);
   assertTagDoesNotExist(releaseVersion);
   validateReleaseNotes(sourceNotes, releaseVersion);
 
@@ -35,7 +43,7 @@ function main() {
   const desktopPackage = readPackage(desktopPackagePath);
   const preparationState = resolvePreparationState({
     releaseVersion,
-    baseVersion,
+    sourceVersion,
     rootPackage,
     desktopPackage,
     targetNotesPath,
@@ -101,8 +109,9 @@ function requiredFile(rawValue, name) {
   return path;
 }
 
+/** 使用编排流程确认的公开基线；独立执行时沿用当前历史上的稳定标签。 */
 function resolveLatestStableTag() {
-  const tag = git(['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']);
+  const tag = process.env.BASE_TAG?.trim() || git(['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']);
   if (!/^v\d+\.\d+\.\d+$/u.test(tag)) throw new Error(`最新稳定标签格式无效：${tag}`);
   return tag;
 }
@@ -116,6 +125,7 @@ function readPackage(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+/** 仅允许固定源版本升级或恢复已完整准备的目标版本。 */
 function resolvePreparationState(input) {
   if (input.rootPackage.version !== input.desktopPackage.version) {
     throw new Error(`根包与桌面包版本不一致：root=${input.rootPackage.version ?? 'missing'} desktop=${input.desktopPackage.version ?? 'missing'}`);
@@ -126,8 +136,8 @@ function resolvePreparationState(input) {
     }
     return 'prepared';
   }
-  if (input.rootPackage.version !== input.baseVersion) {
-    throw new Error(`当前包版本既不是公开基线 ${input.baseVersion}，也不是目标版本 ${input.releaseVersion}：${input.rootPackage.version ?? 'missing'}`);
+  if (input.rootPackage.version !== input.sourceVersion) {
+    throw new Error(`当前包版本既不是候选源版本 ${input.sourceVersion}，也不是目标版本 ${input.releaseVersion}：${input.rootPackage.version ?? 'missing'}`);
   }
   if (existsSync(input.targetNotesPath)) {
     throw new Error(`目标 Release notes 已存在但包版本尚未升级，拒绝覆盖：${input.targetNotesPath}`);
