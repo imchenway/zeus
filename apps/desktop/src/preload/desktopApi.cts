@@ -495,7 +495,7 @@ export function createDesktopApi(transport: DesktopTransport) {
     /** 请求清理当前宿主的网络缓存。 */
     clearNetworkCache: () => transport.invoke('zeus:clear-network-cache'),
     /** 仅检查当前草稿，不保存或切换运行代理。 */
-    checkNetworkProxyConnection: (settings: unknown, address: string, checkTarget: 'browser' | 'node') => transport.invoke('zeus:network-proxy:check', settings, address, checkTarget),
+    checkNetworkProxyConnection: (address: string, checkTarget: 'browser' | 'node') => transport.invoke('zeus:network-proxy:check', address, checkTarget),
     /** 将补丁保存到用户选定的文件。 */
     exportPatchToFile: (patch: unknown) => transport.invoke('zeus:export-patch', patch),
     /** 打开具有明确来源的资源。 */

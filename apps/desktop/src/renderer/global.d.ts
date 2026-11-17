@@ -8,7 +8,6 @@ import type {
   MoveProjectSourceEntryInput,
   NetworkProxyCheckTarget,
   NetworkProxyConnectionResult,
-  NetworkProxySettings,
   ProjectSourceContentSearchOptions,
   ProjectSourceContentSearchResult,
   ProjectSourceDirectorySnapshot,
@@ -336,7 +335,7 @@ declare global {
       }>;
       clearNetworkCache: () => Promise<{ cleared: boolean; clearedAt: string }>;
       /** 使用当前草稿检查指定的浏览器或模型宿主网络。 */
-      checkNetworkProxyConnection: (settings: NetworkProxySettings, address: string, checkTarget: NetworkProxyCheckTarget) => Promise<NetworkProxyConnectionResult>;
+      checkNetworkProxyConnection: (address: string, checkTarget: NetworkProxyCheckTarget) => Promise<NetworkProxyConnectionResult>;
       exportPatchToFile: (patch: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       openSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
         opened: boolean;
