@@ -8,7 +8,19 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { parseBoolean, releaseCdnBaseUrl, renderCdnReleaseNotes, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile, verifyPublicCdnDownload, verifyPublicCdnManifest } from './release-script-utils.mjs';
+import {
+  parseBoolean,
+  releaseCdnBaseUrl,
+  renderCdnReleaseNotes,
+  requiredVersion,
+  sha256File,
+  sha256Text,
+  validateReleaseNotes,
+  validateReleaseNotesFile,
+  verifyPublicCdnDownload,
+  verifyPublicCdnManifest,
+  waitForReleaseOperations,
+} from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
   observeReleaseWorkflowExecution,
@@ -112,14 +124,12 @@ async function main() {
       return;
     }
   }
-  /** 同一快照决定活跃运行与最近运行，避免重复读取产生矛盾结果。 */
+  /** 同一快照决定活跃运行与原始发布运行，避免重新打包同版本制品。 */
   const workflowRuns = listReleaseRuns(preflight.headSha).value;
   /** 尚未交付时优先续等同一候选的活跃运行。 */
   let workflowRun = workflowRuns.find((run) => run.headSha === preflight.headSha && ['queued', 'in_progress', 'waiting', 'requested'].includes(run.status)) ?? null;
-  /** 最近运行仅参与已有失败 Workflow 的恢复判断。 */
-  const latestWorkflowRun = workflowRuns.find((run) => run.headSha === preflight.headSha) ?? null;
-  const shouldRetryFailedWorkflow = release.exists && !workflowRun && latestWorkflowRun?.status === 'completed' && latestWorkflowRun.conclusion === 'failure';
-  if ((!release.exists && !workflowRun) || shouldRetryFailedWorkflow) {
+  if (!workflowRun) workflowRun = resumeReleasePublication(workflowRuns, preflight.headSha);
+  if (!release.exists && !workflowRun) {
     const dispatchedAt = Date.now();
     dispatchReleaseWorkflow(tag, preflight.headSha, requireAppleDistribution);
     workflowRun = await waitForDispatchedRun(preflight.headSha, dispatchedAt);
@@ -352,8 +362,10 @@ export async function verifyPublishedRelease(input) {
 
   const downloadDirectory = mkdtempSync(join(tmpdir(), `zeus-release-public-${input.releaseVersion}-`));
   try {
-    /** 两端共用清单下载、元数据和候选身份检查，不能只验证其中一个平台。 */
-    const { manifest, manifestPath, manifestSize, manifestSha256 } = await readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, 'darwin');
+    /** gh 原生并发下载两份清单，字节和候选身份校验也分别并发执行。 */
+    downloadReleaseAsset(input.tag, ['zeus-release-manifest.json', 'zeus-release-manifest-win32.json'], downloadDirectory, publicVerificationReadOptions(input));
+    const [macRelease, windowsRelease] = await waitForReleaseOperations(['darwin', 'win32'].map((platform) => readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, platform)));
+    const { manifest, manifestPath, manifestSize, manifestSha256 } = macRelease;
     /** macOS 当前仅发布 Apple Silicon DMG，不允许其他记录混入此平台清单。 */
     const manifestArtifact = manifest.artifacts?.[0];
     if (
@@ -377,7 +389,6 @@ export async function verifyPublishedRelease(input) {
     }
 
     /** Windows 清单必须列出同一候选的两个原生架构，并逐项匹配真实公开资产。 */
-    const windowsRelease = await readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, 'win32');
     if (!Array.isArray(windowsRelease.manifest.artifacts) || windowsRelease.manifest.artifacts.length !== 2) throw new Error('公开 Windows 清单必须恰好包含 x64 和 ARM64 两个安装器。');
     /** 安装器身份、官方地址、大小和摘要均通过后才写入发布凭证。 */
     const windowsArtifacts = ['x64', 'arm64'].map((arch) => {
@@ -402,7 +413,7 @@ export async function verifyPublishedRelease(input) {
 
     if (includesCdnDownloads) {
       /** 带加速链接的正文只有在两端公开 CDN 清单与 GitHub 候选一致时才通过验收。 */
-      await Promise.all([
+      await waitForReleaseOperations([
         verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json'),
         verifyPublicCdnManifest(windowsRelease.manifest, 'zeus-release-manifest-win32.json'),
         verifyPublicCdnManifest(manifest, 'zeus-release-manifest.json', fetch, true),
@@ -469,13 +480,12 @@ export async function verifyPublishedRelease(input) {
   }
 }
 
-/** 两端使用相同规则下载并核对正式平台清单，且始终绑定当前候选提交。 */
+/** 两端使用相同规则核对已下载的正式平台清单，且始终绑定当前候选提交。 */
 async function readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, platform) {
   /** 平台后缀保持已发行客户端使用的固定下载入口。 */
   const fileName = platform === 'win32' ? 'zeus-release-manifest-win32.json' : 'zeus-release-manifest.json';
   /** 服务端摘要和大小已由完整资产集合检查约束。 */
   const asset = actualAssets.find((candidate) => candidate.name === fileName);
-  downloadReleaseAsset(input.tag, fileName, downloadDirectory, publicVerificationReadOptions(input));
   /** 仅读取本次任务临时目录中的固定文件名。 */
   const manifestPath = join(downloadDirectory, fileName);
   /** 实际下载字节必须与 GitHub 服务端公布的摘要一致。 */
@@ -578,12 +588,41 @@ function readRelease(tag, options = {}) {
 
 /** 一次读取候选运行列表，读取失败时禁止猜测并重复触发发布。 */
 function listReleaseRuns(headSha) {
-  const result = ghJson(
-    ['run', 'list', '--repo', repository, '--workflow', 'Release', '--event', 'workflow_dispatch', '--commit', headSha, '--limit', '20', '--json', 'databaseId,status,conclusion,event,headSha,url,createdAt,workflowName'],
-    true,
-  );
-  if (!result.ok || !Array.isArray(result.value)) throw new Error(`无法确认候选提交是否已有 Release Workflow：${result.error || 'GitHub 返回了无效运行列表'}`);
-  return result;
+  const result = ghJson(['api', '--paginate', '--slurp', `repos/${repository}/actions/workflows/release.yml/runs?event=workflow_dispatch&head_sha=${headSha}&per_page=100`], true);
+  if (!result.ok || !Array.isArray(result.value) || result.value.some((page) => !Array.isArray(page?.workflow_runs))) throw new Error(`无法确认候选提交是否已有 Release Workflow：${result.error || 'GitHub 返回了无效运行列表'}`);
+  return {
+    ...result,
+    value: result.value.flatMap((page) =>
+      page.workflow_runs.map((run) => ({ databaseId: run.id, status: run.status, conclusion: run.conclusion, headSha: run.head_sha, url: run.html_url, createdAt: run.created_at, attempt: run.run_attempt })),
+    ),
+  };
+}
+
+/** 复用最早进入 CDN 上传或公开发布的制品，只重跑失败作业；原制品过期时禁止重新打包。 */
+function resumeReleasePublication(workflowRuns, headSha) {
+  for (const workflowRun of [...workflowRuns].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))) {
+    /** 读取该运行的最新 attempt，避免对过时的失败状态重复提交重跑。 */
+    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,headSha,status,conclusion,url,attempt,jobs'], true);
+    if (!result.ok || result.value?.headSha !== headSha || !Array.isArray(result.value.jobs) || !Number.isSafeInteger(result.value.attempt)) throw new Error(`无法确认原发布作业，未重新创建 Workflow：${result.error || workflowRun.url}`);
+    /** 矩阵上传可能在 publish 启动前失败，也必须复用这一运行的原始构建。 */
+    const publicationJobs = result.value.jobs.filter((job) => (job.name === 'publish' || job.name.startsWith('stage-cdn')) && job.conclusion !== 'skipped' && Date.parse(job.startedAt) > 0);
+    if (!publicationJobs.length) continue;
+    if (result.value.status !== 'completed' || result.value.conclusion === 'success') return result.value;
+    if (!['failure', 'cancelled'].includes(result.value.conclusion)) throw new Error(`原发布作业状态未知，未重新打包：${workflowRun.url}`);
+    /** 发布作业下载原运行的附件，不接受其他运行的同名安装包。 */
+    const artifacts = ghJson(['api', `repos/${repository}/actions/runs/${workflowRun.databaseId}/artifacts?per_page=100`], true);
+    if (!artifacts.ok || !Array.isArray(artifacts.value?.artifacts)) throw new Error(`无法读取原构建制品，未重跑发布：${artifacts.error || workflowRun.url}`);
+    /** 三个平台安装包及其构建清单必须仍可从同一运行下载。 */
+    for (const name of [`zeus-macos-${headSha}`, `zeus-windows-${headSha}-x64`, `zeus-windows-${headSha}-arm64`]) {
+      /** 同名附件必须唯一且未过期，才能继续维持版本目录的字节身份。 */
+      const matches = artifacts.value.artifacts.filter((artifact) => artifact.name === name);
+      if (matches.length !== 1 || matches[0].expired !== false) throw new Error(`原构建制品缺失或已过期，禁止用重建文件替换同版本：${name}；${workflowRun.url}`);
+    }
+    console.log(`恢复原运行的失败上传及发布作业，复用已成功的构建和上传：${workflowRun.url}`);
+    run('gh', ['run', 'rerun', String(workflowRun.databaseId), '--repo', repository, '--failed']);
+    return { ...result.value, attempt: result.value.attempt + 1 };
+  }
+  return null;
 }
 
 function dispatchReleaseWorkflow(tag, commitSha, requireAppleDistribution) {
@@ -667,11 +706,11 @@ export async function waitForPublishedRelease(workflowRun, input) {
     }
     if (beforeRead.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, previousSnapshot, beforeRead, lastVerificationFailure);
 
-    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,status,conclusion,url,jobs'], true, {
+    const result = ghJson(['run', 'view', String(workflowRun.databaseId), '--repo', repository, '--json', 'databaseId,status,conclusion,url,attempt,jobs'], true, {
       attempts: 1,
       timeout: Math.max(1, Math.min(releaseRemoteReadTimeoutMs, beforeRead.remainingMs)),
     });
-    if (!result.ok || !result.value || typeof result.value.status !== 'string') {
+    if (!result.ok || !result.value || typeof result.value.status !== 'string' || !Number.isSafeInteger(result.value.attempt)) {
       consecutiveReadFailures += 1;
       const reason = result.error || 'GitHub CLI 返回了无效响应';
       // 网络故障由同一等待预算约束，不能在三次瞬时失败后提前放弃已派发的发布。
@@ -695,6 +734,16 @@ export async function waitForPublishedRelease(workflowRun, input) {
       continue;
     }
     consecutiveReadFailures = 0;
+
+    /** 重跑请求可能先于 GitHub 状态刷新返回，旧 attempt 的失败不能终止本次恢复。 */
+    if (result.value.attempt < (workflowRun.attempt ?? 1)) {
+      /** 状态传播等待仍使用原有预算和心跳，不发起第二次重跑。 */
+      const waitState = readReleaseWorkflowWaitState(waitWindow);
+      printWorkflowWaitHeartbeatIfDue(workflowRun, previousSnapshot, waitState, nextHeartbeatAtMs);
+      if (performance.now() >= nextHeartbeatAtMs) nextHeartbeatAtMs = performance.now() + releaseWorkflowHeartbeatIntervalMs;
+      await delay(Math.min(releaseWorkflowPollIntervalMs, waitState.remainingMs));
+      continue;
+    }
 
     const snapshot = buildWorkflowProgressSnapshot(result.value);
     observeReleaseWorkflowExecution(waitWindow, snapshot);
@@ -844,16 +893,17 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
 
-/** 下载指定公开资产，轮询与独立回验分别使用调用方的预算和重试次数。 */
+/** gh 原生并发下载指定公开资产，轮询与独立回验分别保留原有预算和重试次数。 */
 function downloadReleaseAsset(tag, assetName, destinationDirectory, options = {}) {
   /** 轮询内只使用本轮剩余预算，独立回验保留既有重试规则。 */
   const timeout = options.timeout ?? releaseRemoteReadTimeoutMs;
-  const destination = join(destinationDirectory, assetName);
-  const args = ['release', 'download', tag, '--repo', repository, '--pattern', assetName, '--dir', destinationDirectory];
+  /** 多份清单在同一下载批次中完成；显式完整 DMG 回下载继续使用单文件。 */
+  const assetNames = Array.isArray(assetName) ? assetName : [assetName];
+  const args = ['release', 'download', tag, '--repo', repository, ...assetNames.flatMap((name) => ['--pattern', name]), '--dir', destinationDirectory];
   const outcome = runRemoteReadWithRetrySync({
     attempts: options.attempts,
     execute: () => {
-      rmSync(destination, { force: true });
+      for (const name of assetNames) rmSync(join(destinationDirectory, name), { force: true });
       return spawnSync('gh', args, {
         cwd: repositoryRoot,
         encoding: 'utf8',

@@ -123,10 +123,24 @@ jobs:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
+  # 两个发布入口共用同一组并发上传作业，macOS 安装包取自既有 Release。
+  stage-cdn:
+    if: ${{ inputs.publish_release }}
+    needs: [preflight, verify, package-windows]
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/stage-release-cdn.yml
+    with:
+      commit_sha: ${{ inputs.commit_sha }}
+      tag: ${{ inputs.tag }}
+      macos_from_release: true
+
   # 只追加本平台资产；macOS 发布、Release notes 和 Homebrew 均由原有流程维护。
   publish:
     if: ${{ inputs.publish_release }}
-    needs: [preflight, verify, package-windows]
+    needs: [preflight, verify, package-windows, stage-cdn]
     runs-on: ubuntu-latest
     # 两个发布入口共用串行组，稳定清单不会被并发补发覆盖。
     concurrency:
@@ -154,12 +168,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: 下载两个原生架构的正式安装器
-        uses: actions/download-artifact@v4
-        with:
-          pattern: zeus-windows-${{ inputs.commit_sha }}-*
-          path: dist
-          merge-multiple: true
+      - name: 并发下载 Windows 原构建和已有 macOS 制品
+        run: |
+          mkdir -p dist
+          # 三个进程写入不同文件，失败后也等待其他下载结束。
+          pids=()
+          for arch in x64 arm64; do
+            gh run download "$GITHUB_RUN_ID" --repo imchenway/zeus --name "zeus-windows-$RELEASE_COMMIT-$arch" --dir dist &
+            pids+=("$!")
+          done
+          gh release download "$RELEASE_TAG" --repo imchenway/zeus --pattern "Zeus-${RELEASE_TAG#v}-arm64.dmg" --pattern zeus-release-manifest.json --dir dist &
+          pids+=("$!")
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
       - name: 合并并复核官方 Windows 清单
         run: node scripts/assemble-windows-release.mjs dist
       - name: 重新核对标签与稳定发行
@@ -174,20 +198,10 @@ jobs:
           fi
           gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease |
             jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
-      - name: 复用同版 macOS 制品以提供完整 CDN 下载链接
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          gh release download "$RELEASE_TAG" --repo imchenway/zeus --pattern "Zeus-$version-arm64.dmg" --pattern zeus-release-manifest.json --dir dist
       - name: 安装固定版本 OSS 上传工具
-        run: |
-          curl --fail --location --retry 2 --connect-timeout 10 --max-time 120 'https://gosspublic.alicdn.com/ossutil/v2/2.4.1/ossutil-2.4.1-linux-amd64.zip' -o "$RUNNER_TEMP/zeus-ossutil.zip"
-          printf '57ee4c56796a40144acd6b0b96b53b4ba75e5cec09c01d8d0313c09a5524022f  %s\n' "$RUNNER_TEMP/zeus-ossutil.zip" | sha256sum --check -
-          unzip -q "$RUNNER_TEMP/zeus-ossutil.zip" -d "$RUNNER_TEMP/zeus-ossutil"
-          chmod 755 "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64/ossutil"
-          printf '%s\n' "$RUNNER_TEMP/zeus-ossutil/ossutil-2.4.1-linux-amd64" >> "$GITHUB_PATH"
-      - name: 申请阿里云短期上传身份
-        id: oss_identity
-        # 官方 MIT Action 固定到不可变提交。
+        uses: ./.github/actions/setup-release-oss
+      - name: 申请清单准备身份
+        id: oss_stage_identity
         uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6
         with:
           oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
@@ -196,28 +210,15 @@ jobs:
           role-session-expiration: 1800
       - name: 准备并核验 CDN 固定版本制品
         env:
-          # 上传只使用本次 OIDC 换取的短期凭据。
-          OSS_ACCESS_KEY_ID: ${{ steps.oss_identity.outputs.aliyun-access-key-id }}
-          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_identity.outputs.aliyun-access-key-secret }}
-          OSS_SESSION_TOKEN: ${{ steps.oss_identity.outputs.aliyun-security-token }}
-        run: |
-          node scripts/publish-release-cdn.mjs stage dist
+          OSS_ACCESS_KEY_ID: ${{ steps.oss_stage_identity.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.oss_stage_identity.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.oss_stage_identity.outputs.aliyun-security-token }}
+        run: node scripts/publish-release-cdn.mjs prepare-manifests dist
       - name: 上传并核对 Windows 资产，最后公开更新清单
         run: |
           version="$(node -p "require('./package.json').version")"
-          # 同名资产只核对，不覆盖；上传结果未知时停止，后续显式重跑先读取现有事实。
-          # 两个安装器都通过服务器摘要核对后才上传清单，部分失败不会宣布 Windows 可更新。
-          for local_asset in "dist/Zeus-$version-win32-x64.exe" "dist/Zeus-$version-win32-arm64.exe" dist/zeus-release-manifest-win32.json; do
-            name="$(basename "$local_asset")"
-            digest="sha256:$(sha256sum "$local_asset" | awk '{print $1}')"
-            size="$(stat -c '%s' "$local_asset")"
-            release_json="$(gh release view "$RELEASE_TAG" --json assets)"
-            if ! printf '%s' "$release_json" | jq -e --arg name "$name" '.assets | any(.name == $name)' >/dev/null; then
-              gh release upload "$RELEASE_TAG" "$local_asset"
-            fi
-            gh release view "$RELEASE_TAG" --json assets |
-              jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
-          done
+          # 两个安装包并发上传并核验完成后，才公开 Windows 更新清单。
+          node scripts/publish-release-assets.mjs dist win32
           echo "Windows 两个架构和更新清单已核对：$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: 刷新稳定清单写入身份
         id: oss_activate_identity
@@ -235,5 +236,12 @@ jobs:
           OSS_ACCESS_KEY_SECRET: ${{ steps.oss_activate_identity.outputs.aliyun-access-key-secret }}
           OSS_SESSION_TOKEN: ${{ steps.oss_activate_identity.outputs.aliyun-security-token }}
         run: |
-          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md"
-          node scripts/publish-release-cdn.mjs activate dist
+          gh release edit "$RELEASE_TAG" --repo imchenway/zeus --notes-file "releases/$RELEASE_TAG.md" &
+          notes_pid=$!
+          node scripts/publish-release-cdn.mjs activate dist &
+          cdn_pid=$!
+          status=0
+          for pid in "$notes_pid" "$cdn_pid"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
