@@ -3887,6 +3887,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     inputDeliverableIds?: string[];
     reason?: string;
     context?: Record<string, unknown>;
+    /** 自动化预检完成后，仅在实际写入新接纳时复核控制状态。 */
+    assertCanAccept?: () => void;
   }): Promise<{ workflowRunId: string } | null> => {
     if (!digitalTeamWorkflowCoordinator) throw nativeApiError('ZEUS_DIGITAL_TEAM_NOT_READY', '项目流程服务尚未就绪。');
     /** 本次入口权限必须进入运行快照，不能被任务长期授权或员工默认扩大。 */
@@ -3923,8 +3925,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       parsed,
       destinationId: 'project-workflow-admission',
       resourceId: input.taskId,
-      mutateBusinessState: () =>
-        digitalTeamWorkflowCoordinator!.acceptEmployeeAssignment(input.projectId, assignment, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }, prepared),
+      mutateBusinessState: () => {
+        input.assertCanAccept?.();
+        return digitalTeamWorkflowCoordinator!.acceptEmployeeAssignment(input.projectId, assignment, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }, prepared);
+      },
     });
     await db.save();
     /** 使用协调器实际运行身份，而不是第一个员工会话身份。 */
@@ -4152,12 +4156,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         }
         if (task.projectId !== project.id) throw nativeApiError('ZEUS_AUTOMATION_TASK_SCOPE', '已冻结的自动化目标不属于当前项目。');
         if (taskManagementStatusIsTerminal(task)) throw nativeApiError('ZEUS_AUTOMATION_TASK_TERMINAL', '目标任务已经结束，过期事件不重新执行。');
-        /** 创建任务保存会让出控制权，真正接纳工作前再次核对原修订授权。 */
-        const authorizationRevision = automationTasks.getRevision(run.automationRevisionId);
-        if (snapshot.permissionMode === 'full-access' && (!authorizationRevision || !automationTasks.hasFullAccessGrant(run.automationId, authorizationRevision.revision)))
-          throw nativeApiError('ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED', '原运行的完全访问授权已失效，请重新保存授权后运行。');
-        /** 创建任务可能让出控制权，实际接纳前再次读取整条自动化的当日用量。 */
-        automationRuns.assertDailyTokenBudget(run.automationId, automationNow());
+        /** 预检返回后在各接纳写入前复核人工控制、原修订授权和当前预算。 */
+        const assertCanAccept = (): void => {
+          if (automationRuns.getById(run.id)?.status !== 'dispatching' || automationTasks.getById(run.automationId)?.status !== 'active') throw new Error('ZEUS_AUTOMATION_DISPATCH_INTERRUPTED: 自动化已暂停、删除或不再允许派发新工作。');
+          /** 原运行修订的授权必须仍然有效，不能借用后来修订的授权。 */
+          const authorizationRevision = automationTasks.getRevision(run.automationRevisionId);
+          if (snapshot.permissionMode === 'full-access' && (!authorizationRevision || !automationTasks.hasFullAccessGrant(run.automationId, authorizationRevision.revision)))
+            throw nativeApiError('ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED', '原运行的完全访问授权已失效，请重新保存授权后运行。');
+          automationRuns.assertDailyTokenBudget(run.automationId, automationNow());
+        };
+        assertCanAccept();
         /** 项目任务复用项目流程；员工调研仍保留独立工作。 */
         const reference = await digitalEmployeeOrchestrator.queueAutomatedAssignment({
           projectId: project.id,
@@ -4166,6 +4174,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           sourceRef: target.sourceRef,
           bypassWorkflow: snapshot.action.kind === 'employee_work',
           permissionMode: snapshot.permissionMode,
+          assertCanAccept,
         });
         return reference;
       },

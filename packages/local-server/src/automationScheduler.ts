@@ -446,12 +446,15 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
               await options.save();
               continue;
             }
-            /** 未发生业务接纳的目标保留准确失败原因，人工恢复仍沿冻结范围。 */
-            options.runs.updateDispatchTarget(running.id, { ...target, status: 'pending', reason: error instanceof Error ? error.message : String(error) });
-            /** 部分接纳遇到日额度耗尽时保留原占位并等待下一自然日，其他错误仍需人工恢复。 */
-            if (options.runs.getById(running.id)?.executionReferences.length) {
-              if (errorCode(error) !== 'ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED') options.runs.pauseDispatch(running.id, errorCode(error), error instanceof Error ? error.message : String(error));
-            } else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
+            /** 人工控制中止保留原目标，暂停可继续，删除由既有对账收口。 */
+            const interrupted = errorCode(error) === 'ZEUS_AUTOMATION_DISPATCH_INTERRUPTED';
+            options.runs.updateDispatchTarget(running.id, { ...target, status: 'pending', reason: interrupted ? null : error instanceof Error ? error.message : String(error) });
+            if (!interrupted) {
+              /** 部分接纳遇到日额度耗尽时保留原占位并等待下一自然日，其他错误仍需人工恢复。 */
+              if (options.runs.getById(running.id)?.executionReferences.length) {
+                if (errorCode(error) !== 'ZEUS_AUTOMATION_BUDGET_TOKENS_EXHAUSTED') options.runs.pauseDispatch(running.id, errorCode(error), error instanceof Error ? error.message : String(error));
+              } else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
+            }
           } catch (reconciliationError) {
             /** 接纳事实待核对时同样保留原占位和身份，不能放行后继运行。 */
             /** 使用当前目标事实，避免把已记账的引用覆盖为未接纳。 */

@@ -62,6 +62,8 @@ interface DigitalEmployeeOrchestratorOptions {
     source: string;
     sourceRef: string;
     context?: { permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access' };
+    /** 异步流程预检结束后，在接纳事务内复核自动化控制状态。 */
+    assertCanAccept?: () => void;
   }): Promise<{ workflowRunId: string } | null>;
   /** 历史排队执行接入流程后读取完整流程终态。 */
   readProjectWorkflowRun?(runId: string): AutomationExecutionState | undefined;
@@ -112,6 +114,8 @@ export interface DigitalEmployeeOrchestrator {
     sourceRef: string;
     bypassWorkflow?: boolean;
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+    /** 每个新接纳分支在写入前调用，原回执重放不受影响。 */
+    assertCanAccept: () => void;
   }): Promise<AutomationExecutionReference | null>;
   kick(): void;
   close(): Promise<void>;
@@ -192,6 +196,8 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     bypassWorkflow?: boolean;
     /** 自动化权限只能收紧员工和任务的既有授权。 */
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+    /** 预检期间的暂停或删除必须阻止尚未接纳的工作。 */
+    assertCanAccept: () => void;
   }): Promise<AutomationExecutionReference | null> {
     if (input.employee.entrypoint?.kind !== 'agent' || input.employee.entrypointMigrationState !== 'ready') {
       throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行；自动化不会运行旧版入口配置。', false);
@@ -205,6 +211,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         source: input.source,
         sourceRef: input.sourceRef,
         ...(input.permissionMode ? { context: { permissionMode: input.permissionMode } } : {}),
+        assertCanAccept: input.assertCanAccept,
       });
       if (accepted) {
         if (input.automation && input.eventIdentity) options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: null, createdAt: now().toISOString() });
@@ -214,7 +221,13 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     }
     /** 统一自动化沿旧安排的正式接纳回执等待整份原计划，不另建工作。 */
     if (input.source === 'automation' && !input.automation) {
-      const planned = await options.taskWorkManagement.claimPlannedAutomationWork({ taskId: input.task.id, employeeId: input.employee.id, sourceRef: input.sourceRef, permissionMode: input.permissionMode });
+      const planned = await options.taskWorkManagement.claimPlannedAutomationWork({
+        taskId: input.task.id,
+        employeeId: input.employee.id,
+        sourceRef: input.sourceRef,
+        permissionMode: input.permissionMode,
+        assertCanAccept: input.assertCanAccept,
+      });
       if (planned !== undefined) return planned;
     }
     /** 有阶段安排的任务只领取其中的分工，不另建整份任务的重复执行。 */
@@ -224,7 +237,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       return null;
     }
     const sourceRef = input.source === 'task_pool' ? input.sourceRef : `${input.employee.id}:${input.sourceRef}`;
-    const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef, permissionMode: input.permissionMode });
+    const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef, permissionMode: input.permissionMode, assertCanAccept: input.assertCanAccept });
     if (input.automation && input.eventIdentity) options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: null, createdAt: now().toISOString() });
     options.taskEvents.create({
       taskId: input.task.id,
@@ -871,7 +884,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       if (!task || task.projectId !== input.projectId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_TASK_UNAVAILABLE', '自动化目标任务已不可用。', false);
       const employee = options.employees.ensureProjectEmployee(input.projectId, input.employeeId);
       if (!employee.enabled) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。', false);
-      return queueExecution({ employee, task, source: 'automation', sourceRef: input.sourceRef, bypassWorkflow: input.bypassWorkflow, permissionMode: input.permissionMode });
+      return queueExecution({ employee, task, source: 'automation', sourceRef: input.sourceRef, bypassWorkflow: input.bypassWorkflow, permissionMode: input.permissionMode, assertCanAccept: input.assertCanAccept });
     },
     kick: () => {
       if (timer) clearTimeout(timer);
