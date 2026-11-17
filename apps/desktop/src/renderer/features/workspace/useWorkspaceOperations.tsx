@@ -234,6 +234,11 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     },
     [props.nativeConversationClient],
   );
+  /** 读取分支快照时跳过差异补丁，并保持回调引用稳定，避免界面重渲染触发重新加载。 */
+  const loadNewConversationProjectGit = useMemo(() => {
+    const client = props.nativeConversationClient;
+    return client ? (projectId: string) => client.loadProjectGitWorkbench(projectId, false) : undefined;
+  }, [props.nativeConversationClient]);
   const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
     const {
       onConfirmRuntimeOperation,
@@ -1970,7 +1975,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             handleMainNavigate('settings');
           },
           onSelectNewConversationProject: selectNewConversationProject,
-          onLoadNewConversationProjectGit: props.nativeConversationClient ? (projectId) => props.nativeConversationClient!.loadProjectGitWorkbench(projectId, false) : undefined,
+          onLoadNewConversationProjectGit: loadNewConversationProjectGit,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
           onSelectTask: (task) => {
