@@ -49,7 +49,9 @@ export class ComputerElectronBridge {
       },
       visible: () => window.isVisible(),
       textInputOnly: true,
-      allowUrl: () => { throw new Error('应用后台输入桥不允许导航。'); },
+      allowUrl: () => {
+        throw new Error('应用后台输入桥不允许导航。');
+      },
     });
     try {
       writeFileSync(temporary, JSON.stringify({ pid: process.pid, windowId, endpoint: `${endpoint}${session}` }), { flag: 'wx', mode: 0o600 });

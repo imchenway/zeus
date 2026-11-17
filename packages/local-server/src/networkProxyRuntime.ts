@@ -118,7 +118,11 @@ export async function closeNetworkProxyRuntime(): Promise<void> {
   const previous = startingNetworkProxyBridge;
   startingNetworkProxyBridge = undefined;
   networkProxyBridge = undefined;
-  if (previous) await previous.then((bridge) => bridge.close(), () => undefined);
+  if (previous)
+    await previous.then(
+      (bridge) => bridge.close(),
+      () => undefined,
+    );
 }
 
 /** 在业务请求启动前建立固定出口，后续设置变更只切换出口规则。 */

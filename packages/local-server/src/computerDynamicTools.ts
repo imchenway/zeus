@@ -162,7 +162,8 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'set_value',
-          description: 'Set the value of an accessible control from the latest window snapshot. Zeus text controls use the private background renderer bridge to replace or clear text and verify the DOM value. Prefer element_token; verify the result from fresh state.',
+          description:
+            'Set the value of an accessible control from the latest window snapshot. Zeus text controls use the private background renderer bridge to replace or clear text and verify the DOM value. Prefer element_token; verify the result from fresh state.',
           deferLoading: true,
           inputSchema: objectSchema({ ...exactWindowProperties, ...semanticTargetProperties, value: { type: 'string' } }, ['pid', 'window_id', 'value']),
         },

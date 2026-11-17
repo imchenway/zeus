@@ -88,23 +88,25 @@ export function NetworkSettingsPane(props: {
     const currentRevision = ++revision.current;
     setStatus('saving');
     /** 每次先核对正式出口，连续失焦与检查不会重复切断相同配置的连接。 */
-    const operation = saveQueue.current.catch(() => undefined).then(async () => {
-      if (!props.client) throw new Error(zh ? '本地设置服务暂不可用。' : 'Settings service is unavailable.');
-      /** 先读取当前出口，其他窗口修改后也以真实状态为准。 */
-      let applied = await props.client.settings.loadActiveNetworkProxy();
-      if (!sameNetworkProxy(applied, networkProxy)) {
-        /** 只提交本页拥有的字段，避免覆盖其他设置。 */
-        const saved = await props.client.settings.saveAppShellSettings({ networkProxy });
-        await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
-        applied = await props.client.settings.loadActiveNetworkProxy();
-      }
-      if (!sameNetworkProxy(applied, networkProxy)) throw new Error(zh ? '代理配置尚未生效，请重试。' : 'Proxy settings have not been applied. Please retry.');
-      if (currentRevision === revision.current) {
-        setActiveProxy(applied);
-        setActiveProxyUnavailable(false);
-        setStatus('saved');
-      }
-    });
+    const operation = saveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!props.client) throw new Error(zh ? '本地设置服务暂不可用。' : 'Settings service is unavailable.');
+        /** 先读取当前出口，其他窗口修改后也以真实状态为准。 */
+        let applied = await props.client.settings.loadActiveNetworkProxy();
+        if (!sameNetworkProxy(applied, networkProxy)) {
+          /** 只提交本页拥有的字段，避免覆盖其他设置。 */
+          const saved = await props.client.settings.saveAppShellSettings({ networkProxy });
+          await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
+          applied = await props.client.settings.loadActiveNetworkProxy();
+        }
+        if (!sameNetworkProxy(applied, networkProxy)) throw new Error(zh ? '代理配置尚未生效，请重试。' : 'Proxy settings have not been applied. Please retry.');
+        if (currentRevision === revision.current) {
+          setActiveProxy(applied);
+          setActiveProxyUnavailable(false);
+          setStatus('saved');
+        }
+      });
     saveQueue.current = operation;
     try {
       await operation;
@@ -145,7 +147,9 @@ export function NetworkSettingsPane(props: {
       <div className="network-runtime-summary" aria-label={zh ? '代理生效状态' : 'Proxy activation status'}>
         <div>
           <span>{zh ? '当前生效' : 'Active now'}</span>
-          <strong role="status" aria-live="polite">{activeProxyUnavailable ? (zh ? '无法读取' : 'Unavailable') : describeNetworkProxy(activeProxy, zh)}</strong>
+          <strong role="status" aria-live="polite">
+            {activeProxyUnavailable ? (zh ? '无法读取' : 'Unavailable') : describeNetworkProxy(activeProxy, zh)}
+          </strong>
         </div>
       </div>
       <div className="settings-group-stack">

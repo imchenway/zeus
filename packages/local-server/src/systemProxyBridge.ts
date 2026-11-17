@@ -314,7 +314,7 @@ export async function startSystemProxyBridge(resolveRoutes: (target: URL) => Pro
         return;
       }
       /** 所有头均来自 Node 已解析的 HTTP 报文，内部代理凭据已移除。 */
-      const headers = Object.entries(forwardHeaders(request, target, forwardProxy)).flatMap(([name, value]) => value === undefined ? [] : (Array.isArray(value) ? value : [value]).map((item) => `${name}: ${item}`));
+      const headers = Object.entries(forwardHeaders(request, target, forwardProxy)).flatMap(([name, value]) => (value === undefined ? [] : (Array.isArray(value) ? value : [value]).map((item) => `${name}: ${item}`)));
       upstream.write([`${request.method} ${forwardProxy ? target.href : target.pathname + target.search} HTTP/${request.httpVersion}`, ...headers, '', ''].join('\r\n'));
       pipeSockets(client, upstream, head);
     })().catch(() => client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'));

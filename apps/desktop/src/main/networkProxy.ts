@@ -14,9 +14,12 @@ async function withOperationTimeout<T>(operation: Promise<T>, message: string): 
   /** 原生操作提前完成时清理定时器，不延长宿主生命周期。 */
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => reject(new Error(message)), networkRequestTimeoutMs);
-    })]);
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), networkRequestTimeoutMs);
+      }),
+    ]);
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -43,7 +46,8 @@ export async function applyDesktopNetworkProxy(value: unknown, browserSession: E
   if (typeof value !== 'string') throw new Error('网络运行地址无效。');
   /** 内部端点只能是带随机认证的本机 HTTP 代理，不能由配置替换成外部地址。 */
   const address = URL.parse(value);
-  if (!address || address.protocol !== 'http:' || address.hostname !== '127.0.0.1' || !address.port || !address.username || !address.password || address.pathname !== '/' || address.search || address.hash) throw new Error('网络运行地址无效。');
+  if (!address || address.protocol !== 'http:' || address.hostname !== '127.0.0.1' || !address.port || !address.username || !address.password || address.pathname !== '/' || address.search || address.hash)
+    throw new Error('网络运行地址无效。');
   runtimeProxyAddress = address;
   applyNetworkProxyEnvironment(networkProxyEnvironment({ mode: 'manual', url: address.href, bypass: '' }));
   /** 用户绕过列表由 Core 处理，客户端只固定绕过本机 API。 */
@@ -135,11 +139,13 @@ export async function checkNetworkProxyConnection(address: unknown, checkTarget:
         response.on('error', (error) => finish(connectionError(error, startedAt)));
         /** Core 的建连错误与目标网站自己的拒绝响应分别报告。 */
         const latencyMs = elapsedMilliseconds(startedAt);
-        finish(response.headers[networkProxyFailureHeader]?.includes('connection')
-          ? { error: 'connection', latencyMs }
-          : response.statusCode === 407
-            ? { error: 'authentication', statusCode: 407, latencyMs }
-            : { statusCode: response.statusCode, latencyMs });
+        finish(
+          response.headers[networkProxyFailureHeader]?.includes('connection')
+            ? { error: 'connection', latencyMs }
+            : response.statusCode === 407
+              ? { error: 'authentication', statusCode: 407, latencyMs }
+              : { statusCode: response.statusCode, latencyMs },
+        );
       });
       request.on('redirect', (statusCode) => finish({ statusCode, latencyMs: elapsedMilliseconds(startedAt) }));
       request.on('error', (error) => finish(connectionError(error, startedAt)));
