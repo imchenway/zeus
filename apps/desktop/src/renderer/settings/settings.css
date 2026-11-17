@@ -530,21 +530,17 @@
   .browser-settings-actions {
     flex-wrap: wrap;
   }
-  /* 网络页先说明“当前运行”和“已保存”，避免把待重启配置误当成供应商检查所用配置。 */
+  /* 网络页只展示正式生效的出口，保存状态沿用页面标题旁的共享组件。 */
   .network-runtime-summary {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     padding: 4px var(--settings-card-padding);
   }
   .network-runtime-summary > div {
     display: grid;
     gap: 4px;
     min-inline-size: 0;
-    padding: 14px 18px 14px 0;
-  }
-  .network-runtime-summary > div + div {
-    padding-inline: 18px 0;
-    border-inline-start: 1px solid var(--zeus-product-border);
+    padding: 14px 0;
   }
   .network-runtime-summary span {
     color: var(--zeus-product-muted);
@@ -557,14 +553,6 @@
     overflow-wrap: anywhere;
     font-size: 13px;
     font-weight: 620;
-  }
-  .network-runtime-summary small {
-    color: var(--zeus-product-muted);
-    font-size: 11px;
-    line-height: 1.5;
-  }
-  .network-runtime-summary [data-state='restart'] small {
-    color: var(--zeus-status-warning-text, #8a5b12);
   }
   /* 网络配置和两类诊断各自成组，卡片间留白表示不同操作。 */
   .network-settings-group {
@@ -1686,11 +1674,9 @@
     .network-proxy-check-row {
       grid-template-columns: minmax(0, 1fr);
     }
-    .network-runtime-summary,
     .network-proxy-results {
       grid-template-columns: minmax(0, 1fr);
     }
-    .network-runtime-summary > div + div,
     .network-proxy-results > div + div {
       padding-inline: 0;
       border-inline-start: 0;

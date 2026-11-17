@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   defaultNetworkProxySettings,
   networkProxyAddressFields,
@@ -62,14 +62,16 @@ export function NetworkProxySettingsFields(props: {
   language: 'zh-CN' | 'en-US';
   /** 未配置时保留原网络行为。 */
   value: NetworkProxySettings | undefined;
-  /** 本次宿主启动时实际使用的代理；供应商检查只走这套配置。 */
+  /** 当前正式生效的代理，保存后与所有检查同步刷新。 */
   activeValue: NetworkProxySettings | null;
   /** 服务不可用时禁止修改。 */
   disabled: boolean;
   /** 复用模型供应商和 Codex 订阅的现有诊断接口。 */
   client: NetworkModelConnectionClient | null;
   /** 只有通过校验的配置交给通用自动保存入口。 */
-  onChange: (value: NetworkProxySettings) => void;
+  onChange: (value: NetworkProxySettings) => Promise<void>;
+  /** 等待已有保存，再读取所有正式请求当前使用的出口。 */
+  beforeCheck: () => Promise<NetworkProxySettings>;
 }) {
   /** 草稿保留未完成的主机和端口，不写入设置。 */
   const [draft, setDraft] = useState(() => ({ ...networkProxyAddressFields(props.value ?? defaultNetworkProxySettings), mode: props.value?.mode ?? 'default', bypass: props.value?.bypass ?? '' }));
@@ -91,6 +93,8 @@ export function NetworkProxySettingsFields(props: {
   const [checkingModelConnections, setCheckingModelConnections] = useState(false);
   /** 检查失败与保存校验错误分别展示。 */
   const [checkError, setCheckError] = useState<string | null>(null);
+  /** 较早输入的保存失败不能覆盖后来编辑后的反馈。 */
+  const editRevision = useRef(0);
   /** 同页多窗口控件具有独立的可访问性标识。 */
   const id = useId();
   /** 跟随当前应用语言，无额外持久状态。 */
@@ -128,6 +132,7 @@ export function NetworkProxySettingsFields(props: {
 
   /** 修改草稿即废弃先前检查反馈；不丢弃已输入的手动配置。 */
   function edit(patch: Partial<typeof draft>): typeof draft {
+    editRevision.current += 1;
     /** 合并本次字段，供选择模式或协议时即时提交。 */
     const next = { ...draft, ...patch };
     setDraft(next);
@@ -143,23 +148,38 @@ export function NetworkProxySettingsFields(props: {
     try {
       /** 保留草稿中的独立端口，存储继续使用规范化 URL。 */
       const normalized = networkProxySettingsFromFields(next.mode, next, next.bypass);
+      /** 保存回执只归属提交时的表单内容。 */
+      const currentRevision = editRevision.current;
       setError(null);
-      props.onChange(normalized);
+      void props.onChange(normalized).catch((cause: unknown) => {
+        if (currentRevision !== editRevision.current) return;
+        setError(cause instanceof Error ? cause.message : zh ? '代理配置应用失败。' : 'Failed to apply proxy settings.');
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : zh ? '代理配置无效。' : 'Invalid proxy settings.');
     }
   }
 
-  /** 当前草稿直接交给隔离检查，不修改任何运行中的网络会话。 */
+  /** 合法表单才允许检查；读取正式配置时不覆盖仍未提交的非法输入。 */
+  async function prepareChecks(): Promise<void> {
+    /** 保存口径用于判断是否已经换过出口，旧结果不能归到新配置下。 */
+    const previous = networkProxySettingsFromFields(draft.mode, draft, draft.bypass);
+    /** API 或其他窗口的修改需要同步到当前展示，检查本身不再次保存。 */
+    const active = await props.beforeCheck();
+    if (previous.mode !== active.mode || previous.url !== active.url || previous.bypass !== active.bypass) {
+      edit({ ...(active.mode === 'manual' ? networkProxyAddressFields(active) : {}), mode: active.mode, bypass: active.bypass });
+    }
+  }
+
+  /** 等待已触发的保存完成，再检查正式浏览器与模型出口。 */
   async function checkConnection(): Promise<void> {
     setCheckError(null);
     try {
-      /** 检查与保存使用完全相同的字段组装和校验。 */
-      const settings = networkProxySettingsFromFields(draft.mode, draft, draft.bypass);
       /** 冻结本次桌面桥接，两个并行检查使用同一实现。 */
       const checkNetworkProxyConnection = window.zeus?.checkNetworkProxyConnection;
       if (!checkNetworkProxyConnection) throw new Error(zh ? '请在 Zeus 桌面应用中检查连接。' : 'Check the connection in the Zeus desktop app.');
       setChecking(true);
+      await prepareChecks();
       setNetworkPathChecks({
         browser: { status: 'checking', result: null, message: null },
         node: { status: 'checking', result: null, message: null },
@@ -167,7 +187,7 @@ export function NetworkProxySettingsFields(props: {
       /** 两个 IPC 独立返回；Node 成功不会再被 Chromium 代理切换超时压住。 */
       const checks = (['browser', 'node'] as const).map(async (checkTarget) => {
         try {
-          const checkResult = await checkNetworkProxyConnection(settings, target, checkTarget);
+          const checkResult = await checkNetworkProxyConnection(target, checkTarget);
           setNetworkPathChecks((current) => ({
             ...current,
             [checkTarget]: { status: checkResult.error ? 'failed' : 'success', result: checkResult, message: null },
@@ -242,6 +262,8 @@ export function NetworkProxySettingsFields(props: {
       const client = props.client;
       if (!client) throw new Error(zh ? '本地模型服务暂不可用。' : 'The local model service is unavailable.');
       setCheckingModelConnections(true);
+      /** 失焦保存与 API 切换都完成后，供应商检查才进入正式链路。 */
+      await prepareChecks();
       /** 每次点击先取最新连接，新增、删除和启用状态无需同步维护。 */
       const connections = await client.loadModelConnections();
       const targets = configuredModelConnections(connections);
@@ -308,7 +330,7 @@ export function NetworkProxySettingsFields(props: {
             <h3 id={`${id}-proxy-heading`}>{zh ? '代理配置' : 'Proxy configuration'}</h3>
           </div>
         </header>
-        <NativeControlRow title={zh ? '代理模式' : 'Proxy mode'} description={zh ? '重启 Zeus 后生效。' : 'Applies after restarting Zeus.'}>
+        <NativeControlRow title={zh ? '代理模式' : 'Proxy mode'} description={zh ? '立即生效，现有网络连接会断开。' : 'Applies immediately and closes existing network connections.'}>
           <div className="network-proxy-modes" role="radiogroup" aria-label={zh ? '网络代理模式' : 'Network proxy mode'}>
             {(
               [
@@ -351,8 +373,8 @@ export function NetworkProxySettingsFields(props: {
                 value={draft.protocol}
                 disabled={disabled}
                 options={[
-                  { value: 'http', label: 'HTTP' },
-                  { value: 'https', label: 'HTTPS' },
+                  { value: 'http', label: zh ? 'HTTP 代理' : 'HTTP proxy' },
+                  { value: 'https', label: zh ? 'HTTPS 代理' : 'HTTPS proxy' },
                 ]}
                 onChange={(protocol) => {
                   /** 主机和端口齐全后，协议切换才自动保存。 */
@@ -436,7 +458,6 @@ export function NetworkProxySettingsFields(props: {
         <header className="network-settings-group-heading">
           <div>
             <h3 id={`${id}-path-heading`}>{zh ? '网址链路' : 'URL paths'}</h3>
-            <p>{zh ? '使用当前表单草稿分别检查内置浏览器与模型宿主；不修改运行中的代理。' : 'Check the built-in browser and model host with the current form draft without changing the active proxy.'}</p>
           </div>
         </header>
         <NativeControlRow
@@ -490,7 +511,7 @@ export function NetworkProxySettingsFields(props: {
             <h3 id={`${id}-provider-heading`}>{zh ? '供应商真实请求' : 'Real provider requests'}</h3>
             <p>
               {zh
-                ? `使用当前运行配置（${describeProxy(props.activeValue, zh)}）和已保存凭据；每个供应商发送一次最小请求，可能产生少量用量。`
+                ? `使用当前生效配置（${describeProxy(props.activeValue, zh)}）和已保存凭据；每个供应商发送一次最小请求，可能产生少量用量。`
                 : `Use the active configuration (${describeProxy(props.activeValue, zh)}) and saved credentials. One minimal request per provider may incur minor usage.`}
             </p>
           </div>

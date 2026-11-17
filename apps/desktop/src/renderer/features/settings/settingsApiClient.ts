@@ -16,7 +16,7 @@ export interface SettingsApiClient {
   loadAppShellSettings: () => Promise<AppShellSettings>;
   /** 输入建议选择器复用已登录 Codex 与配置连接的模型目录。 */
   loadInputSuggestionModels: (signal?: AbortSignal) => Promise<{ items: InputSuggestionModelOption[]; warning: string }>;
-  /** 读取本次宿主启动时已生效的代理，不把刚保存的待重启值冒充为运行值。 */
+  /** 读取正式出口当前生效的代理，保存和导入后立即刷新。 */
   loadActiveNetworkProxy: () => Promise<NetworkProxySettings>;
   saveAppShellSettings: (input: UpdateAppShellSettingsRequest) => Promise<AppShellSettings>;
   exportLocalSettings: () => Promise<LocalSettingsExportSnapshot>;

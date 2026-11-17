@@ -33,8 +33,8 @@ import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { resolveReleaseUpdateManifestUrl, type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
-import { applyNetworkProxyAtStartup, closeNetworkProxyRuntime } from './networkProxyRuntime.js';
-export { applyNetworkProxyAtStartup, closeNetworkProxyRuntime, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
+import { initializeNetworkProxyRuntime, closeNetworkProxyRuntime, networkProxyRuntimeEnvironment, readActiveNetworkProxySettings, updateNetworkProxySettings } from './networkProxyRuntime.js';
+export { applyNetworkProxyEnvironment, closeNetworkProxyRuntime } from './networkProxyRuntime.js';
 export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import {
   cloneTaskManagementStatusConfig,
@@ -1028,12 +1028,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson('archive.project-task-view-settings', { preferences: legacyTaskViewSettings, archivedAt: now().toISOString() });
   }
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
-  /** 固定本次宿主的生效值；后台任务继续运行时，重新开窗也不得提前切换浏览器代理。 */
-  const activeNetworkProxy = normalizeNetworkProxySettings(appShellSettings.networkProxy);
-  await applyNetworkProxyAtStartup(activeNetworkProxy);
+  /** 所有网络客户端使用固定回环入口，保存代理配置时立即切换出口。 */
+  await initializeNetworkProxyRuntime(normalizeNetworkProxySettings(appShellSettings.networkProxy));
   server.addHook('onClose', closeNetworkProxyRuntime);
   // 只读端点沿用本地 API 的认证；保存仍走既有设置命令，不增加独立写入口。
-  server.get('/api/settings/network-proxy', async () => activeNetworkProxy);
+  server.get('/api/settings/network-proxy', async () => readActiveNetworkProxySettings());
+  /** 运行地址只交给已认证的 Main，不写入用户设置，也不允许缓存随机凭据。 */
+  server.get('/api/settings/network-proxy/runtime', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { url: (await networkProxyRuntimeEnvironment()).HTTP_PROXY };
+  });
   if (newDatabase) {
     appShellSettings = { ...appShellSettings, modelSetupStatus: 'pending' };
     settings.setJson(appShellSettingsKey, appShellSettings);
@@ -2662,6 +2666,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return appShellSettings;
     },
     set appShellSettings(value: AppShellSettingsSnapshot) {
+      updateNetworkProxySettings(value.networkProxy);
       appShellSettings = value;
     },
     get codexRemoteControlEnabled() {

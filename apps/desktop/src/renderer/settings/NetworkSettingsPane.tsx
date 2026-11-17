@@ -40,9 +40,11 @@ export function NetworkSettingsPane(props: {
   const latestProxy = useRef<NetworkProxySettings>(props.value.networkProxy ?? { mode: 'default', url: '', bypass: '' });
   /** 只有最新保存操作可以更新页面反馈。 */
   const revision = useRef(0);
+  /** 连续编辑按提交顺序应用，避免较早的保存覆盖最新代理。 */
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   /** 保存状态显示在独立页面标题旁。 */
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-  /** 宿主启动时冻结的真实生效代理，与保存后的草稿分开显示。 */
+  /** 生效值由正式出口读取，保存成功后立即刷新。 */
   const [activeProxy, setActiveProxy] = useState<NetworkProxySettings | null>(null);
   /** 生效配置读取失败时明确显示未知，不猜测为最新保存值。 */
   const [activeProxyUnavailable, setActiveProxyUnavailable] = useState(false);
@@ -55,6 +57,8 @@ export function NetworkSettingsPane(props: {
   useEffect(() => {
     /** 页面切换后迟到请求不能覆盖新客户端状态。 */
     let active = true;
+    /** 初始读取不能覆盖随后完成的即时切换。 */
+    const currentRevision = revision.current;
     setActiveProxy(null);
     setActiveProxyUnavailable(false);
     if (!props.client) {
@@ -66,33 +70,61 @@ export function NetworkSettingsPane(props: {
     void props.client.settings
       .loadActiveNetworkProxy()
       .then((value) => {
-        if (active) setActiveProxy(value);
+        if (active && currentRevision === revision.current) setActiveProxy(value);
       })
       .catch(() => {
-        if (active) setActiveProxyUnavailable(true);
+        if (active && currentRevision === revision.current) setActiveProxyUnavailable(true);
       });
     return () => {
       active = false;
     };
   }, [props.client]);
 
-  /** 保存代理配置并通知 Main；实际任务网络仍按产品规则在完全重启后切换。 */
+  /** 保存即切换正式出口，检查请求等待此操作成功后再发出。 */
   async function save(networkProxy = latestProxy.current): Promise<void> {
     latestProxy.current = networkProxy;
     props.onChange((value) => ({ ...value, networkProxy }));
     /** 异步回执只归属本次保存。 */
     const currentRevision = ++revision.current;
     setStatus('saving');
-    try {
+    /** 每次先核对正式出口，连续失焦与检查不会重复切断相同配置的连接。 */
+    const operation = saveQueue.current.catch(() => undefined).then(async () => {
       if (!props.client) throw new Error(zh ? '本地设置服务暂不可用。' : 'Settings service is unavailable.');
-      /** 只提交本页拥有的字段，避免覆盖其他设置。 */
-      const saved = await props.client.settings.saveAppShellSettings({ networkProxy });
-      await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
-      if (currentRevision === revision.current) setStatus('saved');
+      /** 先读取当前出口，其他窗口修改后也以真实状态为准。 */
+      let applied = await props.client.settings.loadActiveNetworkProxy();
+      if (!sameNetworkProxy(applied, networkProxy)) {
+        /** 只提交本页拥有的字段，避免覆盖其他设置。 */
+        const saved = await props.client.settings.saveAppShellSettings({ networkProxy });
+        await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
+        applied = await props.client.settings.loadActiveNetworkProxy();
+      }
+      if (!sameNetworkProxy(applied, networkProxy)) throw new Error(zh ? '代理配置尚未生效，请重试。' : 'Proxy settings have not been applied. Please retry.');
+      if (currentRevision === revision.current) {
+        setActiveProxy(applied);
+        setActiveProxyUnavailable(false);
+        setStatus('saved');
+      }
+    });
+    saveQueue.current = operation;
+    try {
+      await operation;
     } catch {
-      if (currentRevision !== revision.current) return;
-      setStatus('failed');
+      if (currentRevision === revision.current) setStatus('failed');
+      throw new Error(zh ? '代理配置应用失败，请重试。' : 'Failed to apply proxy settings. Please retry.');
     }
+  }
+
+  /** 检查只等待已有保存并读取正式配置，不能把其他窗口的新配置覆盖回旧草稿。 */
+  async function beforeCheck(): Promise<NetworkProxySettings> {
+    await saveQueue.current;
+    if (!props.client) throw new Error(zh ? '本地设置服务暂不可用。' : 'Settings service is unavailable.');
+    /** 外部保存和导入完成后，以同一份正式配置刷新摘要与表单。 */
+    const active = await props.client.settings.loadActiveNetworkProxy();
+    latestProxy.current = active;
+    setActiveProxy(active);
+    setActiveProxyUnavailable(false);
+    props.onChange((value) => ({ ...value, networkProxy: active }));
+    return active;
   }
 
   return (
@@ -112,30 +144,12 @@ export function NetworkSettingsPane(props: {
       </header>
       <div className="network-runtime-summary" aria-label={zh ? '代理生效状态' : 'Proxy activation status'}>
         <div>
-          <span>{zh ? '当前运行' : 'Active now'}</span>
-          <strong>{activeProxyUnavailable ? (zh ? '无法读取' : 'Unavailable') : describeNetworkProxy(activeProxy, zh)}</strong>
-          <small>{zh ? '供应商真实请求使用这套配置' : 'Real provider requests use this configuration'}</small>
-        </div>
-        <div data-state={activeProxyUnavailable ? 'unknown' : sameNetworkProxy(activeProxy, latestProxy.current) ? 'active' : 'restart'}>
-          <span>{zh ? '已保存' : 'Saved'}</span>
-          <strong>{describeNetworkProxy(latestProxy.current, zh)}</strong>
-          <small>
-            {activeProxyUnavailable
-              ? zh
-                ? '无法判断是否需要重启'
-                : 'Restart requirement is unknown'
-              : sameNetworkProxy(activeProxy, latestProxy.current)
-                ? zh
-                  ? '已在当前宿主生效'
-                  : 'Active in the current host'
-                : zh
-                  ? '待任务结束后完全退出并重开 Zeus'
-                  : 'Fully quit and reopen Zeus after tasks finish'}
-          </small>
+          <span>{zh ? '当前生效' : 'Active now'}</span>
+          <strong role="status" aria-live="polite">{activeProxyUnavailable ? (zh ? '无法读取' : 'Unavailable') : describeNetworkProxy(activeProxy, zh)}</strong>
         </div>
       </div>
       <div className="settings-group-stack">
-        <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} activeValue={activeProxy} disabled={!props.client} client={props.client} onChange={(networkProxy) => save(networkProxy)} />
+        <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} activeValue={activeProxy} disabled={!props.client} client={props.client} onChange={save} beforeCheck={beforeCheck} />
       </div>
     </section>
   );

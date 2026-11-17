@@ -15,7 +15,6 @@ import {
   type FilePreviewSourceWorkspace,
   type MoveProjectSourceEntryInput,
   normalizeInputSuggestionUiDiagnostic,
-  normalizeNetworkProxySettings,
   type ReadOnlyValidationDescriptor,
   type SaveProjectSourceFileInput,
   type TrashProjectSourceEntryInput,
@@ -102,9 +101,9 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget, type ReserveAutomaticCodexUpdate } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { applyNetworkProxyAtStartup, closeNetworkProxyRuntime, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { closeNetworkProxyRuntime, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { getFileBlame, type GitDiffSummary, parseGitUnifiedDiff } from '@zeus/git-core';
-import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
+import { applyDesktopNetworkProxy, checkNetworkProxyConnection } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, readPackagedDesktopApplicationId, resolveDesktopTestDataRoot, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
@@ -3135,11 +3134,11 @@ function setupIpc(): void {
     return { cleared: true, clearedAt: new Date().toISOString() };
   });
   // 仅主设置窗口可以检查网络，网页子框架不能借此发起任意请求。
-  ipcMain.handle('zeus:network-proxy:check', (event, settings: unknown, address: unknown, checkTarget: unknown) => {
+  ipcMain.handle('zeus:network-proxy:check', (event, address: unknown, checkTarget: unknown) => {
     /** 绑定实际请求窗口和顶层页面，不接受调用方提供的窗口身份。 */
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('当前窗口不能检查网络代理。');
-    return checkNetworkProxyConnection(settings, address, checkTarget);
+    return checkNetworkProxyConnection(address, checkTarget, session.fromPartition(browserPartition));
   });
   ipcMain.handle('zeus:export-patch', (_event, patch: unknown) =>
     exportPatchToFile({
@@ -4345,7 +4344,8 @@ async function initializeApplication(): Promise<void> {
       conversationAttachmentGrantSecretPath,
       browserAutomation: nativeAutomationHost,
       readOnlyValidation: readOnlyValidationDescriptor,
-      onRestarted: () => {
+      onRestarted: async (config) => {
+        await initializeNetworkProxy(config);
         // 本地服务异常重启后，依赖旧 WebSocket 的系统通知桥必须重建，避免继续挂在旧端口。
         if (!readOnlyValidationDescriptor) applySystemNotificationBridge();
         for (const window of [...windows, ...taskGitDeliveryWindows.values()]) {
@@ -4359,7 +4359,7 @@ async function initializeApplication(): Promise<void> {
     localServerStartup = undefined;
     if (desktopShutdown.signal.aborted) return;
     traceApplicationStartup('local_server_ready');
-    // 读取宿主实际生效值；后台宿主仍在工作时，保存的新设置留待完整退出后统一启用。
+    // Main 和浏览器连接 Core 固定出口，后续保存设置时无需重启。
     await initializeNetworkProxy(localServerRuntime.config);
     if (!readOnlyValidationDescriptor) {
       const stopSuggestionNetworkBridge = startInputSuggestionNetworkBridge(() => localServerRuntime?.config);
@@ -4942,19 +4942,14 @@ app.on('did-resign-active', () => {
   ensureMacOSDockIconVisible();
 });
 
-/** Main、内置浏览器和系统网络会话在业务界面开放前使用宿主的同一份代理。 */
+/** Main 与浏览器使用 Core 的固定出口，代理规则只由 Core 实时维护。 */
 async function initializeNetworkProxy(config: { baseUrl: string; apiToken: string }): Promise<void> {
   /** 本机设置读取有界等待，失败时不把手动代理误降级为直连。 */
-  const response = await fetch(`${config.baseUrl}/api/settings/network-proxy`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10_000) });
-  // 旧宿主交接期间尚不支持代理配置，保持旧宿主的网络行为。
-  if (response.status === 404) return;
-  if (!response.ok) throw new Error('无法读取当前生效的网络代理配置。');
-  /** 只接受与设置保存相同的合法配置。 */
-  const settings = normalizeNetworkProxySettings(await response.json());
-  await applyNetworkProxyAtStartup(settings);
-  /** 浏览器显式跟随系统，模型和 Main 请求通过统一出口使用同一系统规则。 */
-  const proxy = chromiumNetworkProxyConfig(settings);
-  await Promise.all([app.setProxy(proxy), session.defaultSession.setProxy(proxy), session.fromPartition(browserPartition).setProxy(proxy)]);
+  const response = await fetch(`${config.baseUrl}/api/settings/network-proxy/runtime`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error('无法读取当前网络运行地址。');
+  /** Main 重新校验内部端点，不把接口数据直接当成任意外部代理。 */
+  const runtime: { url?: unknown } = await response.json();
+  await applyDesktopNetworkProxy(runtime.url, session.fromPartition(browserPartition));
 }
 
 /** 单次读取完整设置，避免 Main 与 Renderer 在启动时重复查询。 */

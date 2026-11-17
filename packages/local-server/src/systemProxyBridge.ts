@@ -4,6 +4,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
+import type { Duplex } from 'node:stream';
 import { networkProxyEnvironment, networkProxyFailureHeader } from '@zeus/shared';
 import { resolveSystemProxyRoutes, type SystemProxyRoute } from './systemProxyResolver.js';
 
@@ -187,9 +188,9 @@ interface SystemConnection {
   forwardProxy?: URL;
 }
 
-/** 仅尝试系统明确返回的有序出口，不自行增加直连回退。 */
-async function openSystemConnection(target: URL, tunnel: boolean): Promise<SystemConnection> {
-  for (const route of await resolveSystemProxyRoutes(target)) {
+/** 仅尝试当前配置明确返回的有序出口，不自行增加直连回退。 */
+async function openSystemConnection(target: URL, tunnel: boolean, routes: SystemProxyRoute[]): Promise<SystemConnection> {
+  for (const route of routes) {
     try {
       if (route.kind === 'direct') return { socket: await connectDirect(target.hostname.replace(/^\[|\]$/gu, ''), Number(target.port || (target.protocol === 'https:' ? 443 : 80))) };
       if (route.kind === 'http' || route.kind === 'https') {
@@ -213,14 +214,35 @@ function requestTarget(value: string, tunnel: boolean): URL {
   return target;
 }
 
-/** 为 Core、模型子进程和工具提供统一的系统代理出口，生命周期不依赖界面窗口。 */
-export async function startSystemProxyBridge(): Promise<{ url: string; close: () => Promise<void> }> {
+/** 去掉内部代理认证，只有上游代理可以收到其自身的认证头。 */
+function forwardHeaders(request: http.IncomingMessage, target: URL, proxy?: URL): http.OutgoingHttpHeaders {
+  /** Host 始终对应真实目标，不携带回环代理身份。 */
+  const headers: http.OutgoingHttpHeaders = { ...request.headers, host: target.host };
+  delete headers['proxy-authorization'];
+  delete headers['proxy-connection'];
+  if (proxy?.username || proxy?.password) headers['proxy-authorization'] = `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`;
+  return headers;
+}
+
+/** 为所有网络客户端提供固定入口，每次建连读取当前出口配置。 */
+export async function startSystemProxyBridge(resolveRoutes: (target: URL) => Promise<SystemProxyRoute[]> = resolveSystemProxyRoutes): Promise<{ url: string; resetConnections: () => void; close: () => Promise<void> }> {
   /** 代理认证密码只属于当前宿主，不写入配置或日志。 */
   const password = randomBytes(32).toString('hex');
   /** 每个宿主独立持有随机认证值，网页不能把回环端口当成开放代理。 */
   const credential = `Basic ${Buffer.from(`zeus:${password}`).toString('base64')}`;
   /** 正向连接和 CONNECT 都需要在退出时收口。 */
   const sockets = new Set<net.Socket>();
+  /** CONNECT 和 WebSocket 共用透明转发，任一端关闭都会回收另一端。 */
+  function pipeSockets(client: Duplex, upstream: net.Socket, head: Buffer): void {
+    sockets.add(upstream);
+    upstream.once('close', () => sockets.delete(upstream));
+    client.on('error', () => upstream.destroy());
+    upstream.on('error', () => client.destroy());
+    client.once('close', () => upstream.destroy());
+    upstream.once('close', () => client.destroy());
+    if (head.length) upstream.write(head);
+    client.pipe(upstream).pipe(client);
+  }
   /** 认证在解析目标之前完成；比较不泄露匹配到哪一段凭据。 */
   const authorized = (request: http.IncomingMessage): boolean => {
     /** 不接受重复认证头，避免不同 HTTP 实现选择不同值。 */
@@ -235,19 +257,16 @@ export async function startSystemProxyBridge(): Promise<{ url: string; close: ()
       return;
     }
     void (async () => {
-      /** 绝对形式的 HTTP 请求经系统选定的连接转发。 */
+      /** 绝对形式的 HTTP 请求经当前配置选定的连接转发。 */
       const target = requestTarget(request.url || '', false);
-      /** 不把代理专用头带给目标网站。 */
-      const headers: http.OutgoingHttpHeaders = { ...request.headers, host: target.host };
-      delete headers['proxy-authorization'];
-      delete headers['proxy-connection'];
       /** 当前请求有且仅有一个出口连接，不进入 Agent 的代理环境。 */
-      const { socket, forwardProxy } = await openSystemConnection(target, false);
+      const { socket, forwardProxy } = await openSystemConnection(target, false, await resolveRoutes(target));
       if (request.aborted || response.destroyed) {
         socket.destroy();
         return;
       }
-      if (forwardProxy?.username || forwardProxy?.password) headers['proxy-authorization'] = `Basic ${Buffer.from(`${decodeURIComponent(forwardProxy.username)}:${decodeURIComponent(forwardProxy.password)}`).toString('base64')}`;
+      /** 普通请求与 WebSocket 升级共用同一认证隔离。 */
+      const headers = forwardHeaders(request, target, forwardProxy);
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
       /** 独立 Agent 只使用已经建立的系统出口。 */
@@ -279,6 +298,27 @@ export async function startSystemProxyBridge(): Promise<{ url: string; close: ()
     socket.on('error', () => socket.destroy());
     socket.once('close', () => sockets.delete(socket));
   });
+  /** 明文 WebSocket 使用 HTTP Upgrade，不能当作普通响应或 TLS 隧道处理。 */
+  server.on('upgrade', (request, client, head) => {
+    if (!authorized(request)) {
+      client.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Zeus system proxy"\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    void (async () => {
+      /** WebSocket 的绝对地址按 HTTP 转发，保留路径、请求头及握手后数据。 */
+      const target = requestTarget((request.url || '').replace(/^ws:/iu, 'http:'), false);
+      /** 普通 HTTP 代理仍使用正向请求，不要求它支持 CONNECT 到 80 端口。 */
+      const { socket: upstream, forwardProxy } = await openSystemConnection(target, false, await resolveRoutes(target));
+      if (client.destroyed) {
+        upstream.destroy();
+        return;
+      }
+      /** 所有头均来自 Node 已解析的 HTTP 报文，内部代理凭据已移除。 */
+      const headers = Object.entries(forwardHeaders(request, target, forwardProxy)).flatMap(([name, value]) => value === undefined ? [] : (Array.isArray(value) ? value : [value]).map((item) => `${name}: ${item}`));
+      upstream.write([`${request.method} ${forwardProxy ? target.href : target.pathname + target.search} HTTP/${request.httpVersion}`, ...headers, '', ''].join('\r\n'));
+      pipeSockets(client, upstream, head);
+    })().catch(() => client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'));
+  });
   server.on('connect', (request, client, head) => {
     if (!authorized(request)) {
       client.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Zeus system proxy"\r\nConnection: close\r\n\r\n');
@@ -287,21 +327,14 @@ export async function startSystemProxyBridge(): Promise<{ url: string; close: ()
     void (async () => {
       /** TLS 保留在模型与远端之间；Core 不解密模型请求。 */
       const target = requestTarget(request.url || '', true);
-      /** 系统决定是直达目标还是经过上游代理。 */
-      const { socket: upstream } = await openSystemConnection(target, true);
+      /** 以当前配置决定直达目标或经过上游代理。 */
+      const { socket: upstream } = await openSystemConnection(target, true, await resolveRoutes(target));
       if (client.destroyed) {
         upstream.destroy();
         return;
       }
-      sockets.add(upstream);
-      upstream.once('close', () => sockets.delete(upstream));
-      client.on('error', () => upstream.destroy());
-      upstream.on('error', () => client.destroy());
-      client.once('close', () => upstream.destroy());
-      upstream.once('close', () => client.destroy());
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (head.length) upstream.write(head);
-      client.pipe(upstream).pipe(client);
+      pipeSockets(client, upstream, head);
     })().catch(() => client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'));
   });
   /** 仅在 IPv4 回环监听，端口由系统分配，不改变 macOS 或 Windows 的代理设置。 */
@@ -316,6 +349,10 @@ export async function startSystemProxyBridge(): Promise<{ url: string; close: ()
   url.password = password;
   return {
     url: url.href,
+    /** 立即断开旧出口，保留监听地址和认证值供现有客户端重新建连。 */
+    resetConnections: () => {
+      for (const socket of sockets) socket.destroy();
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) socket.destroy();
