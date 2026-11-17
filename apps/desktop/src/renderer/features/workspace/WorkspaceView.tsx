@@ -2178,7 +2178,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       </section>
                     ) : null}
                     {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
-                    {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
+                    {settingsCategory === 'browser' ? (
+                      <BrowserSettingsPane language={appShellSettings.appLanguage} appSettings={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onAppSettingsChange={setAppShellSettings} />
+                    ) : null}
                     {settingsCategory === 'network' ? <NetworkSettingsPane value={appShellSettings} client={props.nativeConversationClient ?? null} onChange={setAppShellSettings} /> : null}
                     {settingsCategory === 'models' ? (
                       <>

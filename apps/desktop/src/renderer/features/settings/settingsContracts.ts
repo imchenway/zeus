@@ -6,6 +6,8 @@ import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../
 import type { InputSuggestionSettings, NetworkProxySettings, SidebarConversationFilters } from '@zeus/shared';
 
 export interface AppShellSettings {
+  /** 操作任务的独立模型，空值保留主会话执行。 */
+  automationModels?: import('@zeus/shared').AutomationModelSettings;
   /** 完全退出并重开应用后使用的网络代理。 */
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
@@ -70,6 +72,8 @@ export type UpdateAppShellSettingsRequest = Partial<
     | 'autoUpdateChannel'
   >
 > & {
+  /** 单个能力保存时保留另一个能力的服务端当前选择。 */
+  automationModels?: Partial<import('@zeus/shared').AutomationModelSettings>;
   /** 省略时保留当前代理，兼容其他设置的局部保存。 */
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */

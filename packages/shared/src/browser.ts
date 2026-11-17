@@ -112,6 +112,30 @@ export type ZeusBrowserScreenshotMode = 'always' | 'necessary';
 export type ZeusWebLinkOpenTarget = 'zeus_browser' | 'system_default';
 export type ZeusFileOpenTarget = 'zeus_source' | 'system_default' | 'editor:vscode' | 'editor:vscode-insiders' | 'editor:cursor' | 'editor:windsurf';
 
+/** 浏览器与桌面操作分别选择模型；空值沿用当前会话，不创建代理。 */
+export interface AutomationModelSettings {
+  /** 浏览器操作使用的完整模型目录身份。 */
+  browser: string | null;
+  /** 桌面操作使用的完整模型目录身份。 */
+  computer: string | null;
+}
+
+/** 缺省配置保留当前会话的执行方式；非法目录身份拒绝保存。 */
+export function normalizeAutomationModelSettings(value: unknown): AutomationModelSettings {
+  if (value === undefined) return { browser: null, computer: null };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('操作模型设置必须为对象。');
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).some((key) => key !== 'browser' && key !== 'computer')) throw new Error('操作模型设置包含未知字段。');
+  const result: AutomationModelSettings = { browser: null, computer: null };
+  for (const capability of ['browser', 'computer'] as const) {
+    const model = input[capability];
+    if (model === null || model === undefined) continue;
+    if (typeof model !== 'string' || !model.trim() || model.length > 512 || /\p{Cc}/u.test(model)) throw new Error('操作模型身份无效。');
+    result[capability] = model.trim();
+  }
+  return result;
+}
+
 export interface ZeusBrowserSettings {
   enabled: boolean;
   /** 记住免费服务身份或模型目录身份；未设置时使用默认免费翻译。 */

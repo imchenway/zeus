@@ -164,6 +164,8 @@ export interface NativeItemSnapshot {
 export type NativeSubagentStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'unknown';
 
 export interface NativeSubagentSummary {
+  /** 服务端核实的操作代理，原生子线程不推断此字段。 */
+  operation?: 'browser' | 'computer';
   id: string;
   parentThreadId: string | null;
   title: string;

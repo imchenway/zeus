@@ -1590,7 +1590,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       toolResults: conversationToolResults,
       sourceContexts: conversationSources,
       plugins: zeusConversationPluginRuntime,
-      browserAutomation: options.browserAutomation,
+      browserAutomation: options.browserAutomation
+        ? {
+            ...options.browserAutomation,
+            invoke: (input) => conversationOperations.invokeScopedAutomation(input, options.browserAutomation!),
+            endComputerUse: (input) =>
+              options.browserAutomation!.endComputerUse?.({ ...input, conversationId: conversationOperations.readAutomationAgentContext(input.conversationId)?.ownerConversationId ?? input.conversationId }) ?? Promise.resolve(),
+          }
+        : undefined,
+      automationAgents: options.browserAutomation ? { invoke: (input) => conversationOperations.invokeAutomationAgentTool(input) } : undefined,
       workTools: nativeWorkTools,
       auditNativeTool: async (event) => {
         auditLogs.append({
@@ -2141,7 +2149,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       // 只读检查与后台同步都必须核对真正收到本次发送的候选线程。
       reconcileOutcomeUnknownSwitches: (conversationId) => recoverUnifiedOutcomeUnknownSwitches(conversationId),
       eventFlow: conversationEventFlow,
-      browserAutomation: options.browserAutomation,
+      browserAutomation: options.browserAutomation
+        ? {
+            ...options.browserAutomation,
+            invoke: (input) => conversationOperations.invokeScopedAutomation(input, options.browserAutomation!),
+            endComputerUse: (input) =>
+              options.browserAutomation!.endComputerUse?.({ ...input, conversationId: conversationOperations.readAutomationAgentContext(input.conversationId)?.ownerConversationId ?? input.conversationId }) ?? Promise.resolve(),
+          }
+        : undefined,
+      automationAgents: options.browserAutomation ? { invoke: (input) => conversationOperations.invokeAutomationAgentTool(input) } : undefined,
+      stopSubagents: (conversationId) => conversationOperations.stopConversationSubagents(conversationId),
       workTools: nativeWorkTools,
       plugins: zeusConversationPluginRuntime,
       auditNativeTool: async (event) => {
@@ -3046,6 +3063,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           if (child.conversationId !== conversationId) queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(child.conversationId).catch(() => undefined));
         }
       }
+      if (mappedType === 'conversation.turn.completed') {
+        for (const child of conversationRuntime.listSubagents(relation?.rootId ?? conversationId)) queueMicrotask(() => void deliverAutomationResult(child.conversationId));
+      }
     }
     const durability = classifyConversationEventDurability(mappedType);
     if (durability !== 'coalescible_process') flushPendingNativeDeltaEvents();
@@ -3195,6 +3215,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let supportOperations!: ReturnType<typeof createLocalServerSupportOperations>;
   // eslint-disable-next-line prefer-const
   let conversationOperations!: ReturnType<typeof createConversationApplicationOperations>;
+  /** 结果交回失败只影响对应任务，保留持久结果供完成事件或启动恢复再次核对。 */
+  async function deliverAutomationResult(conversationId: string): Promise<void> {
+    try {
+      await conversationOperations.resumeAutomationCompletion(conversationId);
+    } catch (error) {
+      const relation = conversationRuntime.getSubagent(conversationId);
+      if (relation)
+        publishNativeConversationEvent('conversation.native.error', {
+          conversationId: relation.parentId,
+          error: 'ZEUS_AUTOMATION_RESULT_DELIVERY_FAILED',
+          message: redactSensitiveText(error instanceof Error ? error.message : '操作任务结果未能自动交回，请查看智能体结果。').text,
+        });
+    }
+  }
   // eslint-disable-next-line prefer-const
   let projectGitQueries!: ProjectGitQueryApplication;
   // eslint-disable-next-line prefer-const
@@ -4198,6 +4232,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await copilotNativeCoordinator.recoverGoals();
       if (startupRecoveryStopping) return;
       await recoverExpertRounds();
+      for (const conversation of conversations.listNativeBoundRecords()) {
+        if (conversationOperations.readAutomationAgentContext(conversation.id)) await deliverAutomationResult(conversation.id);
+      }
       const queuedConversationIds = new Set(
         conversationSubmissions
           .listRecoverable()

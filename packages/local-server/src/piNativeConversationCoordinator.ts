@@ -189,6 +189,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   executeSubagentTool: ReturnType<typeof createConversationApplicationOperations>['executeSubagentTool'];
   stopSubagents(conversationId: string): Promise<void>;
   browserAutomation?: BrowserAutomationPort;
+  /** 与 Codex 共用操作模型委派入口。 */
+  automationAgents?: Pick<BrowserAutomationPort, 'invoke'>;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
   /** 与 Codex 共用产品来源及历史读取，不依赖 Pi JSONL 路径。 */
@@ -285,7 +287,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
   const zeusToolBroker =
-    options.browserAutomation || options.workTools || options.sourceContexts ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools, sources: options.sourceContexts }) : undefined;
+    options.browserAutomation || options.workTools || options.sourceContexts || options.automationAgents
+      ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools, sources: options.sourceContexts, automationAgents: options.automationAgents })
+      : undefined;
 
   /** 将 Pi 发送前的 Plugin 检查写入权威队列；异常时保留消息并进入人工重试状态。 */
   async function runPluginDispatchCheck<T>(conversationId: string, submissionId: string, operation: () => Promise<T>): Promise<T> {
@@ -3172,8 +3176,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!run || run.conversationId !== input.conversation.id) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '目标 Pi 轮次当前未在执行。');
       const context = input.conversation.nativeSessionId ? contexts.get(input.conversation.nativeSessionId) : undefined;
       if (!context) throw piError('ZEUS_PI_SESSION_NOT_LOADED', '目标 Pi 会话当前未载入运行内核。');
-      // 同时撤销桌面控制与中断 Provider；桌面桥断线不能阻止用户停止模型。
-      const computerStop = options.browserAutomation?.endComputerUse?.({ conversationId: input.conversation.id, turnId: input.providerTurnId }).then(
+      // 子任务或桌面桥失败不能阻止主模型收到中断；各自结果仍如实报告。
+      const controlStop = Promise.all([options.stopSubagents(input.conversation.id), options.browserAutomation?.endComputerUse?.({ conversationId: input.conversation.id, turnId: input.providerTurnId })]).then(
         () => null,
         (error: unknown) => ({ error }),
       );
@@ -3193,7 +3197,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       });
       interruptedRuns.add(input.providerTurnId);
       options.processes.stopOwned(input.conversation.id);
-      await options.stopSubagents(input.conversation.id);
       try {
         command.markProviderWriteStarted();
         await driver.interruptRun({ session: context.session, nativeRunId: input.providerTurnId, traceIdentity: command.traceIdentity });
@@ -3251,8 +3254,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
       }
       // 模型停止后仍如实报告桌面撤销失败，不将两者混同为全部停止。
-      const computerStopFailure = await computerStop;
-      if (computerStopFailure) throw computerStopFailure.error;
+      const controlStopFailure = await controlStop;
+      if (controlStopFailure) throw controlStopFailure.error;
       return { submissionId: run.submissionId };
     },
     async respondToRequest(input: { requestId: string; response: unknown }): Promise<void> {
