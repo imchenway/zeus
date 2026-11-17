@@ -1699,9 +1699,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
                   : 'Send a message to start a conversation.'}
             </p>
           ) : null}
-          {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
+          {showCreationStatus && props.creationStatus ? <SessionCreationNotice key={props.state.conversationId} status={props.creationStatus} language={props.language} /> : null}
           {showActiveStatus && activeStatusKind ? (
             <TranscriptActiveStatus
+              key={props.state.providerReconnectTurnId ?? activeTurnId ?? props.state.conversationId}
               language={props.language}
               kind={activeStatusKind}
               summaryText={props.state.currentReasoningItem?.turnId === activeTurnId ? latestReasoningSummaryText(props.state.currentReasoningItem) : undefined}
@@ -1865,15 +1866,7 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
       </section>
     );
   }
-  if (props.status.state === 'creating') return <TranscriptActiveStatus language={props.language} kind="executing" reconnectAttempt={0} reconnectAttempts={5} />;
-  /** 重试计数沿用实际创建状态，普通连接文案由调用方提供。 */
-  const retryingMessage = props.status.state === 'retrying' ? `${props.language === 'zh-CN' ? '正在连接...' : 'Connecting...'} (${props.status.retryAttempt ?? 1}/${props.status.maxRetries ?? 5})` : props.status.message;
-  return (
-    <section className={`session-creation-status is-${props.status.state}`} role="status" aria-live="polite">
-      {sessionConnectionSymbol}
-      <SessionSweepText className="session-current-status-text" text={retryingMessage} active />
-    </section>
-  );
+  return <TranscriptActiveStatus language={props.language} kind={props.status.state === 'retrying' ? 'reconnecting' : 'executing'} reconnectAttempt={props.status.retryAttempt ?? 1} reconnectAttempts={props.status.maxRetries ?? 5} />;
 }
 
 /** 普通状态沿用底部进度样式，只有真正的错误使用警告图标和边框。 */
@@ -2597,6 +2590,18 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
 
 /** 任务耗时仍单独显示；此处不把时间增长当作模型继续推进的证据。 */
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>>; reconnectAttempt: number; reconnectAttempts: number; summaryText?: string }): ReactNode {
+  /** 只有连续恢复超过 10 秒才显示连接提示，短暂抖动不占用正文。 */
+  const [reconnectStatusVisible, setReconnectStatusVisible] = useState(false);
+  useEffect(() => {
+    if (props.kind !== 'reconnecting') {
+      setReconnectStatusVisible(false);
+      return;
+    }
+    /** 重试次数变化不重新计时；恢复或离开当前状态时取消提示。 */
+    const timer = window.setTimeout(() => setReconnectStatusVisible(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [props.kind]);
+  if (props.kind === 'reconnecting' && !reconnectStatusVisible) return null;
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
     starting: ['正在准备', 'Preparing'],
