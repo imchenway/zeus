@@ -182,7 +182,8 @@ export function VisibleApplicationError(props: {
       <span className="application-error-inline-summary" data-zeus-selectable="text">
         {props.summary ?? explanation.message}
       </span>
-      <button
+      <Button
+        unstyled
         type="button"
         className="application-error-details-link"
         aria-label={detailsLabel}
@@ -190,13 +191,13 @@ export function VisibleApplicationError(props: {
         onClick={() => reportApplicationError(props.error, { language, summary: props.summary, title: props.title, action: props.action, showDetails: true })}
       >
         <WarningCircle aria-hidden="true" />
-      </button>
+      </Button>
       {props.action ? (
         <Button
           size="compact"
           className="application-error-inline-action"
           onClick={() => {
-            void Promise.resolve()
+            return Promise.resolve()
               .then(() => props.action?.onClick())
               .catch((error: unknown) => reportApplicationError(error, { language, title: props.title }));
           }}
@@ -369,7 +370,7 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                 <Button
                   size="regular"
                   busy={current.reporting}
-                  onClick={() => void submitCurrentFault(current)}
+                  onClick={() => submitCurrentFault(current)}
                   data-icon-tooltip={current.language === 'zh-CN' ? '发送脱敏错误、环境和运行事件，不含对话正文、源码或截图' : 'Send redacted errors, environment and runtime events; excludes conversations, source and screenshots'}
                 >
                   {current.reporting
@@ -406,7 +407,7 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                     /** 先关闭当前反馈，避免重复点击；失败继续使用统一错误出口。 */
                     const action = current.action;
                     dismissCurrentError();
-                    void Promise.resolve()
+                    return Promise.resolve()
                       .then(() => action?.onClick())
                       .catch((error: unknown) => reportApplicationError(error, { language: current.language, title: current.title }));
                   }}

@@ -4,7 +4,9 @@ import { markSideQuestionConversationArchived, restoreSideQuestionWorkspace } fr
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
+import { modelCatalogGeneration } from '../integrations/modelCatalogEvents.js';
 import type { ProjectRecord } from '../../apiClient.js';
+import { mergeTaskProjection } from '../tasks/taskQueryStore.js';
 import {
   type ConversationHistoryItem,
   isLikelyLocalServerConnectionError,
@@ -144,6 +146,13 @@ function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities,
 }
 
 export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
+  /** 详情与事件只回填当前打开的任务，关闭或切换后不恢复旧选中态。 */
+  const taskDetailTargetRef = state.taskDetailPaneTaskIdRef;
+  /** 同一任务的并行入口复用正在进行的正文读取。 */
+  const taskDetailReadsRef = useRef(new Map<string, Promise<TaskRecord>>());
+  /** 复制窗口先打开；读取源任务时禁止把未完整回填的草稿提交。 */
+  const [taskCopyLoading, setTaskCopyLoading] = useState(false);
+  const taskCopyRevisionRef = useRef(0);
   /** 创建后等真实任务详情完成渲染，再复用推送入口，避免旧快照与导航身份竞争。 */
   const taskCreatePushTaskIdRef = useRef<string | null>(null);
   /** 同一草稿保存期间只接纳一次提交意图。 */
@@ -889,12 +898,15 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return updatedTask;
   }
 
-  function refreshOpenTaskEvents(taskId: string): void {
-    if (!props.onLoadTaskEvents || taskDetailPaneTaskId !== taskId) return;
-    void props
-      .onLoadTaskEvents(taskId)
-      .then(setTaskEvents)
-      .catch((error: unknown) => recordLocalError('task-event-refresh', error));
+  async function refreshOpenTaskEvents(taskId: string): Promise<void> {
+    if (!props.onLoadTaskEvents || taskDetailTargetRef.current !== taskId) return;
+    const projectId = activeProjectIdRef.current;
+    try {
+      const events = await props.onLoadTaskEvents(taskId);
+      if (taskDetailTargetRef.current === taskId && activeProjectIdRef.current === projectId) setTaskEvents(events);
+    } catch (error) {
+      if (taskDetailTargetRef.current === taskId && activeProjectIdRef.current === projectId) recordLocalError('task-event-refresh', error);
+    }
   }
 
   async function loadLatestTaskAfterConflict(taskId: string): Promise<TaskRecord | null> {
@@ -969,44 +981,51 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   /** 详情读取同步共享任务记录，防止后续会话选择用摘要覆盖完整正文。 */
   async function loadTaskDetail(taskId: string): Promise<void> {
     setConversationDraftOpen(false);
+    const projectId = activeProjectIdRef.current;
     if (!props.onLoadTask) {
       setTaskDetail(snapshot.tasks.find((task) => task.id === taskId));
       return;
     }
-    setActionState('updating-task');
     try {
-      /** 完整记录先回填共享集合，再建立当前详情选中态。 */
-      const task = await props.onLoadTask(taskId);
+      let read = taskDetailReadsRef.current.get(taskId);
+      if (!read) {
+        read = props.onLoadTask(taskId);
+        taskDetailReadsRef.current.set(taskId, read);
+        /** 失败与成功都释放在途身份，下一次明确打开仍可重新校准。 */
+        void read
+          .finally(() => {
+            if (taskDetailReadsRef.current.get(taskId) === read) taskDetailReadsRef.current.delete(taskId);
+          })
+          .catch(() => undefined);
+      }
+      const task = await read;
       mergeTaskRecord(task);
-      setTaskDetail(task);
-      setActionState('idle');
+      if (taskDetailTargetRef.current !== taskId || activeProjectIdRef.current !== projectId) return;
+      setTaskDetail((current) => (current?.id === task.id ? mergeTaskProjection(current, task) : task));
     } catch (error) {
+      if (taskDetailTargetRef.current !== taskId || activeProjectIdRef.current !== projectId) return;
       recordLocalError('renderer-action', error);
-      setActionState('failed');
     }
   }
 
   async function openTaskDetailPane(taskId: string, presentation: TaskBoardOpenMode = 'side_peek'): Promise<void> {
     // 任务详情只有真正打开时才建立选中态；看板可在右侧抽屉、居中预览和工作区全页之间选择。
+    taskDetailTargetRef.current = taskId;
+    const projectId = activeProjectIdRef.current;
     setTaskDetailPresentation(presentation);
     setTaskDetailPaneTaskId(taskId);
+    setTaskDetail((current) => (current?.id === taskId ? current : snapshot.tasks.find((task) => task.id === taskId)));
+    setTaskEvents([]);
     const pending: Promise<void>[] = [loadTaskDetail(taskId)];
     // 打开任何一种详情时读取原会话，失败由共享加载状态提供重试入口。
     pending.push(
       refreshNativeConversationChoices(taskId)
         .then(() => undefined)
-        .catch((error: unknown) => recordLocalError('task-conversation-refresh', error)),
+        .catch((error: unknown) => {
+          if (taskDetailTargetRef.current === taskId && activeProjectIdRef.current === projectId) recordLocalError('task-conversation-refresh', error);
+        }),
     );
-    if (props.onLoadTaskEvents) {
-      pending.push(
-        props
-          .onLoadTaskEvents(taskId)
-          .then(setTaskEvents)
-          .catch((error: unknown) => {
-            recordLocalError('renderer-action', error);
-          }),
-      );
-    }
+    pending.push(refreshOpenTaskEvents(taskId));
     await Promise.all(pending);
   }
 
@@ -1315,6 +1334,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setTaskSearchQuery('');
         setTaskTagFilter('');
         setTaskDetail(createdTask);
+        taskDetailTargetRef.current = createdTask.id;
         setActiveProjectSection('tasks');
         setTaskDetailPaneTaskId(createdTask.id);
         if (taskCreateTeamId && !pushAfterCreate) {
@@ -1324,10 +1344,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         }
         if (props.onLoadTaskEvents) {
           // 已创建成功后，事件读取失败不能让用户重复创建任务。
-          void props
-            .onLoadTaskEvents(createdTask.id)
-            .then(setTaskEvents)
-            .catch((error: unknown) => recordLocalError('task-event-refresh', error));
+          void refreshOpenTaskEvents(createdTask.id);
         }
         if (zentao && props.commandClient) {
           // 本地创建已成功；远端失败只报告同步结果，不返回到创建重试流程。
@@ -1362,6 +1379,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 用户主动新建任务时，将当前项目固定为草稿目标。 */
   function openTaskCreateModal(parentTaskId: string | null = null): void {
+    taskCopyRevisionRef.current += 1;
+    setTaskCopyLoading(false);
     setTaskCreateTeamId(null);
     taskCreateReturnFocusRef.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), projectId: activeProjectId ?? '', parentTaskId });
@@ -1378,33 +1397,44 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 复制仅预填可编辑内容，目标选择和保存沿用新建任务流程。 */
   async function openTaskCopyModal(task: TaskRecord): Promise<void> {
-    try {
-      if (props.onLoadTask) task = await props.onLoadTask(task.id);
-    } catch (error) {
-      recordLocalError('task-copy-load', error);
-      return;
-    }
     openTaskCreateModal();
     setActiveProjectSection('tasks');
-    setTaskCreateForm({
+    /** 先显示当前任务的已知字段，再校准完整正文和附件。 */
+    const copyForm = (source: TaskRecord) => ({
       ...buildTaskCreateInitialForm(appShellSettings.appLanguage),
-      projectId: snapshot.projects.find((project) => project.id !== task.projectId)?.id ?? task.projectId,
-      copiedFromTaskId: task.id,
-      title: task.title,
-      taskType: task.taskType,
-      description: task.description ?? '',
-      defectCurrentState: task.defectCurrentState ?? '',
-      defectExpectedOutcome: task.defectExpectedOutcome ?? '',
-      defectReproductionSteps: task.defectReproductionSteps ?? '',
-      optimizationCurrentState: task.optimizationCurrentState ?? '',
-      optimizationExpectedOutcome: task.optimizationExpectedOutcome ?? '',
-      priority: isTaskPriority(task.priority) ? task.priority : 'p3',
-      tags: (task.tags ?? []).join(', '),
-      attachments: parseTaskAttachments(task.sourceContextJson),
+      projectId: snapshot.projects.find((project) => project.id !== source.projectId)?.id ?? source.projectId,
+      copiedFromTaskId: source.id,
+      title: source.title,
+      taskType: source.taskType,
+      description: source.description ?? '',
+      defectCurrentState: source.defectCurrentState ?? '',
+      defectExpectedOutcome: source.defectExpectedOutcome ?? '',
+      defectReproductionSteps: source.defectReproductionSteps ?? '',
+      optimizationCurrentState: source.optimizationCurrentState ?? '',
+      optimizationExpectedOutcome: source.optimizationExpectedOutcome ?? '',
+      priority: isTaskPriority(source.priority) ? source.priority : 'p3',
+      tags: (source.tags ?? []).join(', '),
+      attachments: parseTaskAttachments(source.sourceContextJson),
     });
+    setTaskCreateForm(copyForm(task));
+    const revision = taskCopyRevisionRef.current;
+    setTaskCopyLoading(true);
+    try {
+      if (props.onLoadTask) task = await props.onLoadTask(task.id);
+      if (revision !== taskCopyRevisionRef.current) return;
+      setTaskCreateForm(copyForm(task));
+    } catch (error) {
+      if (revision !== taskCopyRevisionRef.current) return;
+      closeTaskCreateModal();
+      recordLocalError('task-copy-load', error);
+    } finally {
+      if (revision === taskCopyRevisionRef.current) setTaskCopyLoading(false);
+    }
   }
 
   function closeTaskCreateModal(): void {
+    taskCopyRevisionRef.current += 1;
+    setTaskCopyLoading(false);
     setTaskCreateTeamId(null);
     setTaskCreateModalOpen(false);
     setTaskCreateError('');
@@ -1930,9 +1960,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   taskGitDeliveryChangedRef.current = (taskId) => {
     // 独立交付窗口、服务端通知和返回内嵌交付页共用同一快照失效入口。
     setTaskGitDeliveryRevision((current) => current + 1);
-    void Promise.all([refreshNativeConversationChoices(taskId), props.onLoadTaskEvents && taskDetailPaneTaskId === taskId ? props.onLoadTaskEvents(taskId).then(setTaskEvents) : Promise.resolve()]).catch((error: unknown) =>
-      recordLocalError('task-git-delivery-projection-refresh', error),
-    );
+    void Promise.all([refreshNativeConversationChoices(taskId), refreshOpenTaskEvents(taskId)]).catch((error: unknown) => recordLocalError('task-git-delivery-projection-refresh', error));
   };
   taskGitDeliveryConversationRef.current = ({ taskId, conversationId }) => {
     void openTaskConflictAiConversation(taskId, conversationId);
@@ -2473,6 +2501,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 完整资料共用一条加载路径，接入返回时保留原表单与附件。 */
   async function loadTaskModelPushCapabilities(task: TaskRecord, request: number, origin: TaskModelPushNavigationTarget, reference?: string | null): Promise<void> {
+    const catalogGeneration = modelCatalogGeneration();
     /** 能力读取不再加载项目偏好，不会准备工作区或创建会话。 */
     const client = props.nativeConversationClient;
     if (!client) throw new Error('ZEUS_MODEL_UNAVAILABLE');
@@ -2496,7 +2525,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskCapabilitiesResolved = true;
     if (!isTaskModelPushRequestCurrent(request, origin)) return;
     const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
-    cacheCodexConversationCapabilities(client, capabilities);
+    cacheCodexConversationCapabilities(client, capabilities, catalogGeneration);
     setTaskModelPushRuntimeCapabilities(capabilities);
     /** 首次加载只根据同一份完整快照选择下一工作面，不再发起独立模型预检。 */
     const destination = resolveTaskModelPushEntry(capabilities, capabilities.hasConfiguredProvider);
@@ -3313,6 +3342,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     startProjectConversation,
     submitTaskCreateModal,
     submitTaskModelPush,
+    taskCopyLoading,
     taskDetailPaneTask,
     taskModelPushWorkspaceActions,
     taskPriorityLabels,

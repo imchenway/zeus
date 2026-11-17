@@ -14,6 +14,7 @@ import { RuntimeDetails } from './RuntimeDetails.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
 import { useReadingScroll, useReadingState } from '../ui/readingState.js';
+import { Button } from '../ui/Button.js';
 
 /** 子智能体工作面只提供原生线程的查看与刷新。 */
 interface SubagentWorkspaceProps {
@@ -177,7 +178,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       <header className="session-thread-header session-subagent-header">
         <span className="session-subagent-title">
           {selectedThreadId ? (
-            <button
+            <Button
+              unstyled
               data-icon-tooltip={zh ? '返回智能体列表' : 'Back to agent list'}
               type="button"
               aria-label={zh ? '返回智能体列表' : 'Back to agent list'}
@@ -189,7 +191,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
               }}
             >
               <ArrowLeft aria-hidden="true" />
-            </button>
+            </Button>
           ) : (
             <UsersThree aria-hidden="true" weight="regular" />
           )}
@@ -202,24 +204,30 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           </span>
         </span>
         <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
-          <button type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'} onClick={() => void (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
+          <Button
+            unstyled
+            type="button"
+            aria-label={zh ? '刷新智能体' : 'Refresh agents'}
+            data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'}
+            onClick={() => (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}
+          >
             <ArrowsClockwise aria-hidden="true" />
-          </button>
-          <button type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
+          </Button>
+          <Button unstyled type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-          </button>
-          <button type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          </Button>
+          <Button unstyled type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </nav>
       </header>
 
       {error ? (
         <section className="session-subagent-error" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          <button type="button" onClick={() => void (selectedThreadId ? openThread(selectedThreadId, true) : refreshList(true))}>
+          <Button unstyled type="button" onClick={() => (selectedThreadId ? openThread(selectedThreadId, true) : refreshList(true))}>
             {zh ? '重试' : 'Retry'}
-          </button>
+          </Button>
         </section>
       ) : null}
       {selectedThreadId ? (
@@ -241,8 +249,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
         <section ref={listScroll} className="session-subagent-list" aria-live="polite">
           {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
           {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} /> : null}
-          {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
-          {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已完成' : 'Done'} items={grouped.done} language={props.language} onOpen={(agent) => void openThread(agent.id, true)} /> : null}
+          {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => openThread(agent.id, true)} /> : null}
+          {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已完成' : 'Done'} items={grouped.done} language={props.language} onOpen={(agent) => openThread(agent.id, true)} /> : null}
         </section>
       )}
     </aside>
@@ -328,7 +336,7 @@ function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; l
       </header>
       <div>
         {props.items.map((agent) => (
-          <button key={agent.id} type="button" className="session-subagent-row" onClick={() => props.onOpen(agent)}>
+          <Button data-busy-behavior="background" unstyled key={agent.id} type="button" className="session-subagent-row" onClick={() => props.onOpen(agent)}>
             <span className="session-subagent-status-dot" data-status={agent.status} aria-hidden="true" />
             <span className="session-subagent-row-copy">
               <strong>{agent.title}</strong>
@@ -336,7 +344,7 @@ function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; l
             </span>
             <span className="session-subagent-row-status">{statusLabel(agent.status, props.language)}</span>
             <CaretRight aria-hidden="true" />
-          </button>
+          </Button>
         ))}
       </div>
     </section>

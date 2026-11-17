@@ -10,6 +10,7 @@ import { formatVisibleApplicationError, reportApplicationError } from '../ui/App
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import type { useInputSuggestion } from './useInputSuggestion.js';
+import { Button } from '../ui/Button.js';
 
 /** 已有会话和新建草稿共用同一交互状态。 */
 type SuggestionState = ReturnType<typeof useInputSuggestion>;
@@ -124,7 +125,8 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   return (
     <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>
       <IconTooltip label={tooltip}>
-        <button
+        <Button
+          unstyled
           ref={triggerRef}
           type="button"
           className="session-suggestion-button"
@@ -170,7 +172,7 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
           ) : (
             <SparkleIcon aria-hidden="true" />
           )}
-        </button>
+        </Button>
       </IconTooltip>
       <span className="visually-hidden" role="status">
         {message || (props.suggestion.text || (hasPreview && previewOpen) ? (props.language === 'zh-CN' ? '输入建议已生成，按 Tab 采用。' : 'Suggestion ready. Press Tab to use it.') : '')}
@@ -250,7 +252,8 @@ function InputSuggestionPreview(props: {
         props.triggerRef.current?.focus({ preventScroll: true });
       }}
     >
-      <button
+      <Button
+        unstyled
         type="button"
         className="session-suggestion-preview-text"
         aria-label={`${props.language === 'zh-CN' ? '采用建议' : 'Use suggestion'}: ${props.suggestion.polishedText}`}
@@ -263,7 +266,7 @@ function InputSuggestionPreview(props: {
         }}
       >
         {changes.map((change, index) => (change.changed ? <mark key={index}>{change.text}</mark> : change.text))}
-      </button>
+      </Button>
       {props.suggestion.adoptionFailed ? (
         <div role="status">
           {props.language === 'zh-CN'

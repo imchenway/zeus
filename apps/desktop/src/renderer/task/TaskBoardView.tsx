@@ -240,15 +240,18 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
       {props.settings.preview === 'first_image' ? <TaskBoardImagePreview task={props.card.task} settings={props.settings} loadPreview={props.loadPreview} /> : null}
       {props.settings.preview === 'content' && taskBoardActiveContent(props.card.task) ? <p className="task-board-card-content-preview">{taskBoardActiveContent(props.card.task)}</p> : null}
       <div className="task-board-card-heading">
-        <button
+        <Button
+          data-busy-behavior="background"
+          unstyled
           type="button"
           className="task-board-card-open"
           onClick={() => props.onOpenTask(props.card.task.id, props.settings.openMode)}
           aria-label={`${props.context.language === 'zh-CN' ? '打开任务' : 'Open task'} ${props.card.task.title}`}
         >
           {props.card.task.title}
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={props.context.language === 'zh-CN' ? '拖动任务' : 'Drag task'}
           ref={sortable.setActivatorNodeRef}
           type="button"
@@ -259,7 +262,7 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
           {...sortable.listeners}
         >
           <DotsSixVertical aria-hidden="true" weight="bold" />
-        </button>
+        </Button>
       </div>
       <div className="task-board-card-properties">
         {visibleProperties.map((property) => {
@@ -287,7 +290,7 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
           disabled={props.busy}
           onChange={(event) => {
             const value = event.currentTarget.value;
-            if (value) props.onMoveToLane(props.card, value);
+            if (value) return props.onMoveToLane(props.card, value);
           }}
         >
           <option value="">{props.context.language === 'zh-CN' ? '移动到…' : 'Move to…'}</option>
@@ -326,20 +329,21 @@ function TaskBoardLane(props: {
     <section ref={droppable.setNodeRef} className={`task-board-lane${droppable.isOver ? ' is-over' : ''}${props.collapsed ? ' is-collapsed' : ''}`} aria-label={props.label ?? props.group.label}>
       {props.label ? (
         <header className="task-board-subgroup-heading">
-          <button type="button" onClick={props.onToggleCollapsed} aria-expanded={!props.collapsed}>
+          <Button unstyled type="button" onClick={props.onToggleCollapsed} aria-expanded={!props.collapsed}>
             {props.collapsed ? <CaretRight aria-hidden="true" weight="bold" /> : <CaretDown aria-hidden="true" weight="bold" />}
             {props.label}
-          </button>
+          </Button>
           <span className="task-board-subgroup-actions">
             <span>{props.context.language === 'zh-CN' ? `${props.cards.length} 项` : `${props.cards.length} ${props.cards.length === 1 ? 'item' : 'items'}`}</span>
-            <button
+            <Button
+              unstyled
               data-icon-tooltip={props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'}
               type="button"
               aria-label={`${props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'} ${props.label}`}
               onClick={props.onHide}
             >
               <EyeSlash aria-hidden="true" />
-            </button>
+            </Button>
           </span>
         </header>
       ) : null}
@@ -407,7 +411,8 @@ function TaskBoardColumn(props: {
       style={columnStyle}
     >
       <header className="task-board-column-heading">
-        <button
+        <Button
+          unstyled
           type="button"
           className="task-board-column-collapse"
           aria-expanded={!collapsed}
@@ -421,8 +426,9 @@ function TaskBoardColumn(props: {
           <span>{props.group.label}</span>
           <small>{props.context.language === 'zh-CN' ? `${props.group.taskCount} 项` : `${props.group.taskCount} ${props.group.taskCount === 1 ? 'item' : 'items'}`}</small>
           {collapsed ? <CaretRight className="task-board-column-caret" aria-hidden="true" /> : <CaretDown className="task-board-column-caret" aria-hidden="true" />}
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={props.settings.groupSort !== 'manual' ? (props.context.language === 'zh-CN' ? '使用手动排序后可拖动分组' : 'Use manual sorting to drag groups') : props.context.language === 'zh-CN' ? '拖动分组' : 'Drag group'}
           ref={sortable.setActivatorNodeRef}
           type="button"
@@ -433,8 +439,9 @@ function TaskBoardColumn(props: {
           {...sortable.listeners}
         >
           <DotsSixVertical aria-hidden="true" weight="bold" />
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           data-icon-tooltip={props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'}
           type="button"
           className="task-board-column-hide"
@@ -442,7 +449,7 @@ function TaskBoardColumn(props: {
           onClick={props.onHideGroup}
         >
           <EyeSlash aria-hidden="true" />
-        </button>
+        </Button>
       </header>
       {!collapsed ? (
         props.settings.subgroupBy ? (
@@ -592,9 +599,9 @@ function TaskBoardFilterEditor(props: { group: TaskBoardFilterGroup; depth: numb
                 }
               />
             ) : null}
-            <button type="button" aria-label={zh ? '移除筛选条件' : 'Remove filter'} onClick={() => props.onChange({ ...props.group, conditions: props.group.conditions.filter((_, entryIndex) => entryIndex !== index) })}>
+            <Button unstyled type="button" aria-label={zh ? '移除筛选条件' : 'Remove filter'} onClick={() => props.onChange({ ...props.group, conditions: props.group.conditions.filter((_, entryIndex) => entryIndex !== index) })}>
               <X aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         ),
       )}
@@ -630,9 +637,9 @@ function TaskBoardSettingsDialog(props: {
             <strong id="task-board-settings-title">{zh ? '看板设置' : 'Board settings'}</strong>
             <small>{zh ? '设置只影响当前项目的看板。' : 'Settings apply to this project board.'}</small>
           </div>
-          <button type="button" aria-label={zh ? '关闭看板设置' : 'Close board settings'} disabled={props.saving} onClick={props.onDismiss}>
+          <Button unstyled type="button" aria-label={zh ? '关闭看板设置' : 'Close board settings'} disabled={props.saving} onClick={props.onDismiss}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </header>
         <nav className="task-board-settings-sections" aria-label={zh ? '看板设置区域' : 'Board settings sections'}>
           {(
@@ -642,9 +649,9 @@ function TaskBoardSettingsDialog(props: {
               ['rules', zh ? '规则' : 'Rules'],
             ] as const
           ).map(([section, label]) => (
-            <button key={section} type="button" aria-pressed={props.section === section} onClick={() => props.onSectionChange(section)}>
+            <Button unstyled key={section} type="button" aria-pressed={props.section === section} onClick={() => props.onSectionChange(section)}>
               {label}
-            </button>
+            </Button>
           ))}
         </nav>
         <div className="task-board-settings-content">
@@ -815,7 +822,8 @@ function TaskBoardSettingsDialog(props: {
                     />
                     {translate(cardPropertyLabels[property], props.language)}
                   </label>
-                  <button
+                  <Button
+                    unstyled
                     data-icon-tooltip={zh ? '向上移动字段' : 'Move property up'}
                     type="button"
                     aria-label={zh ? '向上移动字段' : 'Move property up'}
@@ -829,8 +837,9 @@ function TaskBoardSettingsDialog(props: {
                     }
                   >
                     <ArrowUp aria-hidden="true" />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    unstyled
                     data-icon-tooltip={zh ? '向下移动字段' : 'Move property down'}
                     type="button"
                     aria-label={zh ? '向下移动字段' : 'Move property down'}
@@ -844,7 +853,7 @@ function TaskBoardSettingsDialog(props: {
                     }
                   >
                     <ArrowDown aria-hidden="true" />
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -891,9 +900,9 @@ function TaskBoardSettingsDialog(props: {
                   <option value="ascending">{zh ? '升序' : 'Ascending'}</option>
                   <option value="descending">{zh ? '降序' : 'Descending'}</option>
                 </select>
-                <button type="button" aria-label={zh ? '移除排序' : 'Remove sort'} onClick={() => setDraft((current) => ({ ...current, sorts: current.sorts.filter((_, entryIndex) => entryIndex !== index) }))}>
+                <Button unstyled type="button" aria-label={zh ? '移除排序' : 'Remove sort'} onClick={() => setDraft((current) => ({ ...current, sorts: current.sorts.filter((_, entryIndex) => entryIndex !== index) }))}>
                   <X aria-hidden="true" />
-                </button>
+                </Button>
               </div>
             ))}
             <Button variant="secondary" size="compact" onClick={() => setDraft((current) => ({ ...current, sorts: [...current.sorts, { id: crypto.randomUUID(), property: 'updatedAt', direction: 'descending' }] }))}>
@@ -976,9 +985,9 @@ function TaskBoardSettingsDialog(props: {
                   language={props.language}
                   onChange={(filter) => setDraft((current) => ({ ...current, conditionalColors: current.conditionalColors.map((entry, entryIndex) => (entryIndex === index ? { ...entry, filter } : entry)) }))}
                 />
-                <button type="button" onClick={() => setDraft((current) => ({ ...current, conditionalColors: current.conditionalColors.filter((_, entryIndex) => entryIndex !== index) }))}>
+                <Button unstyled type="button" onClick={() => setDraft((current) => ({ ...current, conditionalColors: current.conditionalColors.filter((_, entryIndex) => entryIndex !== index) }))}>
                   {zh ? '移除' : 'Remove'}
-                </button>
+                </Button>
               </div>
             ))}
           </fieldset>
@@ -1458,7 +1467,8 @@ export function TaskBoardView(props: TaskBoardViewProps) {
               {feedback.actionLabel}
             </Button>
           ) : null}
-          <button
+          <Button
+            unstyled
             type="button"
             className="task-board-feedback-dismiss"
             aria-label={props.language === 'zh-CN' ? '关闭操作反馈' : 'Dismiss feedback'}
@@ -1467,7 +1477,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
             }}
           >
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </section>
       ) : null}
       <DndContext
@@ -1496,9 +1506,9 @@ export function TaskBoardView(props: TaskBoardViewProps) {
                     busy={moving || savingSettings}
                     activeCardOccurrenceId={activeCard?.occurrenceId ?? null}
                     groupDropPosition={activeGroupId === group.id ? null : groups.findIndex((entry) => entry.id === activeGroupId) >= 0 && groups.findIndex((entry) => entry.id === activeGroupId) < groupIndex ? 'after' : 'before'}
-                    onSettingsChange={(patch) => void saveSettings(patch).catch(() => undefined)}
-                    onHideGroup={() => void hideGroup(group).catch(() => undefined)}
-                    onHideSubgroup={(subgroupId, subgroupLabel) => void hideSubgroup(group, subgroupId, subgroupLabel).catch(() => undefined)}
+                    onSettingsChange={(patch) => saveSettings(patch).catch(() => undefined)}
+                    onHideGroup={() => hideGroup(group).catch(() => undefined)}
+                    onHideSubgroup={(subgroupId, subgroupLabel) => hideSubgroup(group, subgroupId, subgroupLabel).catch(() => undefined)}
                     onMoveToLane={moveToLane}
                     onOpenTask={props.onOpenTask}
                     loadPreview={props.onLoadAttachmentPreview}
@@ -1546,7 +1556,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
             onDismiss={() => changeSettingsOpen(false)}
             onSectionChange={changeSettingsSection}
             onSave={(draft) => {
-              void saveSettings(draft)
+              return saveSettings(draft)
                 .then(() => changeSettingsOpen(false))
                 .catch(() => undefined);
             }}

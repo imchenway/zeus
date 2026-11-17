@@ -103,7 +103,7 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
     <section className="settings-product-section browser-password-section" aria-labelledby="browser-password-heading">
       <header className="browser-password-heading">
         <h3 id="browser-password-heading">{zh ? '密码' : 'Passwords'}</h3>
-        <Button size="compact" disabled={busy || (accounts === null && !error)} onClick={() => (accounts === null ? void run(async () => setAccounts(await window.zeus!.listBrowserPasswords())) : void prepare())}>
+        <Button size="compact" disabled={busy || (accounts === null && !error)} onClick={() => (accounts === null ? run(async () => setAccounts(await window.zeus!.listBrowserPasswords())) : prepare())}>
           {accounts === null && error ? (zh ? '重试读取' : 'Retry') : zh ? '导入 Chrome CSV' : 'Import Chrome CSV'}
         </Button>
       </header>
@@ -158,10 +158,10 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
             </ul>
           ) : null}
           <div className="browser-password-actions">
-            <Button size="compact" disabled={busy} onClick={() => void cancel()}>
+            <Button size="compact" disabled={busy} onClick={() => cancel()}>
               {zh ? '取消' : 'Cancel'}
             </Button>
-            <Button size="compact" variant="primary" busy={busy} onClick={() => void commit()}>
+            <Button size="compact" variant="primary" busy={busy} onClick={() => commit()}>
               {zh ? '确认导入' : 'Import'}
             </Button>
           </div>
@@ -180,7 +180,7 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
                 variant="danger"
                 disabled={busy || Boolean(preview)}
                 aria-label={zh ? `删除 ${account.origin} 的 ${account.username || '无用户名'} 账号` : `Delete ${account.username || 'No username'} at ${account.origin}`}
-                onClick={() => void remove(account)}
+                onClick={() => remove(account)}
               >
                 {zh ? '删除' : 'Delete'}
               </Button>

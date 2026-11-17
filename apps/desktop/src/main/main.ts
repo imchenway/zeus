@@ -2135,7 +2135,12 @@ function setupIpc(): void {
   ipcMain.handle('zeus:project-git:load-comparison', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 比较请求无效。');
     const candidate = input as Record<string, unknown>;
-    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.ref !== 'string' || (candidate.mode !== 'current' && candidate.mode !== 'working-tree')) {
+    if (
+      typeof candidate.projectId !== 'string' ||
+      typeof candidate.repositoryId !== 'string' ||
+      typeof candidate.ref !== 'string' ||
+      (candidate.mode !== 'current' && candidate.mode !== 'working-tree' && candidate.mode !== 'staged' && candidate.mode !== 'unstaged')
+    ) {
       throw new TypeError('项目 Git 比较请求身份无效。');
     }
     if ((candidate.path !== undefined && typeof candidate.path !== 'string') || (candidate.summaryOnly !== undefined && typeof candidate.summaryOnly !== 'boolean')) throw new TypeError('项目 Git 比较范围无效。');
@@ -3073,11 +3078,17 @@ function setupIpc(): void {
     if (typeof url !== 'string' || !browserHost?.getSettings().enabled) return false;
     return openThirdPartyTaskLogin(requestingWindow, url);
   });
-  ipcMain.handle('zeus:third-party-task:parse-link', async (event, request: MainCommandRequest<string>) => {
+  ipcMain.handle('zeus:third-party-task:parse-link', async (event, request: MainCommandRequest<{ url: string; requestId: string }>) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('第三方任务解析来自不受信任窗口。');
-    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_third_party', async (url, command) => {
-      const result = typeof url === 'string' && url.trim() ? await extractThirdPartyTaskInfo(url.trim(), await loadZentaoExtractServices(command)) : { kind: 'unsupported' as const, sourceUrl: typeof url === 'string' ? url : '' };
+    return activeMainCommandLedger().execute(request, 'desktop.task_resources.import_third_party', async (input, command) => {
+      const url = input && typeof input === 'object' && typeof input.url === 'string' ? input.url.trim() : '';
+      const requestId = input && typeof input === 'object' && typeof input.requestId === 'string' && /^[a-zA-Z0-9-]{16,80}$/u.test(input.requestId) ? input.requestId : null;
+      const result = url
+        ? await extractThirdPartyTaskInfo(url, await loadZentaoExtractServices(command), (metadata) => {
+            if (requestId && !requestingWindow.isDestroyed()) requestingWindow.webContents.send('zeus:third-party-task:metadata', { requestId, result: metadata });
+          })
+        : { kind: 'unsupported' as const, sourceUrl: url };
       // 无附件的成功解析也要生成可重放回执；附件路径已在首次写入前标记。
       await command.markWriteStarted();
       return result;

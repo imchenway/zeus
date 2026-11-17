@@ -3,6 +3,7 @@ import type { Text } from '@codemirror/state';
 import type { ProjectSourcePreviewGrant, ProjectSourcePreviewKind } from '@zeus/shared';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 
 /** 只有显示文档效果时才加载 Markdown 与图表渲染。 */
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
@@ -118,9 +119,9 @@ export function ProjectSourceRenderedPreview(props: {
 
   return (
     <section ref={root} className="project-source-rendered-preview" aria-label={zh ? '文件效果预览' : 'Rendered file preview'} aria-busy={loading || deferredDraft !== props.draft}>
-      <button type="button" className="project-source-preview-refresh" aria-label={zh ? '刷新预览' : 'Refresh preview'} data-icon-tooltip={zh ? '刷新预览' : 'Refresh preview'} onClick={() => setAttempt((value) => value + 1)}>
+      <Button unstyled type="button" className="project-source-preview-refresh" aria-label={zh ? '刷新预览' : 'Refresh preview'} data-icon-tooltip={zh ? '刷新预览' : 'Refresh preview'} onClick={() => setAttempt((value) => value + 1)}>
         <ArrowClockwise size={16} aria-hidden="true" />
-      </button>
+      </Button>
       {error ? (
         <div className="project-source-preview-message" role="status">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />

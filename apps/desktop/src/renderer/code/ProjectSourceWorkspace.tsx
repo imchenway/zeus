@@ -46,6 +46,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
+import { Form } from '../ui/Form.js';
 
 const ProjectSourceEditor = lazy(() => import('./ProjectSourceEditor.js').then((module) => ({ default: module.ProjectSourceEditor })));
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
@@ -744,26 +745,26 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
           {activeTab?.externalChange ? (
             <>
-              <button type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
+              <Button unstyled type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
                 {zh ? '另存为' : 'Save as'}
-              </button>
-              <button type="button" onClick={() => void reloadActiveTab()}>
+              </Button>
+              <Button unstyled type="button" onClick={() => reloadActiveTab()}>
                 {zh ? '重新加载' : 'Reload'}
-              </button>
+              </Button>
             </>
           ) : null}
-          <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
+          <Button unstyled type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {error ? (
         <div className="project-source-message" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          <button type="button" aria-label={zh ? '关闭错误提示' : 'Dismiss error'} onClick={() => setError(null)}>
+          <Button unstyled type="button" aria-label={zh ? '关闭错误提示' : 'Dismiss error'} onClick={() => setError(null)}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -772,9 +773,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           <section className="project-source-conflict-comparison" data-modal-surface="dialog">
             <header>
               <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
-              <button type="button" onClick={() => setConflictComparison(null)}>
+              <Button unstyled type="button" onClick={() => setConflictComparison(null)}>
                 {zh ? '关闭' : 'Close'}
-              </button>
+              </Button>
             </header>
             <div className="project-source-conflict-columns">
               <section>
@@ -807,22 +808,24 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               </label>
               {/* 新建入口与搜索同行，默认位置继续使用当前文件的父目录。 */}
               <span className="project-source-module-actions" role="group" aria-label={zh ? '新建文件或目录' : 'Create files or folders'}>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   data-icon-tooltip={zh ? '新建文件' : 'New file'}
                   aria-label={zh ? '新建文件' : 'New file'}
                   onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' })}
                 >
                   <FilePlus size={16} aria-hidden="true" />
-                </button>
-                <button
+                </Button>
+                <Button
+                  unstyled
                   type="button"
                   data-icon-tooltip={zh ? '新建目录' : 'New folder'}
                   aria-label={zh ? '新建目录' : 'New folder'}
                   onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' })}
                 >
                   <FolderPlus size={16} aria-hidden="true" />
-                </button>
+                </Button>
               </span>
             </div>
             <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
@@ -833,7 +836,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   gitFileStatuses={gitFileStatuses}
                   truncated={searchTruncated}
                   busyPath={busyPath}
-                  onOpen={(path) => void openFile(path)}
+                  onOpen={(path) => openFile(path)}
                   onContextMenu={openFileContextMenu}
                   onShortcut={handleFileShortcut}
                   zh={zh}
@@ -849,8 +852,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   activePath={activePath}
                   gitFileStatuses={gitFileStatuses}
                   busyPath={busyPath}
-                  onToggle={(path) => void toggleDirectory(path)}
-                  onOpen={(path) => void openFile(path)}
+                  onToggle={(path) => toggleDirectory(path)}
+                  onOpen={(path) => openFile(path)}
                   onContextMenu={openFileContextMenu}
                   onShortcut={handleFileShortcut}
                 />
@@ -863,7 +866,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         <main className="project-source-editor-pane">
           <div className="project-source-editor-header">
             <div className="project-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
-              <button
+              <Button
+                unstyled
                 data-icon-tooltip={zh ? '显示代码目录' : 'Show source tree'}
                 type="button"
                 className="project-source-tree-toggle"
@@ -872,7 +876,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 aria-expanded={treeDrawerOpen}
               >
                 <FolderOpen aria-hidden="true" />
-              </button>
+              </Button>
               {tabs.map((tab, index) => (
                 <div
                   key={tab.document.relativePath}
@@ -885,7 +889,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     closeTab(tab.document.relativePath);
                   }}
                 >
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     role="tab"
                     data-icon-tooltip={tab.document.name}
@@ -914,8 +919,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                         !
                       </i>
                     ) : null}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    unstyled
                     type="button"
                     className="zeus-workspace-tab-close"
                     data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
@@ -924,7 +930,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     onClick={() => closeTab(tab.document.relativePath)}
                   >
                     <X size={14} aria-hidden="true" />
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -940,7 +946,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 {renderedPreviewKind ? (
                   <div className="project-source-view-modes" role="group" aria-label={zh ? '源码显示方式' : 'Source view mode'}>
                     {sourceViewModes.map(({ id, zh: chinese, en, icon: Icon }) => (
-                      <button
+                      <Button
+                        unstyled
                         key={id}
                         type="button"
                         data-source-view-mode={id}
@@ -950,7 +957,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                         onClick={() => setViewModes((current) => ({ ...current, [activeTab.document.relativePath]: id }))}
                       >
                         <Icon size={16} aria-hidden="true" />
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 ) : null}
@@ -980,8 +987,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                         location={activeTab.revealLocation}
                         onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLocation: undefined } : tab)))}
                         onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
-                        onSave={() => void saveTab(activeTab.document.relativePath)}
-                        onSaveAll={() => void saveAll()}
+                        onSave={() => saveTab(activeTab.document.relativePath)}
+                        onSaveAll={() => saveAll()}
                       />
                     </Suspense>
                   </div>
@@ -1049,7 +1056,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       </div>
 
       {treeBackdrop.present ? (
-        <button
+        <Button
+          unstyled
           ref={treeBackdrop.ref}
           data-motion-state={treeDrawerOpen ? 'open' : 'closing'}
           inert={!treeDrawerOpen}
@@ -1076,48 +1084,51 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               >
                 {contextMenu.entry.kind === 'directory' ? (
                   <>
-                    <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+N`} onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
+                    <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+N`} onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
                       <span>{zh ? '新建文件' : 'New file'}</span>
                       <kbd>{fileShortcutLabels.createFile}</kbd>
-                    </button>
-                    <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+N`} onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
+                    </Button>
+                    <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+N`} onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
                       <span>{zh ? '新建目录' : 'New folder'}</span>
                       <kbd>{fileShortcutLabels.createDirectory}</kbd>
-                    </button>
+                    </Button>
                   </>
                 ) : null}
-                <button role="menuitem" type="button" onClick={() => void copySourceEntry(contextMenu.entry, false)}>
+                <Button unstyled role="menuitem" type="button" onClick={() => copySourceEntry(contextMenu.entry, false)}>
                   <span>{zh ? '复制文件名' : 'Copy file name'}</span>
                   <kbd>{macShortcuts ? '⌘C' : 'Ctrl+C'}</kbd>
-                </button>
-                <button role="menuitem" type="button" onClick={() => void copySourceEntry(contextMenu.entry, true)}>
+                </Button>
+                <Button unstyled role="menuitem" type="button" onClick={() => copySourceEntry(contextMenu.entry, true)}>
                   <span>{zh ? '复制路径' : 'Copy path'}</span>
                   <kbd>{macShortcuts ? '⌘⇧C' : 'Ctrl+Shift+C'}</kbd>
-                </button>
-                <button role="menuitem" type="button" aria-keyshortcuts="F2" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
+                </Button>
+                <Button unstyled role="menuitem" type="button" aria-keyshortcuts="F2" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
                   <span>{zh ? '重命名' : 'Rename'}</span>
                   <kbd>{fileShortcutLabels.rename}</kbd>
-                </button>
-                <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+M`} onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
+                </Button>
+                <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+M`} onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
                   <span>{zh ? '移动…' : 'Move…'}</span>
                   <kbd>{fileShortcutLabels.move}</kbd>
-                </button>
-                <button
+                </Button>
+                <Button
+                  unstyled
                   role="menuitem"
                   type="button"
                   aria-keyshortcuts={`${fileShortcutModifier}+Shift+R`}
                   onClick={() => {
-                    void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
+                    /** 菜单立即关闭，文件管理器操作继续由共享按钮接纳结果。 */
+                    const pending = bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
                     setContextMenu(null);
+                    return pending;
                   }}
                 >
                   <span>{zh ? '在 Finder 中显示' : 'Reveal in Finder'}</span>
                   <kbd>{fileShortcutLabels.reveal}</kbd>
-                </button>
-                <button role="menuitem" type="button" aria-keyshortcuts={macShortcuts ? 'Meta+Backspace' : 'Delete'} className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+                </Button>
+                <Button unstyled role="menuitem" type="button" aria-keyshortcuts={macShortcuts ? 'Meta+Backspace' : 'Delete'} className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
                   <span>{zh ? '移入废纸篓…' : 'Move to Trash…'}</span>
                   <kbd>{fileShortcutLabels.delete}</kbd>
-                </button>
+                </Button>
               </MenuSurface>
             ) : null}
           </MotionPresence>
@@ -1128,19 +1139,19 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       <MotionPresence>
         {operation ? (
           <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setOperation(null)} dismissDisabled={Boolean(busyPath)} role="dialog">
-            <form
+            <Form
               className="project-source-operation-modal zeus-solid-form-surface"
               onSubmit={(event) => {
                 event.preventDefault();
-                void submitOperation();
+                return submitOperation();
               }}
               data-modal-surface="dialog"
             >
               <header>
                 <strong>{operationTitle(operation, zh)}</strong>
-                <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
+                <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
                   <X size={16} aria-hidden="true" />
-                </button>
+                </Button>
               </header>
               <div>
                 {operation.kind === 'delete' ? (
@@ -1168,7 +1179,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   {operation.kind === 'delete' ? (zh ? '移入废纸篓' : 'Move to Trash') : zh ? '确认' : 'Confirm'}
                 </Button>
               </footer>
-            </form>
+            </Form>
           </ModalPortal>
         ) : null}
       </MotionPresence>
@@ -1212,7 +1223,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   onClick={() => {
                     const path = pendingClosePath;
                     setBusyPath('close-tab');
-                    void saveAll()
+                    return saveAll()
                       .then((saved) => {
                         if (saved && path) {
                           setPendingClosePath(null);
@@ -1267,7 +1278,9 @@ function TreeRows(props: {
     const expanded = directoryEntry && props.expandedDirectories.has(entry.relativePath);
     return (
       <div key={entry.relativePath} role="none">
-        <button
+        <Button
+          data-busy-behavior="background"
+          unstyled
           type="button"
           role="treeitem"
           aria-selected={entry.relativePath === props.activePath}
@@ -1287,7 +1300,7 @@ function TreeRows(props: {
           {directoryEntry ? expanded ? <FolderOpen weight="regular" aria-hidden="true" /> : <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
           <span data-file-status={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}>{entry.name}</span>
           {entry.kind === 'symlink' ? <small>↗</small> : null}
-        </button>
+        </Button>
         {directoryEntry ? (
           <Collapsible open={expanded}>
             <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} />
@@ -1314,7 +1327,9 @@ function SearchResults(props: {
   return (
     <>
       {props.entries.map((entry) => (
-        <button
+        <Button
+          data-busy-behavior="background"
+          unstyled
           key={entry.relativePath}
           type="button"
           role="treeitem"
@@ -1332,7 +1347,7 @@ function SearchResults(props: {
             <strong data-file-status={props.gitFileStatuses[entry.relativePath]}>{entry.name}</strong>
             <small>{entry.relativePath}</small>
           </span>
-        </button>
+        </Button>
       ))}
       {props.truncated ? <p className="project-source-empty">{props.zh ? '仅显示前 200 项，请缩小搜索范围。' : 'Showing the first 200 results. Refine your search.'}</p> : null}
     </>

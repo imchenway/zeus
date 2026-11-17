@@ -20,11 +20,12 @@ import {
   type FilePreviewSource,
   type FilePreviewRevertInput,
   type FilePreviewSaveInput,
+  type FileReview,
   type GitDeliveryFileActionInput,
 } from '@zeus/shared';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
-import { executeProjectGitAction, getFilePreviewBlame, getGitStatus, withGitRepositoryOperation } from '@zeus/git-core';
+import { executeProjectGitAction, getFilePreviewBlame, getFileReview, getGitStatus, withGitRepositoryOperation } from '@zeus/git-core';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
 protocol.registerSchemesAsPrivileged([
@@ -54,6 +55,8 @@ interface PreviewGrant {
   temporary?: string;
   /** 渲染层可见的有限描述。 */
   item: FilePreviewItem;
+  /** 当前授权版本的审阅读取，正文和媒体加载不等待 Git。 */
+  reviewRead?: Promise<FileReview>;
   /** ICNS 的只读 PNG 预览；系统操作和导出继续使用原始文件。 */
   image?: Buffer;
 }
@@ -606,6 +609,22 @@ export function registerFilePreview(services: {
     /** 发起操作的受信窗口。 */
     const window = services.requireWindow(event);
     return release(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [], window.id);
+  });
+
+  ipcMain.handle('zeus:file-preview:review', async (event, id: string) => {
+    const window = services.requireWindow(event);
+    const grant = grants.get(id);
+    if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
+    if (grant.request.kind !== 'resource' || grant.request.comparison || grant.item.kind !== 'text') return grant.item.review;
+    const path = await currentPath(grant);
+    if (!grant.reviewRead) {
+      grant.reviewRead = getFileReview(path).then(async (review) => {
+        await currentPath(grant);
+        grant.item.review = { ...review, location: grant.item.review?.location };
+        return grant.item.review;
+      });
+    }
+    return grant.reviewRead;
   });
 
   ipcMain.handle('zeus:file-preview:blame', async (event, id: string) => {

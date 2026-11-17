@@ -396,6 +396,8 @@ export function createDesktopApi(transport: DesktopTransport) {
 
     // 预览只传递业务身份，资源地址与系统操作均由主进程授权。
     loadFilePreview: (input: unknown) => transport.invoke('zeus:file-preview:load', input),
+    /** 已授权正文先显示，Git 审阅按当前窗口令牌独立补载。 */
+    loadFilePreviewReview: (id: string) => transport.invoke('zeus:file-preview:review', id),
     /** 保存文件预览内容，使用固定命令身份。 */
     saveFilePreview: (input: { id: string; content: string }) => invokeMainCommand('zeus:file-preview:save', 'desktop.file_preview.save', 'artifact', input.id, input),
     /** 撤销预览中的指定变更块。 */
@@ -494,7 +496,17 @@ export function createDesktopApi(transport: DesktopTransport) {
     /** 通过宿主打开指定任务附件。 */
     openTaskAttachment: (path: string) => transport.invoke('zeus:open-task-attachment', path),
     /** 将第三方详情读取为可确认的任务草稿。 */
-    parseThirdPartyTaskLink: (url: string) => invokeMainCommand('zeus:third-party-task:parse-link', 'desktop.task_resources.import_third_party', 'artifact', 'task-input-resources', url),
+    parseThirdPartyTaskLink: async (url: string, onMetadata?: (result: unknown) => void) => {
+      const requestId = globalThis.crypto.randomUUID();
+      const unsubscribe = transport.subscribe<{ requestId: string; result: unknown }>('zeus:third-party-task:metadata', (event) => {
+        if (event.requestId === requestId) onMetadata?.(event.result);
+      });
+      try {
+        return await invokeMainCommand('zeus:third-party-task:parse-link', 'desktop.task_resources.import_third_party', 'artifact', 'task-input-resources', { url, requestId });
+      } finally {
+        unsubscribe();
+      }
+    },
     /** 使用内置浏览器会话打开独立登录窗口。 */
     openThirdPartyTaskLogin: (url: string) => transport.invoke('zeus:third-party-task:open-login', url),
     /** 将设置快照导出为用户选定的文件。 */

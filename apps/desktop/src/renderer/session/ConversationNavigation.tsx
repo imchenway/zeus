@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useId, useRef, 
 import { createPortal } from 'react-dom';
 import type { ConversationNavigationEntry, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { Button } from '../ui/Button.js';
 
 /** 目录条目附带当前正文行身份；未加载的条目使用同一身份占位。 */
 export interface TranscriptNavigationEntry extends ConversationNavigationEntry {
@@ -278,7 +279,8 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
   const ticks = useMemo(
     () =>
       props.entries.map((entry) => (
-        <button
+        <Button
+          unstyled
           key={entry.rowKey}
           ref={(element) => {
             if (element) buttonsRef.current.set(entry.rowKey, element);
@@ -300,11 +302,11 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
           }}
           onClick={() => {
             hide(true);
-            props.onNavigate(entry);
+            return props.onNavigate(entry);
           }}
         >
           <span aria-hidden="true" />
-        </button>
+        </Button>
       )),
     [props.entries, props.activeRowKey, props.onNavigate, heldKey, zh, show, hide],
   );

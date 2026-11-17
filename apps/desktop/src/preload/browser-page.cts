@@ -93,6 +93,8 @@ const state = {
   editorAnchor: null as PageAnchor | null,
   editorPoint: null as { x: number; y: number } | null,
   editorTarget: null as HTMLElement | null,
+  /** 当前批注的本地提交独占浮层，回执不能关闭或复活另一条批注。 */
+  editorSaving: false,
   renderScheduled: false,
 };
 
@@ -291,7 +293,7 @@ function openEditor(
   },
   existing?: BrowserComment,
 ): void {
-  if (!editor) return;
+  if (!editor || state.editorSaving) return;
   state.editingCommentId = existing?.id;
   state.editorAnchor = anchor;
   state.editorPoint = point;
@@ -327,7 +329,10 @@ function openEditor(
   editor.querySelector('[data-action="save"]')?.addEventListener('click', () => void saveComment());
   const voiceButton = editor.querySelector<HTMLButtonElement>('[data-action="voice"]');
   if (voiceButton) installVoiceInput(voiceButton, textarea);
-  textarea.addEventListener('input', () => syncEditorActions(textarea));
+  textarea.addEventListener('input', () => {
+    textarea.setCustomValidity('');
+    syncEditorActions(textarea);
+  });
   textarea.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -375,7 +380,7 @@ function syncEditorActions(textarea: HTMLTextAreaElement): void {
   textarea.style.height = `${Math.min(112, Math.max(28, textarea.scrollHeight))}px`;
   const hasBody = Boolean(textarea.value.trim());
   const saveButton = editor.querySelector<HTMLButtonElement>('[data-action="save"]');
-  if (saveButton) saveButton.disabled = !hasBody;
+  if (saveButton) saveButton.disabled = state.editorSaving || !hasBody;
   editor.dataset.expanded = String(textarea.scrollHeight > 36 || editor.querySelector('[data-action="options"]')?.getAttribute('aria-expanded') === 'true');
   if (state.editorAnchor) positionEditor(state.editorAnchor);
 }
@@ -401,6 +406,7 @@ function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElem
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.onresult = (event) => {
+      if (state.editorSaving || editor?.querySelector('textarea') !== textarea) return;
       const transcript = [...Array(event.results.length).keys()]
         .map((index) => event.results[index]?.[0]?.transcript ?? '')
         .join(' ')
@@ -413,7 +419,7 @@ function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElem
       button.dataset.listening = 'false';
       button.dataset.iconTooltip = '语音输入';
       button.setAttribute('aria-label', '语音输入');
-      speechRecognition = null;
+      if (speechRecognition === recognition) speechRecognition = null;
     };
     recognition.onend = finish;
     recognition.onerror = finish;
@@ -426,7 +432,7 @@ function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElem
 }
 
 async function saveComment(): Promise<void> {
-  if (!editor || !state.editorAnchor) return;
+  if (!editor || !state.editorAnchor || state.editorSaving) return;
   const textarea = editor.querySelector<HTMLTextAreaElement>('textarea');
   const body = textarea?.value.trim() ?? '';
   // 输入法提交和重复点击不得创建多条相同评论。
@@ -436,9 +442,14 @@ async function saveComment(): Promise<void> {
     return;
   }
   const buttons = [...editor.querySelectorAll<HTMLButtonElement>('button')];
+  /** 已显示的正文在本地回执前保留，失败时仍可原地编辑与重试。 */
+  state.editorSaving = true;
+  speechRecognition?.stop();
   for (const button of buttons) button.disabled = true;
-  editor.hidden = true;
-  render();
+  editor.setAttribute('aria-busy', 'true');
+  editor.querySelector('[data-action="save"]')?.setAttribute('aria-busy', 'true');
+  if (textarea) textarea.readOnly = true;
+  renderMarkers();
   try {
     await invokeBrowserPageCommand('desktop.browser.save_comment', {
       commentId: state.editingCommentId,
@@ -447,18 +458,28 @@ async function saveComment(): Promise<void> {
       // 保留旧评论的已存调整信息，新评论只记录用户内容。
       designChanges: state.comments.find((comment) => comment.id === state.editingCommentId)?.designChanges ?? [],
     });
+    state.editorSaving = false;
     closeEditor();
   } catch (error) {
-    editor.hidden = false;
-    render();
-    for (const button of buttons) button.disabled = false;
+    if (textarea) textarea.readOnly = false;
     textarea?.setCustomValidity(error instanceof Error ? error.message : String(error));
     textarea?.reportValidity();
+  } finally {
+    state.editorSaving = false;
+    editor.removeAttribute('aria-busy');
+    editor.querySelector('[data-action="save"]')?.removeAttribute('aria-busy');
+    for (const button of buttons) button.disabled = false;
+    if (textarea) {
+      textarea.readOnly = false;
+      syncEditorActions(textarea);
+    }
+    renderMarkers();
   }
 }
 
 /** 关闭评论仅清理浮层，不修改被评论的网页内容。 */
 function closeEditor(): void {
+  if (state.editorSaving) return;
   if (speechRecognition) {
     speechRecognition.stop();
     speechRecognition = null;
@@ -656,6 +677,7 @@ function renderMarkers(): void {
     const marker = document.createElement('button');
     marker.className = 'marker session-response-annotation-marker';
     marker.type = 'button';
+    marker.disabled = state.editorSaving;
     marker.textContent = String(comment.number);
     marker.dataset.commentId = comment.id;
     marker.dataset.iconTooltip = `编辑第${comment.number}条网页评论`;

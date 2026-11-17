@@ -5,6 +5,7 @@ import { TerminalIcon as TerminalGlyph } from '@phosphor-icons/react/dist/csr/Te
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { AiRuntimeSession } from '../../apiClient.js';
 import './terminal.css';
+import { Button } from '../../ui/Button.js';
 
 /** 标签只呈现真实会话状态，生命周期和权限由调用入口管理。 */
 interface TerminalTabsProps {
@@ -116,7 +117,9 @@ export function TerminalTabs(props: TerminalTabsProps) {
         const closeLabel = `${zh ? '关闭终端标签' : 'Close terminal tab'}: ${title}`;
         return (
           <div key={session.id} className="zeus-terminal-tab-shell" data-active={active || undefined} role="presentation">
-            <button
+            <Button
+              data-busy-behavior="background"
+              unstyled
               ref={active ? selectedRef : undefined}
               type="button"
               role="tab"
@@ -141,16 +144,16 @@ export function TerminalTabs(props: TerminalTabsProps) {
               <TerminalGlyph aria-hidden="true" />
               <span>{title}</span>
               <i data-status={session.status} aria-label={statusLabels[session.status]} data-icon-tooltip={statusLabels[session.status]} />
-            </button>
-            <button className="zeus-terminal-tab-close" type="button" aria-label={closeLabel} data-icon-tooltip={closeLabel} disabled={props.closeDisabled} onClick={() => props.onClose(session)}>
+            </Button>
+            <Button unstyled className="zeus-terminal-tab-close" type="button" aria-label={closeLabel} data-icon-tooltip={closeLabel} disabled={props.closeDisabled} onClick={() => props.onClose(session)}>
               {props.closingId === session.id ? <CircleNotch aria-hidden="true" className="zeus-terminal-spinner" /> : <X aria-hidden="true" />}
-            </button>
+            </Button>
           </div>
         );
       })}
-      <button className="zeus-terminal-action" type="button" aria-label={zh ? '新建终端' : 'New terminal'} data-icon-tooltip={zh ? '新建终端' : 'New terminal'} disabled={props.newDisabled} onClick={props.onNew}>
+      <Button unstyled className="zeus-terminal-action" type="button" aria-label={zh ? '新建终端' : 'New terminal'} data-icon-tooltip={zh ? '新建终端' : 'New terminal'} disabled={props.newDisabled} onClick={props.onNew}>
         {props.starting ? <CircleNotch aria-hidden="true" className="zeus-terminal-spinner" /> : <Plus aria-hidden="true" />}
-      </button>
+      </Button>
     </div>
   );
 }

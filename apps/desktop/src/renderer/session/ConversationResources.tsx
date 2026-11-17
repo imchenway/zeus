@@ -22,6 +22,7 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
+import { Button } from '../ui/Button.js';
 
 /** 图片回到虚拟窗口时复用预览地址、解码状态和固有尺寸。 */
 interface CachedConversationImage {
@@ -178,7 +179,8 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
 
   return (
     <>
-      <button
+      <Button
+        unstyled
         type="button"
         className="session-resource-image session-pending-attachment-image"
         aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.attachment.name}`}
@@ -214,7 +216,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         ) : (
           <ResourceLoading label={props.language === 'zh-CN' ? '正在加载图片' : 'Loading image'} />
         )}
-      </button>
+      </Button>
       <MotionPresence>
         {previewOpen ? <FilePreviewDialog request={{ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }} zh={props.language === 'zh-CN'} onClose={() => setPreviewOpen(false)} /> : null}
       </MotionPresence>
@@ -283,7 +285,8 @@ export function ConversationInlineResource(
 
   return (
     <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-      <button
+      <Button
+        unstyled
         type="button"
         className="session-inline-resource"
         data-file-path={props.resource.kind === 'file' ? props.resource.projectRelativePath : undefined}
@@ -291,7 +294,7 @@ export function ConversationInlineResource(
         aria-label={`${label}${location ? ` ${location}` : ''}`}
         aria-busy={busy || undefined}
         data-error={Boolean(error) || undefined}
-        onClick={() => void open()}
+        onClick={() => open()}
       >
         <ResourceIcon resource={props.resource} />
         {props.resource.kind === 'file' ? '\u00a0' : null}
@@ -302,7 +305,7 @@ export function ConversationInlineResource(
             <span className="session-inline-resource-location">{location}</span>
           </>
         ) : null}
-      </button>
+      </Button>
       {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </span>
   );
@@ -473,7 +476,8 @@ function ConversationImagePreview(
         : props.label;
 
   return (
-    <button
+    <Button
+      unstyled
       ref={rootRef}
       type="button"
       className={props.className}
@@ -489,7 +493,7 @@ function ConversationImagePreview(
           setRetry((value) => value + 1);
           return;
         }
-        void open();
+        return open();
       }}
     >
       {preview && !error ? (
@@ -519,7 +523,7 @@ function ConversationImagePreview(
         <ResourceLoading label={status} />
       )}
       {preview ? <span className="session-sr-only">{status}</span> : null}
-    </button>
+    </Button>
   );
 }
 
@@ -600,7 +604,7 @@ function ConversationResourceCard(
 
   return (
     <article className="session-resource-card" data-resource-kind={props.resource.kind} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
-      <button type="button" className="session-resource-card-main" data-file-name={props.resource.displayName} data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
+      <Button unstyled type="button" className="session-resource-card-main" data-file-name={props.resource.displayName} data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => open()}>
         <span className="session-resource-card-icon">
           <ResourceIcon resource={props.resource} />
         </span>
@@ -608,7 +612,7 @@ function ConversationResourceCard(
           <strong>{pendingResourceDisplayName(props.resource.displayName, props.language)}</strong>
           <small>{subtitle}</small>
         </span>
-      </button>
+      </Button>
       {/* 附件卡只保留默认预览入口，外部应用操作由文件预览承载。 */}
       {props.resource.kind !== 'attachment' ? <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} /> : null}
       {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
@@ -751,7 +755,8 @@ export function OpenWithMenu(props: {
 
   return (
     <div className="session-open-with" ref={rootRef}>
-      <button
+      <Button
+        unstyled
         ref={triggerRef}
         type="button"
         className="session-open-with-trigger"
@@ -760,17 +765,17 @@ export function OpenWithMenu(props: {
         data-icon-tooltip={props.label ?? (props.language === 'zh-CN' ? '打开方式' : 'Open with')}
         aria-label={props.language === 'zh-CN' ? `选择 ${props.resource.displayName} 的打开方式` : `Open ${props.resource.displayName} with`}
         disabled={props.disabled}
-        onClick={() => void toggle()}
+        onClick={() => toggle()}
         onKeyDown={(event) => {
           if (event.key !== 'ArrowDown') return;
           event.preventDefault();
-          if (!open) void toggle();
+          if (!open) return toggle();
           else menuButtons(menuRef.current)[0]?.focus();
         }}
       >
         <span>{props.label ?? (props.language === 'zh-CN' ? '打开方式' : 'Open with')}</span>
         <CaretDown aria-hidden="true" weight="bold" />
-      </button>
+      </Button>
       {menuPresent
         ? createPortal(
             <div className={openWithPortalClassName(document)}>
@@ -794,7 +799,8 @@ export function OpenWithMenu(props: {
                 ) : null}
                 {!loading && !error
                   ? targets.map((target) => (
-                      <button
+                      <Button
+                        unstyled
                         type="button"
                         role="menuitem"
                         key={target.id}
@@ -802,7 +808,7 @@ export function OpenWithMenu(props: {
                         data-icon-tooltip={!target.available ? target.reason : undefined}
                         onClick={() => {
                           closeAndRestoreFocus();
-                          void props.onOpen(target.id);
+                          return props.onOpen(target.id);
                         }}
                       >
                         <span className="session-open-with-target-label">
@@ -826,7 +832,7 @@ export function OpenWithMenu(props: {
                           {props.applicationsOnly && target.id === 'system_default' ? 'Default app' : props.applicationsOnly && target.id === 'editor:vscode' ? 'VS Code' : localizedTargetLabel(target, props.language)}
                         </span>
                         {target.exactLocation && target.available ? <small>{props.language === 'zh-CN' ? '精确到行' : 'Exact line'}</small> : null}
-                      </button>
+                      </Button>
                     ))
                   : null}
                 {props.footer ? (

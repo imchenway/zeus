@@ -90,10 +90,10 @@ export function CodexInstallationGuide(props: {
                       : 'Prepare Codex in the Zeus directory with the command below, then return here to sign in.'}
           </p>
           <div className="model-setup-actions">
-            <Button variant="primary" disabled={props.busy} onClick={() => void props.onCheck()}>
+            <Button variant="primary" disabled={props.busy} onClick={() => props.onCheck()}>
               {props.zh ? '我已装好，重新检测' : 'Installed — check again'}
             </Button>
-            <Button variant="secondary" disabled={props.busy} onClick={() => void props.onOpenGuide()}>
+            <Button variant="secondary" disabled={props.busy} onClick={() => props.onOpenGuide()}>
               {props.zh ? '查看官方安装指南' : 'Official installation guide'}
             </Button>
           </div>
@@ -101,7 +101,7 @@ export function CodexInstallationGuide(props: {
             <div className="model-setup-installation-command">
               <div className="model-setup-actions">
                 <strong>{props.zh ? '在终端运行安装命令' : 'Run this command in your terminal'}</strong>
-                <Button variant="secondary" size="compact" disabled={props.busy} onClick={() => void copyCommand()}>
+                <Button variant="secondary" size="compact" disabled={props.busy} onClick={() => copyCommand()}>
                   {props.zh ? '复制安装命令' : 'Copy command'}
                 </Button>
               </div>

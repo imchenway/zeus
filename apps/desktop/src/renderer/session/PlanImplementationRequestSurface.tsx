@@ -8,6 +8,8 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ConversationComposerAttachments, conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
+import { Form } from '../ui/Form.js';
+import { Button } from '../ui/Button.js';
 
 /** 计划确认与修改共用选项行尺寸和询问操作样式，保留原有三种响应动作。 */
 export function PlanImplementationRequestSurface(props: {
@@ -76,17 +78,18 @@ export function PlanImplementationRequestSurface(props: {
   }, [feedbackOpen]);
 
   /** 表单按钮与回车共用提交入口，允许仅用附件表达修改意见。 */
-  function submitFeedback(event: FormEvent): void {
+  function submitFeedback(event: FormEvent): void | Promise<void> {
     event.preventDefault();
     if ((!feedback.trim() && attachments.length === 0) || responding) return;
-    void props.onRespond(props.request.id, { action: 'refine', feedback: feedback.trim(), ...(attachments.length ? { attachments } : {}) });
+    return props.onRespond(props.request.id, { action: 'refine', feedback: feedback.trim(), ...(attachments.length ? { attachments } : {}) });
   }
 
   /** 复用答题卡的操作顺序、品牌色和高度；展开输入前只显示跳过。 */
   const actions = (
     <div className="session-rui-inline-actions" role="group" aria-label={zh ? '计划操作' : 'Plan actions'}>
       {feedbackOpen && props.onChooseAttachments ? (
-        <button
+        <Button
+          unstyled
           data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
           type="button"
           className="session-question-attachment-button"
@@ -96,15 +99,15 @@ export function PlanImplementationRequestSurface(props: {
           onClick={inputResources.chooseAttachments}
         >
           <Paperclip aria-hidden="true" />
-        </button>
+        </Button>
       ) : null}
-      <button type="button" onClick={() => void props.onRespond(props.request.id, { action: 'dismiss' })} disabled={responding}>
+      <Button unstyled type="button" onClick={() => props.onRespond(props.request.id, { action: 'dismiss' })} disabled={responding}>
         {zh ? '跳过' : 'Skip'}
-      </button>
+      </Button>
       {feedbackOpen ? (
-        <button type="submit" disabled={(!feedback.trim() && attachments.length === 0) || responding}>
+        <Button unstyled type="submit" disabled={(!feedback.trim() && attachments.length === 0) || responding}>
           {zh ? '提交' : 'Submit'}
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -113,9 +116,9 @@ export function PlanImplementationRequestSurface(props: {
     <section className="session-question-panel session-plan-implementation-request" aria-busy={responding || undefined} data-error={Boolean(props.error) || undefined} data-request-id={props.request.id}>
       <header>
         <strong>{zh ? '实施此计划？' : 'Implement this plan?'}</strong>
-        <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => void props.onRespond(props.request.id, { action: 'dismiss' })} disabled={responding}>
+        <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => props.onRespond(props.request.id, { action: 'dismiss' })} disabled={responding}>
           <X aria-hidden="true" />
-        </button>
+        </Button>
       </header>
       {(props.error ?? resourceError) ? (
         <p className="session-request-invalid" role="alert">
@@ -123,15 +126,15 @@ export function PlanImplementationRequestSurface(props: {
         </p>
       ) : null}
       <div className="session-question-options">
-        <button ref={primaryRef} type="button" className="session-question-option is-primary" onClick={() => void props.onRespond(props.request.id, { action: 'implement' })} disabled={responding}>
+        <Button unstyled ref={primaryRef} type="button" className="session-question-option is-primary" onClick={() => props.onRespond(props.request.id, { action: 'implement' })} disabled={responding}>
           <span className="session-question-index">1</span>
           <span className="session-question-option-copy">
             <strong>{zh ? '是，实施此计划' : 'Yes, implement this plan'}</strong>
           </span>
           <ArrowRight aria-hidden="true" />
-        </button>
+        </Button>
         {feedbackOpen ? (
-          <form
+          <Form
             className="session-plan-refinement"
             onSubmit={submitFeedback}
             data-resource-dragging={inputResources.dragging || undefined}
@@ -170,15 +173,15 @@ export function PlanImplementationRequestSurface(props: {
               }}
             />
             {actions}
-          </form>
+          </Form>
         ) : (
           <div className="session-plan-refinement">
-            <button type="button" className="session-question-option session-question-option-other" onClick={() => setFeedbackOpen(true)} disabled={props.busy}>
+            <Button unstyled type="button" className="session-question-option session-question-option-other" onClick={() => setFeedbackOpen(true)} disabled={props.busy}>
               <span className="session-question-index">
                 <PencilSimple aria-hidden="true" />
               </span>
               <span className="session-question-option-copy">{zh ? '否，继续完善计划' : 'No, refine the plan'}</span>
-            </button>
+            </Button>
             {actions}
           </div>
         )}

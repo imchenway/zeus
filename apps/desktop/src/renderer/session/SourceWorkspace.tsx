@@ -279,7 +279,8 @@ function SourceWorkspaceView(props: {
       >
         {(props.tabs ?? [props.preview]).map((preview) => (
           <div className="zeus-workspace-tab-shell" data-active={sourceWorkspaceTabId(preview) === tabId || undefined} key={sourceWorkspaceTabId(preview)}>
-            <button
+            <Button
+              unstyled
               type="button"
               ref={sourceWorkspaceTabId(preview) === tabId ? titleRef : undefined}
               role="tab"
@@ -292,8 +293,9 @@ function SourceWorkspaceView(props: {
             >
               {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
               <span data-file-status={preview.review?.status}>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
-            </button>
-            <button
+            </Button>
+            <Button
+              unstyled
               type="button"
               className="zeus-workspace-tab-close"
               aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
@@ -301,7 +303,7 @@ function SourceWorkspaceView(props: {
               onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}
             >
               <X aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         ))}
         {props.onOpenFile && props.resources?.length ? (
@@ -314,7 +316,7 @@ function SourceWorkspaceView(props: {
               data-icon-tooltip={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
               onChange={(event) => {
                 const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
-                if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
+                if (resource) return Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
               }}
             >
               <option value="">{zh ? '打开文件…' : 'Open file…'}</option>
@@ -328,7 +330,8 @@ function SourceWorkspaceView(props: {
         ) : null}
       </div>
       <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
-        <button
+        <Button
+          unstyled
           type="button"
           aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
           disabled={props.canSplit === false}
@@ -336,7 +339,7 @@ function SourceWorkspaceView(props: {
           onClick={() => props.onFullWidthChange(!props.fullWidth)}
         >
           {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-        </button>
+        </Button>
       </nav>
     </header>
   );
@@ -371,7 +374,8 @@ function SourceWorkspaceView(props: {
               {sourcePreview && props.preview.resource.kind === 'file' ? (
                 <FileSourceEditButton zh={zh} request={{ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id }} />
               ) : null}
-              <button
+              <Button
+                unstyled
                 type="button"
                 aria-label={zh ? '在文件中搜索' : 'Find in file'}
                 data-icon-tooltip={zh ? '在文件中搜索' : 'Find in file'}
@@ -382,28 +386,29 @@ function SourceWorkspaceView(props: {
                 }}
               >
                 <FileMagnifyingGlass aria-hidden="true" />
-              </button>
+              </Button>
               {markdownPreview ? (
                 <Button size="compact" className="session-source-mode-toggle" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
                   {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
                 </Button>
               ) : null}
-              <button
+              <Button
+                unstyled
                 type="button"
                 aria-label={copyLabel}
                 data-icon-tooltip={
                   !sourcePreview ? (zh ? '当前文件没有可复制的文本' : 'This file has no text to copy') : sourcePreview.truncated ? (zh ? '预览不完整，无法复制全文' : 'The preview is incomplete; full text cannot be copied') : copyLabel
                 }
                 disabled={!sourcePreview || sourcePreview.truncated}
-                onClick={() => void copyFullText()}
+                onClick={() => copyFullText()}
               >
                 {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-              </button>
+              </Button>
               <span role="status" className="session-source-copy-status">
                 {copied ? copyLabel : ''}
               </span>
               <div className="session-source-open-group">
-                <button type="button" disabled={!props.onOpen} data-icon-tooltip={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
+                <Button unstyled type="button" disabled={!props.onOpen} data-icon-tooltip={openApplication?.label} onClick={() => openResource(openTarget ?? 'system_default')}>
                   {openApplication?.iconDataUrl ? (
                     <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
                   ) : openTarget === 'system_default' ? (
@@ -412,7 +417,7 @@ function SourceWorkspaceView(props: {
                     <AppWindow aria-hidden="true" />
                   )}
                   {zh ? '打开' : 'Open'}
-                </button>
+                </Button>
                 <OpenWithMenu
                   key={props.preview.resource.id}
                   resource={props.preview.resource}
@@ -423,12 +428,12 @@ function SourceWorkspaceView(props: {
                   targets={openTargets.length ? openTargets : undefined}
                   footer={
                     <>
-                      <button type="button" role="menuitem" onClick={() => void openResource('file_manager')}>
+                      <Button unstyled type="button" role="menuitem" onClick={() => openResource('file_manager')}>
                         {zh ? '打开所在文件夹' : 'Show in folder'}
-                      </button>
-                      <button type="button" role="menuitem" onClick={() => void fileAction('export')}>
+                      </Button>
+                      <Button unstyled type="button" role="menuitem" onClick={() => fileAction('export')}>
                         {zh ? '另存为…' : 'Save as…'}
-                      </button>
+                      </Button>
                     </>
                   }
                   onOpen={(target) => {
@@ -527,17 +532,18 @@ export function FilePreviewWorkspace(props: {
       <header className="session-context-workspace-header session-source-header">
         <div className="session-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
           <div className="zeus-workspace-tab-shell" data-active="true">
-            <button type="button" role="tab" aria-selected="true" className="zeus-workspace-tab" ref={titleRef} data-icon-tooltip={name}>
+            <Button unstyled type="button" role="tab" aria-selected="true" className="zeus-workspace-tab" ref={titleRef} data-icon-tooltip={name}>
               <FileTypeIcon name={name} />
               <span data-file-status={item?.review?.status}>{name}</span>
-            </button>
-            <button type="button" className="zeus-workspace-tab-close" aria-label={`${zh ? '关闭' : 'Close'} ${name}`} data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${name}`} onClick={props.onClose}>
+            </Button>
+            <Button unstyled type="button" className="zeus-workspace-tab-close" aria-label={`${zh ? '关闭' : 'Close'} ${name}`} data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${name}`} onClick={props.onClose}>
               <X aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         </div>
         <nav aria-label={zh ? '文件审阅操作' : 'File review actions'}>
-          <button
+          <Button
+            unstyled
             type="button"
             disabled={!props.canSplit}
             data-icon-tooltip={!props.canSplit ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
@@ -545,7 +551,7 @@ export function FilePreviewWorkspace(props: {
             onClick={() => props.onFullWidthChange(!props.fullWidth)}
           >
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-          </button>
+          </Button>
         </nav>
       </header>
     );

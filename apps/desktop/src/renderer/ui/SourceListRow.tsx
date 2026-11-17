@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ComponentPropsWithRef, ReactNode } from 'react';
+import { Button } from './Button.js';
 
 export type SourceListRowButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
   [attribute: `data-${string}`]: string | undefined;
@@ -49,13 +50,13 @@ export function SourceListRow(props: SourceListRowProps) {
       data-disclosure-placement={props.disclosure ? (props.disclosurePlacement ?? 'leading') : undefined}
     >
       {props.disclosure && props.disclosurePlacement !== 'trailing' ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
-      <button {...buttonProps} data-icon-tooltip={buttonProps['data-icon-tooltip'] || title} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
+      <Button unstyled {...buttonProps} data-icon-tooltip={buttonProps['data-icon-tooltip'] || title} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
         <span className="zeus-source-list-row-icon" aria-hidden="true">
           {props.icon}
         </span>
         <span className="zeus-source-list-row-label">{props.label}</span>
         {props.state ? <span className="zeus-source-list-row-state">{props.state}</span> : null}
-      </button>
+      </Button>
       {props.actions ? <div className="zeus-source-list-row-actions">{props.actions}</div> : null}
       {props.disclosure && props.disclosurePlacement === 'trailing' ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
     </div>

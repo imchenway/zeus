@@ -329,9 +329,9 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               {props.task.taskCode ?? props.task.id} · {props.task.title}
             </small>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
             ×
-          </button>
+          </Button>
         </header>
 
         <div className="task-git-review-layout">
@@ -383,7 +383,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                             disabled={busy}
                           />
                         ) : null}
-                        <button
+                        <Button
+                          unstyled
                           type="button"
                           data-file-root={activeWorkspace?.worktreePath ?? activeWorkspace?.repositoryPath}
                           data-file-path={file.path}
@@ -393,7 +394,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                         >
                           <FileTypeIcon name={file.path} />
                           <span data-file-status={file.category}>{file.path}</span>
-                        </button>
+                        </Button>
                       </label>
                     </li>
                   ));
@@ -498,7 +499,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
             <strong>{zh ? '放弃本地任务分支' : 'Discard local task branch'}</strong>
             <small>{zh ? `输入 ${activeWorkspace.branchName} 确认。远端分支不会被删除。` : `Type ${activeWorkspace.branchName} to confirm. The remote branch is preserved.`}</small>
             <input value={discardConfirmation} onChange={(event) => setDiscardConfirmation(event.target.value)} disabled={busy} />
-            <Button variant="danger" size="compact" onClick={() => void discard()} disabled={discardConfirmation !== activeWorkspace.branchName || busy}>
+            <Button variant="danger" size="compact" onClick={() => discard()} disabled={discardConfirmation !== activeWorkspace.branchName || busy}>
               {zh ? '确认放弃' : 'Discard branch'}
             </Button>
           </section>
@@ -532,11 +533,11 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
           </span>
           <span>
             {props.mode === 'commit' || props.mode === 'commit-only' ? (
-              <Button variant="secondary" size="regular" busy={busy} onClick={() => void commitAll()} disabled={busy || !workspaceIndex?.items.length}>
+              <Button variant="secondary" size="regular" busy={busy} onClick={() => commitAll()} disabled={busy || !workspaceIndex?.items.length}>
                 {zh ? '提交全部有变化仓库' : 'Commit all changed repositories'}
               </Button>
             ) : props.mode === 'push-only' ? (
-              <Button variant="secondary" size="regular" busy={busy} onClick={() => void pushAll()} disabled={busy || !workspaceIndex?.items.length}>
+              <Button variant="secondary" size="regular" busy={busy} onClick={() => pushAll()} disabled={busy || !workspaceIndex?.items.length}>
                 {zh ? '推送全部已提交仓库' : 'Push all committed repositories'}
               </Button>
             ) : null}
@@ -544,11 +545,11 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
               {zh ? '取消' : 'Cancel'}
             </Button>
             {props.mode === 'commit' ? (
-              <Button variant="primary" size="regular" busy={busy} onClick={() => void commit()} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
+              <Button variant="primary" size="regular" busy={busy} onClick={() => commit()} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
                 {zh ? '提交' : 'Commit'}
               </Button>
             ) : props.mode === 'commit-only' ? (
-              <Button variant="primary" size="regular" busy={busy} onClick={() => void commit()} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
+              <Button variant="primary" size="regular" busy={busy} onClick={() => commit()} disabled={busy || !activeWorkspace || files.length === 0 || selectedPaths.length === 0 || activeReview?.conflictFiles.length !== 0}>
                 {zh ? '提交代码' : 'Commit Code'}
               </Button>
             ) : props.mode === 'push-only' ? (
@@ -556,17 +557,17 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                 variant="primary"
                 size="regular"
                 busy={busy}
-                onClick={() => void push()}
+                onClick={() => push()}
                 disabled={busy || !activeWorkspace || !activeWorkspace.remoteName || activeReview?.conflictFiles.length !== 0 || closedWorkspaceStates.has(activeWorkspace.state)}
               >
                 {zh ? '推送代码' : 'Push Code'}
               </Button>
             ) : canReclaimUnchanged ? (
-              <Button variant="primary" size="regular" busy={busy} onClick={() => void reclaimWithoutCommit()} disabled={busy}>
+              <Button variant="primary" size="regular" busy={busy} onClick={() => reclaimWithoutCommit()} disabled={busy}>
                 {zh ? '保留本地分支并回收目录' : 'Keep local branch and remove working folder'}
               </Button>
             ) : (
-              <Button variant="primary" size="regular" busy={busy} onClick={() => void commit()} disabled={busy || !activeWorkspace || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}>
+              <Button variant="primary" size="regular" busy={busy} onClick={() => commit()} disabled={busy || !activeWorkspace || activeReview?.conflictFiles.length !== 0 || (files.length > 0 && selectedPaths.length === 0)}>
                 {zh ? '提交代码' : 'Commit Code'}
               </Button>
             )}

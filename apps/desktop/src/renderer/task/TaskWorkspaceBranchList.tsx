@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { TaskWorkspaceIndexSnapshot } from '../session/sessionTypes.js';
+import { Button } from '../ui/Button.js';
 
 interface TaskWorkspaceBranchGroup<Workspace extends TaskWorkspaceIndexSnapshot> {
   branchName: string;
@@ -38,9 +39,9 @@ export function TaskWorkspaceBranchList<Workspace extends TaskWorkspaceIndexSnap
                 <span className="task-git-workspace-branch-actions">
                   {currentConversation ? <small className="task-git-current-conversation-badge">{props.zh ? '当前会话' : 'Current session'}</small> : null}
                   {props.onCopyBranch ? (
-                    <button type="button" onClick={() => void props.onCopyBranch?.(group.branchName)} disabled={props.disabled} aria-label={props.zh ? `复制分支名 ${group.branchName}` : `Copy branch name ${group.branchName}`}>
+                    <Button unstyled type="button" onClick={() => props.onCopyBranch?.(group.branchName)} disabled={props.disabled} aria-label={props.zh ? `复制分支名 ${group.branchName}` : `Copy branch name ${group.branchName}`}>
                       {props.zh ? '复制' : 'Copy'}
-                    </button>
+                    </Button>
                   ) : null}
                 </span>
               </span>
@@ -52,11 +53,11 @@ export function TaskWorkspaceBranchList<Workspace extends TaskWorkspaceIndexSnap
                 const showRelativePath = Boolean(workspace.repositoryRelativePath && workspace.repositoryRelativePath !== repositoryLabel);
                 const active = workspace.id === props.selectedWorkspaceId;
                 return (
-                  <button type="button" key={workspace.id} className={active ? 'is-active' : ''} aria-pressed={active} onClick={() => props.onSelect(workspace.id)} disabled={props.disabled}>
+                  <Button data-busy-behavior="background" unstyled type="button" key={workspace.id} className={active ? 'is-active' : ''} aria-pressed={active} onClick={() => props.onSelect(workspace.id)} disabled={props.disabled}>
                     <span>{repositoryLabel}</span>
                     {showRelativePath ? <small>{workspace.repositoryRelativePath}</small> : null}
                     <small>{props.stateLabel(workspace, props.zh)}</small>
-                  </button>
+                  </Button>
                 );
               })}
             </div>

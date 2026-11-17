@@ -17,6 +17,7 @@ import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { CodeDiffViewProps } from './CodeDiffView.js';
 import './editableCodeDiffView.css';
+import { Button } from '../ui/Button.js';
 
 /** 修改块使用统一语义色，两侧新增或删除的空白由 MergeView 负责对齐。 */
 function chunkTone(chunk: Chunk): string {
@@ -531,7 +532,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         allowLayout={!single}
         onUnifiedChange={(value) => {
           previousState.current = views.right?.state ?? null;
-          preview.onUnifiedChange(value);
+          return preview.onUnifiedChange(value);
         }}
         onPreview={preview.onPreview}
         onRefresh={preview.onRefresh}
@@ -558,15 +559,16 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
                 : 'Editable'}
       </span>
       {editing.conflict ? (
-        <button type="button" aria-pressed={editing.showingDraft} onClick={editing.onToggleDraft}>
+        <Button unstyled type="button" aria-pressed={editing.showingDraft} onClick={editing.onToggleDraft}>
           {editing.showingDraft ? (zh ? '查看工作区' : 'View working tree') : zh ? '查看保留草稿' : 'View retained draft'}
-        </button>
+        </Button>
       ) : null}
-      <button type="button" className="diff-edit-save" disabled={!editing.dirty || editing.saving || editing.conflict || props.revertDisabled} onClick={() => void editing.onSave()}>
+      <Button unstyled type="button" className="diff-edit-save" disabled={!editing.dirty || editing.saving || editing.conflict || props.revertDisabled} onClick={() => editing.onSave()}>
         {zh ? '保存' : 'Save'}
-      </button>
+      </Button>
       {editing.dirty ? (
-        <button
+        <Button
+          unstyled
           type="button"
           disabled={editing.saving}
           onClick={() => {
@@ -574,7 +576,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           }}
         >
           {zh ? '放弃' : 'Discard'}
-        </button>
+        </Button>
       ) : null}
     </>
   );
@@ -586,10 +588,11 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
             <strong>{zh ? '放弃此文件的未保存修改？' : 'Discard unsaved changes to this file?'}</strong>
             <p>{props.file.newPath}</p>
             <footer>
-              <button type="button" onClick={() => setDiscarding(false)}>
+              <Button unstyled type="button" onClick={() => setDiscarding(false)}>
                 {zh ? '取消' : 'Cancel'}
-              </button>
-              <button
+              </Button>
+              <Button
+                unstyled
                 type="button"
                 onClick={() => {
                   editing.onDiscard();
@@ -598,7 +601,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
                 }}
               >
                 {zh ? '放弃修改' : 'Discard changes'}
-              </button>
+              </Button>
             </footer>
           </section>
         </ModalPortal>
@@ -643,7 +646,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
             locale={zh ? 'zh-CN' : 'en-US'}
             onChange={editing.onChange}
             onSave={() => {
-              if (!props.revertDisabled) void editing.onSave();
+              if (!props.revertDisabled) return editing.onSave();
             }}
             onView={(view) => {
               if (view) {

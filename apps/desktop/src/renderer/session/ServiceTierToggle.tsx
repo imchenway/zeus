@@ -2,6 +2,7 @@ import { fastServiceTier } from './serviceTierSelection.js';
 import type { CodexTaskPushModelCapability, NativeServiceTierSelection } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
+import { Button } from '../ui/Button.js';
 
 /** 用闪电表示速度切换，沿用当前模型能力和已选状态。 */
 export function ServiceTierToggle(props: {
@@ -35,20 +36,21 @@ export function ServiceTierToggle(props: {
 
   return (
     <IconTooltip label={title}>
-      <button
+      <Button
+        unstyled
         type="button"
         className="session-service-tier-toggle"
         data-active={active || undefined}
         aria-label={accessibleLabel}
         aria-pressed={active}
         disabled={props.disabled || (unsupported && !active)}
-        onClick={() => void props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: 'priority' })}
+        onClick={() => props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: 'priority' })}
       >
         {/* 标准速度显示空心闪电，选中 Fast 后填实；沿用柔和轮廓，让状态不只依赖颜色区分。 */}
         <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
           <path d="M13.6 2.8 5.2 12.2c-.6.7-.1 1.8.8 1.8h4.2l-1 6.1c-.2 1 .9 1.5 1.6.8l8-9.5c.6-.7.1-1.8-.8-1.8h-4.1l1.3-6c.2-1-.9-1.5-1.6-.8Z" />
         </svg>
-      </button>
+      </Button>
     </IconTooltip>
   );
 }

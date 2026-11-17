@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { usePresenceSurface } from './MotionPresence.js';
 import { useModalFocus } from './useModalFocus.js';
 import { useNativeCloseLayer } from './nativeCloseLayer.js';
+import { Button } from './Button.js';
 
 /** 抽屉的呈现方式与尺寸保持显式。 */
 type WorkspaceDrawerVisual =
@@ -83,7 +84,7 @@ export function WorkspaceDrawer(props: WorkspaceDrawerProps) {
         onPointerUp={(event) => {
           const shouldClose = backdropPointer.current === event.pointerId && event.target === event.currentTarget;
           backdropPointer.current = null;
-          if (open && shouldClose) props.onClose();
+          if (open && shouldClose) return props.onClose();
         }}
       >
         <aside
@@ -100,9 +101,9 @@ export function WorkspaceDrawer(props: WorkspaceDrawerProps) {
             <strong>{props.label}</strong>
             <div className="workspace-drawer-header-actions">
               {props.headerAction}
-              <button type="button" className="workspace-drawer-close-button" aria-label={props.closeLabel} onClick={props.onClose}>
+              <Button unstyled type="button" className="workspace-drawer-close-button" aria-label={props.closeLabel} onClick={props.onClose}>
                 {props.closeLabel}
-              </button>
+              </Button>
             </div>
           </div>
           <div className="workspace-drawer-content">{props.children}</div>

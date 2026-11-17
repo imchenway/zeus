@@ -40,6 +40,7 @@ import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 import { browserProjectModelPreferenceStorage, readProjectModelPreferences, writeProjectModelPreferences } from '../session/projectModelPreferences.js';
+import { Form } from '../ui/Form.js';
 
 export interface TaskModelPushForm {
   /** 缺省使用模型默认，具体数值仅用于本次工作。 */
@@ -868,7 +869,7 @@ export function TaskModelPushModal(props: {
       role="dialog"
       aria-labelledby="task-model-push-title"
     >
-      <form
+      <Form
         className="task-model-push-modal zeus-solid-form-surface"
         aria-busy={props.status === 'loading' || undefined}
         onSubmit={props.onSubmit}
@@ -887,9 +888,9 @@ export function TaskModelPushModal(props: {
             <strong id="task-model-push-title">{zh ? '推送任务' : 'Push task'}</strong>
             <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
             ×
-          </button>
+          </Button>
         </header>
 
         <div
@@ -986,7 +987,7 @@ export function TaskModelPushModal(props: {
                   onChange={(value) => {
                     if (!selectedModel) return;
                     const selection = serviceTierSelectionFromValue(value);
-                    props.onChange({
+                    return props.onChange({
                       ...props.form,
                       serviceTier: selection,
                       serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
@@ -1065,7 +1066,7 @@ export function TaskModelPushModal(props: {
                 disabled={busy}
                 onRemove={(attachment) => {
                   const identity = taskPushSupplementalAttachmentIdentity(attachment);
-                  props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
+                  return props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
                 }}
                 onError={setSupplementalResourceError}
               />
@@ -1278,7 +1279,7 @@ export function TaskModelPushModal(props: {
                             size="compact"
                             busy={attachingRepositoryId === repository.repositoryId}
                             disabled={busy || !selectedEnvironment?.available}
-                            onClick={() => void attachEnvironmentRepository(repository.repositoryId)}
+                            onClick={() => attachEnvironmentRepository(repository.repositoryId)}
                           >
                             {zh ? '补入当前环境' : 'Add to this environment'}
                           </Button>
@@ -1531,7 +1532,7 @@ export function TaskModelPushModal(props: {
             </Button>
           </span>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
   return modal;

@@ -141,7 +141,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
               <h1>{zh ? '技能管理' : 'Skill management'}</h1>
             </div>
             <span className="skills-workspace-actions">
-              <Button variant="secondary" size="regular" busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
+              <Button variant="secondary" size="regular" busy={loading} onClick={() => load(true)} disabled={!props.client || loading}>
                 <ArrowClockwise aria-hidden="true" weight="regular" />
                 {zh ? '刷新' : 'Refresh'}
               </Button>
@@ -158,7 +158,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
         <div className="skills-embedded-toolbar">
           <strong>{zh ? '已安装技能' : 'Installed skills'}</strong>
           <div className="skills-workspace-actions">
-            <Button busy={loading} onClick={() => void load(true)} disabled={!props.client || loading}>
+            <Button busy={loading} onClick={() => load(true)} disabled={!props.client || loading}>
               <ArrowClockwise aria-hidden="true" />
               {zh ? '刷新技能' : 'Refresh skills'}
             </Button>
@@ -222,9 +222,9 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
         ) : null}
         <nav className="extension-tabs skills-scope-tabs" aria-label={zh ? '技能来源' : 'Skill sources'}>
           {groupedSkills.map(([scope, skills]) => (
-            <button key={scope} type="button" aria-current={selectedScope === scope ? 'page' : undefined} onClick={() => setSelectedScope(scope)}>
+            <Button unstyled key={scope} type="button" aria-current={selectedScope === scope ? 'page' : undefined} onClick={() => setSelectedScope(scope)}>
               {scopeName(scope, zh)} <span>{skills.length}</span>
-            </button>
+            </Button>
           ))}
         </nav>
         <div className="skills-scope-groups">
@@ -271,7 +271,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
             submitLabel={zh ? '安装' : 'Install'}
             submitDisabled={source.kind === 'local' ? !source.path.trim() : !source.repositoryUrl.trim()}
             onClose={closeInstall}
-            onSubmit={(event) => void submitInstall(event)}
+            onSubmit={(event) => submitInstall(event)}
           >
             <ExtensionSourceFields
               source={source}
@@ -314,7 +314,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
             onClose={() => setPendingRemoval(null)}
             onSubmit={(event) => {
               event.preventDefault();
-              void removeSkill(pendingRemoval);
+              return removeSkill(pendingRemoval);
             }}
           />
         ) : null}

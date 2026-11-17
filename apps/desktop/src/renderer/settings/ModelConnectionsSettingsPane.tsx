@@ -1,6 +1,9 @@
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from 'react';
+import { ModelConnectionQueryStore, modelConnectionQueryStore, type ModelConnectionJob } from '../features/integrations/modelConnectionQueryStore.js';
+import { codexCapabilitiesChangedEvent } from '../features/integrations/modelCatalogEvents.js';
+import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye';
@@ -99,8 +102,24 @@ export function ModelConnectionsSettingsPane(props: {
         : zh
           ? '新项目默认模型'
           : 'Default model for new projects';
-  const [connections, setConnections] = useState<ModelConnectionRecord[]>([]);
-  const [draft, setDraft] = useState<ModelConnectionDraft>(() => emptyDraft());
+  /** 列表和后台操作由当前客户端持有，设置页切换不会清空已有供应商。 */
+  const query = useMemo(() => (props.client ? modelConnectionQueryStore(props.client) : new ModelConnectionQueryStore({ loadModelConnections: async () => [] })), [props.client]);
+  const connectionSnapshot = useSyncExternalStore(query.connections.subscribe, query.connections.getSnapshot, query.connections.getSnapshot);
+  const jobs = useSyncExternalStore(query.subscribe, query.getSnapshot, query.getSnapshot);
+  const connections = connectionSnapshot.value ?? [];
+  /** 写入回执与现有列表共用一份可订阅快照。 */
+  function setConnections(update: SetStateAction<ModelConnectionRecord[]>): void {
+    const current = query.connections.getSnapshot().value ?? [];
+    query.connections.set(typeof update === 'function' ? update(current) : update);
+  }
+  const [draft, setDraft] = useState<ModelConnectionDraft>(() => {
+    const cached = query.connections.getSnapshot().value;
+    const selected = !props.onComplete ? (cached?.find((connection) => connection.id === query.selectedConnectionId) ?? cached?.[0]) : undefined;
+    return selected ? connectionDraft(selected) : emptyDraft();
+  });
+  /** 子编辑器保存期间允许切换供应商，迟到回执只更新原连接。 */
+  const selectedConnectionId = useRef(draft.id);
+  selectedConnectionId.current = draft.id;
   const [newModelId, setNewModelId] = useState('');
   /** 搜索和分页只改变展示，不影响供应商保存的模型集合。 */
   const [modelQuery, setModelQuery] = useState('');
@@ -108,7 +127,16 @@ export function ModelConnectionsSettingsPane(props: {
   const [requestedModelPage, setRequestedModelPage] = useState(1);
   /** 展开只属于当前编辑器，跨搜索和分页保留，不写入模型配置。 */
   const [expandedModelIds, setExpandedModelIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'probing' | 'deleting' | 'revealing'>('loading');
+  const [localStatus, setStatus] = useState<'idle' | 'loading' | 'saving' | 'refreshing' | 'probing' | 'deleting' | 'revealing'>('idle');
+  /** 当前编辑器只等待自己的远端操作，列表导航不受其他连接影响。 */
+  const job = draft.id ? jobs[draft.id] : undefined;
+  const status = localStatus === 'idle' && job?.pending ? (job.kind === 'diagnosing' ? 'loading' : job.kind) : localStatus;
+  /** 新建、选择与异步首屏回填使用同一个选择代次。 */
+  const selectionRevision = useRef(0);
+  /** 首屏后台校准不能覆盖用户已经修改的草稿。 */
+  const draftRevision = useRef(0);
+  /** 同一个后台回执只应用一次，保留用户后续编辑。 */
+  const appliedJob = useRef<ModelConnectionJob | null>(null);
   /** 已读取出来的密钥只活在这份状态里：隐藏、保存、切换连接都会立刻丢掉。 */
   const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
@@ -130,34 +158,52 @@ export function ModelConnectionsSettingsPane(props: {
   useEffect(() => {
     let active = true;
     if (!props.client) {
-      setStatus('idle');
       return () => {
         active = false;
       };
     }
-    void props.client
-      .loadModelConnections()
+    const revision = selectionRevision.current;
+    const editRevision = draftRevision.current;
+    const cached = query.connections.getSnapshot().value;
+    void query.connections
+      .load(true)
       .then((items) => {
         if (!active) return;
-        setConnections(items);
-        if (!props.onComplete && items[0]) selectConnection(items[0]);
-        setStatus('idle');
+        if (!props.onComplete && selectionRevision.current === revision && draftRevision.current === editRevision) {
+          const selected = items.find((item) => item.id === selectedConnectionId.current) ?? (!selectedConnectionId.current ? items[0] : undefined);
+          if (selected && cached?.find((item) => item.id === selected.id)?.updatedAt !== selected.updatedAt) selectConnection(selected);
+        }
       })
       .catch((error: unknown) => {
         if (!active) return;
         setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
-        setStatus('idle');
       });
     return () => {
       active = false;
     };
-  }, [props.client]);
+  }, [props.client, query]);
+  useEffect(() => {
+    let active = true;
+    const refresh = (): void => {
+      query.connections.invalidate();
+      void query.connections.load().catch((error: unknown) => {
+        if (active) setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
+      });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      active = false;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [query, zh]);
 
   const busy = status !== 'idle';
+  /** 只有正在保存或删除的表单暂时保护导航；远端检查不锁整个设置页。 */
+  const navigationBusy = localStatus === 'saving' || localStatus === 'deleting' || localStatus === 'revealing';
   useEffect(() => {
-    props.onBusyChange?.(busy);
+    props.onBusyChange?.(navigationBusy);
     return () => props.onBusyChange?.(false);
-  }, [busy, props.onBusyChange]);
+  }, [navigationBusy, props.onBusyChange]);
   useEffect(() => {
     if (props.active !== false) return;
     setDraft((value) => ({ ...value, apiKey: '' }));
@@ -169,6 +215,29 @@ export function ModelConnectionsSettingsPane(props: {
     setRevealedApiKey(null);
     setApiKeyVisible(false);
   }, [draft.id]);
+  useEffect(() => {
+    if (!job || job.pending || appliedJob.current === job) return;
+    appliedJob.current = job;
+    if (job.error) {
+      setMessage(formatVisibleApplicationError(job.error, zh ? 'zh-CN' : 'en'));
+      return;
+    }
+    const result = job.result;
+    if (!result) return;
+    if ('stage' in result) {
+      setDiagnostic(result);
+      return;
+    }
+    const updated = query.connections.getSnapshot().value?.find((item) => item.id === draft.id);
+    if (updated) selectConnection(updated);
+    if ('results' in result) setMessage(describeProbeResult(result, zh));
+    else if ('discoveredModelIds' in result)
+      setMessage(
+        zh
+          ? `候选池已同步：共 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个，移除 ${result.removedModelIds.length} 个。新模型默认未启用，请在“启用模型”中勾选。`
+          : `Candidate pool synced: ${result.discoveredModelIds.length} discovered, ${result.addedModelIds.length} added, ${result.removedModelIds.length} removed. New models stay disabled until selected.`,
+      );
+  }, [job, draft.id, query, zh]);
   /** 界面列表只展示已启用模型：没勾选的候选只留在大纲下拉里，避免几十个候选刷屏。 */
   const enabledModels = draft.models.filter((model) => model.enabled).sort((left, right) => compareModelNames(left.displayName?.trim() || left.id, right.displayName?.trim() || right.id) || compareModelNames(left.id, right.id));
   /** 本地筛选保留全部草稿，翻页不会遗失模型修改。 */
@@ -211,21 +280,14 @@ export function ModelConnectionsSettingsPane(props: {
   }
 
   function selectConnection(connection: ModelConnectionRecord): void {
+    selectedConnectionId.current = connection.id;
+    query.selectedConnectionId = connection.id;
+    selectionRevision.current += 1;
     setSaveState('idle');
     setModelQuery('');
     setRequestedModelPage(1);
     if (connection.id !== draft.id) setExpandedModelIds(new Set());
-    setDraft({
-      id: connection.id,
-      name: connection.name,
-      templateId: connection.templateId,
-      baseUrl: connection.baseUrl,
-      modelsPath: connection.modelsPath,
-      pricingUrl: connection.pricingUrl || connection.pricingCatalog?.url || '',
-      enabled: connection.enabled,
-      models: connection.models.map(cloneModel),
-      apiKey: '',
-    });
+    setDraft(connectionDraft(connection));
     modelRequestRef.current += 1;
     setDefaultModelRef('');
     setSelectableModels([]);
@@ -236,6 +298,7 @@ export function ModelConnectionsSettingsPane(props: {
 
   /** 文字输入结束保存，选择项立即保存；新建和接入引导仍显式创建。 */
   function changeDraft(next: ModelConnectionDraft): void {
+    draftRevision.current += 1;
     setDraft(next);
     setSaveState('idle');
     if (next.id && !props.onComplete) void save(next);
@@ -277,7 +340,7 @@ export function ModelConnectionsSettingsPane(props: {
     const items = await props.client.loadModelConnections();
     setConnections(items);
     const selected = items.find((connection) => connection.id === preferredId);
-    if (selected) selectConnection(selected);
+    if (selected && selectedConnectionId.current === preferredId) selectConnection(selected);
   }
 
   function createSaveInput(value = draft): SaveModelConnectionRequest {
@@ -296,18 +359,13 @@ export function ModelConnectionsSettingsPane(props: {
   /** 先保存单一页面地址，再读取清单；无需逐模型填价。 */
   async function refreshPricing(): Promise<void> {
     if (!props.client || busy || !current) return;
-    setStatus('refreshing');
     setMessage(null);
-    try {
-      await props.client.updateModelConnection(current.id, { ...createSaveInput({ ...current, id: current.id, apiKey: '' }), pricingUrl: draft.pricingUrl?.trim() ?? '' });
-      const updated = await props.client.refreshModelConnectionPricing(current.id);
-      setConnections((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-      setDraft((value) => (value.id === updated.id ? { ...value, pricingUrl: updated.pricingUrl || updated.pricingCatalog?.url || '' } : value));
-    } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
-    } finally {
-      setStatus('idle');
-    }
+    const client = props.client;
+    const input = { ...createSaveInput({ ...current, id: current.id, apiKey: '' }), pricingUrl: draft.pricingUrl?.trim() ?? '' };
+    await query.run(current.id, 'refreshing', async () => {
+      await client.updateModelConnection(current.id, input);
+      return client.refreshModelConnectionPricing(current.id);
+    });
   }
 
   async function persistConnection(input: SaveModelConnectionRequest): Promise<void> {
@@ -371,52 +429,27 @@ export function ModelConnectionsSettingsPane(props: {
 
   async function refreshModels(): Promise<void> {
     if (!props.client || !draft.id || busy) return;
-    setStatus('refreshing');
     setMessage(null);
-    try {
-      const result = await props.client.refreshModelConnectionModels(draft.id);
-      await reloadConnections(draft.id);
-      if (props.onComplete) await refreshDefaultModels(draft.id);
-      setMessage(
-        zh
-          ? `候选池已同步：共 ${result.discoveredModelIds.length} 个模型，新增 ${result.addedModelIds.length} 个，移除 ${result.removedModelIds.length} 个。新模型默认未启用，请在“启用模型”中勾选。`
-          : `Candidate pool synced: ${result.discoveredModelIds.length} discovered, ${result.addedModelIds.length} added, ${result.removedModelIds.length} removed. New models stay disabled until selected.`,
-      );
-    } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
-    } finally {
-      setStatus('idle');
-    }
+    const client = props.client;
+    const id = draft.id;
+    await query.run(id, 'refreshing', () => client.refreshModelConnectionModels(id));
   }
 
   /** 对已启用模型真实探测一次；探测结果由后端落库，界面只负责刷新与回执。 */
   async function probeModels(): Promise<void> {
     if (!props.client || !draft.id || busy) return;
-    setStatus('probing');
     setMessage(null);
-    try {
-      const summary = await props.client.probeModelConnectionModels(draft.id);
-      await reloadConnections(draft.id);
-      if (props.onComplete) await refreshDefaultModels(draft.id);
-      setMessage(describeProbeResult(summary, zh));
-    } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
-    } finally {
-      setStatus('idle');
-    }
+    const client = props.client;
+    const id = draft.id;
+    await query.run(id, 'probing', () => client.probeModelConnectionModels(id));
   }
 
   async function diagnose(): Promise<void> {
     if (!props.client || !draft.id || busy) return;
-    setStatus('loading');
     setMessage(null);
-    try {
-      setDiagnostic(await props.client.diagnoseModelConnection(draft.id));
-    } catch (error) {
-      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
-    } finally {
-      setStatus('idle');
-    }
+    const client = props.client;
+    const id = draft.id;
+    await query.run(id, 'diagnosing', () => client.diagnoseModelConnection(id));
   }
 
   /**
@@ -450,8 +483,9 @@ export function ModelConnectionsSettingsPane(props: {
     if (!props.client || !draft.id || busy) return;
     setStatus('saving');
     try {
-      await props.client.clearModelConnectionApiKey(draft.id);
-      await reloadConnections(draft.id);
+      const updated = await props.client.clearModelConnectionApiKey(draft.id);
+      query.upsert(updated);
+      selectConnection(updated);
       setRevealedApiKey(null);
       setApiKeyVisible(false);
       setMessage(zh ? 'API Key 已从钥匙串清除。' : 'API key cleared from Keychain.');
@@ -467,8 +501,8 @@ export function ModelConnectionsSettingsPane(props: {
     setStatus('deleting');
     try {
       await props.client.deleteModelConnection(draft.id);
-      const items = await props.client.loadModelConnections();
-      setConnections(items);
+      query.remove(draft.id);
+      selectedConnectionId.current = null;
       setDraft(emptyDraft());
       setExpandedModelIds(new Set());
       setDiagnostic(null);
@@ -507,7 +541,7 @@ export function ModelConnectionsSettingsPane(props: {
           onClick={() => {
             const input = pendingInsecureHttpSave;
             setPendingInsecureHttpSave(null);
-            void persistConnection({ ...input, allowInsecureHttp: true });
+            return persistConnection({ ...input, allowInsecureHttp: true });
           }}
         >
           {zh ? '仍然保存' : 'Save anyway'}
@@ -529,6 +563,9 @@ export function ModelConnectionsSettingsPane(props: {
             variant="secondary"
             size="compact"
             onClick={() => {
+              selectionRevision.current += 1;
+              selectedConnectionId.current = null;
+              query.selectedConnectionId = null;
               setDraft(emptyDraft());
               setModelQuery('');
               setRequestedModelPage(1);
@@ -536,7 +573,7 @@ export function ModelConnectionsSettingsPane(props: {
               setDiagnostic(null);
               setMessage(null);
             }}
-            disabled={busy}
+            disabled={navigationBusy}
           >
             {zh ? '新建供应商' : 'New provider'}
           </Button>
@@ -549,11 +586,14 @@ export function ModelConnectionsSettingsPane(props: {
           ariaLabel={zh ? '选择已保存供应商' : 'Choose a saved provider'}
           value={draft.id ?? ''}
           options={[{ value: '', label: zh ? '新建供应商' : 'New provider' }, ...connections.map((connection) => ({ value: connection.id, label: connection.name }))]}
-          disabled={busy}
+          disabled={navigationBusy}
           onChange={(id) => {
             const connection = connections.find((item) => item.id === id);
             if (connection) selectConnection(connection);
             else {
+              selectionRevision.current += 1;
+              selectedConnectionId.current = null;
+              query.selectedConnectionId = null;
               modelRequestRef.current += 1;
               setDraft(emptyDraft());
               setExpandedModelIds(new Set());
@@ -564,18 +604,36 @@ export function ModelConnectionsSettingsPane(props: {
         />
       ) : null}
       <div className={`model-connections-layout${props.onComplete ? ' model-setup-editor-layout' : ''}`}>
-        <nav hidden={Boolean(props.onComplete)} className="model-connection-list" aria-label={zh ? '模型供应商列表' : 'Model provider list'}>
-          {connections.length === 0 ? <p>{zh ? '还没有模型供应商。' : 'No model providers yet.'}</p> : null}
+        <nav hidden={Boolean(props.onComplete)} className="model-connection-list" aria-label={zh ? '模型供应商列表' : 'Model provider list'} aria-busy={connectionSnapshot.loading || undefined}>
+          {connectionSnapshot.loading ? (
+            <span className="model-connection-list-loading">
+              <ResourceLoading label={zh ? '读取供应商' : 'Loading providers'} />
+            </span>
+          ) : connectionSnapshot.value && connections.length === 0 ? (
+            <p>{zh ? '还没有模型供应商。' : 'No model providers yet.'}</p>
+          ) : null}
           {connections.map((connection) => (
-            <button key={connection.id} type="button" className={draft.id === connection.id ? 'selected' : ''} aria-current={draft.id === connection.id ? 'true' : undefined} disabled={busy} onClick={() => selectConnection(connection)}>
+            <Button
+              unstyled
+              key={connection.id}
+              type="button"
+              className={draft.id === connection.id ? 'selected' : ''}
+              aria-current={draft.id === connection.id ? 'true' : undefined}
+              disabled={navigationBusy}
+              aria-busy={jobs[connection.id]?.pending || undefined}
+              data-busy-behavior="background"
+              onClick={() => selectConnection(connection)}
+            >
               <span>
                 <strong>{connection.name}</strong>
                 <small>
                   {connection.models.length} {zh ? '个模型' : 'models'}
                 </small>
               </span>
-              <em data-configured={connection.apiKeyConfigured || undefined}>{connection.apiKeyConfigured ? (zh ? '密钥已保存' : 'Key saved') : zh ? '未配置密钥' : 'No key'}</em>
-            </button>
+              <em data-pending={jobs[connection.id]?.pending || undefined} data-configured={connection.apiKeyConfigured || undefined}>
+                {jobs[connection.id]?.pending ? (zh ? '进行中' : 'Working') : connection.apiKeyConfigured ? (zh ? '密钥已保存' : 'Key saved') : zh ? '未配置密钥' : 'No key'}
+              </em>
+            </Button>
           ))}
         </nav>
 
@@ -583,9 +641,10 @@ export function ModelConnectionsSettingsPane(props: {
           disabled={busy}
           onInput={() => setSaveState('idle')}
           onBlurCapture={(event) => {
-            if (draft.id && !props.onComplete && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'search') void save();
+            if (draft.id && !props.onComplete && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'search') return save();
           }}
           className="model-connection-editor"
+          key={draft.id ?? 'new'}
           aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}
         >
           <div className="model-connection-field-grid">
@@ -653,7 +712,7 @@ export function ModelConnectionsSettingsPane(props: {
                   aria-pressed={apiKeyVisible}
                   disabled={!current?.apiKeyConfigured || busy}
                   busy={status === 'revealing'}
-                  onClick={() => void toggleApiKeyVisibility()}
+                  onClick={() => toggleApiKeyVisibility()}
                 >
                   {apiKeyVisible ? <EyeSlashIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}
                 </Button>
@@ -685,7 +744,7 @@ export function ModelConnectionsSettingsPane(props: {
                   onChange={(event) => changeDraft({ ...draft, pricingUrl: event.currentTarget.value })}
                   disabled={busy}
                 />
-                <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => void refreshPricing()}>
+                <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => refreshPricing()}>
                   {zh ? '更新价格' : 'Refresh prices'}
                 </Button>
               </span>
@@ -853,18 +912,18 @@ export function ModelConnectionsSettingsPane(props: {
           ) : null}
           <footer className="model-connection-actions">
             {!draft.id || props.onComplete || saveState === 'failed' ? (
-              <Button variant="primary" size="compact" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
+              <Button variant="primary" size="compact" onClick={() => save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
                 {draft.id ? (zh ? '保存供应商' : 'Save provider') : zh ? '创建供应商' : 'Create provider'}
               </Button>
             ) : null}
-            <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
+            <Button variant="secondary" size="compact" onClick={() => refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
               {zh ? '获取模型' : 'Fetch models'}
             </Button>
             <Button
               variant="secondary"
               size="compact"
               title={zh ? '使用第一个已启用模型发送一次最小真实请求，可能产生少量用量' : 'Send one minimal real request with the first enabled model; minor usage may be billed'}
-              onClick={() => void diagnose()}
+              onClick={() => diagnose()}
               disabled={busy || !draft.id || enabledModelCount === 0}
               busy={status === 'loading'}
             >
@@ -874,7 +933,7 @@ export function ModelConnectionsSettingsPane(props: {
               variant="secondary"
               size="compact"
               title={zh ? '对已启用模型真实发送一次请求，按观测结果更新工具、图片、流式、用量和推理档位' : 'Send one real request per enabled model and update tools, image, streaming, usage, and reasoning evidence'}
-              onClick={() => void probeModels()}
+              onClick={() => probeModels()}
               disabled={busy || !draft.id || !current?.apiKeyConfigured || enabledModelCount === 0}
               busy={status === 'probing'}
             >
@@ -884,7 +943,7 @@ export function ModelConnectionsSettingsPane(props: {
               <Button
                 variant="primary"
                 size="compact"
-                onClick={() => void completeSetup()}
+                onClick={() => completeSetup()}
                 disabled={
                   busy ||
                   !current?.apiKeyConfigured ||
@@ -899,12 +958,12 @@ export function ModelConnectionsSettingsPane(props: {
               </Button>
             ) : null}
             {draft.id && current?.apiKeyConfigured ? (
-              <Button variant="secondary" size="compact" onClick={() => void clearApiKey()} disabled={busy}>
+              <Button variant="secondary" size="compact" onClick={() => clearApiKey()} disabled={busy}>
                 {zh ? '清除密钥' : 'Clear key'}
               </Button>
             ) : null}
             {draft.id ? (
-              <Button variant="danger" size="compact" onClick={() => void removeConnection()} disabled={busy} busy={status === 'deleting'}>
+              <Button variant="danger" size="compact" onClick={() => removeConnection()} disabled={busy} busy={status === 'deleting'}>
                 {zh ? '删除供应商' : 'Delete provider'}
               </Button>
             ) : null}
@@ -1089,13 +1148,13 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
           <Button size="compact" variant="secondary" disabled={busy} onClick={() => setRows((value) => value.slice(0, -1))}>
             {zh ? '减少一档' : 'Remove last'}
           </Button>
-          <Button size="compact" disabled={busy || props.context.connectionId === null} busy={status === 'saving'} onClick={() => void saveOverride(rows)}>
+          <Button size="compact" disabled={busy || props.context.connectionId === null} busy={status === 'saving'} onClick={() => saveOverride(rows)}>
             {zh ? '保存清单' : 'Save list'}
           </Button>
-          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null} onClick={() => void saveOverride(null)}>
+          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null} onClick={() => saveOverride(null)}>
             {zh ? '恢复自动判定' : 'Reset to automatic'}
           </Button>
-          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null || profile.options.length === 0} busy={status === 'auditing'} onClick={() => void runAudit()}>
+          <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null || profile.options.length === 0} busy={status === 'auditing'} onClick={() => runAudit()}>
             {zh ? '逐档体检' : 'Audit each level'}
           </Button>
         </span>
@@ -1325,7 +1384,7 @@ function ModelDefinitionEditor(props: {
         <span className="model-definition-enabled-state" data-enabled={model.enabled ? 'true' : 'false'}>
           {model.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '候选' : 'Candidate'}
         </span>
-        <button type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
+        <Button unstyled type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
           <span>
             <strong data-icon-tooltip={model.displayName || model.id}>{model.displayName || model.id}</strong>
             <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
@@ -1337,11 +1396,11 @@ function ModelDefinitionEditor(props: {
             ))}
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
-        </button>
+        </Button>
         {props.readOnly ? null : (
-          <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} data-icon-tooltip={zh ? '移除模型' : 'Remove model'}>
+          <Button unstyled className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} data-icon-tooltip={zh ? '移除模型' : 'Remove model'}>
             <X aria-hidden="true" weight="bold" />
-          </button>
+          </Button>
         )}
       </header>
       <Collapsible id={detailsId} open={props.expanded}>
@@ -1413,6 +1472,21 @@ function ModelDefinitionEditor(props: {
       </Collapsible>
     </article>
   );
+}
+
+/** 展示缓存只恢复配置字段，密钥输入始终重新留空。 */
+function connectionDraft(connection: ModelConnectionRecord): ModelConnectionDraft {
+  return {
+    id: connection.id,
+    name: connection.name,
+    templateId: connection.templateId,
+    baseUrl: connection.baseUrl,
+    modelsPath: connection.modelsPath,
+    pricingUrl: connection.pricingUrl || connection.pricingCatalog?.url || '',
+    enabled: connection.enabled,
+    models: connection.models.map(cloneModel),
+    apiKey: '',
+  };
 }
 
 function emptyDraft(): ModelConnectionDraft {

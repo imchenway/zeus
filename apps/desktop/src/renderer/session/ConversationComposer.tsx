@@ -40,6 +40,7 @@ import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
 import { InputSuggestionButton } from './InputSuggestionControl.js';
 import { selectHasActiveProviderTurn } from './sessionSelectors.js';
+import { Button } from '../ui/Button.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -435,9 +436,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
             <strong>{copy.createGoal}</strong>
             {hasDraft ? <small>{copy.normalDraftPreserved}</small> : null}
             <span className={goalCount > 4_000 ? 'session-goal-compose-count is-invalid' : 'session-goal-compose-count'}>{goalCount} / 4000</span>
-            <button type="button" aria-label={copy.exitGoal} onClick={exitGoalInput} disabled={goalOperationBusy}>
+            <Button unstyled type="button" aria-label={copy.exitGoal} onClick={exitGoalInput} disabled={goalOperationBusy}>
               <X aria-hidden="true" weight="bold" />
-            </button>
+            </Button>
           </div>
         ) : null}
         <ConversationComposerAttachments
@@ -472,7 +473,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               onValueChange={(nextValue) => {
                 if (nextValue !== editorValue) suggestion.beginEditing();
                 setEditorValue(nextValue);
-                if (!composingRef.current) props.onDraftChange(nextValue);
+                if (!composingRef.current) return props.onDraftChange(nextValue);
               }}
               onSelectionChange={(selection) => {
                 structuredSelectionRef.current = selection;
@@ -500,7 +501,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 })
               }
               onGoalMode={() => {
-                if (props.goal) props.onOpenGoal?.();
+                if (props.goal) return props.onOpenGoal?.();
                 else enterGoalInput();
               }}
               onOpenComputerSettings={props.onOpenComputerSettings}
@@ -513,14 +514,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 composingRef.current = false;
                 setIsComposing(false);
                 setEditorValue(nextValue);
-                props.onDraftChange(nextValue);
+                return props.onDraftChange(nextValue);
               }}
               onBlur={(nextValue) => {
                 if (!composingRef.current) return;
                 composingRef.current = false;
                 setIsComposing(false);
                 setEditorValue(nextValue);
-                props.onDraftChange(nextValue);
+                return props.onDraftChange(nextValue);
               }}
               onPaste={(event) => {
                 suggestion.beginEditing();
@@ -535,9 +536,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
             {/* 附件入口直接显示功能提示，禁用时仍可识别用途。 */}
             {props.onChooseAttachments ? (
               <IconTooltip label={copy.attach}>
-                <button type="button" className="session-attachment-button" aria-label={copy.attach} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={!inputWritable || busy || inputResources.processing}>
+                <Button unstyled type="button" className="session-attachment-button" aria-label={copy.attach} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={!inputWritable || busy || inputResources.processing}>
                   <Paperclip aria-hidden="true" weight="regular" />
-                </button>
+                </Button>
               </IconTooltip>
             ) : null}
             <PermissionModeControl
@@ -572,7 +573,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
             />
             {props.goalAvailable ? (
               <IconTooltip label={props.goal ? copy.goal : goalInputActive ? copy.exitGoal : copy.createGoal}>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-goal-trigger"
                   aria-label={props.goal ? copy.goal : goalInputActive ? copy.exitGoal : copy.createGoal}
@@ -581,7 +583,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   data-active={goalInputActive || props.goal ? 'true' : 'false'}
                   data-status={props.goal?.status}
                   onClick={() => {
-                    if (props.goal) props.onOpenGoal?.();
+                    if (props.goal) return props.onOpenGoal?.();
                     else if (goalInputActive) exitGoalInput();
                     else if (structuredSelectionRef.current.expertMentions.length > 0) {
                       setInputResourceError(new Error(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.'));
@@ -590,7 +592,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={props.readOnly === true || props.inputBlocked === true || goalOperationBusy || (props.goal ? !props.onOpenGoal : !props.onSetGoal)}
                 >
                   <Target aria-hidden="true" weight={goalInputActive || props.goal ? 'fill' : 'regular'} />
-                </button>
+                </Button>
               </IconTooltip>
             ) : null}
           </span>
@@ -604,7 +606,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 disabled={!settingsWritable}
                 onChange={(selection) => {
                   setSelectedServiceTier(selection);
-                  props.onRuntimeSettingsChange?.({
+                  return props.onRuntimeSettingsChange?.({
                     contextCapacityTokens: selectedCapacity,
                     model: effectiveModel,
                     effort: selectedEffort,
@@ -656,7 +658,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   setSelectedModel(model);
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
-                  props.onRuntimeSettingsChange?.({
+                  return props.onRuntimeSettingsChange?.({
                     contextCapacityTokens: capacity,
                     model: modelId,
                     agentKind: capability?.agentKind,
@@ -677,7 +679,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   disabled={!settingsWritable}
                   onChange={(effort) => {
                     setSelectedEffort(effort);
-                    props.onRuntimeSettingsChange?.({
+                    return props.onRuntimeSettingsChange?.({
                       contextCapacityTokens: selectedCapacity,
                       model: effectiveModel,
                       effort,
@@ -691,27 +693,29 @@ export function ConversationComposer(props: ConversationComposerProps) {
             </span>
             <span className="session-primary-command-slot" data-primary-command-slot="true">
               {showSendCommand ? (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-send-button"
                   aria-label={goalInputActive ? copy.createGoal : sendableSuggestion ? copy.sendSuggestion : copy.send}
-                  onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue', true))}
+                  onClick={() => (goalInputActive ? setGoalObjective(goalDraft) : submit('queue', true))}
                   disabled={!inputWritable || !settingsWritable || busy || goalOperationBusy || inputResources.processing || (goalInputActive ? !goalDraftValid : !hasSendableContent)}
                   aria-busy={busy || goalOperationBusy || inputResources.processing || undefined}
                 >
                   {busy || goalOperationBusy || inputResources.processing ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-stop-button"
                   aria-label={busy ? (props.language === 'zh-CN' ? '正在暂停' : 'Pausing') : copy.stop}
                   aria-busy={busy || undefined}
-                  onClick={() => props.state.activeTurnId && void props.onInterrupt(props.state.activeTurnId)}
+                  onClick={() => props.state.activeTurnId && props.onInterrupt(props.state.activeTurnId)}
                   disabled={!writable || !props.state.activeTurnId || props.state.startedTurnId !== props.state.activeTurnId || busy}
                 >
                   {busy ? <span className="session-command-spinner" aria-hidden="true" /> : <Square aria-hidden="true" weight="fill" />}
-                </button>
+                </Button>
               )}
             </span>
           </span>
@@ -792,13 +796,13 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
   return (
     <section {...preview.surfaceProps} className="session-composer-context-draft" aria-label={zh ? '待发送评论' : 'Pending comments'}>
       <span className="session-context-draft-chip">
-        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
+        <Button unstyled type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
           <ChatCircle aria-hidden="true" weight="regular" />
           <strong>{label}</strong>
-        </button>
-        <button type="button" aria-label={zh ? '移除评论' : 'Remove comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
+        </Button>
+        <Button unstyled type="button" aria-label={zh ? '移除评论' : 'Remove comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
           <span aria-hidden="true">×</span>
-        </button>
+        </Button>
       </span>
       <aside id={previewId} className="session-context-draft-preview" role="tooltip" aria-hidden={!preview.open} inert={!preview.open}>
         <header>
@@ -860,13 +864,13 @@ export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPrep
   return (
     <section {...preview.surfaceProps} className="session-composer-context-draft" aria-label={zh ? '待发送网页评论' : 'Pending browser comments'}>
       <span className="session-context-draft-chip">
-        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
+        <Button unstyled type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
           <ChatCircle aria-hidden="true" weight="regular" />
           <strong>{label}</strong>
-        </button>
-        <button type="button" aria-label={props.language === 'zh-CN' ? '移除网页评论' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
+        </Button>
+        <Button unstyled type="button" aria-label={props.language === 'zh-CN' ? '移除网页评论' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
           <span aria-hidden="true">×</span>
-        </button>
+        </Button>
       </span>
       <aside id={previewId} className="session-context-draft-preview" aria-label={zh ? '网页评论详情' : 'Browser comment details'} aria-hidden={!preview.open} inert={!preview.open}>
         <BrowserCommentPreview comments={props.submission.comments} zh={zh} />

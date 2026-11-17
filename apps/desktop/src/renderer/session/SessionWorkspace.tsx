@@ -1,3 +1,5 @@
+import { CachedQuery } from '../cachedQuery.js';
+import { modelCatalogGeneration } from '../features/integrations/modelCatalogEvents.js';
 import { Button } from '../ui/Button.js';
 import { recordConversationAcceptancePerformance } from '../rendererPerformanceObservability.js';
 import { FileSelectionQuestionContext, sideQuestionReferenceContext, type SideQuestionReference } from './sideQuestionContext.js';
@@ -447,9 +449,10 @@ export interface ConnectedSessionWorkspaceProps {
   contentVisible?: boolean;
 }
 
+/** 每个项目的模型目录与其他读取共用缓存失效和在途合并规则。 */
 interface ConversationCapabilitiesCacheEntry {
-  value: CodexConversationCapabilities | null;
-  promise: Promise<CodexConversationCapabilities> | null;
+  query: CachedQuery<CodexConversationCapabilities>;
+  generation: number;
 }
 
 interface ScopedSubagentSnapshot {
@@ -471,48 +474,33 @@ function conversationCapabilitiesEntry(client: SessionControllerClient, projectI
     conversationCapabilitiesCache.set(client, projectCache);
   }
   const current = projectCache.get(projectId);
-  if (current) return current;
-  const created: ConversationCapabilitiesCacheEntry = { value: null, promise: null };
+  const generation = modelCatalogGeneration();
+  if (current) {
+    projectCache.delete(projectId);
+    projectCache.set(projectId, current);
+    if (current.generation !== generation) {
+      current.query.invalidate();
+      current.generation = generation;
+    }
+    return current;
+  }
+  const created = { query: new CachedQuery(() => client.loadCodexConversationCapabilities!(projectId), 60_000), generation };
   projectCache.set(projectId, created);
+  if (projectCache.size > 32) projectCache.delete(projectCache.keys().next().value!);
   return created;
 }
 
-/** 项目级模型能力只读取一次并复用；会话切换不能让底部模型选择器退回空白。 */
+/** 项目级模型目录在一分钟内复用；刷新不能让底部选择器退回空白。 */
 export function preloadCodexConversationCapabilities(client: SessionControllerClient, projectId: string): Promise<CodexConversationCapabilities | null> {
-  const load = client.loadCodexConversationCapabilities;
-  if (!load) return Promise.resolve(null);
-  const entry = conversationCapabilitiesEntry(client, projectId);
-  if (entry.value) return Promise.resolve(entry.value);
-  if (entry.promise) return entry.promise;
-  const promise = load(projectId)
-    .then((capabilities) => {
-      // 登录后的强制刷新已经接管时，登录前预读的迟到结果不能回写缓存。
-      if (entry.promise === promise) entry.value = capabilities;
-      return capabilities;
-    })
-    .finally(() => {
-      if (entry.promise === promise) entry.promise = null;
-    });
-  entry.promise = promise;
-  return promise;
+  if (!client.loadCodexConversationCapabilities) return Promise.resolve(null);
+  return conversationCapabilitiesEntry(client, projectId).query.load();
 }
 
-/** 共用进行中的目录读取；登录后可强制刷新，旧请求不能覆盖更新后的缓存。 */
+/** 显式配置变化撤销旧读取，普通刷新仍合并同一项目的请求。 */
 export function refreshCodexConversationCapabilities(client: SessionControllerClient, projectId: string, force = false): Promise<CodexConversationCapabilities> {
-  const load = client.loadCodexConversationCapabilities;
-  if (!load) return Promise.reject(new Error('模型选项读取不可用。'));
+  if (!client.loadCodexConversationCapabilities) return Promise.reject(new Error('模型选项读取不可用。'));
   const entry = conversationCapabilitiesEntry(client, projectId);
-  if (entry.promise && !force) return entry.promise;
-  const promise = load(projectId)
-    .then((capabilities) => {
-      if (entry.promise === promise) entry.value = capabilities;
-      return capabilities;
-    })
-    .finally(() => {
-      if (entry.promise === promise) entry.promise = null;
-    });
-  entry.promise = promise;
-  return promise;
+  return entry.query.load(force);
 }
 
 /** 原地刷新新会话和已有会话的模型能力，不重建输入区或清空用户选择。 */
@@ -530,14 +518,15 @@ function useCodexCapabilitiesRevision(): number {
 
 /** 同步读取已有项目能力，只用于首帧展示；提交仍由服务端重新复验。 */
 export function readCachedCodexConversationCapabilities(client: SessionControllerClient, projectId: string): CodexConversationCapabilities | null {
-  return conversationCapabilitiesEntry(client, projectId).value;
+  return conversationCapabilitiesEntry(client, projectId).query.getSnapshot().value;
 }
 
 /** 任务完整查询同步更新共享模型目录，并阻止较早的预读回执覆盖新快照。 */
-export function cacheCodexConversationCapabilities(client: SessionControllerClient, capabilities: CodexConversationCapabilities): void {
+export function cacheCodexConversationCapabilities(client: SessionControllerClient, capabilities: CodexConversationCapabilities, generation = modelCatalogGeneration()): void {
+  if (generation !== modelCatalogGeneration()) return;
   /** 缓存仍按客户端和项目隔离，不保存任务仓库或上下文的独立副本。 */
   const entry = conversationCapabilitiesEntry(client, capabilities.projectId);
-  entry.value = {
+  entry.query.set({
     generationId: capabilities.generationId,
     initializedAt: capabilities.initializedAt,
     projectId: capabilities.projectId,
@@ -547,8 +536,7 @@ export function cacheCodexConversationCapabilities(client: SessionControllerClie
     goals: capabilities.goals,
     available: capabilities.available,
     availabilityReason: capabilities.availabilityReason,
-  };
-  entry.promise = null;
+  });
 }
 
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
@@ -2913,9 +2901,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         <section className="session-composer-unavailable" role="status">
           <span>{props.language === 'zh-CN' ? '配置可运行模型后即可在这里继续沟通。' : 'Set up a runnable model to continue this conversation.'}</span>
           {actions.onOpenAiSettings ? (
-            <button type="button" onClick={() => actions.onOpenAiSettings?.('models')}>
+            <Button unstyled type="button" onClick={() => actions.onOpenAiSettings?.('models')}>
               {props.language === 'zh-CN' ? '配置模型' : 'Set up models'}
-            </button>
+            </Button>
           ) : null}
         </section>
       );
@@ -3073,7 +3061,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const taskReadOnlyAction = props.readOnlyGate ? (
     <div className="session-composer-stack session-readonly-actions">
       {legacy ? <LegacyConversationBanner language={props.language} /> : null}
-      <Button size="compact" busy={props.readOnlyGate.busy} onClick={() => void props.readOnlyGate?.onAction()}>
+      <Button size="compact" busy={props.readOnlyGate.busy} onClick={() => props.readOnlyGate?.onAction()}>
         {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
       </Button>
       {props.readOnlyGate.error ? (
@@ -3100,17 +3088,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             <div key={navigationId} className="session-thread-title-copy" data-conversation-transition="true">
               <span className="session-thread-title-row">
                 {displayedHeader.taskId && actions.onOpenTaskDetail ? (
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     className="session-thread-task-title"
                     data-icon-tooltip={displayedHeader.title}
                     aria-label={props.language === 'zh-CN' ? `打开任务详情：${displayedHeader.title}` : `Open task details: ${displayedHeader.title}`}
                     onClick={() => {
-                      if (displayedHeader.taskId) actions.onOpenTaskDetail?.(displayedHeader.taskId);
+                      if (displayedHeader.taskId) return actions.onOpenTaskDetail?.(displayedHeader.taskId);
                     }}
                   >
                     {displayedHeader.title}
-                  </button>
+                  </Button>
                 ) : (
                   <strong data-icon-tooltip={displayedHeader.title}>{displayedHeader.title}</strong>
                 )}
@@ -3127,7 +3116,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }))}
                     onChange={(status) => {
                       if (!displayedHeader.taskId || status === displayedHeader.taskManagementStatus?.id) return;
-                      void Promise.resolve(actions.onTaskManagementStatusChange?.(displayedHeader.taskId, status)).catch(() => undefined);
+                      return Promise.resolve(actions.onTaskManagementStatusChange?.(displayedHeader.taskId, status)).catch(() => undefined);
                     }}
                     className="task-status-select task-status-custom session-thread-task-status"
                     style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
@@ -3410,13 +3399,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             : 'Conversation history could not be prepared. View the error details.'}
                       </span>
                       {transcriptPreparationError.retryable && actions.onReconnect ? (
-                        <button type="button" onClick={() => void actions.onReconnect?.()}>
+                        <Button unstyled type="button" onClick={() => actions.onReconnect?.()}>
                           {props.language === 'zh-CN' ? '重试' : 'Retry'}
-                        </button>
+                        </Button>
                       ) : (
-                        <button type="button" onClick={() => reportApplicationError(transcriptPreparationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' })}>
+                        <Button unstyled type="button" onClick={() => reportApplicationError(transcriptPreparationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' })}>
                           {props.language === 'zh-CN' ? '查看详情' : 'View details'}
-                        </button>
+                        </Button>
                       )}
                     </p>
                   ) : props.state?.transcriptInitializing && props.state.snapshot ? (
@@ -3498,7 +3487,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                               // 能力切换期间保留网页与批注，不能把缺少发送回调当成已成功暂存。
                               if (!actions.onStageBrowserComments) return;
                               await actions.onStageBrowserComments(prepared);
-                              closeContextWorkspace({ focusComposer: true });
+                              return closeContextWorkspace({ focusComposer: true });
                             }}
                           />
                         ) : null}
@@ -3572,7 +3561,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             onClose={closeContextWorkspace}
                             loading={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.loading}
                             loadError={props.state?.snapshot?.v2Paging?.changeSetsByTurn[turnDiffChangeSet.providerTurnId]?.error}
-                            onLoad={() => void actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
+                            onLoad={() => actions.onLoadTurnArtifacts?.(turnDiffChangeSet.providerTurnId)}
                             onOperate={!interactionReadOnly && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
                             onOpenFile={(file, line) => openTurnChangeFile(turnDiffChangeSet, file, line)}
                             onLoadPreview={actions.onLoadTurnChangeFilePreview}
@@ -4365,7 +4354,8 @@ export function NewConversationComposer(props: {
             <strong>{copy.createGoal}</strong>
             {composerState.draft.trim() || composerState.attachments.length > 0 ? <small>{copy.normalDraftPreserved}</small> : null}
             <span className={goalCount > 4_000 ? 'session-goal-compose-count is-invalid' : 'session-goal-compose-count'}>{goalCount} / 4000</span>
-            <button
+            <Button
+              unstyled
               type="button"
               aria-label={copy.exitGoal}
               onClick={() => {
@@ -4375,7 +4365,7 @@ export function NewConversationComposer(props: {
               disabled={submitting}
             >
               <X aria-hidden="true" weight="bold" />
-            </button>
+            </Button>
           </div>
         ) : null}
         {goalInputActive ? (
@@ -4400,7 +4390,7 @@ export function NewConversationComposer(props: {
                 setGoalInputOpen(false);
               } else if (intent === 'submit') {
                 event.preventDefault();
-                if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
+                if (goalObjectiveValid) return submit({ content: content.trim() ? content : goalObjective, goalObjective });
               }
             }}
           />
@@ -4491,7 +4481,7 @@ export function NewConversationComposer(props: {
                   void submit({ content: objective, goalObjective: objective });
                   return;
                 }
-                void submit();
+                return submit();
               }}
             />
           </div>
@@ -4501,9 +4491,17 @@ export function NewConversationComposer(props: {
             {/* 新建会话与共享输入框使用同一可见提示。 */}
             {props.onChooseAttachments ? (
               <IconTooltip label={copy.attach}>
-                <button type="button" className="session-attachment-button" aria-label={copy.attach} disabled={submitting || inputResources.processing || !props.owner} aria-haspopup="menu" onClick={inputResources.chooseAttachments}>
+                <Button
+                  unstyled
+                  type="button"
+                  className="session-attachment-button"
+                  aria-label={copy.attach}
+                  disabled={submitting || inputResources.processing || !props.owner}
+                  aria-haspopup="menu"
+                  onClick={inputResources.chooseAttachments}
+                >
                   <Paperclip aria-hidden="true" weight="regular" />
-                </button>
+                </Button>
               </IconTooltip>
             ) : null}
             <PermissionModeControl
@@ -4516,7 +4514,8 @@ export function NewConversationComposer(props: {
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
             {goalAvailable ? (
               <IconTooltip label={goalInputActive ? copy.exitGoal : copy.createGoal}>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="session-goal-trigger"
                   aria-label={goalInputActive ? copy.exitGoal : copy.createGoal}
@@ -4533,7 +4532,7 @@ export function NewConversationComposer(props: {
                   }}
                 >
                   <Target aria-hidden="true" weight={goalInputActive ? 'fill' : 'regular'} />
-                </button>
+                </Button>
               </IconTooltip>
             ) : null}
           </span>
@@ -4581,11 +4580,12 @@ export function NewConversationComposer(props: {
               </span>
             ) : null}
             <span className="session-primary-command-slot" data-primary-command-slot="true">
-              <button
+              <Button
+                unstyled
                 type="button"
                 className={needsModelSetup ? 'session-send-button is-model-setup' : 'session-send-button'}
                 aria-label={needsModelSetup ? (props.language === 'zh-CN' ? '配置模型' : 'Set up model') : goalInputActive ? copy.createGoal : copy.send}
-                onClick={() => void submit(goalInputActive ? { content: content.trim() ? content : goalObjective, goalObjective } : {})}
+                onClick={() => submit(goalInputActive ? { content: content.trim() ? content : goalObjective, goalObjective } : {})}
                 disabled={
                   submitting ||
                   executionContextBusy ||
@@ -4600,7 +4600,7 @@ export function NewConversationComposer(props: {
                 aria-busy={submitting || undefined}
               >
                 {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : needsModelSetup ? <span>{props.language === 'zh-CN' ? '配置模型' : 'Set up model'}</span> : <ArrowUp aria-hidden="true" weight="bold" />}
-              </button>
+              </Button>
             </span>
           </span>
         </div>
@@ -4636,17 +4636,18 @@ export function NewConversationComposer(props: {
         <div className="session-context-header-tools">
           <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" />
           <div className="session-thread-header-actions">
-            <button
+            <Button
+              unstyled
               type="button"
               className={`session-browser-toggle ${browserVisible ? 'selected' : ''}`}
               aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
               aria-pressed={browserVisible}
               aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
               data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
-              onClick={() => (browserVisible && !projectTools.open ? void closeBrowser() : openBrowser())}
+              onClick={() => (browserVisible && !projectTools.open ? closeBrowser() : openBrowser())}
             >
               <GlobeSimple aria-hidden="true" weight="regular" />
-            </button>
+            </Button>
           </div>
         </div>
       </header>

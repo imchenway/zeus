@@ -17,6 +17,7 @@ const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) 
 import '../styles.css';
 import '../ui/primitives.css';
 import '../agentdesk-theme.css';
+import { Button } from '../ui/Button.js';
 
 interface SideBySideDiffProps {
   /** 已知工作区状态优先于补丁类型，避免未跟踪文件被显示为已暂存新增。 */
@@ -103,21 +104,26 @@ export function ProjectGitDiffWindow(props: {
                 return detail.diff;
               })
             : source.comparisonRef
-              ? props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, source.comparisonRef, source.comparisonMode ?? 'current').then((summary) => {
+              ? props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, source.comparisonRef, source.comparisonMode ?? 'current', source.path).then((summary) => {
                   if (!cancelled) setTitle(`${source.comparisonRef} · ${zh ? '分支差异' : 'Branch diff'}`);
                   return summary;
                 })
-              : props.client.loadProjectGitWorkbench(source.projectId).then((workbench) => {
-                  /** 项目工作台只在项目来源下解析仓库。 */
-                  const repository = workbench.repositories.find((candidate) => candidate.id === source.repositoryId);
-                  if (!repository) throw new Error(zh ? '仓库已不在当前项目中。' : 'The repository is no longer part of this project.');
-                  if (!cancelled) {
-                    setTitle(repository.name);
-                    // 暂存范围由补丁决定；未跟踪与冲突不能从新增补丁推断。
-                    setFileStatuses(Object.fromEntries(repository.snapshot.fileStatuses.filter((file) => file.category === 'untracked' || file.category === 'conflict').map((file) => [file.path, file.category])));
-                  }
-                  return source.stage === 'staged' ? repository.snapshot.stagedDiff : source.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff;
-                });
+              : (() => {
+                  // 文件补丁与仓库状态独立回填，其他仓库扫描不延迟当前差异。
+                  void props.client
+                    .loadProjectGitWorkbench(source.projectId, false)
+                    .then((workbench) => {
+                      if (cancelled) return;
+                      const repository = workbench.repositories.find((candidate) => candidate.id === source.repositoryId);
+                      if (!repository) return;
+                      setTitle(repository.name);
+                      setFileStatuses(Object.fromEntries(repository.snapshot.fileStatuses.filter((file) => file.category === 'untracked' || file.category === 'conflict').map((file) => [file.path, file.category])));
+                    })
+                    .catch((cause: unknown) => {
+                      if (!cancelled) console.warn('Git file status refresh failed', cause);
+                    });
+                  return props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, 'HEAD', source.stage === 'staged' || source.stage === 'unstaged' ? source.stage : 'working-tree', source.path);
+                })();
     void request
       .then((next) => {
         if (cancelled) return;
@@ -164,22 +170,22 @@ export function ProjectGitDiffWindow(props: {
               </header>
               <div>
                 {props.source.path && !diff.fileDiffs.some((file) => file.newPath === props.source.path || file.oldPath === props.source.path) ? (
-                  <button type="button" data-file-path={props.source.path} className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
+                  <Button unstyled type="button" data-file-path={props.source.path} className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
                     <FileTypeIcon name={props.source.path} />
                     <span data-file-status={fileStatuses[props.source.path]}>{props.source.path}</span>
-                  </button>
+                  </Button>
                 ) : null}
                 {diff.fileDiffs.map((file) => {
                   const path = file.newPath || file.oldPath;
                   return (
-                    <button key={`${file.oldPath}:${file.newPath}`} type="button" data-file-path={path} className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
+                    <Button unstyled key={`${file.oldPath}:${file.newPath}`} type="button" data-file-path={path} className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
                       <FileTypeIcon name={path} kind={file.isSubmodule ? 'submodule' : undefined} />
                       <span data-icon-tooltip={path} data-file-status={fileStatuses[path] ?? file.changeType}>
                         {path}
                       </span>
                       <em>+{file.addedLines}</em>
                       <i>-{file.deletedLines}</i>
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -285,9 +291,9 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
                   }}
                 />
                 {props.onHunkAction ? (
-                  <button type="button" disabled={actionsDisabled} onClick={() => props.onHunkAction?.(file, selectedHunk, selectedIndex)}>
+                  <Button unstyled type="button" disabled={actionsDisabled} onClick={() => props.onHunkAction?.(file, selectedHunk, selectedIndex)}>
                     {props.hunkActionLabel}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ) : null}

@@ -15,7 +15,7 @@ export interface ProjectGitReadEffectPort {
   /** 只读推送范围，与提交查询保持同一仓库隔离边界。 */
   readPushPreview(localPath: string, input: ProjectGitPushPreviewInput): Promise<unknown>;
   readHistory(localPath: string, offset: number, ref?: string): Promise<unknown>;
-  readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree', path?: string, summaryOnly?: boolean): Promise<unknown>;
+  readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly?: boolean): Promise<unknown>;
 }
 
 interface ProjectGitQueryPorts {
@@ -80,7 +80,9 @@ export class ProjectGitQueryApplication {
     const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
     const ref = rawRef?.trim();
     if (!ref) throw queryError('ZEUS_GIT_REF_REQUIRED', 'A comparison branch is required.');
-    return this.ports.effects.readComparison(repository.localPath, ref, rawMode === 'working-tree' ? 'working-tree' : 'current', path, summaryOnly);
+    const mode = rawMode ?? 'current';
+    if (mode !== 'current' && mode !== 'working-tree' && mode !== 'staged' && mode !== 'unstaged') throw queryError('ZEUS_GIT_COMPARISON_MODE_INVALID', 'Git 比较范围无效。');
+    return this.ports.effects.readComparison(repository.localPath, ref, mode, path, summaryOnly);
   }
 
   async readHistory(projectId: string, repositoryId: string, offset: number, ref?: string) {

@@ -269,8 +269,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   useEffect(() => {
     // 缓存仅用于首屏，进入页面和回到应用时都重新读取外部 Git 变化。
-    const refresh = () => {
-      if (document.visibilityState === 'visible' && !actionBusyRef.current) void loadWorkbench();
+    const refresh = (force = false) => {
+      if (force) projectGitWorkbenchCacheEntry(props.client, props.project.id).invalidate();
+      if (document.visibilityState === 'visible' && !actionBusyRef.current) void loadWorkbench(force);
     };
     refresh();
     const unsubscribe = subscribeProjectGitRefresh(props.project.id, refresh);
@@ -282,7 +283,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   /** 缓存和源码状态均跟随工作台快照，包括 Git 操作后的更新。 */
   useEffect(() => {
-    if (snapshot?.projectId === props.project.id) projectGitWorkbenchCacheEntry(props.client, props.project.id).snapshot = snapshot;
+    if (snapshot?.projectId === props.project.id) {
+      const cache = projectGitWorkbenchCacheEntry(props.client, props.project.id);
+      if (cache.getSnapshot().value !== snapshot) cache.set(snapshot);
+    }
     props.onSnapshot?.(snapshot);
   }, [props.client, props.project.id, props.onSnapshot, snapshot]);
 
@@ -322,14 +326,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     };
   }, [props.project.id, selectedRepository?.id, selectedCommitHash, activeStashRef, activeStash?.hash, tab]);
 
-  async function loadWorkbench(): Promise<void> {
+  async function loadWorkbench(force = false): Promise<void> {
     // 历史与仓库快照独立读取，仓库刷新失败不能伪装成没有操作记录。
     if (!props.conversationScope) void operationHistory.refresh();
     const version = ++requestVersionRef.current;
     setLoadState('loading');
     setError(null);
     try {
-      const next = await requestProjectGitWorkbench(props.client, props.project.id);
+      const next = await requestProjectGitWorkbench(props.client, props.project.id, force);
       if (version !== requestVersionRef.current) return;
       setSnapshot(next);
       setSelectedRepositoryId((current) => (next.repositories.some((repository) => repository.id === current) ? current : (next.repositories[0]?.id ?? '')));
@@ -361,7 +365,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     props.onOpenPanel?.();
     actionBusyRef.current = true;
     requestVersionRef.current += 1;
-    projectGitWorkbenchCacheEntry(props.client, props.project.id).request = null;
+    projectGitWorkbenchCacheEntry(props.client, props.project.id).invalidate();
     setBusy({ repositoryId: repository.id, action: action.type });
     setError(null);
     const previousOperationErrors = { ...operationErrorsByRepositoryRef.current };
@@ -385,7 +389,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         action.type === 'subtree' ||
         ((action.type === 'checkout' || action.type === 'checkout_revision' || action.type === 'create_branch') && repository.snapshot.submodules?.some((module) => module.initialized))
       )
-        await loadWorkbench();
+        await loadWorkbench(true);
       notifyProjectGitChanged(props.project.id);
       if (response.result.outcome === 'conflict') openDelivery(repository.id);
       return response.result.outcome;
@@ -405,7 +409,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           : {}),
       });
       operationErrorsByRepositoryRef.current = { ...operationErrorsByRepositoryRef.current, [repository.id]: message };
-      await loadWorkbench();
+      await loadWorkbench(true);
       setError(`${label}: ${message}`);
       return null;
     } finally {
@@ -600,17 +604,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }
 
   /** 所有变更入口直接使用既有原生交付窗口服务，工作台不挂载交付页面。 */
-  function openDelivery(repositoryId?: string, pathPrefix?: string): void {
+  function openDelivery(repositoryId?: string, pathPrefix?: string): void | Promise<unknown> {
     if (!window.zeus?.openTaskGitDeliveryWindow) {
       setError(errorMessage(new Error(zh ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.'), zh));
       return;
     }
-    void window.zeus.openTaskGitDeliveryWindow(repositoryId ? { projectId: props.project.id, repositoryId, pathPrefix } : { projectId: props.project.id }).catch((reason: unknown) => setError(errorMessage(reason, zh)));
+    return window.zeus.openTaskGitDeliveryWindow(repositoryId ? { projectId: props.project.id, repositoryId, pathPrefix } : { projectId: props.project.id }).catch((reason: unknown) => setError(errorMessage(reason, zh)));
   }
 
   /** 全局提交与冲突入口覆盖项目内全部仓库，文件树负责后续选择。 */
-  function openCommit(): void {
-    if (repositories.length) openDelivery();
+  function openCommit(): void | Promise<unknown> {
+    if (repositories.length) return openDelivery();
   }
 
   function openDiffWindow(repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }): void {
@@ -619,7 +623,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         ? props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, options.comparisonRef, options.comparisonMode ?? 'current')
         : options?.commitHash
           ? props.client.loadProjectGitCommit(props.project.id, repository.id, options.commitHash).then((detail) => detail.diff)
-          : Promise.resolve(options?.stage === 'staged' ? repository.snapshot.stagedDiff : options?.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff);
+          : props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, 'HEAD', options?.stage === 'staged' || options?.stage === 'unstaged' ? options.stage : 'working-tree', filePath);
       void request
         .then((diff) =>
           setConversationDiff({
@@ -679,7 +683,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <section className="project-git-workbench-state" role="alert">
         {props.toolbarActions ? <div className="project-git-state-actions">{props.toolbarActions}</div> : null}
         <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-        <Button variant="secondary" onClick={() => void loadWorkbench()}>
+        <Button variant="secondary" onClick={() => loadWorkbench(true)}>
           {zh ? '重新读取' : 'Reload'}
         </Button>
       </section>
@@ -693,7 +697,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <GitBranch aria-hidden="true" />
         <strong>{zh ? '这个项目中没有发现 Git 仓库' : 'No Git repository was found'}</strong>
         <span>{zh ? '请检查项目目录是否包含 Git 仓库，然后重新扫描。' : 'Check that the project folder contains a Git repository, then scan again.'}</span>
-        <Button variant="secondary" onClick={() => void loadWorkbench()}>
+        <Button variant="secondary" onClick={() => loadWorkbench(true)}>
           {zh ? '重新扫描' : 'Scan again'}
         </Button>
       </section>
@@ -723,7 +727,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               variant="secondary"
               size="compact"
               onClick={() => {
-                void window.zeus!.cancelProjectGitAction(busy.repositoryId).catch((reason: unknown) => setError(errorMessage(reason, zh)));
+                return window.zeus!.cancelProjectGitAction(busy.repositoryId).catch((reason: unknown) => setError(errorMessage(reason, zh)));
               }}
             >
               {zh ? '中止操作' : 'Stop operation'}
@@ -735,7 +739,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 variant="secondary"
                 size="compact"
                 disabled={busy !== null || selectedRepository.snapshot.conflictFiles.length > 0}
-                onClick={() => void execute(selectedRepository, { type: 'continue_integration', kind: selectedRepository.snapshot.integrationState! }, zh ? '继续合并或变基' : 'Continue integration')}
+                onClick={() => execute(selectedRepository, { type: 'continue_integration', kind: selectedRepository.snapshot.integrationState! }, zh ? '继续合并或变基' : 'Continue integration')}
               >
                 {zh ? '继续' : 'Continue'}
               </Button>
@@ -743,7 +747,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 variant="secondary"
                 size="compact"
                 disabled={busy !== null}
-                onClick={() => void execute(selectedRepository, { type: 'abort_integration', kind: selectedRepository.snapshot.integrationState! }, zh ? '终止合并或变基' : 'Abort integration')}
+                onClick={() => execute(selectedRepository, { type: 'abort_integration', kind: selectedRepository.snapshot.integrationState! }, zh ? '终止合并或变基' : 'Abort integration')}
               >
                 {zh ? '终止合并/变基' : 'Abort integration'}
               </Button>
@@ -782,7 +786,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       {/* 工具栏跨越整个 Git 工作区，底线与左右工作面同时衔接。 */}
       <header className="project-git-toolbar git-command-toolbar" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
         <strong className="git-workspace-heading">{zh ? '工作区' : 'Workspace'}</strong>
-        <button
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(1)}
           aria-haspopup="dialog"
@@ -795,9 +800,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         >
           <GitCommit aria-hidden="true" />
           {changedCount > 0 ? <small aria-hidden="true">{changedCount}</small> : null}
-        </button>
+        </Button>
         <i />
-        <button
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(2)}
           aria-label={toolbarLabel(zh ? '拉取' : 'Pull', 2)}
@@ -807,8 +813,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         >
           <ArrowDown aria-hidden="true" />
           {selectedRepository?.snapshot.behind ? <small>{selectedRepository.snapshot.behind}</small> : null}
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(3)}
           aria-label={toolbarLabel(zh ? '推送' : 'Push', 3)}
@@ -818,21 +825,23 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         >
           <ArrowUp aria-hidden="true" />
           {selectedRepository?.snapshot.ahead ? <small>{selectedRepository.snapshot.ahead}</small> : null}
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(4)}
           aria-label={toolbarLabel(zh ? '抓取' : 'Fetch', 4)}
           data-icon-tooltip={toolbarLabel(zh ? '抓取' : 'Fetch', 4)}
           disabled={!selectedRepository || busy !== null || !selectedRepository.snapshot.remotes.length}
           onClick={() => {
-            if (selectedRepository) void execute(selectedRepository, { type: 'fetch' }, zh ? '获取远端' : 'Fetch');
+            if (selectedRepository) return execute(selectedRepository, { type: 'fetch' }, zh ? '获取远端' : 'Fetch');
           }}
         >
           <ArrowsClockwise aria-hidden="true" />
-        </button>
+        </Button>
         <i />
-        <button
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(5)}
           aria-label={toolbarLabel(zh ? '分支' : 'Branch', 5)}
@@ -844,8 +853,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           }}
         >
           <GitBranch aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(6)}
           aria-label={toolbarLabel(zh ? '合并' : 'Merge', 6)}
@@ -854,8 +864,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           onClick={() => setMergeOpen(true)}
         >
           <GitMerge aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button
+          unstyled
           type="button"
           {...toolbarShortcut(7)}
           aria-label={toolbarLabel(zh ? '贮藏' : 'Stash', 7)}
@@ -866,9 +877,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           }}
         >
           <Archive aria-hidden="true" />
-        </button>
+        </Button>
         <span className="project-git-menu-anchor">
-          <button
+          <Button
+            unstyled
             ref={operationsTriggerRef}
             type="button"
             {...toolbarShortcut(8)}
@@ -880,7 +892,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             onClick={() => setOperationsOpen((current) => !current)}
           >
             <DotsThree aria-hidden="true" />
-          </button>
+          </Button>
           <MotionPresence>
             {operationsOpen ? (
               <OperationsMenu
@@ -903,9 +915,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           </MotionPresence>
         </span>
 
-        <button type="button" {...toolbarShortcut(9)} aria-label={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} data-icon-tooltip={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} disabled={busy !== null} onClick={() => void loadWorkbench()}>
+        <Button unstyled type="button" {...toolbarShortcut(9)} aria-label={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} data-icon-tooltip={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} disabled={busy !== null} onClick={() => loadWorkbench(true)}>
           <ArrowsClockwise aria-hidden="true" />
-        </button>
+        </Button>
         {props.toolbarActions}
       </header>
       <div className="project-git-browser-layout">
@@ -917,16 +929,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 <span>{zh ? '子模块初始化与更新' : 'Initialize / update submodules'}</span>
               </summary>
               {selectedRepository.snapshot.submodules.map((module) => (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   key={module.path}
                   disabled={busy !== null}
                   data-icon-tooltip={zh ? '检出父仓库记录的子模块提交，保留未提交修改；有冲突时 Git 会拒绝更新。' : 'Check out the recorded submodule commit without forcing local changes.'}
-                  onClick={() => void execute(selectedRepository, { type: 'submodule_update', path: module.path }, zh ? '初始化/更新子模块' : 'Initialize/update submodule')}
+                  onClick={() => execute(selectedRepository, { type: 'submodule_update', path: module.path }, zh ? '初始化/更新子模块' : 'Initialize/update submodule')}
                 >
                   <span>{module.path}</span>
                   <small>{module.initialized ? (zh ? '更新' : 'Update') : zh ? '初始化' : 'Initialize'}</small>
-                </button>
+                </Button>
               ))}
             </details>
           ) : null}
@@ -1024,7 +1037,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   <small>{selectedRepository.snapshot.stashes.length}</small>
                 </summary>
                 {selectedRepository.snapshot.stashes.map((stash) => (
-                  <button
+                  <Button
+                    unstyled
                     key={stash.ref}
                     className="project-git-navigation-stash"
                     data-git-context={JSON.stringify({ kind: 'stash', repositoryId: selectedRepository.id, ref: stash.ref })}
@@ -1038,7 +1052,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   >
                     <Archive aria-hidden="true" />
                     <span>{stash.subject}</span>
-                  </button>
+                  </Button>
                 ))}
               </details>
               <details>
@@ -1046,10 +1060,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   <span>{zh ? '子树' : 'Subtrees'}</span>
                 </summary>
                 {(selectedRepository.subtreePaths ?? []).map((path) => (
-                  <button key={path} type="button" onClick={() => openDelivery(selectedRepository.id, path)}>
+                  <Button unstyled key={path} type="button" onClick={() => openDelivery(selectedRepository.id, path)}>
                     <Folder aria-hidden="true" />
                     <span>{path}</span>
-                  </button>
+                  </Button>
                 ))}
               </details>
             </>
@@ -1081,7 +1095,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               historyLoading={historyLoading}
               historyError={historyError}
               historyHasMore={historyPage?.key === `${selectedRepository?.id}:${historyRef}` && historyPage.hasMore}
-              onLoadMore={() => void loadHistory(true)}
+              onLoadMore={() => loadHistory(true)}
               selectedRepository={selectedRepository}
               selectedCommitHash={commitDetail?.commit.hash ?? selectedCommitHash}
               commitDetail={commitDetail}
@@ -1132,7 +1146,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
       <MotionPresence>{stashRepository ? <StashDialog key={stashRepository.id} repository={stashRepository} zh={zh} busy={busy} onClose={() => setStashRepositoryId(null)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>
-        {updateOpen ? <UpdateProjectDialog key={props.project.id} projectId={props.project.id} zh={zh} busy={busy} onClose={() => setUpdateOpen(false)} onUpdate={(strategy) => void updateProject(strategy)} /> : null}
+        {updateOpen ? <UpdateProjectDialog key={props.project.id} projectId={props.project.id} zh={zh} busy={busy} onClose={() => setUpdateOpen(false)} onUpdate={(strategy) => updateProject(strategy)} /> : null}
       </MotionPresence>
       <MotionPresence>
         {newBranchOpen ? (
@@ -1256,14 +1270,14 @@ function GitLogSurface(props: {
         </header>
         {props.repositories.map((repository) => (
           <section key={repository.id} className={repository.id === props.selectedRepository?.id ? 'is-current' : ''}>
-            <button type="button" className="project-git-repository-row" onClick={() => props.onSelectRepository(repository.id)}>
+            <Button unstyled type="button" className="project-git-repository-row" onClick={() => props.onSelectRepository(repository.id)}>
               <GitBranch aria-hidden="true" />
               <span>
                 <strong>{repository.name}</strong>
                 <small>{repository.relativePath === '.' ? repository.snapshot.branch : `${repository.relativePath} · ${repository.snapshot.branch}`}</small>
               </span>
               {repository.snapshot.fileStatuses.length > 0 ? <em>{repository.snapshot.fileStatuses.length}</em> : null}
-            </button>
+            </Button>
             <div className="project-git-branch-tree">
               <span>{props.zh ? '本地分支' : 'Local branches'}</span>
               <BranchDirectoryTree
@@ -1300,7 +1314,7 @@ function GitLogSurface(props: {
           <span>{props.zh ? '日期' : 'Date'}</span>
         </header>
         {props.selectedRepository && props.selectedRepository.snapshot.fileStatuses.length > 0 ? (
-          <button type="button" className="project-git-commit-row git-working-copy-row" onPointerEnter={props.onPreloadChanges} onFocus={props.onPreloadChanges} onClick={props.onOpenChanges}>
+          <Button unstyled type="button" className="project-git-commit-row git-working-copy-row" onPointerEnter={props.onPreloadChanges} onFocus={props.onPreloadChanges} onClick={props.onOpenChanges}>
             <span className="project-git-commit-subject">
               <strong>{props.zh ? '未提交的更改' : 'Uncommitted changes'}</strong>
               <small>{props.selectedRepository.snapshot.fileStatuses.length}</small>
@@ -1308,7 +1322,7 @@ function GitLogSurface(props: {
             <code>—</code>
             <span>—</span>
             <span />
-          </button>
+          </Button>
         ) : null}
         <div className="project-git-commit-scroll" ref={historyScroll}>
           <CommitGraph commits={props.commits.map(({ commit }) => commit)} />
@@ -1317,7 +1331,8 @@ function GitLogSurface(props: {
             {props.commits.map(({ repository, commit }) => {
               const selected = repository.id === props.selectedRepository?.id && commit.hash === props.selectedCommitHash;
               return (
-                <button
+                <Button
+                  unstyled
                   key={`${repository.id}:${commit.hash}`}
                   data-git-context={JSON.stringify({ kind: 'commit', repositoryId: repository.id, ref: commit.hash })}
                   type="button"
@@ -1338,7 +1353,7 @@ function GitLogSurface(props: {
                   <time dateTime={commit.authoredAt} data-icon-tooltip={new Date(commit.authoredAt).toLocaleString()}>
                     {formatRelativeTime(commit.authoredAt, props.zh)}
                   </time>
-                </button>
+                </Button>
               );
             })}
             <div ref={historySentinel} role="status" className="project-git-history-status">
@@ -1411,13 +1426,14 @@ function GitLogSurface(props: {
                 {commitMenu && props.selectedRepository
                   ? createPortal(
                       <MenuSurface className="project-git-context-menu" aria-label={props.zh ? '提交操作' : 'Commit actions'} style={{ left: commitMenu.x, top: commitMenu.y }} onClose={() => setCommitMenu(null)}>
-                        <button
+                        <Button
+                          unstyled
                           type="button"
                           role="menuitem"
                           disabled={props.busy !== null || props.selectedRepository.snapshot.detached}
                           onClick={() => {
                             setCommitMenu(null);
-                            props.onConfirmAction(
+                            return props.onConfirmAction(
                               props.selectedRepository!,
                               { type: 'cherry_pick', revision: props.commitDetail!.commit.hash },
                               props.zh ? '拣选到当前分支' : 'Cherry-pick commit',
@@ -1426,15 +1442,16 @@ function GitLogSurface(props: {
                           }}
                         >
                           {props.zh ? '拣选到当前分支' : 'Cherry-pick to current branch'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          unstyled
                           type="button"
                           role="menuitem"
                           data-danger="true"
                           disabled={props.busy !== null}
                           onClick={() => {
                             setCommitMenu(null);
-                            props.onConfirmAction(
+                            return props.onConfirmAction(
                               props.selectedRepository!,
                               { type: 'revert', revision: props.commitDetail!.commit.hash },
                               props.zh ? '撤销此提交' : 'Revert commit',
@@ -1444,7 +1461,7 @@ function GitLogSurface(props: {
                           }}
                         >
                           {props.zh ? '撤销此提交' : 'Revert this commit'}
-                        </button>
+                        </Button>
                       </MenuSurface>,
                       document.querySelector('.macos-ai-app') ?? document.body,
                     )
@@ -1462,7 +1479,7 @@ function GitLogSurface(props: {
                 selectedPath={props.selectedFilePath}
                 onSelect={props.onSelectFile}
                 onOpen={(path) => {
-                  if (props.selectedRepository) props.onOpenDiff(props.selectedRepository, path, { commitHash: props.commitDetail?.commit.hash });
+                  if (props.selectedRepository) return props.onOpenDiff(props.selectedRepository, path, { commitHash: props.commitDetail?.commit.hash });
                 }}
               />
             </section>
@@ -1516,7 +1533,9 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
     );
   }
   return (
-    <button
+    <Button
+      data-busy-behavior="background"
+      unstyled
       type="button"
       data-file-path={props.node.path}
       className={props.node.path === props.selectedPath ? 'is-current' : ''}
@@ -1530,7 +1549,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       </span>
       <em>+{props.node.stats.additions}</em>
       <i>-{props.node.stats.deletions}</i>
-    </button>
+    </Button>
   );
 }
 
@@ -1668,7 +1687,9 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
               : 'Synced';
     const row =
       repository && snapshot ? (
-        <button
+        <Button
+          data-busy-behavior="background"
+          unstyled
           data-git-context={JSON.stringify({ kind: 'repository', repositoryId: repository.id, ref: repository.name })}
           type="button"
           className="project-git-navigation-repository"
@@ -1684,7 +1705,7 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
           <span className="git-tracking-badge" aria-label={relation}>
             {relation}
           </span>
-        </button>
+        </Button>
       ) : null;
     if (!node.children.size) return <div key={node.path}>{row}</div>;
     return (
@@ -1743,13 +1764,13 @@ function StashSurface(props: {
           </span>
         </span>
         <span className="project-git-stash-actions">
-          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref }, props.zh ? '应用 Stash' : 'Apply stash')}>
+          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref }, props.zh ? '应用 Stash' : 'Apply stash')}>
             {props.zh ? '应用' : 'Apply'}
           </Button>
-          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref, pop: true }, props.zh ? '弹出 Stash' : 'Pop stash')}>
+          <Button variant="secondary" size="compact" disabled={props.busy !== null} onClick={() => props.onExecute(repository, { type: 'apply_stash', stashRef: stash.ref, pop: true }, props.zh ? '弹出 Stash' : 'Pop stash')}>
             {props.zh ? '弹出' : 'Pop'}
           </Button>
-          <Button variant="danger" size="compact" disabled={props.busy !== null} onClick={() => void props.onExecute(repository, { type: 'drop_stash', stashRef: stash.ref }, props.zh ? '删除 Stash' : 'Drop stash')}>
+          <Button variant="danger" size="compact" disabled={props.busy !== null} onClick={() => props.onExecute(repository, { type: 'drop_stash', stashRef: stash.ref }, props.zh ? '删除 Stash' : 'Drop stash')}>
             {props.zh ? '删除' : 'Delete'}
           </Button>
         </span>
@@ -1870,14 +1891,14 @@ function ConsoleSurface(props: { zh: boolean; history: ReturnType<typeof useGitO
               {props.zh ? '操作历史读取失败：' : 'Could not read operation history: '}
               {props.history.error}
             </span>
-            <Button variant="secondary" size="compact" onClick={() => void props.history.retry()}>
+            <Button variant="secondary" size="compact" onClick={() => props.history.retry()}>
               {props.zh ? '重试读取' : 'Retry loading'}
             </Button>
           </>
         ) : props.history.loading || props.history.total === null ? (
           <span role="status">{props.zh ? '正在加载操作记录…' : 'Loading operation records…'}</span>
         ) : props.history.nextCursor ? (
-          <Button variant="secondary" size="compact" onClick={() => void props.history.loadMore()}>
+          <Button variant="secondary" size="compact" onClick={() => props.history.loadMore()}>
             {props.zh ? '加载更多' : 'Load more'}
           </Button>
         ) : props.history.items.length > 0 ? (
@@ -1962,39 +1983,39 @@ function OperationsMenu(props: {
   };
   return createPortal(
     <MenuSurface onClose={props.onClose} ref={menuRef} className="macos-ai-app project-git-operations-menu" role="menu" style={{ left: Math.max(8, (bounds?.right ?? 228) - 220), top: (bounds?.bottom ?? 0) + 5 }}>
-      <button type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
         {props.zh ? '提交…' : 'Commit…'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(props.onOpenPush)}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenPush)}>
         {props.zh ? '推送…' : 'Push…'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(props.onOpenUpdate)}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenUpdate)}>
         {props.zh ? '更新项目…' : 'Update Project…'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(props.onOpenSubtree)}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenSubtree)}>
         {props.zh ? '管理子树…' : 'Manage subtrees…'}
-      </button>
+      </Button>
       <hr />
-      <button type="button" role="menuitem" onClick={action(props.onOpenNewBranch)}>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenNewBranch)}>
         {props.zh ? '新建分支…' : 'New Branch…'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(props.onOpenRevision)}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenRevision)}>
         {props.zh ? '切换到标签或提交…' : 'Switch to a tag or commit…'}
-      </button>
+      </Button>
       <hr />
-      <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('log'))}>
+      <Button unstyled type="button" role="menuitem" onClick={action(() => props.onSelectTab('log'))}>
         {props.zh ? '显示 Git 历史' : 'Show Git History'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
         {props.zh ? '未提交的变更' : 'Uncommitted Changes'}
-      </button>
-      <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('stash'))}>
+      </Button>
+      <Button unstyled type="button" role="menuitem" onClick={action(() => props.onSelectTab('stash'))}>
         {props.zh ? '贮藏' : 'Stashes'}
-      </button>
+      </Button>
       {props.onOpenConsole ? (
-        <button type="button" role="menuitem" onClick={action(props.onOpenConsole)}>
+        <Button unstyled type="button" role="menuitem" onClick={action(props.onOpenConsole)}>
           {props.zh ? '控制台 / 操作记录' : 'Console / Operation history'}
-        </button>
+        </Button>
       ) : null}
     </MenuSurface>,
     document.body,
@@ -2091,7 +2112,7 @@ function SubtreeManagementDialog(props: {
           <Button
             disabled={props.busy !== null || !path || !remote || !branch}
             onClick={() =>
-              void props.onExecute(props.repository, { type: 'subtree', operation, path, remote, branch }, props.zh ? '子树操作' : 'Subtree operation').then((result) => {
+              props.onExecute(props.repository, { type: 'subtree', operation, path, remote, branch }, props.zh ? '子树操作' : 'Subtree operation').then((result) => {
                 if (result === 'completed') props.onClose();
               })
             }

@@ -3,9 +3,10 @@ import { chmod, lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promise
 import { openRegularFileNoFollow, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { sessionViewCacheSchemaGeneration } from '@zeus/shared';
 
 /** 只接纳已分离执行原文的显示缓存，旧缓存可从权威数据重建。 */
-const cacheSchema = 'zeus-session-visible-content-cache';
+const cacheSchema = sessionViewCacheSchemaGeneration;
 /** 单会话、总量与有效期共同约束磁盘使用。 */
 const cacheLimits = { entryBytes: 8 * 1024 * 1024, totalBytes: 32 * 1024 * 1024, entries: 32, ageMs: 14 * 24 * 60 * 60 * 1000 };
 /** 会话身份仅用作哈希输入，不能控制文件路径。 */

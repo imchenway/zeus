@@ -9,6 +9,7 @@ import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import { ProjectToolContext } from './projectToolContext.js';
 import './projectToolsWorkspace.css';
+import { Button } from '../../ui/Button.js';
 
 /** 项目 Git 保留唯一工作台实例，源码目录选择独立使用现有 worktree。 */
 const ProjectGitWorkbench = lazy(() => import('../../git/ProjectGitWorkbench.js').then((module) => ({ default: module.ProjectGitWorkbench })));
@@ -114,7 +115,8 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
           {open && !fullWidth ? <GitPaneSeparator name="project-git-height" axis="y" target=".project-tools-layout" label={zh ? '调整 Git 高度' : 'Resize Git height'} initial={55} min={20} max={95} reverse /> : null}
           <header className="project-tools-header">
             <strong>{props.project?.name} · Git</strong>
-            <button
+            <Button
+              unstyled
               type="button"
               aria-label={expanded ? (zh ? '恢复高度' : 'Restore height') : zh ? '全屏展开' : 'Expand to full height'}
               data-icon-tooltip={expanded ? (zh ? '恢复高度' : 'Restore height') : zh ? '全屏展开' : 'Expand to full height'}
@@ -122,10 +124,10 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
               onClick={() => setExpanded(!expanded)}
             >
               {expanded ? <ArrowsInSimpleIcon aria-hidden="true" /> : <ArrowsOutSimpleIcon aria-hidden="true" />}
-            </button>
-            <button type="button" aria-label={zh ? '最小化 Git' : 'Minimize Git'} data-icon-tooltip={zh ? '最小化 Git' : 'Minimize Git'} onClick={closePanel}>
+            </Button>
+            <Button unstyled type="button" aria-label={zh ? '最小化 Git' : 'Minimize Git'} data-icon-tooltip={zh ? '最小化 Git' : 'Minimize Git'} onClick={closePanel}>
               <MinusIcon aria-hidden="true" />
-            </button>
+            </Button>
           </header>
           {props.project ? <ProjectGitPanel key={props.project.id} {...props} /> : null}
         </aside>

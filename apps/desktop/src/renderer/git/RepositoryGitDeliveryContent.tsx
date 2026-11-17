@@ -585,7 +585,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       {snapshot && error ? (
         <div className="task-git-merge-status is-error" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          <Button variant="secondary" size="compact" onClick={() => void refresh()} disabled={Boolean(busyAction)}>
+          <Button variant="secondary" size="compact" onClick={() => refresh()} disabled={Boolean(busyAction)}>
             {zh ? '重新读取' : 'Retry'}
           </Button>
         </div>
@@ -653,13 +653,13 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 onSelectFile={selectPreparedFile}
                 onPreloadFile={(repositoryId, path) => {
                   const target = fileDiffTarget(repositoryId, path);
-                  if (target) void readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
+                  if (target) return readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
                 }}
                 onToggleWorkspace={(id, checked) => toggleRepositories([id], checked)}
                 onToggleBranch={toggleRepositories}
                 onToggleFiles={toggleFiles}
                 onOpenFile={(repositoryId, path) => {
-                  void window.zeus
+                  return window.zeus
                     ?.openProjectGitDiffWindow?.({
                       conversationId: props.conversationWorkspaceMode !== 'direct' ? props.conversation?.id : undefined,
                       projectId: props.project.id,
@@ -685,7 +685,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 generationClient={props.client}
                 projectId={props.project.id}
                 canGenerate={Boolean(commitCount)}
-                onGenerate={() => void generateMessage()}
+                onGenerate={() => generateMessage()}
                 message={generated ?? message}
                 onMessageChange={(value) => {
                   generation.current?.abort();
@@ -703,7 +703,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                   ) : undefined
                 }
                 commitCount={commitCount}
-                onCommit={() => void commitSelected(selected.filter((repository) => commitSelection.some((item) => item.repositoryId === repository.id)))}
+                onCommit={() => commitSelected(selected.filter((repository) => commitSelection.some((item) => item.repositoryId === repository.id)))}
                 commitFeedback={feedback?.action === 'commit' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                 mergeTargets={snapshot.repositories.map((repository) => ({
                   repositoryId: repository.id,
@@ -717,7 +717,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 mode={mode}
                 onModeChange={setMode}
                 mergeCount={props.conversation ? snapshot.repositories.length : 0}
-                onMerge={(settings) => void mergeSelected(settings)}
+                onMerge={(settings) => mergeSelected(settings)}
                 combination={
                   props.conversation ? (
                     <GitDeliveryRunControl
@@ -783,9 +783,9 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             </small>
           </span>
           {!standaloneWindow ? (
-            <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={Boolean(busyAction && busyAction !== 'loading' && busyAction !== 'commit-message')}>
+            <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={Boolean(busyAction && busyAction !== 'loading' && busyAction !== 'commit-message')}>
               ×
-            </button>
+            </Button>
           ) : null}
         </header>
         {content}

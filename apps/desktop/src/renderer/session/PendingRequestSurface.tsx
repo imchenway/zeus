@@ -206,7 +206,7 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           autoFocus={props.autoFocus !== false}
           approvalIssue={approvalIssue}
           permissionMode={props.permissionMode ?? 'read-only'}
-          onDecision={(decision) => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision] }))}
+          onDecision={(decision) => props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision] }))}
           // 工作安排只确认当前指派，不提供顺带修改会话权限的入口。
           onAllowFullAccess={
             props.onRespondWithFullAccess && !props.request.payload.taskWorkAssignment ? () => void props.onRespondWithFullAccess?.(props.request.id, buildPendingRequestResponse(props.request, { decision: ['accept'] })) : undefined
@@ -240,9 +240,9 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
             </label>
           ) : null}
           {mcpUrl ? (
-            <button type="button" className="session-mcp-url" onClick={() => void openMcpUrl(mcpUrl)}>
+            <Button unstyled type="button" className="session-mcp-url" onClick={() => openMcpUrl(mcpUrl)}>
               {copy.mcpUrl}
-            </button>
+            </Button>
           ) : null}
           {invalidMcp ? (
             <p className="session-request-invalid" role="alert">
@@ -257,16 +257,17 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           ) : null}
           <div className="session-request-actions">
             {decisions.map((decision) => (
-              <button
+              <Button
+                unstyled
                 key={decision}
                 ref={decision === autofocusDecision ? (firstControlRef as React.RefObject<HTMLButtonElement>) : undefined}
                 type="button"
                 disabled={decision === 'accept' && !mcpResponseValid}
                 className={decision === 'accept' || decision === 'acceptForSession' ? 'session-request-accept' : 'session-request-decline'}
-                onClick={() => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision], ...(acceptsMcpJson ? { mcpContent: [mcpResponseJson] } : {}) }))}
+                onClick={() => props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision], ...(acceptsMcpJson ? { mcpContent: [mcpResponseJson] } : {}) }))}
               >
                 {props.busy ? copy.responding : copy[decision]}
-              </button>
+              </Button>
             ))}
           </div>
         </fieldset>
@@ -400,23 +401,24 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           </div>
           <div ref={rootRef} className="session-compact-approval-actions" role="group" aria-label={copy.approval}>
             {failClosedDecision ? (
-              <button ref={failClosedRef} type="button" className="session-request-decline" onClick={() => choose(failClosedDecision)}>
+              <Button unstyled ref={failClosedRef} type="button" className="session-request-decline" onClick={() => choose(failClosedDecision)}>
                 {copy[failClosedDecision]}
-              </button>
+              </Button>
             ) : null}
             <div className="session-approval-grant-control">
               {hasAllowOnce ? (
-                <button type="button" className="session-request-accept" onClick={() => choose('accept')}>
+                <Button unstyled type="button" className="session-request-accept" onClick={() => choose('accept')}>
                   {props.busy ? copy.responding : copy.accept}
-                </button>
+                </Button>
               ) : grantDecisions.length > 0 ? (
-                <button ref={menuTriggerRef} type="button" className="session-request-grant-menu-trigger" aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                <Button unstyled ref={menuTriggerRef} type="button" className="session-request-grant-menu-trigger" aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
                   {copy.grantOptions}
                   <CaretDown aria-hidden="true" />
-                </button>
+                </Button>
               ) : null}
               {hasAllowOnce && menuDecisions.length > 1 ? (
-                <button
+                <Button
+                  unstyled
                   data-icon-tooltip={copy.grantOptions}
                   ref={menuTriggerRef}
                   type="button"
@@ -427,7 +429,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                   onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
                 >
                   <CaretDown aria-hidden="true" size={13} weight="bold" />
-                </button>
+                </Button>
               ) : null}
               {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
                 <div className="session-approval-grant-menu" role="menu" inert={!menuOpen} aria-hidden={!menuOpen} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
@@ -445,7 +447,8 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                     const title = decision === 'full-access' ? copy.fullAccess : copy[decision];
                     return (
                       <div key={decision} className="session-approval-grant-menu-row" role="none">
-                        <button
+                        <Button
+                          unstyled
                           type="button"
                           role="menuitem"
                           data-danger={decision === 'full-access' || undefined}
@@ -457,7 +460,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                           }}
                         >
                           <span className="session-approval-grant-menu-label">{title}</span>
-                        </button>
+                        </Button>
                         {help && menuOpen ? <ApprovalDecisionHelp title={title} description={help} /> : null}
                       </div>
                     );
@@ -474,16 +477,16 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                     }}
                     onConfirm={() => {
                       setConfirmingFullAccess(false);
-                      props.onAllowFullAccess?.();
+                      return props.onAllowFullAccess?.();
                     }}
                   />
                 ) : null}
               </MotionPresence>
             </div>
             {extraFailClosedDecision ? (
-              <button type="button" className="session-request-decline" onClick={() => choose(extraFailClosedDecision)}>
+              <Button unstyled type="button" className="session-request-decline" onClick={() => choose(extraFailClosedDecision)}>
                 {copy[extraFailClosedDecision]}
-              </button>
+              </Button>
             ) : null}
           </div>
         </div>
@@ -514,7 +517,8 @@ function ApprovalDecisionHelp(props: { title: string; description: string }) {
         if (document.activeElement !== buttonRef.current) popoverRef.current?.hidePopover();
       }}
     >
-      <button
+      <Button
+        unstyled
         ref={buttonRef}
         type="button"
         role="menuitem"
@@ -535,7 +539,7 @@ function ApprovalDecisionHelp(props: { title: string; description: string }) {
         }}
       >
         <WarningCircle aria-hidden="true" />
-      </button>
+      </Button>
       <div ref={popoverRef} id={id} popover="auto" role="tooltip" className="session-approval-grant-help" style={{ positionAnchor: anchor }}>
         {props.description}
       </div>
@@ -623,17 +627,17 @@ function RequestUserInputActions(props: RequestUserInputActionsProps) {
   return (
     <div className="session-rui-inline-actions" role="group" aria-label={zh ? '询问操作' : 'Question actions'} style={props.style}>
       {props.questionIndex > 0 ? (
-        <button type="button" disabled={props.resourcesProcessing} onClick={props.onPrevious}>
+        <Button unstyled type="button" disabled={props.resourcesProcessing} onClick={props.onPrevious}>
           {zh ? '上一个' : 'Previous'}
-        </button>
+        </Button>
       ) : null}
-      <button type="button" disabled={props.resourcesProcessing} onClick={props.onSkip}>
+      <Button unstyled type="button" disabled={props.resourcesProcessing} onClick={props.onSkip}>
         {props.dismissLabel ?? (zh ? '跳过' : 'Skip')}
-      </button>
+      </Button>
       {props.showSubmit ? (
-        <button type="submit" disabled={!props.currentComplete || (props.questionIndex === props.questionCount - 1 && !props.allComplete)}>
+        <Button unstyled type="submit" disabled={!props.currentComplete || (props.questionIndex === props.questionCount - 1 && !props.allComplete)}>
           {props.responding ? (zh ? '正在提交' : 'Submitting') : props.questionIndex === props.questionCount - 1 ? (props.submitLabel ?? (zh ? '提交' : 'Submit')) : zh ? '继续' : 'Continue'}
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -771,15 +775,15 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
     }
   }
 
-  function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): void {
+  function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): void | Promise<void> {
     // 导入期间不能切题，否则完成的附件可能被放到另一题。
     if (inputResources.processing) return;
     if (questionIndex < props.questions.length - 1) setQuestionIndex((value) => value + 1);
-    else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers, nextAttachments)) void finish(nextAnswers, nextOtherAnswers, nextAttachments);
+    else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers, nextAttachments)) return finish(nextAnswers, nextOtherAnswers, nextAttachments);
   }
 
   /** 单选点击确认当前答案并推进，多选点击只切换勾选状态。 */
-  function selectOption(optionLabel: string): void {
+  function selectOption(optionLabel: string): void | Promise<void> {
     if (responding) return;
     snooze();
     /** 草稿恢复或提交失败后，再次点击同一单选答案也应直接发送。 */
@@ -791,7 +795,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
     if (switchingFromOther) {
       setAnswerAttachments(nextAttachments);
     }
-    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
+    if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) return advance(nextAnswers, otherAnswers, nextAttachments);
   }
 
   /** 仅移除当前草稿的引用，不删除可能仍被已发送消息使用的副本。 */
@@ -909,7 +913,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
           void snooze();
           setQuestionIndex((value) => Math.max(0, value - 1));
         }}
-        onSkip={() => void skip()}
+        onSkip={() => skip()}
       />
     );
   }
@@ -931,28 +935,29 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
           <VisibleApplicationError error={props.error ?? resourceError} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <form
+      <Form
         className="session-question-panel session-rui-request"
         aria-busy={responding || undefined}
         data-error={Boolean(props.error) || undefined}
         onSubmit={(event) => {
           event.preventDefault();
-          if (currentComplete && !responding) advance();
+          if (currentComplete && !responding) return advance();
         }}
       >
         <fieldset disabled={responding}>
           <header>
             <strong className="zeus-fidelity-text">{currentQuestion.question}</strong>
-            <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => void skip()}>
+            <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => skip()}>
               <X aria-hidden="true" />
-            </button>
+            </Button>
           </header>
           <div className="session-question-options" data-actions-placement={actionsPlacement}>
             {currentQuestion.options.map((option, optionIndex) => {
               const checked = selectedValues.includes(option.label);
               const presentation = recommendedOption(option.label);
               return (
-                <button
+                <Button
+                  unstyled
                   ref={(element) => {
                     optionRefs.current[optionIndex] = element;
                   }}
@@ -976,12 +981,13 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   ) : (
                     <ArrowRight aria-hidden="true" />
                   )}
-                </button>
+                </Button>
               );
             })}
             {currentQuestion.allowOther ? (
               <div className="session-question-other" data-selected={selectedValues.includes(otherAnswerControlValue(currentQuestion)) || undefined}>
-                <button
+                <Button
+                  unstyled
                   data-icon-tooltip={zh ? '其他回答' : 'Other answer'}
                   ref={(element) => {
                     optionRefs.current[currentQuestion.options.length] = element;
@@ -996,7 +1002,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   }}
                 >
                   <PencilSimple aria-hidden="true" />
-                </button>
+                </Button>
                 {currentQuestion.secret ? (
                   <input
                     ref={otherAnswerRef as React.RefObject<HTMLInputElement>}
@@ -1068,7 +1074,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   </div>
                 )}
                 {answerAttachmentsEnabled && props.onChooseAttachments ? (
-                  <button
+                  <Button
+                    unstyled
                     data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
                     type="button"
                     className="session-question-attachment-button"
@@ -1078,7 +1085,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     onClick={inputResources.chooseAttachments}
                   >
                     <Paperclip aria-hidden="true" />
-                  </button>
+                  </Button>
                 ) : null}
                 {actionsPlacement === 'other' ? renderActions() : null}
               </div>
@@ -1145,7 +1152,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     }}
                   />
                   {answerAttachmentsEnabled && props.onChooseAttachments ? (
-                    <button
+                    <Button
+                      unstyled
                       data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
                       type="button"
                       className="session-question-attachment-button"
@@ -1155,7 +1163,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                       onClick={inputResources.chooseAttachments}
                     >
                       <Paperclip aria-hidden="true" />
-                    </button>
+                    </Button>
                   ) : null}
                   {actionsPlacement === 'freeform' ? renderActions() : null}
                 </div>
@@ -1167,7 +1175,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
             <small className="session-secret-hint">{zh ? '敏感回答只用于本次请求，不保存到对话记录或草稿中。' : 'Sensitive answers are used only for this request and are not saved in the conversation history or drafts.'}</small>
           ) : null}
         </fieldset>
-      </form>
+      </Form>
     </section>
   );
 }
@@ -1891,3 +1899,5 @@ function buildQuestionResponse(
   };
 }
 import { useHoverIntent } from '../ui/useHoverIntent.js';
+import { Form } from '../ui/Form.js';
+import { Button } from '../ui/Button.js';

@@ -191,7 +191,7 @@ export function WorkflowPrimitiveFields(props: {
                 size="compact"
                 disabled={loading || !node.data.capability.reference.conversationId || !props.loadTools}
                 onClick={() => {
-                  if (node.data.capability.kind === 'tool') void load(node.data.capability.reference.conversationId);
+                  if (node.data.capability.kind === 'tool') return load(node.data.capability.reference.conversationId);
                 }}
               >
                 {loading ? '读取中…' : '读取工具'}

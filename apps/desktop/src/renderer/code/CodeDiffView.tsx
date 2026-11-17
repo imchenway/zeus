@@ -20,6 +20,7 @@ import { diffAlignmentExtension, AlignmentSpace } from './conflictAlignment.js';
 import { EditableCodeDiffView } from './EditableCodeDiffView.js';
 import { DiffReviewToolbar } from './DiffReviewToolbar.js';
 import { DiffConnectorLayer } from './DiffConnectorLayer.js';
+import { Button } from '../ui/Button.js';
 
 /** 评论位置沿用原始文件的左右行号。 */
 export interface DiffAnnotationLine {
@@ -425,7 +426,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
       fullAvailable={Boolean(complete)}
       onFullChange={(value) => {
         setExpanded(new Set());
-        preview?.onFullChange(value);
+        return preview?.onFullChange(value);
       }}
       current={visibleChange}
       count={changes.length}
@@ -465,16 +466,17 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
             {pending.items !== preview?.items ? <p role="status">{preview?.zh === false ? 'The preview changed. Cancel and select the change again.' : '文件已刷新，请取消后重新选择改动。'}</p> : null}
             {revertError ? <VisibleApplicationError error={revertError} language={preview?.zh === false ? 'en' : 'zh-CN'} /> : null}
             <footer>
-              <button type="button" disabled={reverting} onClick={() => setPending(null)}>
+              <Button unstyled type="button" disabled={reverting} onClick={() => setPending(null)}>
                 {preview?.zh === false ? 'Cancel' : '取消'}
-              </button>
-              <button
+              </Button>
+              <Button
+                unstyled
                 type="button"
                 disabled={reverting || props.revertDisabled || Boolean(revertError) || pending.items !== preview?.items}
                 onClick={() => {
                   if (!preview?.onRevert || reverting || pending.items !== preview.items) return;
                   setReverting(true);
-                  void preview
+                  return preview
                     .onRevert(pending.range)
                     .then(() => setPending(null))
                     .catch(setRevertError)
@@ -482,7 +484,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
                 }}
               >
                 {reverting ? (preview?.zh === false ? 'Restoring…' : '正在恢复…') : preview?.zh === false ? 'Restore block' : '恢复区块'}
-              </button>
+              </Button>
             </footer>
           </section>
         </ModalPortal>
@@ -533,7 +535,8 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
           if (portal.action)
             return createPortal(
               row.change ? (
-                <button
+                <Button
+                  unstyled
                   type="button"
                   className="code-diff-revert"
                   disabled={reverting || props.revertDisabled}
@@ -546,7 +549,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
                   }}
                 >
                   <span className="code-diff-revert-icon" aria-hidden="true" />
-                </button>
+                </Button>
               ) : null,
               portal.element,
               `revert:${portal.row}`,

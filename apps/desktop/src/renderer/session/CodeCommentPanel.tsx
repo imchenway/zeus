@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { Button } from '../ui/Button.js';
 
 export function CodeCommentPanel(props: { language: SessionUiLanguage; position: ConversationCodeCommentPosition; comment?: ConversationCodeComment; onCancel: () => void; onSave: (body: string) => void; onDelete?: () => void }) {
   const zh = props.language === 'zh-CN';
@@ -21,18 +22,18 @@ export function CodeCommentPanel(props: { language: SessionUiLanguage; position:
       <textarea autoFocus value={body} placeholder={zh ? '请求更改' : 'Request changes'} onChange={(event) => setBody(event.currentTarget.value)} />
       <span className="session-code-comment-panel-footer">
         {props.comment && props.onDelete ? (
-          <button type="button" className="is-delete" onClick={props.onDelete}>
+          <Button unstyled type="button" className="is-delete" onClick={props.onDelete}>
             {zh ? '删除' : 'Delete'}
-          </button>
+          </Button>
         ) : (
           <span />
         )}
-        <button type="button" onClick={props.onCancel}>
+        <Button unstyled type="button" onClick={props.onCancel}>
           {zh ? '取消' : 'Cancel'}
-        </button>
-        <button type="button" className="is-primary" disabled={!body.trim()} onClick={() => body.trim() && props.onSave(body.trim())}>
+        </Button>
+        <Button unstyled type="button" className="is-primary" disabled={!body.trim()} onClick={() => body.trim() && props.onSave(body.trim())}>
           {props.comment ? (zh ? '保存' : 'Save') : zh ? '评论' : 'Comment'}
-        </button>
+        </Button>
       </span>
     </span>
   );

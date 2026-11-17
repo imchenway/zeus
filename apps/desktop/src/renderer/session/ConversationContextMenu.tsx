@@ -14,6 +14,7 @@ import { Button } from '../ui/Button.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeConversationChoice } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { Form } from '../ui/Form.js';
 
 /** 会话菜单使用会话界面的既有语言范围。 */
 export type ConversationContextMenuLanguage = SessionUiLanguage;
@@ -102,7 +103,7 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
   }, [open, conversation.title]);
 
   /** 保存真实会话标题，失败后保留草稿供重试。 */
-  function handleRenameSubmit(event: FormEvent<HTMLFormElement>): void {
+  function handleRenameSubmit(event: FormEvent<HTMLFormElement>): void | Promise<void> {
     event.preventDefault();
     const trimmed = renameDraft.trim();
     if (!trimmed || trimmed === conversation.title || !onRename) {
@@ -110,7 +111,7 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
       return;
     }
     setRenameBusy(true);
-    Promise.resolve(onRename(conversation, trimmed))
+    return Promise.resolve(onRename(conversation, trimmed))
       .then(() => {
         setRenameDialogOpen(false);
         onClose();
@@ -137,13 +138,11 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
   }
 
   /** 调用已接入的归档或恢复入口。 */
-  function handleArchive(): void {
-    if (conversation.archived) {
-      onRestore?.(conversation);
-    } else {
-      onArchive?.(conversation);
-    }
+  function handleArchive(): void | Promise<void> {
+    /** 菜单立即关闭，完成回执仍交给调用方观察。 */
+    const completion = conversation.archived ? onRestore?.(conversation) : onArchive?.(conversation);
     onClose();
+    return completion;
   }
 
   if (!open) return null;
@@ -156,20 +155,20 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
         <MenuSurface onClose={onClose} style={{ left: position.x, top: position.y }} className="conversation-context-menu zeus-quiet-more-menu">
           {/* 重命名 */}
           {onRename ? (
-            <button type="button" role="menuitem" onClick={handleRename}>
+            <Button unstyled type="button" role="menuitem" onClick={handleRename}>
               <PencilSimple aria-hidden="true" />
               <span>{copy.rename}</span>
               <kbd>{copy.renameShortcut}</kbd>
-            </button>
+            </Button>
           ) : null}
 
           {/* 归档/取消归档 */}
           {(onArchive || onRestore) && (
-            <button type="button" role="menuitem" onClick={handleArchive}>
+            <Button unstyled type="button" role="menuitem" onClick={handleArchive}>
               <Archive aria-hidden="true" />
               <span>{conversation.archived ? copy.archive.replace('归档', '取消归档').replace('Archive', 'Restore') : copy.archive}</span>
               <kbd>{copy.archiveShortcut}</kbd>
-            </button>
+            </Button>
           )}
         </MenuSurface>,
         menuPortalHost,
@@ -185,7 +184,7 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
           role="dialog"
           aria-labelledby="conversation-rename-dialog-title"
         >
-          <form className="conversation-rename-dialog zeus-solid-form-surface" onSubmit={handleRenameSubmit}>
+          <Form className="conversation-rename-dialog zeus-solid-form-surface" onSubmit={handleRenameSubmit}>
             <header className="conversation-rename-dialog-header">
               <strong id="conversation-rename-dialog-title">{copy.renameDialogTitle}</strong>
             </header>
@@ -201,7 +200,7 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
                 {renameBusy ? copy.renameSaving : copy.renameSave}
               </Button>
             </footer>
-          </form>
+          </Form>
         </ModalPortal>
       )}
     </>

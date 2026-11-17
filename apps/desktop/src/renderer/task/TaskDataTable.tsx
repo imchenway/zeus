@@ -106,18 +106,19 @@ function TaskColumnHeader(props: IHeaderParams<TaskRowViewModel>) {
     return () => props.column.removeEventListener('movingChanged', rememberMove);
   }, [props.column]);
   return (
-    <button
+    <Button
+      unstyled
       type="button"
       className="task-data-table-sort"
       aria-label={`${props.displayName} · ${workspace.appLanguage === 'zh-CN' ? '点击排序' : 'Sort'}`}
       onClick={() => {
         if (Date.now() - movedAt.current < 150) return;
-        workspace.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey));
+        return workspace.onTaskTableColumnsChange(cycleTaskTableSort(model.columnPreferences, columnKey));
       }}
     >
       <span>{props.displayName}</span>
       {direction ? <span aria-hidden="true">{direction === 'asc' ? '↑' : '↓'}</span> : null}
-    </button>
+    </Button>
   );
 }
 
@@ -155,7 +156,7 @@ function TaskPriorityCell({ task }: { task: TaskRecord }) {
         triggerTitle={feedback}
         options={isTaskPriority(value) ? workspace.priorityOptions : [{ value, label: zh ? '历史值' : 'Legacy value', disabled: true }, ...workspace.priorityOptions]}
         onChange={(next) => {
-          if (isTaskPriority(next)) void save(next, task.updatedAt ?? '');
+          if (isTaskPriority(next)) return save(next, task.updatedAt ?? '');
         }}
         className={`task-status-select task-priority-select task-status-tone-${taskPriorityTone(value)}`}
         disabled={!workspace.onTaskPriorityChange || edit?.kind === 'saving'}
@@ -168,7 +169,7 @@ function TaskPriorityCell({ task }: { task: TaskRecord }) {
                 variant="secondary"
                 size="compact"
                 onClick={() => {
-                  if (isTaskPriority(value)) void save(value, edit?.latest?.updatedAt ?? task.updatedAt ?? '');
+                  if (isTaskPriority(value)) return save(value, edit?.latest?.updatedAt ?? task.updatedAt ?? '');
                 }}
               >
                 {zh ? '重试' : 'Retry'}
@@ -441,12 +442,12 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
           onColumnMoved={saveLayout}
           onColumnResized={saveLayout}
           onRowClicked={({ data, event }) => {
-            if (data && !(event?.target instanceof Element && event.target.closest('button, input, a'))) workspace.onOpenTaskDetail(data.id);
+            if (data && !(event?.target instanceof Element && event.target.closest('button, input, a'))) return workspace.onOpenTaskDetail(data.id);
           }}
           onCellKeyDown={({ data, event }) => {
             if (data && event instanceof KeyboardEvent && ['Enter', ' '].includes(event.key) && !(event.target instanceof Element && event.target.closest('button, input, a'))) {
               event.preventDefault();
-              workspace.onOpenTaskDetail(data.id);
+              return workspace.onOpenTaskDetail(data.id);
             }
           }}
         />

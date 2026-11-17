@@ -1,6 +1,7 @@
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { MotionPresence } from './ui/MotionPresence.js';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { commandDefinitionsQuery, invalidateCommandDefinitions } from './features/command-center/commandDefinitionsQuery.js';
 import { createPortal } from 'react-dom';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { CheckIcon as CheckGlyph } from '@phosphor-icons/react/dist/csr/Check';
@@ -39,6 +40,7 @@ import { ModalPortal } from './ui/ModalPortal.js';
 import { MenuSurface } from './ui/MenuSurface.js';
 import { VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
+import { Form } from './ui/Form.js';
 
 export interface CommandCenterPanelProps {
   /** 项目弹窗的关闭入口；关闭显示层不终止后台运行。 */
@@ -210,7 +212,8 @@ function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: Da
   return (
     <>
       {logArtifacts.length > 0 ? (
-        <button
+        <Button
+          unstyled
           type="button"
           className="command-run-log-action"
           aria-haspopup="menu"
@@ -222,10 +225,11 @@ function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: Da
           <DownloadSimple aria-hidden="true" />
           <span>{props.zh ? '导出日志' : 'Export logs'}</span>
           <CaretDown aria-hidden="true" />
-        </button>
+        </Button>
       ) : null}
       {outputArtifacts.length > 0 ? (
-        <button
+        <Button
+          unstyled
           type="button"
           className="command-run-log-action"
           aria-haspopup="menu"
@@ -238,7 +242,7 @@ function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: Da
             {props.zh ? '输出文件' : 'Output files'} ({outputArtifacts.length})
           </span>
           <CaretDown aria-hidden="true" />
-        </button>
+        </Button>
       ) : null}
       <MotionPresence>
         {menu && menuHostRef.current
@@ -251,21 +255,22 @@ function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: Da
                 onClose={() => setMenu(null)}
               >
                 {visibleArtifacts.map((artifact) => (
-                  <button
+                  <Button
+                    unstyled
                     key={artifact.id}
                     type="button"
                     role="menuitem"
                     disabled={Boolean(downloadingId)}
                     aria-busy={downloadingId === artifact.id || undefined}
                     data-icon-tooltip={artifact.relativePath}
-                    onClick={() => void downloadArtifact(artifact)}
+                    onClick={() => downloadArtifact(artifact)}
                   >
                     {downloadingId === artifact.id ? <CircleNotch className="command-run-copy-spinner" aria-hidden="true" /> : <DownloadSimple aria-hidden="true" />}
                     <span>
                       <strong>{menu.kind === 'logs' ? (artifact.relativePath === 'logs/terminal.raw.log' ? (props.zh ? '原始日志' : 'Raw logs') : props.zh ? '整理日志' : 'Formatted logs') : artifact.relativePath}</strong>
                       <small>{downloadingId === artifact.id ? (props.zh ? '正在导出…' : 'Exporting…') : formatBytes(artifact.byteLength)}</small>
                     </span>
-                  </button>
+                  </Button>
                 ))}
                 {downloadFailed ? <p role="alert">{props.zh ? '导出失败，请重试。' : 'Export failed. Please try again.'}</p> : null}
               </MenuSurface>,
@@ -359,7 +364,8 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
           {props.ariaLabel}
         </strong>
         <div className="command-run-log-actions">
-          <button
+          <Button
+            unstyled
             className="command-run-log-action"
             type="button"
             disabled={!props.hasLogs || copyState === 'copying'}
@@ -367,7 +373,7 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
             data-copy-state={copyState}
             aria-label={copyLabel}
             data-icon-tooltip={copyLabel}
-            onClick={() => void copyCompleteLog()}
+            onClick={() => copyCompleteLog()}
           >
             {copyState === 'copying' ? (
               <CircleNotch className="command-run-copy-spinner" aria-hidden="true" />
@@ -379,7 +385,7 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
               <Copy aria-hidden="true" />
             )}
             <span>{copyState === 'idle' ? (props.zh ? '复制日志' : 'Copy logs') : copyLabel}</span>
-          </button>
+          </Button>
           <CommandRunFileActions artifacts={props.artifacts} client={props.client} zh={props.zh} />
         </div>
       </header>
@@ -435,9 +441,14 @@ async function writeCommandRunClipboard(content: string): Promise<boolean> {
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const zh = props.language === 'zh-CN';
-  const [commands, setCommands] = useState<CommandDefinition[]>([]);
+  /** 已读目录立即展示；不同项目和客户端的在途结果互不回填。 */
+  const definitionsQuery = useMemo(() => commandDefinitionsQuery(props.client, props.mode, props.project?.id), [props.client, props.mode, props.project?.id]);
+  const definitionsSnapshot = useSyncExternalStore(definitionsQuery.subscribe, definitionsQuery.getSnapshot);
+  const commands = definitionsSnapshot.value ?? [];
+  const loading = definitionsSnapshot.loading;
+  const currentDefinitionsQuery = useRef(definitionsQuery);
+  currentDefinitionsQuery.current = definitionsQuery;
   const [runs, setRuns] = useState<CommandRun[]>([]);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -467,24 +478,12 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   }, [runDetail, zh]);
 
   useEffect(() => {
-    let active = true;
-    setLoading(true);
     setError(null);
-    const request = props.mode === 'global' ? props.client.loadGlobalCommands() : props.project ? props.client.loadProjectCommands(props.project.id) : Promise.resolve([]);
-    void request
-      .then((items) => {
-        if (active) setCommands(items);
-      })
-      .catch((loadError) => {
-        if (active) setError(loadError);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [props.client, props.mode, props.project?.id]);
+    setBusy(false);
+    setEditing(null);
+    setPendingDeleteId(null);
+    void definitionsQuery.load().catch(() => undefined);
+  }, [definitionsQuery]);
 
   useEffect(() => {
     historyCommandIdRef.current = null;
@@ -637,19 +636,19 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   }, [historyCommand?.id, runDetail?.run, selectedRunId, props.onRunDetailVisible]);
 
   async function reloadCommands(): Promise<void> {
-    const items = props.mode === 'global' ? await props.client.loadGlobalCommands() : props.project ? await props.client.loadProjectCommands(props.project.id) : [];
-    setCommands(items);
+    await definitionsQuery.load(true);
   }
 
   async function reloadRuns(selectRunId?: string): Promise<void> {
     if (!props.project) return;
     const items = await props.client.loadCommandRuns(props.project.id);
+    if (currentDefinitionsQuery.current !== definitionsQuery) return;
     setRuns(items);
     if (selectRunId) setSelectedRunId(selectRunId);
   }
 
   async function openRunHistory(command: CommandDefinition, selectRunId?: string): Promise<void> {
-    if (!props.project) return;
+    if (!props.project || currentDefinitionsQuery.current !== definitionsQuery) return;
     historyCommandIdRef.current = command.id;
     setHistoryCommand(command);
     setError(null);
@@ -660,12 +659,12 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setSelectedRunId(selectRunId ?? currentCommandRuns[0]?.id ?? null);
     try {
       const items = await props.client.loadCommandRuns(props.project.id);
-      if (historyCommandIdRef.current !== command.id) return;
+      if (historyCommandIdRef.current !== command.id || currentDefinitionsQuery.current !== definitionsQuery) return;
       const commandRuns = items.filter((run) => run.commandId === command.id);
       setRuns(items);
       setSelectedRunId(selectRunId ?? commandRuns[0]?.id ?? null);
     } catch (loadError) {
-      setError(loadError);
+      if (historyCommandIdRef.current === command.id && currentDefinitionsQuery.current === definitionsQuery) setError(loadError);
     }
   }
 
@@ -714,21 +713,30 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setBusy(true);
     setError(null);
     try {
+      /** 保存回执已包含定义，目录补读不再阻塞编辑器关闭。 */
+      let saved: CommandDefinition | undefined;
       if (editing === 'new') {
-        if (props.mode === 'global') await props.client.createGlobalCommand(input);
-        else if (props.project) await props.client.createProjectCommand(props.project.id, input);
+        if (props.mode === 'global') saved = await props.client.createGlobalCommand(input);
+        else if (props.project) saved = await props.client.createProjectCommand(props.project.id, input);
       } else if (editing.scope === 'global') {
-        await props.client.updateGlobalCommand(editing.id, input, editing.revision);
+        saved = await props.client.updateGlobalCommand(editing.id, input, editing.revision);
       } else if (props.project) {
-        await props.client.updateProjectCommand(props.project.id, editing.id, input, editing.revision);
+        saved = await props.client.updateProjectCommand(props.project.id, editing.id, input, editing.revision);
       }
-      await reloadCommands();
+      if (!saved) throw new Error(zh ? '请选择命令所属项目。' : 'Select a project for this command.');
+      invalidateCommandDefinitions(props.client);
+      definitionsQuery.set([saved, ...(definitionsQuery.getSnapshot().value ?? []).filter((command) => command.id !== saved.id)]);
+      void reloadCommands().catch(() => undefined);
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       setEditing(null);
       setNotice(zh ? '命令定义已保存。' : 'Command definition saved.');
     } catch (saveError) {
-      setError(saveError);
+      /** 断连后的写入结果可能尚未回传，旧目录不能继续被视为新鲜数据。 */
+      invalidateCommandDefinitions(props.client);
+      void reloadCommands().catch(() => undefined);
+      if (currentDefinitionsQuery.current === definitionsQuery) setError(saveError);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -742,13 +750,18 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     try {
       if (command.scope === 'global') await props.client.deleteGlobalCommand(command.id, command.revision);
       else if (props.project) await props.client.deleteProjectCommand(props.project.id, command.id, command.revision);
-      await reloadCommands();
+      invalidateCommandDefinitions(props.client);
+      definitionsQuery.set((definitionsQuery.getSnapshot().value ?? []).filter((item) => item.id !== command.id));
+      void reloadCommands().catch(() => undefined);
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       setPendingDeleteId(null);
       setNotice(zh ? '命令定义已删除，历史记录仍保留。' : 'Command deleted; history remains available.');
     } catch (deleteError) {
-      setError(deleteError);
+      invalidateCommandDefinitions(props.client);
+      void reloadCommands().catch(() => undefined);
+      if (currentDefinitionsQuery.current === definitionsQuery) setError(deleteError);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -770,6 +783,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     setError(null);
     try {
       const config = await props.client.loadProjectConfig(props.project.id);
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       const missingShell = !config.security.allowShell;
       const missingGitWrite = command.riskFlags.gitWrite && !config.security.allowGitWrite;
       if (missingShell || missingGitWrite) {
@@ -778,9 +792,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       }
       showRunConfirmation(command);
     } catch (loadError) {
-      setError(loadError);
+      if (currentDefinitionsQuery.current === definitionsQuery) setError(loadError);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -792,14 +806,15 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       const config = await props.client.loadProjectConfig(props.project.id);
       const input = projectConfigWithCommandPermissions(config, permissionRequest.command);
       await props.client.saveProjectConfig(props.project.id, input);
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       const command = permissionRequest.command;
       setPermissionRequest(null);
       showRunConfirmation(command);
       setNotice(zh ? '已开启所需项目权限，请确认本次运行。' : 'Required project permissions enabled. Confirm this run to continue.');
     } catch (saveError) {
-      setError(saveError);
+      if (currentDefinitionsQuery.current === definitionsQuery) setError(saveError);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -819,14 +834,17 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         parameters: runParameters,
       });
       const command = runningCommand;
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       setRunningCommand(null);
-      await openRunHistory(command, run.id);
+      /** 运行已受理，日志目录读取在新打开的历史面板内继续。 */
+      void openRunHistory(command, run.id);
       setNotice(zh ? `已启动 ${command.title}。` : `${command.title} started.`);
     } catch (runError) {
+      if (currentDefinitionsQuery.current !== definitionsQuery) return;
       setError(runError);
-      await reloadRuns().catch(() => undefined);
+      void reloadRuns().catch(() => undefined);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -837,9 +855,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       await props.client.stopCommandRun(run.id);
       await reloadRuns(run.id);
     } catch (stopError) {
-      setError(stopError);
+      if (currentDefinitionsQuery.current === definitionsQuery) setError(stopError);
     } finally {
-      setBusy(false);
+      if (currentDefinitionsQuery.current === definitionsQuery) setBusy(false);
     }
   }
 
@@ -860,9 +878,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               {zh ? '新建命令' : 'New command'}
             </Button>
             {props.onClose ? (
-              <button type="button" className="command-center-close" disabled={busy} onClick={props.onClose} aria-label={zh ? '关闭命令' : 'Close commands'} data-icon-tooltip={zh ? '关闭命令' : 'Close commands'}>
+              <Button unstyled type="button" className="command-center-close" disabled={busy} onClick={props.onClose} aria-label={zh ? '关闭命令' : 'Close commands'} data-icon-tooltip={zh ? '关闭命令' : 'Close commands'}>
                 <X aria-hidden="true" />
-              </button>
+              </Button>
             ) : null}
           </div>
         </header>
@@ -870,17 +888,19 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         <div className="command-center-live" role="status" aria-live="polite">
           {notice ? <span>{notice}</span> : null}
         </div>
-        {error ? (
+        {error || definitionsSnapshot.error ? (
           <p className="command-center-empty" role="alert">
-            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+            <VisibleApplicationError error={error ?? definitionsSnapshot.error} language={zh ? 'zh-CN' : 'en'} />
           </p>
         ) : null}
 
         <section className="command-definition-list" aria-label={zh ? '命令定义列表' : 'Command definitions'}>
-          {loading ? (
+          {!definitionsSnapshot.hasValue && (loading || !definitionsSnapshot.error) ? (
             <p className="command-center-empty">{zh ? '正在加载命令…' : 'Loading commands…'}</p>
           ) : commands.length === 0 ? (
-            <p className="command-center-empty">{zh ? '尚未配置命令。' : 'No commands configured.'}</p>
+            definitionsSnapshot.error ? null : (
+              <p className="command-center-empty">{zh ? '尚未配置命令。' : 'No commands configured.'}</p>
+            )
           ) : (
             commands.map((command) => {
               /** 项目页只允许维护项目命令，全局页维护全局命令。 */
@@ -899,17 +919,19 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                   <span className="command-definition-actions">
                     {props.mode === 'project' ? (
                       <>
-                        <button
+                        <Button
+                          data-busy-behavior="background"
+                          unstyled
                           type="button"
                           className="command-definition-icon-action"
-                          onClick={() => void openRunHistory(command)}
+                          onClick={() => openRunHistory(command)}
                           disabled={!props.project || busy}
                           aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`}
                           data-icon-tooltip={zh ? '查看执行历史' : 'View run history'}
                         >
                           <ClockCounterClockwise aria-hidden="true" />
-                        </button>
-                        <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy} aria-label={`${zh ? '运行' : 'Run'} ${command.title}`}>
+                        </Button>
+                        <Button size="compact" onClick={() => openRun(command)} disabled={!command.enabled || !props.project || busy} aria-label={`${zh ? '运行' : 'Run'} ${command.title}`}>
                           <Play aria-hidden="true" />
                           {zh ? '运行' : 'Run'}
                         </Button>
@@ -918,7 +940,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     <span className="command-definition-management">
                       {editable ? (
                         <>
-                          <button
+                          <Button
+                            unstyled
                             data-icon-tooltip={`${zh ? '编辑命令' : 'Edit command'} ${command.title}`}
                             type="button"
                             className="command-definition-icon-action"
@@ -927,19 +950,20 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                             aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}
                           >
                             <PencilSimple aria-hidden="true" />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            unstyled
                             data-icon-tooltip={`${pendingDeleteId === command.id ? (zh ? '确认删除命令' : 'Confirm command deletion') : zh ? '删除命令' : 'Delete command'} ${command.title}`}
                             type="button"
                             className="command-definition-icon-action"
                             data-confirm={pendingDeleteId === command.id ? 'true' : undefined}
-                            onClick={() => void removeCommand(command)}
+                            onClick={() => removeCommand(command)}
                             disabled={busy}
                             aria-label={`${pendingDeleteId === command.id ? (zh ? '确认删除' : 'Confirm delete') : zh ? '删除' : 'Delete'} ${command.title}`}
                           >
                             <Trash aria-hidden="true" />
                             {pendingDeleteId === command.id ? (zh ? '确认' : 'Confirm') : null}
-                          </button>
+                          </Button>
                         </>
                       ) : null}
                     </span>
@@ -959,14 +983,14 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
               onChange={setDraft}
               onClose={() => setEditing(null)}
-              onSubmit={(event) => void saveDefinition(event)}
+              onSubmit={(event) => saveDefinition(event)}
             />
           ) : null}
         </MotionPresence>
 
         <MotionPresence>
           {permissionRequest && props.project ? (
-            <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => void enablePermissionsAndContinue()} />
+            <CommandPermissionModal request={permissionRequest} project={props.project} busy={busy} language={props.language} onClose={() => setPermissionRequest(null)} onContinue={() => enablePermissionsAndContinue()} />
           ) : null}
         </MotionPresence>
 
@@ -980,7 +1004,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               language={props.language}
               onValuesChange={setRunParameters}
               onClose={() => setRunningCommand(null)}
-              onSubmit={(event) => void submitRun(event)}
+              onSubmit={(event) => submitRun(event)}
             />
           ) : null}
         </MotionPresence>
@@ -1001,7 +1025,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               language={props.language}
               onClose={closeRunHistory}
               onSelectRun={selectHistoryRun}
-              onStopRun={(run) => void stopRun(run)}
+              onStopRun={(run) => stopRun(run)}
             />
           ) : null}
         </MotionPresence>
@@ -1080,9 +1104,9 @@ function CommandRunHistoryModal(props: {
               {props.activeRunCount > 0 ? ` · ${zh ? `${props.activeRunCount} 条运行中` : `${props.activeRunCount} running`}` : ''}
             </p>
           </span>
-          <button type="button" aria-label={zh ? '关闭执行历史' : 'Close run history'} onClick={props.onClose} disabled={props.busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭执行历史' : 'Close run history'} onClick={props.onClose} disabled={props.busy}>
             ×
-          </button>
+          </Button>
         </header>
         <div className="command-history-modal-body">
           {props.runs.length === 0 ? (
@@ -1096,7 +1120,7 @@ function CommandRunHistoryModal(props: {
                     const status = commandRunStatusPresentation(run, props.selectedRunId, props.syncState, zh);
                     return (
                       <li key={run.id}>
-                        <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
+                        <Button unstyled type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
                           <span>
                             <strong>{formatRunTime(run.createdAt)}</strong>
                             <small>
@@ -1104,7 +1128,7 @@ function CommandRunHistoryModal(props: {
                             </small>
                           </span>
                           <span className={`command-run-status ${status.className}`}>{status.label}</span>
-                        </button>
+                        </Button>
                       </li>
                     );
                   })}
@@ -1199,15 +1223,15 @@ function CommandDefinitionModal(props: {
     );
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-definition-modal-title">
-      <form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
+      <Form className="command-modal command-definition-modal command-editor-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
             <p>{zh ? '命令在目标项目目录中执行。解释器与脚本一起保存，切换解释器不会自动转换脚本。' : 'Commands run in the project folder. The shell is saved with the script; changing it does not convert the script.'}</p>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
-          </button>
+          </Button>
         </header>
         <div className="command-modal-body" inert={props.busy} aria-busy={props.busy || undefined}>
           <div className="command-editor-grid">
@@ -1341,7 +1365,7 @@ function CommandDefinitionModal(props: {
             {zh ? '保存命令' : 'Save command'}
           </Button>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
 }
@@ -1366,9 +1390,9 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
               {props.project.name} · {props.request.command.title}
             </p>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
-          </button>
+          </Button>
         </header>
         <div className="command-modal-body command-permission-body">
           <p id="command-permission-modal-description">
@@ -1436,14 +1460,14 @@ function CommandRunModal(props: {
       aria-labelledby="command-run-modal-title"
       aria-describedby={highRisk ? `${fieldPrefix}-risk` : undefined}
     >
-      <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
+      <Form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-run-modal-title">{props.command.title}</h3>
           </span>
-          <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
+          <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
-          </button>
+          </Button>
         </header>
         <div className="command-modal-body command-run-body" inert={props.busy} aria-busy={props.busy || undefined}>
           <div className="command-run-context">
@@ -1522,7 +1546,7 @@ function CommandRunModal(props: {
             {zh ? '运行' : 'Run'}
           </Button>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
 }

@@ -95,6 +95,14 @@ export interface ZentaoExtractServices {
   loadInstances?: () => Promise<ZentaoInstanceRecord[]>;
   readPassword?: (instanceId: string) => Promise<string | undefined>;
   storeAttachments?: (attachments: ZentaoAttachmentPayload[]) => Promise<ZentaoStoredAttachment[]>;
+  /** 已校验的标题和正文先进入草稿，附件仍由原命令完成物化。 */
+  onMetadata?: (extract: Extract<ZentaoTaskExtract, { kind: 'ok' }>) => void;
+}
+
+/** 文本与附件分阶段交付；下载期间保留既有大小限制和串行内存上限。 */
+async function finishZentaoExtract(extract: Extract<ZentaoTaskExtract, { kind: 'ok' }>, download: () => Promise<ZentaoAttachmentDownloads>, services?: ZentaoExtractServices): Promise<Extract<ZentaoTaskExtract, { kind: 'ok' }>> {
+  services?.onMetadata?.(extract);
+  return attachZentaoDownloads(extract, await download(), services);
 }
 
 /** 解析用户粘贴的禅道详情页链接，抓取页面并提取可填入 Zeus 任务表单的字段。 */
@@ -112,7 +120,7 @@ export async function extractZentaoTaskInfo(rawUrl: string, services?: ZentaoExt
       const attempt = await attemptZentaoRestDetail(endpoint, link.zentaoKind, link.objectId);
       if (attempt.kind === 'ok') {
         const restExtract = buildZentaoRestExtract(link, attempt.payload);
-        if (restExtract) return attachZentaoDownloads(restExtract, await downloadZentaoRestAttachments(endpoint, attempt.token, attempt.payload), services);
+        if (restExtract) return finishZentaoExtract(restExtract, () => downloadZentaoRestAttachments(endpoint, attempt.token, attempt.payload), services);
       } else if (attempt.kind === 'auth_failed') {
         credentialAttempt = 'failed';
       }
@@ -144,7 +152,7 @@ export async function extractZentaoTaskInfo(rawUrl: string, services?: ZentaoExt
     const currentState = firstNonEmpty(extractZentaoLabeledSection(body, ['缺陷现象', '缺陷摘要', 'Bug描述', '缺陷描述']));
     const reproductionSteps = firstNonEmpty(extractZentaoLabeledSection(body, ['重现步骤', '复现步骤']), currentState ? '' : mainContent);
     const expectedOutcome = extractZentaoLabeledSection(body, ['期望结果', '预期结果']);
-    return attachZentaoDownloads(
+    return finishZentaoExtract(
       {
         kind: 'ok',
         zentaoKind: 'bug',
@@ -159,13 +167,13 @@ export async function extractZentaoTaskInfo(rawUrl: string, services?: ZentaoExt
         attachments: [],
         attachmentFailedCount: 0,
       },
-      await downloadZentaoHtmlAttachments(page),
+      () => downloadZentaoHtmlAttachments(page),
       services,
     );
   }
 
   const description = firstNonEmpty(extractZentaoLabeledSection(body, link.zentaoKind === 'story' ? ['需求描述', '验收标准'] : ['任务描述']), extractZentaoLabeledSection(body, ['描述']), mainContent);
-  return attachZentaoDownloads(
+  return finishZentaoExtract(
     {
       kind: 'ok',
       zentaoKind: link.zentaoKind,
@@ -180,7 +188,7 @@ export async function extractZentaoTaskInfo(rawUrl: string, services?: ZentaoExt
       attachments: [],
       attachmentFailedCount: 0,
     },
-    await downloadZentaoHtmlAttachments(page),
+    () => downloadZentaoHtmlAttachments(page),
     services,
   );
 }

@@ -1,4 +1,5 @@
 import type { FilePreviewSourceWorkspace } from '@zeus/shared';
+import { mergeTaskProjection } from '../tasks/taskQueryStore.js';
 import { compareConversationWorkStartedDesc, cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, matchesTaskDeadline, projectTerminalOutput, type TaskDeadlineFilter, temporaryWorkspaceId } from '@zeus/shared';
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
@@ -332,8 +333,18 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [archivedProjects, setArchivedProjects] = useState<ProjectRecord[]>(() => props.initialArchivedProjects ?? []);
   const [conversationDraftOpen, setConversationDraftOpen] = useState(false);
   const [projectDetail, setProjectDetail] = useState<ProjectRecord | undefined>(() => props.snapshot?.projects[0]);
-  const [taskDetail, setTaskDetail] = useState<TaskRecord | undefined>(() => props.snapshot?.tasks[0]);
+  const [taskDetail, updateTaskDetail] = useState<TaskRecord | undefined>(() => props.snapshot?.tasks[0]);
+  /** 详情、实时事件与写回执统一比较修订，旧读取不能覆盖同一任务的新内容。 */
+  const setTaskDetail = useCallback((value: SetStateAction<TaskRecord | undefined>): void => {
+    updateTaskDetail((current) => {
+      const next = typeof value === 'function' ? value(current) : value;
+      return next && current?.id === next.id ? mergeTaskProjection(current, next) : next;
+    });
+  }, []);
   const [taskDetailPaneTaskId, setTaskDetailPaneTaskId] = useState<string | undefined>();
+  /** 详情与事件的异步回执使用同一个即时导航身份。 */
+  const taskDetailPaneTaskIdRef = useRef(taskDetailPaneTaskId);
+  taskDetailPaneTaskIdRef.current = taskDetailPaneTaskId;
   const [taskDetailPresentation, setTaskDetailPresentation] = useState<TaskBoardOpenMode>('side_peek');
   const [taskBoardSnapshots, setTaskBoardSnapshots] = useState<Record<string, TaskBoardViewSnapshot>>({});
   const [taskBoardLoadState, setTaskBoardLoadState] = useState<Record<string, { loading: boolean; error: string | null }>>({});
@@ -405,16 +416,21 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   }
 
   useEffect(() => {
-    if (!props.snapshot) return;
+    /** 汇总响应也遵循任务修订顺序，后台查询不能回退刚保存的详情。 */
+    const incoming = props.snapshot;
+    if (!incoming) return;
     // 同步 Electron hydration 后传入的真实 snapshot，避免首屏 connecting 空状态锁死后续真实项目与任务。
-    setSnapshot(props.snapshot);
+    setSnapshot((current) => {
+      if (current === incoming) return current;
+      const knownTasks = new Map(current.tasks.map((task) => [task.id, task]));
+      return { ...incoming, tasks: incoming.tasks.map((task) => mergeTaskProjection(knownTasks.get(task.id), task)) };
+    });
     /** 无项目工作的技术归属可能不进入公开目录，保留已经明确加载的身份。 */
-    const nextProject = projectDetail?.id === temporaryWorkspaceId ? (props.snapshot.projects.find((item) => item.id === projectDetail.id) ?? projectDetail) : syncRecordFromSnapshot(projectDetail, props.snapshot.projects);
+    const nextProject = projectDetail?.id === temporaryWorkspaceId ? (incoming.projects.find((item) => item.id === projectDetail.id) ?? projectDetail) : syncRecordFromSnapshot(projectDetail, incoming.projects);
     /** 正在查看的临时工作成果不能被下一次目录水合替换为其他任务。 */
-    const nextTask =
-      taskDetail?.projectId === temporaryWorkspaceId && taskDetail.id === taskDetailPaneTaskId ? (props.snapshot.tasks.find((item) => item.id === taskDetail.id) ?? taskDetail) : syncRecordFromSnapshot(taskDetail, props.snapshot.tasks);
+    const nextTask = taskDetail?.projectId === temporaryWorkspaceId && taskDetail.id === taskDetailPaneTaskId ? (incoming.tasks.find((item) => item.id === taskDetail.id) ?? taskDetail) : syncRecordFromSnapshot(taskDetail, incoming.tasks);
     setProjectDetail(nextProject);
-    setTaskDetail(nextTask);
+    setTaskDetail((current) => (current?.id === nextTask?.id && nextTask ? mergeTaskProjection(current, nextTask) : nextTask));
     setProjectEditForm({
       name: nextProject?.name ?? '',
       localPath: nextProject?.localPath ?? '',
@@ -1492,9 +1508,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const mergeTaskRecord = useCallback((task: TaskRecord): void => {
     setSnapshot((current) => ({
       ...current,
-      tasks: current.tasks.some((candidate) => candidate.id === task.id) ? current.tasks.map((candidate) => (candidate.id === task.id ? task : candidate)) : [...current.tasks, task],
+      tasks: current.tasks.some((candidate) => candidate.id === task.id) ? current.tasks.map((candidate) => (candidate.id === task.id ? mergeTaskProjection(candidate, task) : candidate)) : [...current.tasks, task],
     }));
-    setTaskDetail((current) => (current?.id === task.id ? task : current));
+    setTaskDetail((current) => (current?.id === task.id ? mergeTaskProjection(current, task) : current));
   }, []);
   return {
     taskQuery,
@@ -1856,6 +1872,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskDeleteDialogTaskId,
     taskDetail,
     taskDetailPaneTaskId,
+    taskDetailPaneTaskIdRef,
     taskDetailPresentation,
     taskEvents,
     taskGitDeliveryChangedRef,

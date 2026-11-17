@@ -4,6 +4,7 @@ import type { CodexOfficialRateWindow, KiloAccountUsage, UsageModelCostBreakdown
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
+import { Button } from '../ui/Button.js';
 
 type Language = AppShellSettings['appLanguage'];
 type Appearance = AppShellSettings['appearance'];
@@ -198,6 +199,8 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   /** 首次读取排序偏好，实时快照刷新不覆盖用户选择。 */
   const [providerOrder, setProviderOrder] = useState(readStoredProviderOrder);
   const [loading, setLoading] = useState(false);
+  /** 本地读取结束后，官方刷新继续在独立来源中进行。 */
+  const refreshing = loading || Boolean(snapshot?.refreshingSources?.length);
   const [error, setError] = useState<unknown>(null);
   const requestRef = useRef<Promise<void> | null>(null);
   /** 读取实际内容高度，使无额度页和较短的列表自然收起。 */
@@ -266,18 +269,21 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
     /** 请求期间的新通知留到下一轮，避免在途去重吞掉最终更新。 */
     const schedule = () => {
       if (disposed || timer || !dirty || !visible()) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        if (disposed || !visible()) return;
-        if (requestRef.current) {
-          void requestRef.current.finally(schedule);
-          return;
-        }
-        dirty = false;
-        const requestedRefresh = refresh;
-        refresh = undefined;
-        void load(requestedRefresh).finally(schedule);
-      }, 150);
+      timer = setTimeout(
+        () => {
+          timer = undefined;
+          if (disposed || !visible()) return;
+          if (requestRef.current) {
+            void requestRef.current.finally(schedule);
+            return;
+          }
+          dirty = false;
+          const requestedRefresh = refresh;
+          refresh = undefined;
+          void load(requestedRefresh).finally(schedule);
+        },
+        refresh ? 0 : 150,
+      );
     };
     const unsubscribe = props.client.subscribeEvents(
       (event) => {
@@ -376,26 +382,28 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <small className="menu-bar-usage-freshness" aria-live="polite" data-icon-tooltip={freshness}>
               {freshness}
             </small>
-            <button
+            <Button
+              unstyled
               className="menu-bar-usage-refresh"
               type="button"
-              aria-label={loading ? text.loading : text.retry}
-              data-icon-tooltip={loading ? (props.language === 'zh-CN' ? '正在刷新' : 'Refreshing') : props.language === 'zh-CN' ? '刷新用量' : 'Refresh usage'}
-              aria-busy={loading}
-              disabled={loading}
-              onClick={() => void load('force')}
+              aria-label={refreshing ? text.loading : text.retry}
+              data-icon-tooltip={refreshing ? (props.language === 'zh-CN' ? '正在刷新' : 'Refreshing') : props.language === 'zh-CN' ? '刷新用量' : 'Refresh usage'}
+              aria-busy={refreshing}
+              disabled={refreshing}
+              onClick={() => load('force')}
             >
-              {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
-            </button>
+              {refreshing ? <RefreshPendingIcon /> : <RefreshIcon />}
+            </Button>
           </span>
         </header>
 
         <nav className="menu-bar-usage-tabs" role="tablist" aria-label={text.allProviders}>
-          <button type="button" role="tab" aria-selected={selection === 'all'} tabIndex={selection === 'all' ? 0 : -1} onClick={() => select('all')} onKeyDown={handleTabKeyDown}>
+          <Button unstyled type="button" role="tab" aria-selected={selection === 'all'} tabIndex={selection === 'all' ? 0 : -1} onClick={() => select('all')} onKeyDown={handleTabKeyDown}>
             {text.all}
-          </button>
+          </Button>
           {providers.map((provider) => (
-            <button
+            <Button
+              unstyled
               key={provider.providerId}
               type="button"
               role="tab"
@@ -407,7 +415,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               onKeyDown={handleTabKeyDown}
             >
               {providerDisplayName(provider, true)}
-            </button>
+            </Button>
           ))}
         </nav>
 
@@ -432,15 +440,15 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
         </div>
 
         <footer className="menu-bar-usage-actions">
-          <button className="menu-bar-usage-primary-action" type="button" onClick={() => void window.zeus?.openMenuBarUsageSettings?.('usage')}>
+          <Button unstyled className="menu-bar-usage-primary-action" type="button" onClick={() => window.zeus?.openMenuBarUsageSettings?.('usage')}>
             {text.fullStatistics}
-          </button>
-          <button type="button" onClick={() => void window.zeus?.showMainWindowFromMenuBarUsage?.()}>
+          </Button>
+          <Button unstyled type="button" onClick={() => window.zeus?.showMainWindowFromMenuBarUsage?.()}>
             {text.showZeus}
-          </button>
-          <button type="button" onClick={() => void window.zeus?.quitFromMenuBarUsage?.()}>
+          </Button>
+          <Button unstyled type="button" onClick={() => window.zeus?.quitFromMenuBarUsage?.()}>
             {text.quitZeus}
-          </button>
+          </Button>
         </footer>
       </section>
     </main>
@@ -452,9 +460,9 @@ function UsageLoadFailure(props: { error: unknown; language: Language; loading: 
   return (
     <div className="menu-bar-usage-load-failure" role="alert">
       <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-      <button type="button" onClick={() => void props.onRetry()} disabled={props.loading}>
+      <Button unstyled type="button" onClick={() => props.onRetry()} disabled={props.loading}>
         {props.loading ? text.loading : text.retry}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -524,7 +532,8 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
             }}
           >
             {props.providers.length > 1 ? (
-              <button
+              <Button
+                unstyled
                 className="menu-bar-usage-drag-handle"
                 type="button"
                 draggable
@@ -554,9 +563,11 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M5 3h.01M11 3h.01M5 8h.01M11 8h.01M5 13h.01M11 13h.01" />
                 </svg>
-              </button>
+              </Button>
             ) : null}
-            <button
+            <Button
+              data-busy-behavior="background"
+              unstyled
               className="menu-bar-usage-provider-open"
               type="button"
               aria-label={`${fullName} · ${text.todayToken} ${todayValue}`}
@@ -571,7 +582,7 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                 <strong>{todayValue}</strong>
               </span>
               <Chevron />
-            </button>
+            </Button>
           </div>
         );
       })}
@@ -605,9 +616,9 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
         <h3>{text.overview}</h3>
         <span className="menu-bar-usage-range" role="group" aria-label={text.overview}>
           {overviewRangeOrder.map((entry) => (
-            <button key={entry} type="button" aria-pressed={range === entry} onClick={() => setRange(entry)}>
+            <Button unstyled key={entry} type="button" aria-pressed={range === entry} onClick={() => setRange(entry)}>
               {text.overviewRanges[entry]}
-            </button>
+            </Button>
           ))}
         </span>
       </header>
@@ -823,12 +834,12 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
         </span>
         {!accountSource ? (
           <span className="menu-bar-usage-dimension" role="group" aria-label={text.dimension}>
-            <button type="button" aria-pressed={!costDimension} onClick={() => selectDimension('tokens')}>
+            <Button unstyled type="button" aria-pressed={!costDimension} onClick={() => selectDimension('tokens')}>
               {text.dimensionTokens}
-            </button>
-            <button type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
+            </Button>
+            <Button unstyled type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
               {costLabel}
-            </button>
+            </Button>
           </span>
         ) : null}
       </figcaption>
@@ -978,7 +989,8 @@ function MetricDetailPopover(props: { detail: MetricDetail; language: Language }
 
   return (
     <div ref={controlRef} className="menu-bar-usage-cost-detail-control" onPointerEnter={showFromPointer} onPointerLeave={scheduleHoverClose}>
-      <button
+      <Button
+        unstyled
         ref={triggerRef}
         type="button"
         className="menu-bar-usage-cost-detail-trigger"
@@ -993,7 +1005,7 @@ function MetricDetailPopover(props: { detail: MetricDetail; language: Language }
         }}
       >
         <span aria-hidden="true">?</span>
-      </button>
+      </Button>
     </div>
   );
 }
@@ -1048,8 +1060,8 @@ export function MenuBarUsageCostDetailWindow(props: { initialPayload: MenuBarUsa
       className="menu-bar-usage-root menu-bar-usage-cost-detail-window-root"
       data-appearance={payload.appearance}
       lang={payload.language}
-      onPointerEnter={() => void window.zeus?.cancelHideMenuBarUsageCostDetail?.()}
-      onPointerLeave={() => void window.zeus?.scheduleHideMenuBarUsageCostDetail?.()}
+      onPointerEnter={() => window.zeus?.cancelHideMenuBarUsageCostDetail?.()}
+      onPointerLeave={() => window.zeus?.scheduleHideMenuBarUsageCostDetail?.()}
     >
       <MetricDetailPanel payload={payload} />
     </main>
@@ -1376,7 +1388,7 @@ function readStoredSnapshot(): UsageOverviewSnapshot | null {
 
 function storeSnapshot(value: UsageOverviewSnapshot): void {
   try {
-    localStorage.setItem(snapshotStorageKey, JSON.stringify(value));
+    localStorage.setItem(snapshotStorageKey, JSON.stringify({ ...value, refreshingSources: [] }));
   } catch {
     // 本地快照写入失败不影响当前窗口继续显示实时结果。
   }

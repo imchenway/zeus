@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { RemoteControlApiClient } from '../features/remote/remoteControlApiClient.js';
 import { useRemoteControlFeatureController } from '../features/remote/useRemoteControlFeatureController.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 
 interface CodexRemoteControlSettingsProps {
   language: 'zh-CN' | 'en-US';
@@ -138,27 +139,28 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             {stateLabel}
           </span>
           <span className="settings-row-action-rail">
-            <button type="button" disabled={busy || !props.client} onClick={() => void controller.reload()}>
+            <Button unstyled type="button" disabled={busy || !props.client} onClick={() => controller.reload()}>
               {labels.refresh}
-            </button>
+            </Button>
             {snapshot?.enabled ? (
-              <button
+              <Button
+                unstyled
                 type="button"
                 disabled={busy || !props.client}
                 onClick={() => {
-                  if (window.confirm(labels.disableConfirm)) void controller.disable();
+                  if (window.confirm(labels.disableConfirm)) return controller.disable();
                 }}
               >
                 {labels.disable}
-              </button>
+              </Button>
             ) : (
-              <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void controller.enable()}>
+              <Button unstyled type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => controller.enable()}>
                 {labels.enable}
-              </button>
+              </Button>
             )}
-            <button type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => void controller.startPairing()}>
+            <Button unstyled type="button" disabled={busy || !props.client || standaloneBlocked} onClick={() => controller.startPairing()}>
               {labels.pair}
-            </button>
+            </Button>
           </span>
         </section>
         {managedStandalone ? (
@@ -173,9 +175,9 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
             </span>
             <span className="settings-row-action-rail">
               {!standaloneReady ? (
-                <button type="button" disabled={busy} onClick={() => void copyValue(managedStandalone.installCommand).then(() => controller.setMessage(labels.installCopied))}>
+                <Button unstyled type="button" disabled={busy} onClick={() => copyValue(managedStandalone.installCommand).then(() => controller.setMessage(labels.installCopied))}>
                   {labels.copyInstall}
-                </button>
+                </Button>
               ) : null}
             </span>
           </section>
@@ -213,9 +215,9 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
               </small>
             </span>
             <span className="settings-row-action-rail">
-              <button type="button" onClick={() => void copyValue(pairing.manualPairingCode ?? pairing.pairingCode)}>
+              <Button unstyled type="button" onClick={() => copyValue(pairing.manualPairingCode ?? pairing.pairingCode)}>
                 {labels.copy}
-              </button>
+              </Button>
             </span>
           </section>
         ) : null}
@@ -229,17 +231,18 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
               <span className="remote-device-row" key={device.clientId}>
                 <strong>{device.displayName || device.deviceModel || device.platform || device.clientId}</strong>
                 <small>{[device.platform, device.osVersion, device.appVersion].filter(Boolean).join(' · ')}</small>
-                <button
+                <Button
+                  unstyled
                   type="button"
                   disabled={busy || !snapshot.status.environmentId || !props.client}
                   onClick={() => {
                     if (snapshot.status.environmentId && window.confirm(labels.revokeConfirm)) {
-                      void controller.revoke(snapshot.status.environmentId, device.clientId);
+                      return controller.revoke(snapshot.status.environmentId, device.clientId);
                     }
                   }}
                 >
                   {labels.revoke}
-                </button>
+                </Button>
               </span>
             ))}
           </span>

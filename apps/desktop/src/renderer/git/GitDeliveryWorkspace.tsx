@@ -194,7 +194,8 @@ export function DeliveryRepositoryFileTree(props: {
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
         <span role="group" aria-label={props.zh ? '文件范围' : 'File scope'}>
-          <button
+          <Button
+            unstyled
             type="button"
             className={props.diffScope === 'working' ? 'is-active' : ''}
             aria-pressed={props.diffScope === 'working'}
@@ -203,8 +204,9 @@ export function DeliveryRepositoryFileTree(props: {
             disabled={props.disabled}
           >
             <span>{props.zh ? '本机未提交' : 'Local uncommitted'}</span> <small>{props.totalWorkingFiles}</small>
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
             type="button"
             className={props.diffScope === 'committed' ? 'is-active' : ''}
             aria-pressed={props.diffScope === 'committed'}
@@ -213,7 +215,7 @@ export function DeliveryRepositoryFileTree(props: {
             disabled={props.disabled}
           >
             <span>{props.zh ? '已提交成果' : 'Committed result'}</span> <small>{props.totalCommittedFiles ?? '—'}</small>
-          </button>
+          </Button>
         </span>
       </header>
       <div className="task-git-delivery-file-tree">
@@ -245,7 +247,8 @@ export function DeliveryRepositoryFileTree(props: {
                 </label>
                 <span>
                   {currentConversation ? <small className="task-git-current-conversation-badge">{props.zh ? '当前会话' : 'Current session'}</small> : null}
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     aria-label={copiedBranch === branchGroup.branchName ? (props.zh ? '已复制分支名' : 'Branch name copied') : props.zh ? '复制分支名' : 'Copy branch name'}
                     data-icon-tooltip={copiedBranch === branchGroup.branchName ? (props.zh ? '已复制分支名' : 'Branch name copied') : props.zh ? '复制分支名' : 'Copy branch name'}
@@ -256,7 +259,7 @@ export function DeliveryRepositoryFileTree(props: {
                     disabled={props.disabled}
                   >
                     {copiedBranch === branchGroup.branchName ? <CheckIcon size={14} aria-hidden="true" /> : <CopySimpleIcon size={14} aria-hidden="true" />}
-                  </button>
+                  </Button>
                 </span>
               </header>
               {branchGroup.repositories.map((group) => {
@@ -487,7 +490,9 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
             ) : (
               <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`} onContextMenu={(event) => props.onContextMenu(event, files)} onKeyDown={(event) => props.onKeyDown(event, files)}>
                 {checkbox}
-                <button
+                <Button
+                  data-busy-behavior="background"
+                  unstyled
                   type="button"
                   data-file-path={path}
                   data-icon-tooltip={name}
@@ -495,7 +500,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                   aria-pressed={props.selectedFile === path}
                   onClick={() => {
                     if (props.selectedFile !== path) beginGitDiffSelection(path);
-                    props.onSelect(path);
+                    return props.onSelect(path);
                   }}
                   onPointerEnter={() => props.onPreload?.(path)}
                   onFocus={() => props.onPreload?.(path)}
@@ -506,7 +511,7 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                   <span data-file-status={files[0].status}>{name}</span>
                   {files[0].isSubmodule ? <small>{props.zh ? '子模块' : 'Submodule'}</small> : null}
                   {files[0].additions || files[0].deletions ? <small>{`+${files[0].additions} −${files[0].deletions}`}</small> : null}
-                </button>
+                </Button>
               </div>
             )}
           </li>
@@ -576,7 +581,8 @@ export function DeliveryFeedbackNotice(props: {
     >
       {(props.compactResults || props.feedback.action) && (props.feedback.results?.length || props.feedback.summary) && !props.feedback.onAction ? (
         <>
-          <button
+          <Button
+            unstyled
             ref={resultTrigger}
             type="button"
             className="task-git-delivery-result-trigger"
@@ -598,7 +604,7 @@ export function DeliveryFeedbackNotice(props: {
           >
             <span>{props.feedback.summary ?? props.feedback.text}</span>
             <WarningCircleIcon size={16} aria-hidden="true" />
-          </button>
+          </Button>
           <div
             ref={resultPopover}
             id={resultId}
@@ -620,9 +626,9 @@ export function DeliveryFeedbackNotice(props: {
           <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>
             <span>{props.feedback.text}</span>
             {props.feedback.actionLabel && props.feedback.onAction ? (
-              <button type="button" onClick={props.feedback.onAction}>
+              <Button unstyled type="button" onClick={props.feedback.onAction}>
                 {props.feedback.actionLabel}
-              </button>
+              </Button>
             ) : null}
           </div>
           {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : null}

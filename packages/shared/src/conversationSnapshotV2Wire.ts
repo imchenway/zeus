@@ -1,6 +1,9 @@
 import { parseCanonicalRequestUserInputQuestions } from './requestUserInput.js';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacement } from './conversationTranscriptWire.js';
 
+/** 仅缓存用户可见正文；磁盘读写和界面恢复共用同一格式身份。 */
+export const sessionViewCacheSchemaGeneration = 'zeus-session-visible-content-cache';
+
 /** Snapshot V2 的服务端、桌面端与存储层共用协议代次。 */
 export const conversationSnapshotV2StructureGeneration = '2026-09-16-transcript-placement' as const;
 

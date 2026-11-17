@@ -1,4 +1,5 @@
 import { readSessionViewCache, writeSessionViewCache } from '../apps/desktop/src/main/sessionViewCache.js';
+import { sessionViewCacheSchemaGeneration } from '../packages/shared/src/index.js';
 import { repairTaskAttachmentReferences } from '../packages/local-server/src/taskAttachmentLifecycle.js';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
@@ -97,7 +98,7 @@ async function verifyHomeSummaryAndDisplayCache(): Promise<void> {
   const cacheRoot = join(root, 'display-cache');
   const identity = { projectId: 'project', conversationId: 'conversation' };
   const now = new Date().toISOString();
-  const value = { schemaGeneration: 'zeus-session-display-cache', savedAt: now, entries: [{ ...identity, cachedAt: now, state: { display: '只读显示' } }] };
+  const value = { schemaGeneration: sessionViewCacheSchemaGeneration, savedAt: now, entries: [{ ...identity, cachedAt: now, state: { display: '只读显示' } }] };
   assertProbe(await writeSessionViewCache(cacheRoot, value), '独立缓存应原子写入');
   assertProbe(Boolean(await readSessionViewCache(cacheRoot, identity)) && (await readSessionViewCache(cacheRoot, { ...identity, projectId: 'different' })) === null, '显示缓存必须绑定项目和会话');
   const path = join(cacheRoot, (await readdir(cacheRoot))[0]!);
@@ -212,14 +213,14 @@ async function verifyConversationFileResources(): Promise<void> {
       /** 源码预览实际读取文件，并保留目标行号。 */
       const source = projected.find((resource) => resource.kind === 'file' && resource.iconKind === 'typescript');
       assertProbe(source?.kind === 'file' && source.location?.line === 2, '代码文件链接必须保留行号');
-      const preview = readConversationResourcePreview(source, toConversationResourceOpenIntent(resources.getById(source.id)!));
+      const preview = await readConversationResourcePreview(source, toConversationResourceOpenIntent(resources.getById(source.id)!));
       assertProbe(preview.kind === 'source' && preview.content.includes('value = 7') && preview.location?.line === 2, '代码预览应读取真实文件并定位指定行');
       /** 共享目录保存真实授权目标，预览和绝对路径引用必须指向同一份文件。 */
       const shared = projected.find((resource) => resource.presentation === 'inline' && resource.displayName === '共享');
       assertProbe(shared?.kind === 'file', '共享链接必须登记为正文文件资源');
       const sharedIntent = toConversationResourceOpenIntent(resources.getById(shared.id)!);
       assertProbe(sharedIntent.target.absolutePath === (await realpath(join(root, 'docs', '共享.html'))), '共享链接必须登记文件的真实路径');
-      const sharedPreview = readConversationResourcePreview(shared, sharedIntent);
+      const sharedPreview = await readConversationResourcePreview(shared, sharedIntent);
       assertProbe(sharedIntent.authority.allowedRoot === (await realpath(registeredProjectRoot)) && sharedPreview.kind === 'source' && sharedPreview.content.includes('真实共享内容'), '共享文档必须在已登记项目根内实际读取');
       const absolute = normalizeConversationResources({ ...input, text: `[共享](${join(root, 'docs', '共享.html')})` });
       assertProbe(absolute[0]?.canonicalTargetDigest === resources.getById(shared.id)?.canonicalTargetDigest, '绝对路径和相对路径必须登记同一授权目标');

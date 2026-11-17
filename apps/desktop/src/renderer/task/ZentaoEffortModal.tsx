@@ -113,7 +113,7 @@ export function ZentaoEffortModal(props: {
       submitLabel={zh ? '登记工时' : 'Record hours'}
       submitDisabled={loading || !snapshot || unknown}
       onClose={props.onClose}
-      onSubmit={(event) => void submit(event)}
+      onSubmit={(event) => submit(event)}
     >
       <div className="zentao-effort-task">
         <div>

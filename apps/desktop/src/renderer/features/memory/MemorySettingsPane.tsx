@@ -118,12 +118,12 @@ export function MemorySettingsPane(props: {
 
       {!props.fixedScope ? (
         <div className="memory-scope-controls" role="group" aria-label={zh ? '记忆范围' : 'Memory scope'}>
-          <button type="button" aria-pressed={scopeKind === 'global'} onClick={() => setScopeKind('global')}>
+          <Button unstyled type="button" aria-pressed={scopeKind === 'global'} onClick={() => setScopeKind('global')}>
             {zh ? '全局' : 'Global'}
-          </button>
-          <button type="button" aria-pressed={scopeKind === 'project'} disabled={props.projects.length === 0} onClick={() => setScopeKind('project')}>
+          </Button>
+          <Button unstyled type="button" aria-pressed={scopeKind === 'project'} disabled={props.projects.length === 0} onClick={() => setScopeKind('project')}>
             {zh ? '项目' : 'Project'}
-          </button>
+          </Button>
           {scopeKind === 'project' ? (
             <ZeusSelect
               size="regular"
@@ -134,9 +134,9 @@ export function MemorySettingsPane(props: {
               options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
             />
           ) : null}
-          <button type="button" onClick={() => void controller.reload()} disabled={controller.snapshot.phase === 'loading'}>
+          <Button unstyled type="button" onClick={() => controller.reload()} disabled={controller.snapshot.phase === 'loading'}>
             {zh ? '刷新' : 'Refresh'}
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -160,7 +160,7 @@ export function MemorySettingsPane(props: {
                   busy={busy}
                   onChange={setDraft}
                   onCancel={() => setEditor(null)}
-                  onSubmit={() => void submit()}
+                  onSubmit={() => submit()}
                 />
                 {formError ? (
                   <p role="alert" className="settings-field-error">
@@ -182,12 +182,12 @@ export function MemorySettingsPane(props: {
             <input value={tombstoneReason} onChange={(event) => setTombstoneReason(event.currentTarget.value)} maxLength={2048} />
           </label>
           <span className="memory-inline-actions">
-            <button type="button" onClick={() => setTombstoneTarget(null)} disabled={busy}>
+            <Button unstyled type="button" onClick={() => setTombstoneTarget(null)} disabled={busy}>
               {zh ? '取消' : 'Cancel'}
-            </button>
-            <button type="button" className="is-danger" onClick={() => void tombstone()} disabled={busy || !tombstoneReason.trim()}>
+            </Button>
+            <Button unstyled type="button" className="is-danger" onClick={() => tombstone()} disabled={busy || !tombstoneReason.trim()}>
               {zh ? '确认停用' : 'Disable memory'}
-            </button>
+            </Button>
           </span>
         </section>
       ) : null}
@@ -213,12 +213,12 @@ export function MemorySettingsPane(props: {
                   <small>{memoryStatusLabel(status, zh)}</small>
                 </span>
                 <span className="memory-record-actions">
-                  <button type="button" disabled={busy || record.tombstone || status === 'superseded'} onClick={() => openSupersede(record)}>
+                  <Button unstyled type="button" disabled={busy || record.tombstone || status === 'superseded'} onClick={() => openSupersede(record)}>
                     {zh ? '修正' : 'Correct'}
-                  </button>
-                  <button type="button" disabled={busy || record.tombstone || status === 'superseded'} onClick={() => setTombstoneTarget(record)}>
+                  </Button>
+                  <Button unstyled type="button" disabled={busy || record.tombstone || status === 'superseded'} onClick={() => setTombstoneTarget(record)}>
                     {zh ? '停用' : 'Disable'}
-                  </button>
+                  </Button>
                 </span>
               </header>
               <p>{record.content}</p>
@@ -275,9 +275,9 @@ export function MemorySettingsPane(props: {
         })}
       </div>
       {controller.snapshot.nextCursor ? (
-        <button type="button" className="memory-load-more" disabled={controller.snapshot.loadingMore} onClick={() => void controller.loadMore()}>
+        <Button unstyled type="button" className="memory-load-more" disabled={controller.snapshot.loadingMore} onClick={() => controller.loadMore()}>
           {controller.snapshot.loadingMore ? (zh ? '正在读取…' : 'Loading…') : zh ? '加载更早记录' : 'Load older records'}
-        </button>
+        </Button>
       ) : null}
     </section>
   );
@@ -373,12 +373,12 @@ function MemoryEditor(props: {
         </label>
       ) : null}
       <span className="memory-inline-actions">
-        <button type="button" onClick={props.onCancel} disabled={props.busy}>
+        <Button unstyled type="button" onClick={props.onCancel} disabled={props.busy}>
           {zh ? '取消' : 'Cancel'}
-        </button>
-        <button type="button" onClick={props.onSubmit} disabled={props.busy || (props.draft.effect === 'external_state' && !props.draft.externalStateConfirmed)}>
+        </Button>
+        <Button unstyled type="button" onClick={props.onSubmit} disabled={props.busy || (props.draft.effect === 'external_state' && !props.draft.externalStateConfirmed)}>
           {props.mode === 'create' ? (zh ? '新增记忆' : 'Add memory') : zh ? '保存为新版本' : 'Save as new version'}
-        </button>
+        </Button>
       </span>
     </fieldset>
   );

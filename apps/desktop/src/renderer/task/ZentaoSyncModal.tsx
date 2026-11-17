@@ -198,7 +198,7 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
           </Button>
         </header>
         {confirming ? (
-          <ConfirmImportView zh={zh} items={selectedItems} projectName={props.projectName} busy={busy} onBack={() => setConfirming(false)} onConfirm={() => void importSelected()} />
+          <ConfirmImportView zh={zh} items={selectedItems} projectName={props.projectName} busy={busy} onBack={() => setConfirming(false)} onConfirm={() => importSelected()} />
         ) : (
           <>
             <div className="zentao-sync-modal-body">
@@ -625,7 +625,7 @@ export function ZentaoPushModal(props: ZentaoPushModalProps) {
             </Button>
           ) : null}
           {!result ? (
-            <Button variant="primary" onClick={() => (confirming ? void syncTask() : setConfirming(true))} disabled={!ready || busy || unknown}>
+            <Button variant="primary" onClick={() => (confirming ? syncTask() : setConfirming(true))} disabled={!ready || busy || unknown}>
               {busy ? (zh ? '正在同步…' : 'Syncing…') : confirming ? (zh ? '确认同步' : 'Confirm sync') : zh ? '检查同步内容' : 'Review sync'}
             </Button>
           ) : null}

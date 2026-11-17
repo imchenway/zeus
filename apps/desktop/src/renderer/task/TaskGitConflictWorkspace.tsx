@@ -196,11 +196,11 @@ export function TaskGitConflictWorkspace(props: {
           <small>{props.zh ? `当前文件 ${unresolvedCount} 个待处理` : `${unresolvedCount} unresolved in current file`}</small>
         </header>
         {props.integration.conflictFiles.map((path) => (
-          <button key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
+          <Button unstyled key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
             <FileTypeIcon name={path} />
             <span data-file-status="conflict">{path}</span>
             <small>{path === props.conflictPath ? (currentFileResolved ? (props.zh ? '已处理' : 'Processed') : props.zh ? `${unresolvedCount} 个冲突` : `${unresolvedCount} conflicts`) : props.zh ? '待处理' : 'Pending'}</small>
-          </button>
+          </Button>
         ))}
       </aside>
       <main className="task-git-conflict-editor">
@@ -211,7 +211,8 @@ export function TaskGitConflictWorkspace(props: {
           </span>
           <span>
             <span className="task-git-conflict-navigation" aria-label={props.zh ? '冲突导航' : 'Conflict navigation'}>
-              <button
+              <Button
+                unstyled
                 type="button"
                 onClick={() => selectAdjacentBlock(-1)}
                 disabled={props.busy || selectedBlockIndex <= 0}
@@ -219,9 +220,10 @@ export function TaskGitConflictWorkspace(props: {
                 data-icon-tooltip={props.zh ? '上一个冲突' : 'Previous conflict'}
               >
                 <ArrowLeft aria-hidden="true" />
-              </button>
+              </Button>
               <small>{blocks.length > 0 ? `${Math.min(selectedBlockIndex + 1, blocks.length)} / ${blocks.length}` : '0 / 0'}</small>
-              <button
+              <Button
+                unstyled
                 type="button"
                 onClick={() => selectAdjacentBlock(1)}
                 disabled={props.busy || selectedBlockIndex >= blocks.length - 1}
@@ -229,15 +231,15 @@ export function TaskGitConflictWorkspace(props: {
                 data-icon-tooltip={props.zh ? '下一个冲突' : 'Next conflict'}
               >
                 <ArrowRight aria-hidden="true" />
-              </button>
+              </Button>
             </span>
             <span className="task-git-conflict-view-switch" aria-label={props.zh ? '文件视图' : 'File view'}>
-              <button type="button" className={viewMode === 'focused' ? 'is-active' : ''} onClick={() => setViewMode('focused')} disabled={!document}>
+              <Button unstyled type="button" className={viewMode === 'focused' ? 'is-active' : ''} onClick={() => setViewMode('focused')} disabled={!document}>
                 {props.zh ? '当前冲突' : 'Current conflict'}
-              </button>
-              <button type="button" className={viewMode === 'full' ? 'is-active' : ''} onClick={() => setViewMode('full')} disabled={!document}>
+              </Button>
+              <Button unstyled type="button" className={viewMode === 'full' ? 'is-active' : ''} onClick={() => setViewMode('full')} disabled={!document}>
                 {props.zh ? '完整文件' : 'Full file'}
-              </button>
+              </Button>
             </span>
             <Button
               variant="secondary"
@@ -329,7 +331,7 @@ export function TaskGitConflictWorkspace(props: {
                   <Button variant="secondary" size="regular" onClick={() => setAiPermissionOpen(false)} disabled={props.aiBusy}>
                     {props.zh ? '取消' : 'Cancel'}
                   </Button>
-                  <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => void askAi()}>
+                  <Button variant="primary" size="regular" busy={props.aiBusy} onClick={() => askAi()}>
                     {props.zh ? `以${aiPermissionMode === 'auto' ? '请求批准' : '完全访问'}权限开始` : `Start with ${aiPermissionMode === 'auto' ? 'request approval' : 'full access'}`}
                   </Button>
                 </footer>

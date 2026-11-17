@@ -124,6 +124,7 @@ export function GlobalAgentSettingsPane(props: {
           <Button
             size="compact"
             variant="secondary"
+            busy={busy === 'loading'}
             disabled={busy !== null}
             onClick={() =>
               props.onRequestLeave(() => {
@@ -135,9 +136,10 @@ export function GlobalAgentSettingsPane(props: {
           </Button>
           <Button
             size="compact"
+            busy={busy === 'saving'}
             disabled={busy !== null || !snapshot || (!dirty && snapshot.exists)}
             onClick={() => {
-              void save();
+              return save();
             }}
           >
             {zh ? '保存' : 'Save'}
@@ -192,7 +194,7 @@ export function GlobalAgentSettingsPane(props: {
               readOnly={busy !== null}
               onChange={setDraft}
               onSave={() => {
-                void save();
+                return save();
               }}
             />
           </div>

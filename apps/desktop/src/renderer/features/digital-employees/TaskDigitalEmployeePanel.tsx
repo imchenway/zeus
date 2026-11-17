@@ -417,8 +417,8 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
               readOnly={props.terminalReadOnly}
               language={props.language}
               onOpenConversation={openConversation}
-              onRetry={(item) => void act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
-              onCancel={(item) => void act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
+              onRetry={(item) => act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
+              onCancel={(item) => act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
             />
           ) : null}
         </div>
@@ -621,7 +621,7 @@ function ManagerInbox(props: {
       </header>
       <div>
         {props.requests.map((request) => (
-          <button key={request.id} type="button" disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.(request.conversationId)}>
+          <Button unstyled key={request.id} type="button" disabled={!props.onOpenConversation} onClick={() => props.onOpenConversation?.(request.conversationId)}>
             <span aria-hidden="true">
               <ChatCircle size={19} />
             </span>
@@ -631,10 +631,10 @@ function ManagerInbox(props: {
               <time>{formatDateTime(request.createdAt, props.language)}</time>
             </span>
             <CaretRightIcon size={15} aria-hidden="true" />
-          </button>
+          </Button>
         ))}
         {props.decisions.map((decision) => (
-          <button key={decision.id} type="button" onClick={() => props.onSelect(decision)}>
+          <Button unstyled key={decision.id} type="button" onClick={() => props.onSelect(decision)}>
             <span aria-hidden="true">
               {decision.kind === 'deliverable_acceptance' ? <CheckCircle size={19} /> : decision.kind === 'outcome_unknown' || decision.kind === 'command_failure' ? <WarningCircle size={19} /> : <ChatCircle size={19} />}
             </span>
@@ -644,7 +644,7 @@ function ManagerInbox(props: {
               <time>{formatDateTime(decision.createdAt, props.language)}</time>
             </span>
             <CaretRightIcon size={15} aria-hidden="true" />
-          </button>
+          </Button>
         ))}
       </div>
     </aside>
@@ -710,9 +710,9 @@ function EvidenceView(props: { refs: Array<Record<string, unknown>>; items: Task
         );
         const key = `${String(ref.kind)}:${String(ref.id)}:${index}`;
         return commandId || (conversationId && props.onOpenConversation) ? (
-          <button key={key} type="button" onClick={() => (commandId ? props.onOpenCommand(commandId) : props.onOpenConversation?.(conversationId!))}>
+          <Button unstyled key={key} type="button" onClick={() => (commandId ? props.onOpenCommand(commandId) : props.onOpenConversation?.(conversationId!))}>
             {content}
-          </button>
+          </Button>
         ) : (
           <article key={key}>{content}</article>
         );
@@ -820,7 +820,7 @@ export function TaskDigitalEmployeeExecutor(props: {
               setSelectedEmployee(employee);
               return;
             }
-            void props.management.act('start-executor', async () => {
+            return props.management.act('start-executor', async () => {
               /** 同一接纳入口先预检，配置或输入缺失时不停止旧工作。 */
               const preview = await props.client!.previewTaskWorkItem(props.taskId, { employeeId, workspace: { mode: 'create' }, replaceActiveWork: true });
               if (preview.blockers.length) throw new Error(preview.blockers.map((blocker) => blocker.message).join('\n'));
@@ -849,7 +849,7 @@ export function TaskDigitalEmployeeExecutor(props: {
       ) : props.management.loadState === 'loading' ? (
         <span role="status">{zh ? '正在读取员工…' : 'Loading employees…'}</span>
       ) : props.management.loadState === 'failed' ? (
-        <Button variant="secondary" size="compact" onClick={() => void props.management.load()}>
+        <Button variant="secondary" size="compact" onClick={() => props.management.load()}>
           {zh ? '重新读取员工' : 'Reload employees'}
         </Button>
       ) : props.onManageEmployees ? (
@@ -1268,7 +1268,7 @@ function TaskEmployeeRunDialog(props: {
               size="regular"
               busy={props.busy || inputResources.processing}
               disabled={!preview || previewBusy || inputResources.processing || preview.blockers.length > 0 || Boolean(capabilityError || supplementalResourceError)}
-              onClick={() => void submit()}
+              onClick={() => submit()}
             >
               {zh ? '指派并开始' : 'Assign and start'}
             </Button>
@@ -1593,37 +1593,37 @@ function DecisionDialog(props: {
                       reasonRef.current?.scrollIntoView({ block: 'center' });
                       return;
                     }
-                    void props.onRequestChanges(deliverable, reason.trim());
+                    return props.onRequestChanges(deliverable, reason.trim());
                   }}
                 >
                   {zh ? '要求修改' : 'Request changes'}
                 </Button>
-                <Button variant="primary" size="compact" busy={props.busy && !reason} disabled={deliverableContent === null || !reviewReady} onClick={() => void props.onAccept(deliverable)}>
+                <Button variant="primary" size="compact" busy={props.busy && !reason} disabled={deliverableContent === null || !reviewReady} onClick={() => props.onAccept(deliverable)}>
                   {zh ? '接受交付物' : 'Accept deliverable'}
                 </Button>
               </>
             ) : null}
             {props.decision.kind === 'command_confirmation' ? (
-              <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ parameters: commandParameters })}>
+              <Button variant="primary" size="compact" busy={props.busy} onClick={() => props.onRespond({ parameters: commandParameters })}>
                 {zh ? '确认并启动命令' : 'Confirm and start command'}
               </Button>
             ) : null}
             {props.decision.kind === 'outcome_unknown' ? (
               <>
-                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_failed' })}>
+                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'mark_failed' })}>
                   {zh ? '确认失败' : 'Mark failed'}
                 </Button>
-                <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'mark_succeeded' })}>
+                <Button variant="primary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'mark_succeeded' })}>
                   {zh ? '确认成功' : 'Mark succeeded'}
                 </Button>
               </>
             ) : null}
             {props.decision.kind === 'command_failure' ? (
               <>
-                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'cancel' })}>
+                <Button variant="secondary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'cancel' })}>
                   {zh ? '取消工作项' : 'Cancel work item'}
                 </Button>
-                <Button variant="primary" size="compact" busy={props.busy} onClick={() => void props.onRespond({ action: 'retry' })}>
+                <Button variant="primary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'retry' })}>
                   {zh ? '创建新尝试' : 'Create new attempt'}
                 </Button>
               </>

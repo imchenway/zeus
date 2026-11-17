@@ -11,6 +11,7 @@ import { BranchSwitcher } from '../git/GitRepositoryControls.js';
 import { Button } from '../ui/Button.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { Form } from '../ui/Form.js';
 
 export interface NewConversationExecutionContextProps {
   language: SessionUiLanguage;
@@ -412,7 +413,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                       size="compact"
                       busy={refreshing}
                       disabled={props.disabled || projectBusy || branchBusy || !scopedRepositories.some((repository) => repository.snapshot.remotes.length) || !props.onExecuteProjectGit}
-                      onClick={() => void executeBranchAction({ type: 'fetch' })}
+                      onClick={() => executeBranchAction({ type: 'fetch' })}
                     >
                       {zh ? '刷新远程分支' : 'Refresh remote branches'}
                     </Button>
@@ -442,7 +443,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                       : { ...props.worktree, branchName: props.worktree.branchName.trim() || branchName },
                   );
                 }
-                props.onCreateTaskChange(event.currentTarget.checked);
+                return props.onCreateTaskChange(event.currentTarget.checked);
               }}
               disabled={props.disabled}
             />
@@ -454,13 +455,13 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       <MotionPresence>
         {createBranchOpen && selectedRepository ? (
           <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" dismissDisabled={branchBusy} onDismiss={closeCreateBranchDialog} role="dialog" aria-label={zh ? '新建分支' : 'New branch'}>
-            <form
+            <Form
               className="project-git-reference-dialog zeus-solid-form-surface"
               onSubmit={(event) => {
                 event.preventDefault();
                 const branchName = createBranchName.trim();
                 if (!branchName) return;
-                void executeBranchAction({ type: 'create_branch', branchName, baseRef: selectedRepository.snapshot.detached ? undefined : selectedRepository.snapshot.branch }).then((created) => {
+                return executeBranchAction({ type: 'create_branch', branchName, baseRef: selectedRepository.snapshot.detached ? undefined : selectedRepository.snapshot.branch }).then((created) => {
                   if (created) closeCreateBranchDialog();
                 });
               }}
@@ -492,7 +493,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                   {zh ? '创建并检出' : 'Create and Checkout'}
                 </Button>
               </footer>
-            </form>
+            </Form>
           </ModalPortal>
         ) : null}
       </MotionPresence>

@@ -6,6 +6,7 @@ import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
 import type { PluginSkillReference } from './sessionTypes.js';
 import { MarkdownComposerEditor, type ComposerInputHandle } from './MarkdownComposerEditor.js';
+import { Button } from '../ui/Button.js';
 
 type StructuredTokenKind = 'expert' | 'skill' | 'plugin' | 'plugin-skill' | 'computer';
 
@@ -386,15 +387,15 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         onCompositionStart={() => {
           composingRef.current = true;
           setTrigger(null);
-          props.onCompositionStart?.();
+          return props.onCompositionStart?.();
         }}
         onCompositionEnd={(value) => {
           composingRef.current = false;
-          props.onCompositionEnd?.(value);
+          return props.onCompositionEnd?.(value);
         }}
         onBlur={(value) => {
           composingRef.current = false;
-          props.onBlur?.(value);
+          return props.onBlur?.(value);
         }}
       />
       {tokens.some((token) => token.kind === 'expert') ? (
@@ -414,14 +415,15 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
                 <div key={token.id} className="expert-round-member">
                   {employee ? <DigitalEmployeeAvatar {...employee} /> : null}
                   <span>{employee?.name ?? token.label}</span>
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     disabled={props.disabled}
                     aria-label={zh ? `移除${employee?.name ?? token.label}` : `Remove ${employee?.name ?? token.label}`}
                     onClick={() => updateValue(`${props.value.slice(0, token.start)}${props.value.slice(token.end)}`, token.start)}
                   >
                     {zh ? '移除' : 'Remove'}
-                  </button>
+                  </Button>
                 </div>
               );
             })}

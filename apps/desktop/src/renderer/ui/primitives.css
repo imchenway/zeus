@@ -4,14 +4,14 @@
   --zeus-field-focus-line: var(--zeus-brand-text);
   /* 文本输入只改变原有边界，不叠加第二层焦点圈或改变尺寸。 */
   --zeus-field-focus: none;
-  --zeus-motion-duration-state: 120ms;
-  --zeus-motion-duration-object: 180ms;
-  --zeus-motion-duration-workspace: 240ms;
-  --zeus-motion-duration-layer-enter: 220ms;
-  --zeus-motion-duration-layer-exit: 170ms;
+  --zeus-motion-duration-state: 80ms;
+  --zeus-motion-duration-object: 160ms;
+  --zeus-motion-duration-workspace: 160ms;
+  --zeus-motion-duration-layer-enter: 160ms;
+  --zeus-motion-duration-layer-exit: 120ms;
   --zeus-motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --zeus-motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --zeus-button-motion: 120ms var(--zeus-motion-ease-out);
+  --zeus-button-motion: 80ms var(--zeus-motion-ease-out);
   --zeus-control-danger-focus: 0 0 0 2px color-mix(in oklch, var(--zeus-control-danger-line) 42%, transparent);
   --zeus-overlay-backdrop-bg: oklch(18% 0.006 255 / 0.22);
   --zeus-overlay-backdrop-filter: blur(4px) saturate(0.96);
@@ -142,8 +142,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 @keyframes zeus-workspace-focus-enter {
   from {
-    opacity: 0.62;
-    transform: translate3d(0, 10px, 0) scale(0.998);
+    opacity: 0.94;
+    transform: translate3d(0, 4px, 0);
   }
 
   to {
@@ -694,7 +694,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition:
     background-color var(--zeus-button-motion),
     border-color var(--zeus-button-motion),
-    color var(--zeus-button-motion);
+    color var(--zeus-button-motion),
+    scale var(--zeus-button-motion);
   white-space: nowrap;
 }
 
@@ -744,6 +745,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 .macos-ai-app .zeus-button[data-zeus-primitive='button']:active:not(:disabled) {
   background: var(--zeus-interaction-pressed);
+  scale: 0.98;
+  transition-duration: 40ms;
 }
 
 /* 主操作与危险操作的按下态继续保持白字对比和风险含义。 */
@@ -1628,6 +1631,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .macos-ai-app {
+    --zeus-motion-duration-state: 0ms;
+    --zeus-motion-duration-object: 0ms;
+    --zeus-motion-duration-workspace: 0ms;
+    --zeus-motion-duration-layer-enter: 0ms;
+    --zeus-motion-duration-layer-exit: 0ms;
+  }
+  .macos-ai-app .zeus-button[data-zeus-primitive='button'] {
+    scale: none;
+  }
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'],
   .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] .zeus-modal-backdrop > :is([role='dialog'], [role='alertdialog'], [data-modal-surface='dialog'], [data-modal-surface='alertdialog']) {
     transition: none !important;

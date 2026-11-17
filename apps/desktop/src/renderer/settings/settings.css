@@ -829,6 +829,14 @@
     background: transparent;
     max-block-size: 560px;
   }
+  /* 目录冷读只占列表原有行高，编辑器保持可输入。 */
+  .model-connection-list-loading {
+    position: relative;
+    display: block;
+    block-size: 66px;
+    border-radius: 6px;
+    overflow: hidden;
+  }
   .model-connection-list > button {
     display: grid;
     justify-content: stretch;
@@ -857,6 +865,7 @@
     font-style: normal;
   }
   .model-connection-editor {
+    animation: zeus-settings-content-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
     display: grid;
     align-content: start;
     gap: 18px;

@@ -2,6 +2,7 @@ import { useId, type FormEvent, type ReactNode } from 'react';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { Button } from './Button.js';
 import { ModalPortal } from './ModalPortal.js';
+import { Form } from './Form.js';
 
 /** 表单操作共用标题、滚动表单和操作区，焦点与关闭行为交给全局弹窗。 */
 export function FormDialog(props: {
@@ -22,7 +23,7 @@ export function FormDialog(props: {
   const id = useId();
   return (
     <ModalPortal dismissDisabled={props.busy} onDismiss={props.onClose} role={props.danger ? 'alertdialog' : 'dialog'} aria-labelledby={`${id}-title`} aria-describedby={props.description ? `${id}-description` : undefined}>
-      <form className={['zeus-form-dialog zeus-solid-form-surface', props.className].filter(Boolean).join(' ')} onSubmit={props.onSubmit} data-modal-surface={props.danger ? 'alertdialog' : 'dialog'}>
+      <Form className={['zeus-form-dialog zeus-solid-form-surface', props.className].filter(Boolean).join(' ')} onSubmit={props.onSubmit} data-modal-surface={props.danger ? 'alertdialog' : 'dialog'}>
         <header>
           <h2 id={`${id}-title`}>{props.title}</h2>
           <Button className="zeus-form-dialog-close" aria-label={props.zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
@@ -45,7 +46,7 @@ export function FormDialog(props: {
             <span role="status">{props.busy ? (props.zh ? '处理中…' : 'Working…') : props.submitLabel}</span>
           </Button>
         </footer>
-      </form>
+      </Form>
     </ModalPortal>
   );
 }

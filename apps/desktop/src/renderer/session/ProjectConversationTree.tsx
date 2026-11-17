@@ -22,6 +22,7 @@ import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
 import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 import { ConversationContextMenu, type ConversationContextMenuLanguage } from './ConversationContextMenu.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -200,13 +201,16 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       return (
         <li className="session-conversation-tree-item" key={navigationId} data-conversation-motion-id={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
-          <button
+          <Button
+            data-busy-behavior="background"
+            unstyled
             type="button"
             className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
             aria-current={current ? 'page' : undefined}
             aria-haspopup={conversation.taskPushCreating ? undefined : 'menu'}
             aria-expanded={contextMenuState?.conversation.id === conversation.id}
             aria-busy={archivingConversationId === conversation.id}
+            disabled={archivingConversationId === conversation.id}
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
@@ -214,7 +218,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
                 beginConversationNavigationTrace(conversation.projectId, conversation.id);
               }
-              props.onSelectConversation(conversation);
+              return props.onSelectConversation(conversation);
             }}
             onContextMenu={(event) => handleContextMenu(event, conversation)}
             onKeyDown={(event) => {
@@ -242,7 +246,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             </span>
             {/* 归档进度复用行末状态位置，完成后恢复会话自身状态。 */}
             {archivingConversationId === conversation.id ? <ConversationStatusIcon status="running" label={copy.archiving} /> : <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />}
-          </button>
+          </Button>
           {archiveError?.conversationId === conversation.id ? (
             <span className="session-conversation-row-error" role="alert">
               <VisibleApplicationError error={archiveError.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -262,9 +266,9 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             <ul className="session-conversation-project-items">{renderConversationItems(visibleConversations)}</ul>
             {visibleConversations.length === 0 && props.showEmptyState !== false ? <p className="session-conversation-project-empty">{copy.empty}</p> : null}
             {!normalizedQuery && props.onShowMore && visibleConversations.length < conversations.length ? (
-              <button type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
+              <Button unstyled type="button" className="session-conversation-show-more" onClick={props.onShowMore}>
                 {copy.showMore}
-              </button>
+              </Button>
             ) : null}
           </section>
         ))}
@@ -385,7 +389,8 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
         <strong>{props.project.projectName}</strong>
       </span>
       <div ref={rootRef} className="session-conversation-create-control">
-        <button
+        <Button
+          unstyled
           ref={triggerRef}
           type="button"
           aria-label={`${copy.newThread}: ${props.project.projectName}`}
@@ -395,10 +400,11 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
           onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
         >
           <Plus aria-hidden="true" />
-        </button>
+        </Button>
         <div className="session-conversation-task-menu" role="menu" inert={!menuOpen} aria-hidden={!menuOpen} aria-label={copy.selectTask} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
           {props.project.tasks.map((task, index) => (
-            <button
+            <Button
+              unstyled
               key={task.taskId}
               ref={(element) => {
                 itemRefs.current[index] = element;
@@ -407,12 +413,12 @@ function ProjectConversationHeader(props: { project: ProjectConversationGroup; l
               role="menuitem"
               onClick={() => {
                 setMenuOpen(false);
-                props.onStartConversation(task.taskId);
+                return props.onStartConversation(task.taskId);
               }}
             >
               <strong>{task.taskCode}</strong>
               <span>{task.taskTitle}</span>
-            </button>
+            </Button>
           ))}
         </div>
       </div>

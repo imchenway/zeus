@@ -578,16 +578,16 @@ function InlineTaskTextField(props: {
               <Button variant="secondary" size="compact" disabled={saveState.kind === 'saving' || props.resourcesProcessing} onPointerDown={(event) => event.preventDefault()} onClick={cancelEditing}>
                 {props.copy === taskEditCopies['zh-CN'] ? '取消' : 'Cancel'}
               </Button>
-              <Button variant="primary" size="compact" busy={saveState.kind === 'saving'} disabled={props.resourcesProcessing} onPointerDown={(event) => event.preventDefault()} onClick={() => void commitDraft()}>
+              <Button variant="primary" size="compact" busy={saveState.kind === 'saving'} disabled={props.resourcesProcessing} onPointerDown={(event) => event.preventDefault()} onClick={() => commitDraft()}>
                 {props.copy === taskEditCopies['zh-CN'] ? '保存' : 'Save'}
               </Button>
             </span>
           ) : null}
         </span>
       ) : (
-        <button type="button" className="task-inline-edit-trigger" onClick={beginEditing} disabled={props.disabled} aria-label={props.label}>
+        <Button unstyled type="button" className="task-inline-edit-trigger" onClick={beginEditing} disabled={props.disabled} aria-label={props.label}>
           {props.display}
-        </button>
+        </Button>
       )}
       <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
     </span>
@@ -683,7 +683,7 @@ function TaskImmediateSelect<T extends string>(props: {
             setSaveState({ kind: 'error', message: props.copy.saveFailed });
             return;
           }
-          void saveValue(value, expectedUpdatedAt);
+          return saveValue(value, expectedUpdatedAt);
         }}
         disabled={props.disabled || saveState.kind === 'saving'}
         searchable={false}
@@ -741,7 +741,7 @@ function TaskProjectMoveDialog(props: Pick<TaskDetailPaneContentProps, 'task' | 
       onClose={props.onClose}
       onSubmit={(event) => {
         event.preventDefault();
-        void moveTask();
+        return moveTask();
       }}
     >
       <label>
@@ -1167,7 +1167,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             copy={props.copy}
             editCopy={editCopy}
             disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
-            onRemove={(path) => void removeAttachment(path)}
+            onRemove={(path) => removeAttachment(path)}
             onLoadPreview={props.onLoadAttachmentPreview}
             onOpenAttachment={props.onOpenAttachment}
           />
@@ -1266,7 +1266,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                   size="regular"
                   onClick={() => {
                     moreActionsRef.current?.hidePopover();
-                    props.onOpenCodeDelivery?.(props.task.id);
+                    return props.onOpenCodeDelivery?.(props.task.id);
                   }}
                   busy={props.busy}
                 >
@@ -1313,11 +1313,12 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 {zh ? '移动到其他项目…' : 'Move to another project…'}
               </Button>
               <Button
+                data-busy-behavior="background"
                 variant="secondary"
                 size="regular"
                 onClick={() => {
                   moreActionsRef.current?.hidePopover();
-                  props.onCopyTask(props.task);
+                  return props.onCopyTask(props.task);
                 }}
                 disabled={props.busy}
               >
@@ -1329,7 +1330,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 size="regular"
                 onClick={() => {
                   moreActionsRef.current?.hidePopover();
-                  props.onDeleteTask(props.task.id);
+                  return props.onDeleteTask(props.task.id);
                 }}
                 disabled={props.busy}
               >
@@ -1361,10 +1362,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               <ul className="task-detail-linked-list">
                 {conversations.map((conversation) => (
                   <li key={conversation.id}>
-                    <button type="button" className="task-detail-linked-task" onClick={() => props.onOpenConversation(props.task.id, conversation.id)}>
+                    <Button unstyled type="button" className="task-detail-linked-task" onClick={() => props.onOpenConversation(props.task.id, conversation.id)}>
                       <span>{conversation.title}</span>
                       {conversation.archived ? <small>{props.copy.archivedConversation}</small> : null}
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -1417,7 +1418,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                   copy={props.copy}
                   editCopy={editCopy}
                   disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
-                  onRemove={(path) => void removeAttachment(path)}
+                  onRemove={(path) => removeAttachment(path)}
                   onLoadPreview={props.onLoadAttachmentPreview}
                   onOpenAttachment={props.onOpenAttachment}
                 />
@@ -1480,7 +1481,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                   searchPlaceholder={zh ? '搜索任务' : 'Search tasks'}
                   emptyLabel={zh ? '没有可关联的任务' : 'No tasks available to link'}
                   popoverMinWidth={300}
-                  onChange={(taskId) => void saveRelationships({ relatedTaskIds: [...(props.task.relatedTaskIds ?? []), taskId] })}
+                  onChange={(taskId) => saveRelationships({ relatedTaskIds: [...(props.task.relatedTaskIds ?? []), taskId] })}
                   disabled={props.busy || relationshipSaveState.kind === 'saving'}
                 />
                 <Button className="task-detail-text-action" variant="secondary" size="compact" onClick={() => props.onCreateChild(props.task.id)} disabled={props.busy}>
@@ -1500,7 +1501,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 options={[{ value: '', label: zh ? '根任务' : 'Root task' }, ...validParentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
                 searchPlaceholder={zh ? '搜索任务' : 'Search tasks'}
                 popoverMinWidth={300}
-                onChange={(parentTaskId) => void saveRelationships({ parentTaskId: parentTaskId || null })}
+                onChange={(parentTaskId) => saveRelationships({ parentTaskId: parentTaskId || null })}
                 disabled={props.busy || relationshipSaveState.kind === 'saving'}
               />
               {currentTaskDepth > 1 ? <small>{zh ? `第 ${currentTaskDepth} 级` : `Level ${currentTaskDepth}`}</small> : null}
@@ -1513,10 +1514,17 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 <ul className="task-detail-linked-list">
                   {directChildren.map((task) => (
                     <li key={task.id}>
-                      <button type="button" className="task-detail-linked-task" onClick={() => props.onOpenRelatedTask(task.id)} aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}>
+                      <Button
+                        data-busy-behavior="background"
+                        unstyled
+                        type="button"
+                        className="task-detail-linked-task"
+                        onClick={() => props.onOpenRelatedTask(task.id)}
+                        aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}
+                      >
                         <small>{task.taskCode ?? task.id}</small>
                         <span>{task.title}</span>
-                      </button>
+                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -1530,17 +1538,24 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 <ul className="task-detail-linked-list">
                   {relatedTasks.map((task) => (
                     <li key={task.id}>
-                      <button type="button" className="task-detail-linked-task" onClick={() => props.onOpenRelatedTask(task.id)} aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}>
+                      <Button
+                        data-busy-behavior="background"
+                        unstyled
+                        type="button"
+                        className="task-detail-linked-task"
+                        onClick={() => props.onOpenRelatedTask(task.id)}
+                        aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}
+                      >
                         <small>{task.taskCode ?? task.id}</small>
                         <span>{task.title}</span>
-                      </button>
+                      </Button>
                       <Button
                         className="task-detail-unlink"
                         variant="secondary"
                         size="compact"
                         aria-label={zh ? `解除关联：${task.title}` : `Unlink task: ${task.title}`}
                         title={zh ? '解除关联' : 'Unlink task'}
-                        onClick={() => void saveRelationships({ relatedTaskIds: (props.task.relatedTaskIds ?? []).filter((taskId) => taskId !== task.id) })}
+                        onClick={() => saveRelationships({ relatedTaskIds: (props.task.relatedTaskIds ?? []).filter((taskId) => taskId !== task.id) })}
                         disabled={props.busy || relationshipSaveState.kind === 'saving'}
                       >
                         <XIcon size={14} aria-hidden="true" />
@@ -1583,7 +1598,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           {undoAttachment ? (
             <span className="task-detail-attachment-undo">
               <small role="status">{zh ? `已解除 ${undoAttachment.name} 的任务关联。` : `Removed ${undoAttachment.name} from this task.`}</small>
-              <Button variant="secondary" size="compact" onClick={() => void restoreRemovedAttachment()}>
+              <Button variant="secondary" size="compact" onClick={() => restoreRemovedAttachment()}>
                 {editCopy.undoAttachment}
               </Button>
             </span>

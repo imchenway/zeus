@@ -1,3 +1,4 @@
+import { codexCapabilitiesChangedEvent } from '../integrations/modelCatalogEvents.js';
 import type {
   AgentCatalogSnapshot,
   BatchTaskWorkspaceResponse,
@@ -68,7 +69,7 @@ export interface CopilotAccountCatalog {
 }
 
 /** 新运行实例就绪后通知当前窗口刷新模型选择器，保留正在编辑的草稿。 */
-export const codexCapabilitiesChangedEvent = 'zeus:codex-capabilities-changed';
+export { codexCapabilitiesChangedEvent } from '../integrations/modelCatalogEvents.js';
 
 /** Codex 更新阶段通过窗口事件同步给设置页，不创建第二条轮询链路。 */
 export const codexRuntimeUpdateProgressEvent = 'zeus:codex-runtime-update-progress';

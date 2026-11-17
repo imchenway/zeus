@@ -17,12 +17,12 @@ export function ExtensionSourceFields(props: { source: ExtensionSourceDraft; zh:
   return (
     <>
       <div className="extension-source-tabs" role="group" aria-label={props.zh ? '安装来源' : 'Install source'}>
-        <button type="button" aria-pressed={props.source.kind === 'local'} disabled={props.busy} onClick={() => props.onSource({ ...props.source, kind: 'local' })}>
+        <Button unstyled type="button" aria-pressed={props.source.kind === 'local'} disabled={props.busy} onClick={() => props.onSource({ ...props.source, kind: 'local' })}>
           {props.zh ? '本地目录' : 'Local directory'}
-        </button>
-        <button type="button" aria-pressed={props.source.kind === 'git'} disabled={props.busy} onClick={() => props.onSource({ ...props.source, kind: 'git' })}>
+        </Button>
+        <Button unstyled type="button" aria-pressed={props.source.kind === 'git'} disabled={props.busy} onClick={() => props.onSource({ ...props.source, kind: 'git' })}>
           {props.zh ? 'Git 仓库' : 'Git repository'}
-        </button>
+        </Button>
       </div>
       {props.source.kind === 'local' ? (
         <div className="extension-form-field">
@@ -30,7 +30,7 @@ export function ExtensionSourceFields(props: { source: ExtensionSourceDraft; zh:
           <div className="extension-path-control">
             <input id={pathId} value={props.source.path} onChange={(event) => props.onSource({ ...props.source, path: event.currentTarget.value })} placeholder="/absolute/path/to/folder" required />
             {props.onChoosePath ? (
-              <Button onClick={() => void props.onChoosePath?.()} disabled={props.busy}>
+              <Button onClick={() => props.onChoosePath?.()} disabled={props.busy}>
                 <FolderOpen aria-hidden="true" />
                 {props.zh ? '选择' : 'Choose'}
               </Button>

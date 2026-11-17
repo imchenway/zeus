@@ -11,6 +11,7 @@ import { CodeCommentPanel } from './CodeCommentPanel.js';
 import { SelectionCommentEditor, selectionCommentEditorPoint, type SelectionOverlayBounds } from './SelectionCommentEditor.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
+import { Button } from '../ui/Button.js';
 
 /** 只读源码及文字选区评论共用的输入。 */
 interface CommentableSourceCodePreviewProps {
@@ -309,12 +310,12 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
                   <span>{comment.body}</span>
                   {props.onCommentsChange ? (
                     <span className="session-saved-code-comment-actions">
-                      <button type="button" onClick={() => setEditingCommentId(comment.id)}>
+                      <Button unstyled type="button" onClick={() => setEditingCommentId(comment.id)}>
                         {zh ? '编辑' : 'Edit'}
-                      </button>
-                      <button type="button" onClick={() => removeComment(comment.id)}>
+                      </Button>
+                      <Button unstyled type="button" onClick={() => removeComment(comment.id)}>
                         {zh ? '删除' : 'Delete'}
-                      </button>
+                      </Button>
                     </span>
                   ) : null}
                 </span>
@@ -338,7 +339,8 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
                 aria-label={zh ? '选中文字操作' : 'Selected text actions'}
               >
                 {props.onCommentsChange ? (
-                  <button
+                  <Button
+                    unstyled
                     type="button"
                     aria-label={zh ? '评论选中文字' : 'Comment on selected text'}
                     data-icon-tooltip={zh ? '评论' : 'Comment'}
@@ -346,7 +348,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
                     onClick={() => addSelectionComment(candidate.position)}
                   >
                     <ChatTeardropDots aria-hidden="true" weight="regular" />
-                  </button>
+                  </Button>
                 ) : null}
                 {onAskInSidebar ? (
                   <SelectionQuestionActions
@@ -361,7 +363,8 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
             ) : null}
           </MotionPresence>
           {markers.map(({ comment, index, rect }) => (
-            <button
+            <Button
+              unstyled
               data-icon-tooltip={zh ? `打开第 ${index + 1} 条文件评论` : `Open file comment ${index + 1}`}
               type="button"
               key={comment.id}
@@ -373,7 +376,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
               onClick={() => props.onCommentsChange && setEditingCommentId(comment.id)}
             >
               {index + 1}
-            </button>
+            </Button>
           ))}
           <MotionPresence>
             {editingSelectionComment && editorPoint ? (

@@ -1,6 +1,7 @@
 import { SidebarSimpleIcon } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { LightbulbIcon } from '@phosphor-icons/react/dist/csr/Lightbulb';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { Button } from '../ui/Button.js';
 
 /** 回答和文件选区共用提问、解释按钮，并在点击时保留原选区。 */
 export function SelectionQuestionActions(props: {
@@ -13,12 +14,12 @@ export function SelectionQuestionActions(props: {
   const zh = props.language === 'zh-CN';
   return (
     <>
-      <button type="button" aria-label={zh ? '在侧边栏提问' : 'Ask in sidebar'} data-icon-tooltip={zh ? '在侧边栏提问' : 'Ask in sidebar'} onPointerDown={(event) => event.preventDefault()} onClick={() => props.onAsk(false)}>
+      <Button unstyled type="button" aria-label={zh ? '在侧边栏提问' : 'Ask in sidebar'} data-icon-tooltip={zh ? '在侧边栏提问' : 'Ask in sidebar'} onPointerDown={(event) => event.preventDefault()} onClick={() => props.onAsk(false)}>
         <SidebarSimpleIcon aria-hidden="true" />
-      </button>
-      <button type="button" aria-label={zh ? '解释选中文字' : 'Explain selected text'} data-icon-tooltip={zh ? '解释' : 'Explain'} onPointerDown={(event) => event.preventDefault()} onClick={() => props.onAsk(true)}>
+      </Button>
+      <Button unstyled type="button" aria-label={zh ? '解释选中文字' : 'Explain selected text'} data-icon-tooltip={zh ? '解释' : 'Explain'} onPointerDown={(event) => event.preventDefault()} onClick={() => props.onAsk(true)}>
         <LightbulbIcon aria-hidden="true" />
-      </button>
+      </Button>
     </>
   );
 }

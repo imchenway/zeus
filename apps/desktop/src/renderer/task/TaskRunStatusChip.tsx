@@ -2,6 +2,7 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import type { MouseEventHandler } from 'react';
 import type { TaskAgentRunStatus, TaskType } from '../apiClient.js';
 import type { TaskBranchStatus } from './taskWorkspaceModel.js';
+import { Button } from '../ui/Button.js';
 
 /** 内部状态反馈使用成功色调，分类色保留用户可辨识的独立颜色。 */
 export type TaskSemanticTone = 'neutral' | 'blue' | 'violet' | 'green' | 'amber' | 'orange' | 'red' | 'success';
@@ -80,9 +81,9 @@ export function TaskRunStatusChip(props: { status: TaskAgentRunStatus; label: st
   );
   if (props.onClick) {
     return (
-      <button type="button" className={className} data-icon-tooltip={props.label} aria-label={props.ariaLabel ?? props.label} onClick={props.onClick}>
+      <Button unstyled type="button" className={className} data-icon-tooltip={props.label} aria-label={props.ariaLabel ?? props.label} onClick={props.onClick}>
         {content}
-      </button>
+      </Button>
     );
   }
   return (

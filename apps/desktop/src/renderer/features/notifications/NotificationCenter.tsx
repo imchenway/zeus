@@ -84,7 +84,8 @@ export function NotificationCenter({
 
   return (
     <>
-      <button
+      <Button
+        unstyled
         ref={trigger}
         type="button"
         className="automation-notification-trigger"
@@ -101,7 +102,7 @@ export function NotificationCenter({
             {model.unreadCount > 99 ? '99+' : model.unreadCount}
           </span>
         ) : null}
-      </button>
+      </Button>
       {portalHost
         ? createPortal(
             <div
@@ -120,7 +121,7 @@ export function NotificationCenter({
                 /** 展开仅刷新内容，不批量已读。 */
                 const expanded = event.newState === 'open';
                 setOpen(expanded);
-                if (expanded) void model.refresh();
+                if (expanded) return model.refresh();
                 else if (!document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) trigger.current?.focus({ preventScroll: true });
               }}
             >
@@ -129,7 +130,7 @@ export function NotificationCenter({
                 {model.unreadCount > 0 ? (
                   <div className="automation-notification-header-actions">
                     <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
-                    <Button size="compact" disabled={Boolean(model.busyId)} busy={model.busyId === 'all'} onClick={() => void model.markAllRead()}>
+                    <Button size="compact" disabled={Boolean(model.busyId)} busy={model.busyId === 'all'} onClick={() => model.markAllRead()}>
                       {zh ? '全部已读' : 'Mark all read'}
                     </Button>
                   </div>
@@ -139,7 +140,7 @@ export function NotificationCenter({
                 <div className="automation-notification-error" role="alert">
                   <p>{model.actionError ?? model.loadError}</p>
                   {model.loadError ? (
-                    <Button size="compact" disabled={model.loading} onClick={() => void model.refresh()}>
+                    <Button size="compact" disabled={model.loading} onClick={() => model.refresh()}>
                       {zh ? '重新加载' : 'Reload'}
                     </Button>
                   ) : null}
@@ -181,7 +182,8 @@ export function NotificationCenter({
                       <li key={key} className="automation-notification-item">
                         <div className="automation-notification-item-header">
                           {canOpen ? (
-                            <button
+                            <Button
+                              unstyled
                               type="button"
                               className="automation-notification-open"
                               data-icon-tooltip={title}
@@ -189,13 +191,13 @@ export function NotificationCenter({
                               onClick={() => {
                                 // 导航确认弹窗需要正常焦点；取消导航时恢复通知列表。
                                 surface.current?.hidePopover();
-                                void model.open(item).then((opened) => {
+                                return model.open(item).then((opened) => {
                                   if (!opened && surface.current?.isConnected) surface.current.showPopover();
                                 });
                               }}
                             >
                               <strong>{title}</strong>
-                            </button>
+                            </Button>
                           ) : (
                             <div className="automation-notification-summary">
                               <strong data-icon-tooltip={title}>{title}</strong>
@@ -211,7 +213,7 @@ export function NotificationCenter({
                             busy={model.busyId === key}
                             aria-label={zh ? `将“${title}”标为已读` : `Mark “${title}” as read`}
                             data-icon-tooltip={zh ? '标为已读' : 'Mark as read'}
-                            onClick={() => void model.markRead(item)}
+                            onClick={() => model.markRead(item)}
                           >
                             <CheckIcon size={16} aria-hidden="true" />
                           </Button>
@@ -227,7 +229,7 @@ export function NotificationCenter({
                             busy={model.busyId === `resume:${item.id}`}
                             aria-label={zh ? `恢复“${title}”的剩余项目` : `Resume remaining projects for ${title}`}
                             onClick={() => {
-                              void model.resume(item).then((resumed) => {
+                              return model.resume(item).then((resumed) => {
                                 if (resumed) surface.current?.focus({ preventScroll: true });
                               });
                             }}
@@ -242,7 +244,7 @@ export function NotificationCenter({
               </div>
               {model.nextCursor ? (
                 <footer className="automation-notification-footer">
-                  <Button size="compact" disabled={model.loading} busy={model.loading} onClick={() => void model.refresh(model.nextCursor ?? undefined)}>
+                  <Button size="compact" disabled={model.loading} busy={model.loading} onClick={() => model.refresh(model.nextCursor ?? undefined)}>
                     {zh ? '加载更多' : 'Load more'}
                   </Button>
                 </footer>

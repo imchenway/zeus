@@ -6,6 +6,7 @@ import type { NativeSessionItemBuffer } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './ConversationMarkdown.js';
 import { useReadingScroll } from '../ui/readingState.js';
+import { Button } from '../ui/Button.js';
 
 export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; fullWidth: boolean; onFullWidthChange: (fullWidth: boolean) => void; onClose: () => void }) {
   /** 每份计划保存独立阅读位置。 */
@@ -20,12 +21,12 @@ export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: 
           <strong>{zh ? '计划' : 'Plan'}</strong>
         </span>
         <nav aria-label={zh ? '计划工作区操作' : 'Plan workspace actions'}>
-          <button type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
+          <Button unstyled type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
-          </button>
-          <button type="button" aria-label={zh ? '关闭计划工作区' : 'Close plan workspace'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          </Button>
+          <Button unstyled type="button" aria-label={zh ? '关闭计划工作区' : 'Close plan workspace'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
-          </button>
+          </Button>
         </nav>
       </header>
       <section ref={readingScroll} className="session-plan-workspace-content">

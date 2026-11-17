@@ -3737,7 +3737,7 @@ export async function getProjectGitCommitDetail(cwd: string, commitHash: string)
 }
 
 /** 读取所选分支与当前分支或工作区的差异；只解析受 Git 校验的 ref。 */
-export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
+export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
   /** 单文件范围使用字面量路径，不能由文件名注入 Git pathspec。 */
   const paths = path === undefined ? ['.'] : [`:(literal)${requireSafeWorkspacePath(path)}`];
   if (path !== undefined && mode === 'working-tree' && branchName === 'HEAD') return getGitDiff(cwd, path);
@@ -3745,9 +3745,10 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
   const topLevel = await requireGitStdout(cwd, ['rev-parse', '--show-toplevel']).catch(() => {
     throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
   });
-  const revision = await resolveCommit(topLevel, branchName);
+  const revision = mode === 'current' || mode === 'working-tree' ? await resolveCommit(topLevel, branchName) : null;
   /** 文件清单保留真实增删统计和重命名，不生成全部文件的补丁。 */
-  const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', mode === 'working-tree' ? revision : `${revision}..HEAD`];
+  const comparison = mode === 'staged' ? ['--cached'] : mode === 'unstaged' ? [] : [mode === 'working-tree' ? revision! : `${revision}..HEAD`];
+  const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', ...comparison];
   if (!summaryOnly) {
     if (path !== undefined) {
       /** 重命名检测先读取名称，补丁仍限定为选中文件的两个路径。 */

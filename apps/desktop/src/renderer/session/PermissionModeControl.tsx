@@ -135,7 +135,7 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
               return;
             }
             setConfirmingFullAccess(false);
-            void props.onChange(next);
+            return props.onChange(next);
           }}
         />
       </IconTooltip>
@@ -165,7 +165,7 @@ export function FullAccessConfirmation(props: { language: SessionUiLanguage; onD
         onKeyDown={(event) => {
           if (event.key !== 'Escape') return;
           event.stopPropagation();
-          props.onDismiss();
+          return props.onDismiss();
         }}
         data-modal-surface="alertdialog"
       >

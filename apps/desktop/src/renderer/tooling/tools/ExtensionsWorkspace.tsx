@@ -159,16 +159,16 @@ export function ExtensionsWorkspace(props: { client: ExtensionsClient | null; la
             <p>{zh ? '更改对新对话生效。' : 'Changes apply to new conversations.'}</p>
           </div>
           {tab !== 'skills' ? (
-            <Button variant="secondary" size="regular" busy={busyKey === 'load'} onClick={() => void load()} disabled={!props.client || Boolean(busyKey)}>
+            <Button variant="secondary" size="regular" busy={busyKey === 'load'} onClick={() => load()} disabled={!props.client || Boolean(busyKey)}>
               <ArrowClockwise aria-hidden="true" /> {zh ? '刷新' : 'Refresh'}
             </Button>
           ) : null}
         </div>
         <nav className="extension-tabs" aria-label={zh ? '扩展类型' : 'Extension type'}>
           {(['plugins', 'skills', 'marketplaces'] as const).map((value) => (
-            <button key={value} type="button" className={tab === value ? 'is-active' : ''} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>
+            <Button unstyled key={value} type="button" className={tab === value ? 'is-active' : ''} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>
               {tabLabel(value, zh)}
-            </button>
+            </Button>
           ))}
         </nav>
       </header>
@@ -251,7 +251,7 @@ function PluginCatalog(props: {
           return (
             <article key={plugin.id} className="extension-plugin-row" data-enabled={plugin.enabled ? 'true' : 'false'}>
               <header>
-                <button type="button" className="extension-plugin-summary" aria-expanded={open} onClick={() => props.onExpanded(open ? null : plugin.id)}>
+                <Button unstyled type="button" className="extension-plugin-summary" aria-expanded={open} onClick={() => props.onExpanded(open ? null : plugin.id)}>
                   <CaretRight className="extension-expand-icon" aria-hidden="true" />
                   <span className="skill-list-glyph" aria-hidden="true">
                     {plugin.displayName.slice(0, 1).toLocaleUpperCase()}
@@ -262,7 +262,7 @@ function PluginCatalog(props: {
                       @{plugin.name} · {revision.version} · {plugin.scope === 'personal' ? (props.zh ? '个人' : 'Personal') : props.zh ? '项目' : 'Project'}
                     </small>
                   </span>
-                </button>
+                </Button>
                 <span className="extension-statuses">
                   {descriptor.providerLegacyConflict ? <em className="is-danger">{props.zh ? '旧版配置冲突' : 'Legacy configuration conflict'}</em> : null}
                   {untrusted ? (
@@ -277,7 +277,7 @@ function PluginCatalog(props: {
                   size="compact"
                   busy={props.busyKey === `enable:${plugin.id}`}
                   disabled={Boolean(props.busyKey) || descriptor.providerLegacyConflict}
-                  onClick={() => void props.onMutate(`enable:${plugin.id}`, () => props.client!.setPluginEnabled(plugin.id, !plugin.enabled, plugin.revision))}
+                  onClick={() => props.onMutate(`enable:${plugin.id}`, () => props.client!.setPluginEnabled(plugin.id, !plugin.enabled, plugin.revision))}
                 >
                   {plugin.enabled ? (props.zh ? '停用' : 'Disable') : props.zh ? '启用' : 'Enable'}
                 </Button>
@@ -314,7 +314,7 @@ function PluginCatalog(props: {
                       size="compact"
                       busy={props.busyKey === `update:${plugin.id}`}
                       disabled={Boolean(props.busyKey)}
-                      onClick={() => void props.onMutate(`update:${plugin.id}`, () => props.client!.updatePlugin(plugin.id))}
+                      onClick={() => props.onMutate(`update:${plugin.id}`, () => props.client!.updatePlugin(plugin.id))}
                     >
                       <ArrowClockwise aria-hidden="true" /> {props.zh ? '更新' : 'Update'}
                     </Button>
@@ -344,7 +344,7 @@ function PluginCatalog(props: {
             onClose={() => setPendingRemoval(null)}
             onSubmit={(event) => {
               event.preventDefault();
-              void props
+              return props
                 .onMutate(`remove:${pendingRemoval.plugin.id}`, () => props.client!.removePlugin(pendingRemoval.plugin.id, pendingRemoval.plugin.revision))
                 .then((removed) => {
                   if (removed) setPendingRemoval(null);
@@ -382,7 +382,7 @@ function HookReview(props: { descriptor: PluginDescriptor; client: ExtensionsCli
                 variant="secondary"
                 size="compact"
                 disabled={Boolean(props.busyKey)}
-                onClick={() => void props.onMutate(`hook-enable:${trust.hookId}`, () => props.client!.setPluginHookEnabled(props.descriptor.plugin.id, props.descriptor.revision.id, trust.hookId, !trust.enabled))}
+                onClick={() => props.onMutate(`hook-enable:${trust.hookId}`, () => props.client!.setPluginHookEnabled(props.descriptor.plugin.id, props.descriptor.revision.id, trust.hookId, !trust.enabled))}
               >
                 {trust.enabled ? (props.zh ? '禁用' : 'Disable') : props.zh ? '启用' : 'Enable'}
               </Button>
@@ -390,7 +390,7 @@ function HookReview(props: { descriptor: PluginDescriptor; client: ExtensionsCli
                 variant={trusted ? 'secondary' : 'primary'}
                 size="compact"
                 disabled={Boolean(props.busyKey) || !trust.enabled}
-                onClick={() => void props.onMutate(`hook-trust:${trust.hookId}`, () => props.client!.trustPluginHook(props.descriptor.plugin.id, props.descriptor.revision.id, trust.hookId, !trusted))}
+                onClick={() => props.onMutate(`hook-trust:${trust.hookId}`, () => props.client!.trustPluginHook(props.descriptor.plugin.id, props.descriptor.revision.id, trust.hookId, !trusted))}
               >
                 {trusted ? (props.zh ? '撤销信任' : 'Revoke trust') : props.zh ? '信任此定义' : 'Trust definition'}
               </Button>
@@ -422,14 +422,14 @@ function McpPolicyPanel(props: { descriptor: PluginDescriptor; client: Extension
             </span>
             <span>
               <label>
-                <input type="checkbox" checked={enabled} disabled={Boolean(props.busyKey)} onChange={(event) => void update(mode, event.currentTarget.checked)} /> {props.zh ? '启用' : 'Enabled'}
+                <input type="checkbox" checked={enabled} disabled={Boolean(props.busyKey)} onChange={(event) => update(mode, event.currentTarget.checked)} /> {props.zh ? '启用' : 'Enabled'}
               </label>
               <ZeusSelect
                 ariaLabel={`${server.name} ${props.zh ? '工具权限' : 'tool permissions'}`}
                 size="regular"
                 value={mode}
                 disabled={Boolean(props.busyKey)}
-                onChange={(value) => void update(value)}
+                onChange={(value) => update(value)}
                 options={[
                   { value: 'prompt', label: props.zh ? '每次询问' : 'Prompt' },
                   { value: 'approve', label: props.zh ? '允许' : 'Allow' },
@@ -470,7 +470,7 @@ function ConnectorPanel(props: { descriptor: PluginDescriptor; client: Extension
                   variant="danger"
                   size="compact"
                   disabled={Boolean(props.busyKey)}
-                  onClick={() => void props.onMutate(`connector-revoke:${binding.connectorId}`, () => props.client!.revokePluginConnectorAuthorization(binding.connectorId))}
+                  onClick={() => props.onMutate(`connector-revoke:${binding.connectorId}`, () => props.client!.revokePluginConnectorAuthorization(binding.connectorId))}
                 >
                   {props.zh ? '撤销授权' : 'Revoke authorization'}
                 </Button>
@@ -533,7 +533,7 @@ function ConnectorDialog(props: {
       submitLabel={props.zh ? '保存连接' : 'Save connection'}
       submitDisabled={!connectorId.trim() || !config.trim()}
       onClose={props.onClose}
-      onSubmit={(event) => void submit(event)}
+      onSubmit={(event) => submit(event)}
     >
       <label>
         <span>{props.zh ? '连接标识' : 'Connection ID'}</span>
@@ -602,12 +602,7 @@ function MarketplaceCatalog(props: {
               </small>
             </span>
             <span>
-              <Button
-                variant="secondary"
-                size="compact"
-                disabled={Boolean(props.busyKey)}
-                onClick={() => void props.onMutate(`market-refresh:${catalog.marketplace.id}`, () => props.client!.refreshPluginMarketplace(catalog.marketplace.id))}
-              >
+              <Button variant="secondary" size="compact" disabled={Boolean(props.busyKey)} onClick={() => props.onMutate(`market-refresh:${catalog.marketplace.id}`, () => props.client!.refreshPluginMarketplace(catalog.marketplace.id))}>
                 <ArrowClockwise aria-hidden="true" /> {props.zh ? '刷新' : 'Refresh'}
               </Button>
               <Button
@@ -648,7 +643,7 @@ function MarketplaceCatalog(props: {
                     disabled={!props.client || Boolean(props.busyKey) || installed}
                     title={installed ? (props.zh ? '已安装，可在插件页管理。' : 'Installed. Manage it in the Plugin tab.') : undefined}
                     onClick={() =>
-                      void props.onMutate(installKey, () =>
+                      props.onMutate(installKey, () =>
                         props.client!.installPlugin({ scope: catalog.marketplace.scope, projectId: catalog.marketplace.projectId, source: { kind: 'marketplace', marketplaceId: catalog.marketplace.id, pluginName: entry.name } }),
                       )
                     }
@@ -673,7 +668,7 @@ function MarketplaceCatalog(props: {
             onClose={() => setPendingRemoval(null)}
             onSubmit={(event) => {
               event.preventDefault();
-              void props
+              return props
                 .onMutate(`market-remove:${pendingRemoval.marketplace.id}`, () => props.client!.removePluginMarketplace(pendingRemoval.marketplace.id))
                 .then((removed) => {
                   if (removed) setPendingRemoval(null);
@@ -704,7 +699,7 @@ function SourceDialog(props: {
   /** 必须同时具有有效作用范围和非空来源。 */
   const valid = (props.scope === 'personal' || props.projectAvailable) && Boolean(props.source.kind === 'local' ? props.source.path.trim() : props.source.repositoryUrl.trim());
   return (
-    <FormDialog title={props.title} zh={props.zh} busy={props.busy} submitLabel={props.submitLabel} submitDisabled={!valid} onClose={props.onClose} onSubmit={(event) => void props.onSubmit(event)}>
+    <FormDialog title={props.title} zh={props.zh} busy={props.busy} submitLabel={props.submitLabel} submitDisabled={!valid} onClose={props.onClose} onSubmit={(event) => props.onSubmit(event)}>
       <ExtensionSourceFields source={props.source} zh={props.zh} busy={props.busy} localLabel={props.zh ? '来源目录' : 'Source directory'} onSource={props.onSource} onChoosePath={props.onChoosePath} />
       <div className="extension-form-field">
         <span>{props.zh ? '使用范围' : 'Available to'}</span>

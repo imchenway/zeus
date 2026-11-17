@@ -4,6 +4,7 @@ import type { AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { clearRuiDraft, normalizeRequestQuestions, RequestUserInputPanel } from './PendingRequestSurface.js';
 import { itemRole, ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
+import { Button } from '../ui/Button.js';
 
 /** 按原问题身份查找答复；失败记录保留重试状态，不借用相同正文或别的轮次。 */
 export function asyncQuestionReply(item: NativeSessionItemBuffer, state: NativeSessionState): NativeSessionItemBuffer | undefined {
@@ -200,9 +201,9 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
                   : 'Answer requested'}
         </span>
         {awaitingAnswer && props.onOpen ? (
-          <button type="button" onClick={() => props.onOpen?.(item)}>
+          <Button unstyled type="button" onClick={() => props.onOpen?.(item)}>
             {zh ? '回答问题' : 'Answer question'}
-          </button>
+          </Button>
         ) : null}
       </div>
     </section>

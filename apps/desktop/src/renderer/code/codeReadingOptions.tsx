@@ -6,6 +6,7 @@ import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { formatBlameAuthor, hasBlameCommit } from './blamePresentation.js';
 import './blameGutter.css';
+import { Button } from '../ui/Button.js';
 
 /** 所有源码、预览和差异默认软换行并隐藏作者栏；同一窗口的菜单修改同步生效。 */
 let readingOptions = { wrap: true, blame: false };
@@ -107,7 +108,8 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
           onContextMenu={(event) => event.preventDefault()}
         >
           {(['wrap', 'blame'] as const).map((key) => (
-            <button
+            <Button
+              unstyled
               key={key}
               type="button"
               role="menuitemcheckbox"
@@ -120,7 +122,7 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
             >
               <span aria-hidden="true">{options[key] ? '✓' : '\u00a0'}</span>
               {key === 'wrap' ? (zh ? '软换行' : 'Soft wrap') : zh ? '提交人' : 'Commit author'}
-            </button>
+            </Button>
           ))}
         </MenuSurface>,
         point.portalHost,

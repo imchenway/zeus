@@ -193,7 +193,7 @@ export function GeneralSettingsPane(props: {
                 aria-label={zh ? '启用自动输入建议' : 'Enable automatic input suggestions'}
                 checked={suggestions.enabled}
                 disabled={!props.client || (!suggestions.modelRef && !suggestions.followConversationModel)}
-                onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
+                onChange={(event) => save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
               />
               <span className="native-switch-track" aria-hidden="true" />
             </label>
@@ -205,7 +205,7 @@ export function GeneralSettingsPane(props: {
               value={suggestions.followConversationModel ? 'conversation' : (suggestions.modelRef ?? '')}
               disabled={!props.client || (modelsLoading && !suggestionModels.length)}
               onChange={(value) =>
-                void save({
+                save({
                   inputSuggestions: {
                     enabled: suggestions.enabled && Boolean(value),
                     modelRef: value === 'conversation' ? suggestions.modelRef : value || null,
@@ -230,7 +230,7 @@ export function GeneralSettingsPane(props: {
               value={suggestions.effort ?? ''}
               disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel) || (!suggestionEfforts.length && !suggestions.effort)}
               searchable={false}
-              onChange={(effort) => void save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
+              onChange={(effort) => save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
               options={[
                 { value: '', label: suggestionEfforts.length ? (zh ? '自动（最低档位）' : 'Automatic (lowest effort)') : zh ? '模型未提供可选档位' : 'No selectable effort' },
                 ...suggestionEfforts.map((effort) => ({ value: effort, label: effort })),
@@ -245,7 +245,7 @@ export function GeneralSettingsPane(props: {
               value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
               disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel)}
               searchable={false}
-              onChange={(value) => void save({ inputSuggestions: { ...suggestions, serviceTier: value === 'priority' ? 'priority' : null } })}
+              onChange={(value) => save({ inputSuggestions: { ...suggestions, serviceTier: value === 'priority' ? 'priority' : null } })}
               options={serviceTierOptions({ serviceTiers: suggestionServiceTiers }, zh ? 'zh-CN' : 'en-US')}
             />
           </NativeControlRow>
@@ -286,7 +286,7 @@ export function GeneralSettingsPane(props: {
                 }
                 event.currentTarget.value = taskBranchPrefix;
                 setTaskBranchPrefixError(null);
-                if (taskBranchPrefix !== props.value.taskBranchPrefix) void save({ taskBranchPrefix });
+                if (taskBranchPrefix !== props.value.taskBranchPrefix) return save({ taskBranchPrefix });
               }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') event.currentTarget.blur();

@@ -1,5 +1,6 @@
 import type { AppShellSettings, CodexConfigImportPreview, CodexConfigImportResult } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 
 interface CodexConfigImportSettingsProps {
   language: AppShellSettings['appLanguage'];
@@ -53,9 +54,9 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
           <strong id="codex-config-import-title">{labels.title}</strong>
           <small>{labels.help}</small>
         </span>
-        <button type="button" className="legacy-import-refresh" onClick={() => void props.onRefresh()} disabled={props.loading}>
+        <Button unstyled type="button" className="legacy-import-refresh" onClick={() => props.onRefresh()} disabled={props.loading}>
           {labels.scan}
-        </button>
+        </Button>
       </header>
       {props.preview ? (
         <span className="settings-row-copy">
@@ -87,9 +88,9 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
       ) : null}
       <footer className="legacy-import-command-row">
         <span />
-        <button type="button" disabled={props.loading || (!activationRequired && !props.preview?.available)} onClick={() => void (activationRequired ? props.onActivate() : props.onImport())}>
+        <Button unstyled type="button" disabled={props.loading || (!activationRequired && !props.preview?.available)} onClick={() => (activationRequired ? props.onActivate() : props.onImport())}>
           {props.loading ? (activationRequired ? labels.activating : labels.importing) : activationRequired ? labels.activate : labels.import}
-        </button>
+        </Button>
       </footer>
     </section>
   );

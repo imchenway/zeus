@@ -124,7 +124,7 @@ export class ProjectGitWorkbenchService {
     return getProjectGitPushPreview(resolved.repository.localPath, input);
   }
 
-  async loadComparison(projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
+  async loadComparison(projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!ref.trim()) throw projectGitError('ZEUS_GIT_REF_REQUIRED', '必须选择一个比较分支。');
     return getProjectGitComparisonDiff(resolved.repository.localPath, ref, mode, path, summaryOnly);
