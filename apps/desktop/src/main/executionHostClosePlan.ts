@@ -12,6 +12,15 @@ export interface ExecutionHostCloseResources {
 const executionHostRuntimeCloseTimeoutMs = 20_000;
 const executionHostControlCloseTimeoutMs = 5_000;
 
+/** 向独立 Core 请求停止工作时的等待上限，单位为毫秒。 */
+export const executionHostStopBeforeShutdownTimeoutMs = 10_000;
+/** 等待独立 Core 正常退出并释放租约的上限，单位为毫秒。 */
+export const executionHostGracefulExitTimeoutMs = 45_000;
+/** 发出已核验身份的强制结束请求后，等待进程和租约释放的上限，单位为毫秒。 */
+export const executionHostForcedExitTimeoutMs = 5_000;
+/** Main 等待独立 Core 的总上限，额外为在途连接、控制请求、身份核验和关闭本地桥预留三十秒。 */
+export const desktopExecutionHostCloseTimeoutMs = executionHostStopBeforeShutdownTimeoutMs + executionHostGracefulExitTimeoutMs + executionHostForcedExitTimeoutMs + 30_000;
+
 /**
  * Execution Host 关闭顺序的唯一组合点。
  *
