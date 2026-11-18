@@ -29,6 +29,8 @@ export interface NativeConversationChoiceProjectionContext {
   workspaceById: ReadonlyMap<string, ZeusTaskWorkspaceRecord>;
   recoverableSubmissionsByConversationId: ReadonlyMap<string, readonly ChoiceSubmission[]>;
   inProgressTurnsByConversationId: ReadonlyMap<string, readonly ChoiceTurn[]>;
+  /** 列表批量读取时，未命中的会话没有交付冲突来源。 */
+  deliveryConflictOrigins?: ReturnType<ConversationRepository['listDeliveryConflictOriginsByProject']>;
 }
 
 interface ConversationChoiceQueryPorts {
@@ -36,7 +38,10 @@ interface ConversationChoiceQueryPorts {
   snapshots: Pick<ConversationSnapshotV2Repository, 'searchContent' | 'pendingAsyncQuestionConversationIds'>;
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
-  conversations: Pick<ConversationRepository, 'getById' | 'getDeliveryConflictOrigin' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt' | 'workStartedAt'>;
+  conversations: Pick<
+    ConversationRepository,
+    'getById' | 'getDeliveryConflictOrigin' | 'hasMessages' | 'listDeliveryConflictOriginsByProject' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt' | 'workStartedAt'
+  >;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation' | 'getSourceConversationId'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -60,7 +65,8 @@ export class ConversationChoiceQueryApplication {
     return this.ports.tasks.getById(taskId);
   }
 
-  buildContext(projectId: string): NativeConversationChoiceProjectionContext {
+  /** 列表批量读取冲突来源，单条投影只查自己的归属。 */
+  buildContext(projectId: string, batchDeliveryOrigins = false): NativeConversationChoiceProjectionContext {
     const pendingRequestKindByConversationId = new Map<string, 'approval' | 'user_input'>();
     for (const request of this.ports.requests.listPending()) {
       if (!pendingRequestKindByConversationId.has(request.conversationId)) {
@@ -86,18 +92,19 @@ export class ConversationChoiceQueryApplication {
       workspaceById: new Map(this.ports.workspaces.listByProject(projectId).map((workspace) => [workspace.id, workspace])),
       recoverableSubmissionsByConversationId,
       inProgressTurnsByConversationId,
+      ...(batchDeliveryOrigins ? { deliveryConflictOrigins: this.ports.conversations.listDeliveryConflictOriginsByProject(projectId) } : {}),
     };
   }
 
   listProjectChoices(projectId: string) {
-    const context = this.buildContext(projectId);
+    const context = this.buildContext(projectId, true);
     return this.listProjectHistory(projectId)
       .map((conversation) => this.toChoice(conversation, context))
       .sort(compareConversationWorkStartedDesc);
   }
 
   listTaskChoices(taskId: string, projectId: string) {
-    const context = this.buildContext(projectId);
+    const context = this.buildContext(projectId, true);
     return this.toTaskSnapshot(
       taskId,
       projectId,
@@ -108,7 +115,7 @@ export class ConversationChoiceQueryApplication {
   buildProjectGroups(projectId: string) {
     // 项目侧边栏仍只展示未归档普通会话；任务详情必须同时取得全部归档历史。
     const records = [...this.ports.conversations.listRecordsByProject(projectId), ...this.ports.conversations.listRecordsByProject(projectId, { archived: true })];
-    const context = this.buildContext(projectId);
+    const context = this.buildContext(projectId, true);
     const projectChoices: ReturnType<ConversationChoiceQueryApplication['toChoice']>[] = [];
     const taskChoices = new Map<string, ReturnType<ConversationChoiceQueryApplication['toChoice']>[]>();
     for (const conversation of records) {
@@ -138,7 +145,7 @@ export class ConversationChoiceQueryApplication {
         .listRecordsByProject(project.id, { archived: true })
         .filter((conversation) => (conversation.taskId !== null ? this.isMeaningfulTaskHistoryItem(conversation) : this.isProjectHistoryItem(conversation)));
       if (history.length === 0) continue;
-      const context = this.buildContext(project.id);
+      const context = this.buildContext(project.id, true);
       choices.push(...history.map((conversation) => this.toChoice(conversation, context)));
     }
     return choices.sort(compareConversationWorkStartedDesc);
@@ -269,7 +276,7 @@ export class ConversationChoiceQueryApplication {
             : null;
 
     /** 同一投影只读取一次交付关联，任务和交付入口使用同一来源。 */
-    const deliveryOrigin = this.ports.conversations.getDeliveryConflictOrigin(conversation.id);
+    const deliveryOrigin = context.deliveryConflictOrigins ? context.deliveryConflictOrigins.get(conversation.id) : this.ports.conversations.getDeliveryConflictOrigin(conversation.id);
     return {
       id: conversation.id,
       sourceConversationId: this.ports.submissions.getSourceConversationId(conversation.id),

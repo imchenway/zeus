@@ -142,7 +142,10 @@ async function collectCoreDiagnostics(report: FaultReportInput, core: { baseUrl:
   const { projectId, conversationId, sessionId } = report.context;
   await Promise.all([
     (async () => {
-      if (!report.context.traceId) return;
+      if (!report.context.traceId) {
+        diagnostic.notes.push('request: 报告未记录请求 trace ID，未采集关联请求日志。');
+        return;
+      }
       try {
         const performance = await read('/api/diagnostics/performance?recentLimit=100');
         const api = performance.api as Record<string, unknown> | undefined;

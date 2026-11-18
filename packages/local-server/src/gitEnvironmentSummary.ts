@@ -5,7 +5,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { deliveryWorkspacesForConversationBranch, type GitEnvironmentScope, type GitEnvironmentSummary, type GitEnvironmentStatus } from '@zeus/shared';
+import { deliveryWorkspacesForConversationBranch, userFacingErrorCause, type GitEnvironmentScope, type GitEnvironmentSummary, type GitEnvironmentStatus } from '@zeus/shared';
 import { buildTaskEnvironmentRootPath, discoverGitRepositories, getGitCommonDirectory, getGitWorktreeClean, getTaskWorkspaceReview, type TaskWorkspaceReview } from '@zeus/git-core';
 import type { ProjectRepository, TaskRepository, TaskEnvironmentRepository, TaskWorkspaceRepository, ConversationRepository, ConversationSubmissionRepository, ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { conversationRepositoryId, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -406,7 +406,9 @@ export class GitEnvironmentSummaryService {
         initialSnapshot = false;
         failureCount = 0;
       } catch (error) {
-        send('git.summary.error', { message: error instanceof Error ? error.message : 'Git 状态读取失败。' });
+        /** 传递脱敏提示和原始错误码，让交付页识别目录不可用等受阻状态。 */
+        const { code, message } = userFacingErrorCause(error);
+        send('git.summary.error', { code, message: message || 'Git 状态读取失败。' });
         if (active)
           retryTimer = setTimeout(
             () => {

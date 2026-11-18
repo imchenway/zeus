@@ -1,4 +1,6 @@
 import type { ConversationTranscriptEnvelope } from './conversationTranscriptWire.js';
+import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
+import { normalizeCommandDeliveryDiagnostic, type CommandDeliveryDiagnostic } from './commandDeliveryDiagnostic.js';
 
 /** Zeus 系统消息只描述产品行为，不属于模型输入或输出。 */
 export interface ConversationSystemMessageInput {
@@ -10,6 +12,12 @@ export interface ConversationSystemMessageInput {
   summary: string;
   /** 经脱敏的原始诊断，仅在详情中展示。 */
   detail: string;
+  /** 上报时沿用原错误码定位故障类别。 */
+  errorCode?: string;
+  /** 上报时关联原请求，只保存经过校验的身份。 */
+  traceId?: string;
+  /** 故障上报可用的脱敏命令投递证据。 */
+  commandDelivery?: CommandDeliveryDiagnostic;
   /** 首次发生时间，后续状态更新不得覆盖。 */
   occurredAt: string;
   /** 已恢复时保留时间；空值不能覆盖已有恢复事实。 */
@@ -42,7 +50,7 @@ export interface ConversationSystemMessagePage {
 export function parseConversationSystemMessage(value: unknown): ConversationSystemMessageInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('系统消息格式无效。');
   const input = value as Record<string, unknown>;
-  const keys = ['id', 'operation', 'summary', 'detail', 'occurredAt', 'recoveredAt', 'relatedEntryId', 'targetTurnId'];
+  const keys = ['id', 'operation', 'summary', 'detail', 'errorCode', 'traceId', 'commandDelivery', 'occurredAt', 'recoveredAt', 'relatedEntryId', 'targetTurnId'];
   if (Object.keys(input).some((key) => !keys.includes(key))) throw new Error('系统消息包含未知字段。');
   for (const [key, limit] of [
     ['id', 160],
@@ -52,6 +60,8 @@ export function parseConversationSystemMessage(value: unknown): ConversationSyst
     if (typeof input[key] !== 'string' || !input[key].trim() || input[key].length > limit) throw new Error('系统消息内容或身份无效。');
   }
   if (!/^zeus-system-[a-zA-Z0-9-]+$/.test(input.id as string)) throw new Error('系统消息身份无效。');
+  if (input.errorCode !== undefined && (typeof input.errorCode !== 'string' || !/^[A-Z][A-Z0-9_]{1,159}$/u.test(input.errorCode))) throw new Error('系统消息错误码无效。');
+  if (input.traceId !== undefined && !normalizePerformanceTraceIdentity(input.traceId)) throw new Error('系统消息请求身份无效。');
   if (!['navigation', 'navigation_body', 'input_resource', 'message_send', 'conversation_start', 'model_capabilities', 'browser_close', 'input_validation'].includes(String(input.operation))) throw new Error('系统消息操作无效。');
   for (const key of ['occurredAt', 'recoveredAt'] as const) {
     if (key === 'recoveredAt' && input[key] === null) continue;
@@ -60,5 +70,8 @@ export function parseConversationSystemMessage(value: unknown): ConversationSyst
   for (const key of ['relatedEntryId', 'targetTurnId'] as const) {
     if (input[key] !== null && (typeof input[key] !== 'string' || !input[key].trim() || input[key].length > 256)) throw new Error('系统消息关联身份无效。');
   }
-  return input as unknown as ConversationSystemMessageInput;
+  if (input.commandDelivery === undefined) return input as unknown as ConversationSystemMessageInput;
+  const commandDelivery = normalizeCommandDeliveryDiagnostic(input.commandDelivery);
+  if (!commandDelivery) throw new Error('系统消息的命令投递证据无效。');
+  return { ...(input as unknown as ConversationSystemMessageInput), commandDelivery };
 }

@@ -1909,7 +1909,12 @@ export function SystemMessageNotice(props: { message: ConversationSystemMessageI
     <ConversationNotice label={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'} role={props.message.recoveredAt ? 'status' : 'alert'}>
       <span>
         <span>{props.language === 'zh-CN' ? 'Zeus 系统消息 · ' : 'Zeus · '}</span>
-        <VisibleApplicationError error={props.message.detail} summary={props.message.summary} title={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        <VisibleApplicationError
+          error={{ message: props.message.detail, code: props.message.errorCode, traceId: props.message.traceId, operation: props.message.operation, occurredAt: props.message.occurredAt, commandDelivery: props.message.commandDelivery }}
+          summary={props.message.summary}
+          title={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'}
+          language={props.language === 'zh-CN' ? 'zh-CN' : 'en'}
+        />
       </span>
       {!props.message.recoveredAt && props.onRetry ? (
         <Button unstyled type="button" disabled={pending || props.busy} onClick={() => retry()}>

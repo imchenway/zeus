@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type CommandOutboxRecord, type ZeusDatabase } from '@zeus/storage';
 import { createCommandValidation } from './commandApplicationPrimitives.js';
 import { NetworkProxySettingsError } from '@zeus/shared';
@@ -337,7 +337,7 @@ export function settingsCommandHttpError(error: unknown, redactSensitiveText: (v
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, body: { error: error.code, message: boundedErrorMessage(error.message, redactSensitiveText), details: error.details } };
   if (isCommandDeliveryError(error)) {
     const recoveryRequired = error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED';
-    return { statusCode: recoveryRequired ? 409 : 400, body: { error: error.code, message: boundedErrorMessage(error.message, redactSensitiveText), recoveryRequired } };
+    return { statusCode: recoveryRequired ? 409 : 400, body: { error: error.code, message: boundedErrorMessage(error.message, redactSensitiveText), cause: userFacingErrorCause(error).cause, recoveryRequired } };
   }
   return { statusCode: 500, body: { error: 'ZEUS_SETTINGS_COMMAND_FAILED', message: boundedErrorMessage(error instanceof Error ? error.message : String(error), redactSensitiveText) } };
 }

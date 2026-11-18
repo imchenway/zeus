@@ -47,8 +47,9 @@ export class ConversationSystemMessageRepository {
            json_extract(metadata_json, '$.recoveredAt') IS NULL
            AND json_extract(metadata_json, '$.operation') = ?
            AND json_extract(metadata_json, '$.targetTurnId') IS ?
+           AND json_extract(metadata_json, '$.commandDelivery.outboxId') IS ?
            AND json_extract(metadata_json, '$.detail') = ?)) ORDER BY id = ? DESC, created_at DESC LIMIT 1`,
-        [conversationId, systemMessageSource, recordId, input.operation, input.targetTurnId, input.detail, recordId],
+        [conversationId, systemMessageSource, recordId, input.operation, input.targetTurnId, input.commandDelivery?.outboxId ?? null, input.detail, recordId],
       );
       /** 已存在的内容和首次时间保持原样，仅允许补充恢复事实。 */
       const previous = existing ? parseConversationSystemMessage(JSON.parse(existing.metadata_json)) : null;

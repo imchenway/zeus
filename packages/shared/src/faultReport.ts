@@ -1,4 +1,5 @@
 import { redactUserFacingErrorDetails } from './userFacingError.js';
+import { normalizeCommandDeliveryDiagnostic, type CommandDeliveryDiagnostic } from './commandDeliveryDiagnostic.js';
 
 /** 单份诊断包最大 128 KiB；客户端和匿名接收入口使用同一上限。 */
 export const faultReportMaxBytes = 128 * 1024;
@@ -48,6 +49,8 @@ export interface FaultReportInput {
   operation: string;
   stack: string;
   context: Record<string, string>;
+  /** 私有报告携带拦截当时的派发状态和已有回执。 */
+  commandDelivery?: CommandDeliveryDiagnostic;
 }
 
 /** 运行事件保留时间、关联身份和经白名单投影的私有诊断内容。 */
@@ -315,6 +318,7 @@ export function normalizeFaultReportInput(value: unknown): FaultReportInput {
   if (!value || typeof value !== 'object') throw new Error('Invalid fault report');
   const input = value as Record<string, unknown>;
   if (!isFaultReportId(input.reportId) || typeof input.occurredAt !== 'string' || !Number.isFinite(Date.parse(input.occurredAt))) throw new Error('Invalid fault report identity');
+  const commandDelivery = normalizeCommandDeliveryDiagnostic(input.commandDelivery);
   return {
     reportId: input.reportId.toLowerCase(),
     occurredAt: new Date(input.occurredAt).toISOString(),
@@ -324,5 +328,6 @@ export function normalizeFaultReportInput(value: unknown): FaultReportInput {
     operation: redactFaultReportText(input.operation, 200),
     stack: redactFaultReportText(input.stack),
     context: faultReportContext(input.context),
+    ...(commandDelivery ? { commandDelivery } : {}),
   };
 }

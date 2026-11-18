@@ -82,7 +82,11 @@ export function useGitDeliveryRefresh(options: {
           if (!active || current !== generation) return;
           // 交付窗口只响应重新核对后的摘要，忽略等待后台刷新中的缓存事件。
           if (event.type === 'git.summary.updated' && (event.payload.summary as GitEnvironmentSummary).projectId === projectId) schedule();
-          else if (event.type === 'git.summary.error') latest.current.onError(new Error(String(event.payload.message ?? 'Git 状态读取失败。')));
+          else if (event.type === 'git.summary.error') {
+            /** 保留服务端错误身份，详情与故障上报可以定位到 Git 摘要。 */
+            const { code, message } = event.payload;
+            latest.current.onError(Object.assign(new Error(typeof message === 'string' && message ? message : 'Git 状态读取失败。'), { code: typeof code === 'string' ? code : undefined, operation: 'git.summary' }));
+          }
         },
         () => undefined,
         { path: `/api/projects/${encodeURIComponent(projectId)}/git/summary-events?${query}` },

@@ -1,6 +1,6 @@
 import { MotionPresence } from './MotionPresence.js';
 import { Collapsible } from './Collapsible.js';
-import { describeUserFacingError, faultReportContext, faultReportDetails, normalizeFaultReportInput, redactUserFacingErrorDetails, type FaultReportInput, type FaultReportReceipt } from '@zeus/shared';
+import { describeUserFacingError, faultReportContext, faultReportDetails, normalizeFaultReportInput, readCommandDeliveryDiagnostic, redactUserFacingErrorDetails, type FaultReportInput, type FaultReportReceipt } from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { Button } from './Button.js';
@@ -254,10 +254,11 @@ export function reportApplicationError(error: unknown, options: ApplicationError
       operation: operation ?? '',
       stack: diagnosticErrorStack(error) || original,
       context: { ...applicationErrorContext, ...faultReportContext(error) },
+      commandDelivery: readCommandDeliveryDiagnostic(error),
     }),
   };
   /** 重新查看同一故障时保留报告身份和回执，不再次创建 Issue。 */
-  entry.dedupeKey += `\n${JSON.stringify(entry.report.context)}`;
+  entry.dedupeKey += `\n${JSON.stringify(entry.report.context)}\n${entry.report.commandDelivery?.outboxId ?? ''}`;
   const duplicate = queue.find((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
   if (options.showDetails) {
     const visible = duplicate ?? entry;

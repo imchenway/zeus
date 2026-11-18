@@ -37,8 +37,11 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
+  faultReportContext,
   isConversationSourcePreviewable,
   mergeBrowserSubmissions,
+  readCommandDeliveryDiagnostic,
+  type CommandDeliveryDiagnostic,
   type FilePreviewRequest,
   type ConversationContextDraft,
   type ConversationResponseAnnotation,
@@ -49,6 +52,7 @@ import {
   type TurnChangeFile,
   type ZeusBrowserConversationSnapshot,
   type ZeusBrowserPreparedSubmission,
+  userFacingErrorCause,
 } from '@zeus/shared';
 import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
@@ -316,6 +320,10 @@ export interface NativeConversationStartPreparation {
 export interface NativeConversationStartFailure {
   /** 服务端错误码用于原地打开接入引导。 */
   code?: string;
+  /** 首发失败后保留原请求身份，供系统消息上报时关联。 */
+  traceId?: string;
+  /** 首发错误携带已冻结的命令投递证据。 */
+  commandDelivery?: CommandDeliveryDiagnostic;
   state: 'failed';
   message: string;
 }
@@ -3896,7 +3904,7 @@ export function NewConversationComposer(props: {
   /** 空值只清理调用方的临时状态，不能删除已发生的系统消息。 */
   const setLocalError = useCallback(
     (error: string | NativeConversationStartFailure | null): void => {
-      if (error) recordSystemMessage(systemScope, typeof error === 'string' ? error : error.message, 'conversation_start', '会话操作失败。');
+      if (error) recordSystemMessage(systemScope, error, 'conversation_start', '会话操作失败。');
     },
     [systemScope],
   );
@@ -4311,7 +4319,13 @@ export function NewConversationComposer(props: {
       }
       await props.onAccepted?.();
     } catch (error) {
-      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+      setLocalError({
+        state: 'failed',
+        message: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'),
+        code: userFacingErrorCause(error).code,
+        traceId: faultReportContext(error).traceId,
+        commandDelivery: readCommandDeliveryDiagnostic(error),
+      });
     } finally {
       setSubmitting(false);
       setStartingTranscript(null);

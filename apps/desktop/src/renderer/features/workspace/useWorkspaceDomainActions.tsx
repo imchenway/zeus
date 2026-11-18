@@ -27,7 +27,17 @@ import {
   type ZeusRealtimeEvent,
 } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, temporaryWorkspaceId, type ThirdPartyTaskExtract } from '@zeus/shared';
+import {
+  describeUserFacingError,
+  faultReportContext,
+  isTaskPriority,
+  type ProjectCodeWorkspacePreference,
+  readCommandDeliveryDiagnostic,
+  renderTaskPushLayoutText,
+  temporaryWorkspaceId,
+  type ThirdPartyTaskExtract,
+  userFacingErrorCause,
+} from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import { focusTaskPushWindow } from '../../ui/windowDocument.js';
 import {
@@ -2038,6 +2048,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
+  /** 保留原始请求身份，展示文字仍由现有错误解释器生成。 */
+  function conversationStartFailure(error: unknown): NativeConversationStartFailure {
+    return {
+      state: 'failed',
+      message: redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)),
+      code: userFacingErrorCause(error).code,
+      traceId: faultReportContext(error).traceId,
+      commandDelivery: readCommandDeliveryDiagnostic(error),
+    };
+  }
+
   async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation | NativeConversationStartFailure> {
     /** 创建回执只能接续发起时的导航，不能覆盖之后的会话选择。 */
     const selectionRevision = nativeConversationSelectionRevision.current;
@@ -2058,9 +2079,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           },
         };
       } catch (error) {
-        const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
         setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-        return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
+        return conversationStartFailure(error);
       }
     }
     let refreshError: unknown | null = null;
@@ -2108,16 +2128,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         const rejectedRequest = nativeConversationStartEnvelopeManager.pending(input.task);
         if (rejectedRequest) nativeConversationStartEnvelopeManager.discardPending(input.task, rejectedRequest);
       }
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
-      if (input.source === 'code_review') {
-        setNativeConversationChoiceTaskStates((current) => ({ ...current, [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]) }));
-        return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
-      }
       setNativeConversationChoiceTaskStates((current) => ({
         ...current,
         [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]),
       }));
-      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
+      return conversationStartFailure(error);
     }
     if (refreshError) {
       setNativeConversationChoiceTaskStates((current) => ({
@@ -2178,12 +2193,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       });
       refreshError = result.refreshError;
     } catch (error) {
-      const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
       setNativeConversationChoiceProjectStates((current) => ({
         ...current,
         [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]),
       }));
-      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
+      return conversationStartFailure(error);
     }
     if (refreshError) {
       setNativeConversationChoiceProjectStates((current) => ({
