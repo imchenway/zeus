@@ -375,6 +375,16 @@ export function createDesktopApi(transport: DesktopTransport) {
     hideMenuBarUsage: () => transport.invoke('zeus:menu-bar-usage:hide'),
     /** 将内容高度交给主进程校验，菜单栏浮窗宽度保持不变。 */
     resizeMenuBarUsage: (height: number) => transport.invoke('zeus:menu-bar-usage:resize', height),
+    ...(transport.kind === 'electron-ipc'
+      ? {
+          /** 可见刻度订阅只影响本窗口的采集生命周期。 */
+          subscribeConversationAudio: (active: boolean) => transport.invoke('zeus:conversation-audio:subscribe', active),
+          /** 输入仅包含频谱能量和音量，不包含音频样本。 */
+          onConversationAudioFrame: (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => transport.subscribe('zeus:conversation-audio:frame', listener),
+          /** 采集不可用时刻度恢复静态样式。 */
+          onConversationAudioUnavailable: (listener: () => void) => transport.subscribe('zeus:conversation-audio:unavailable', listener),
+        }
+      : {}),
     /** 在鼠标屏幕锚点旁显示独立透明费用明细窗口。 */
     showMenuBarUsageCostDetail: (input: unknown) => transport.invoke('zeus:menu-bar-usage:cost-detail-show', input),
     /** 指针离开触发器或明细窗口时延迟关闭。 */

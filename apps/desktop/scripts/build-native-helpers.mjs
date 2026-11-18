@@ -37,6 +37,12 @@ if (process.platform === 'darwin') {
     frameworks: [],
   });
   await chmod(resolve(outputDirectory, 'ZeusBrowserNativeHost'), 0o755);
+  // 系统播放频谱由独立助手计算，主进程只接收分析值。
+  await compileSwift({
+    source: resolve(desktopRoot, 'native/ConversationAudio.swift'),
+    output: resolve(outputDirectory, 'ZeusConversationAudio'),
+    frameworks: ['CoreAudio', 'Accelerate'],
+  });
 } else {
   await buildWindowsHelpers();
 }

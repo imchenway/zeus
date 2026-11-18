@@ -48,6 +48,9 @@ mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
   minimumSystemVersion: '13.0'
+  extendInfo:
+    # macOS 在打开系统播放采集权限时展示用途。
+    NSAudioCaptureUsageDescription: Zeus uses system playback to animate conversation navigation.
   hardenedRuntime: true
   entitlements: assets/entitlements.mac.plist
   entitlementsInherit: assets/entitlements.mac.inherit.plist

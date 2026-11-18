@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { ConversationNavigationEntry, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { Button } from '../ui/Button.js';
+import { useConversationAudio } from './conversationAudio.js';
 
 /** 目录条目附带当前正文行身份；未加载的条目使用同一身份占位。 */
 export interface TranscriptNavigationEntry extends ConversationNavigationEntry {
@@ -159,6 +160,7 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
   const railRef = useRef<HTMLElement | null>(null);
   /** 每条刻度的真实元素用于定位预览和焦点。 */
   const buttonsRef = useRef(new Map<string, HTMLButtonElement>());
+  useConversationAudio(railRef, buttonsRef, props.entries);
   /** 导航首次停留独立等待 250 毫秒，已打开的预览允许连续切换。 */
   const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 跨越刻度与卡片间隙时不立即关闭。 */
