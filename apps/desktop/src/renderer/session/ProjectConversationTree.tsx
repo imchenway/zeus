@@ -52,6 +52,8 @@ export interface ProjectConversationTreeProps {
   selectedConversationId?: string | null;
   conversationStates?: Record<string, ConversationTreeRuntimeState>;
   onSelectConversation: (conversation: NativeConversationChoice) => void;
+  /** 悬停和键盘焦点可提高目标会话的预取优先级。 */
+  onPrepareConversation?: (conversationId: string) => void;
   onStartConversation?: (taskId: string) => void;
   onArchiveConversation?: (conversation: NativeConversationChoice) => Promise<void> | void;
   /** 重命名会话 */
@@ -199,6 +201,10 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const workspaceLabel = worktree ? (props.language === 'zh-CN' ? '工作树' : 'Worktree') : props.language === 'zh-CN' ? '项目目录' : 'Project folder';
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
+      /** 只给尚未打开的持久会话安排后台读取。 */
+      const prepareConversation = () => {
+        if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) props.onPrepareConversation?.(conversation.id);
+      };
       return (
         <li className="session-conversation-tree-item" key={navigationId} data-conversation-motion-id={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
           <Button
@@ -214,6 +220,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
+            onPointerEnter={prepareConversation}
+            onFocus={prepareConversation}
             onClick={() => {
               if (!current && conversation.transportKind === 'codex_native' && !conversation.taskPushCreating) {
                 beginConversationNavigationTrace(conversation.projectId, conversation.id);

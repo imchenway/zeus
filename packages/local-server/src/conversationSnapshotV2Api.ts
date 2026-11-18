@@ -249,7 +249,7 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
     markV2Response(reply);
     try {
-      return repository.listResourcePage(pageInput(request.params.conversationId, request.query));
+      return repository.listResourcePage({ ...pageInput(request.params.conversationId, request.query), direction: pageDirection(request.query.direction) });
     } catch (error) {
       return sendSnapshotV2Error(reply, error);
     }

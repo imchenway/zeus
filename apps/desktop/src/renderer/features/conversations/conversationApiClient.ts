@@ -106,7 +106,7 @@ export interface ConversationApiClient {
   loadNativeConversationResourcesV2: (
     projectId: string,
     conversationId: string,
-    options?: { cursor?: string; limit?: number; byteLimit?: number; signal?: AbortSignal },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; signal?: AbortSignal },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2: (projectId: string, conversationId: string, turnId: string) => Promise<NativeConversationChangeSetV2Summary>;
   loadNativeConversationChangeFilesV2: (

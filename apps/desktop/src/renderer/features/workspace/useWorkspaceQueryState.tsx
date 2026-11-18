@@ -1282,6 +1282,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     selectedConversationId: selectedNativeConversation?.id,
     onCached: persistPreloadedConversation,
   });
+  /** 鼠标和键盘预先经过的行共享现有后台队列。 */
+  const prioritizeConversation = useCallback((id: string): void => observeConversationPreload(undefined, id), [observeConversationPreload]);
   useEffect(() => {
     const flush = (): void => {
       if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);
@@ -1590,6 +1592,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     nativeConversationGroups,
     nativeConversationHotCacheRef,
     observeConversationPreload,
+    prioritizeConversation,
     nativeConversationStartState,
     setNativeConversationStartState,
     nativeConversationRuntimeStates,

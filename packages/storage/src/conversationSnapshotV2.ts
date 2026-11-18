@@ -712,6 +712,8 @@ interface ResourceCursorPayload {
   type: 'resource';
   kind: 'resources';
   conversationId: string;
+  /** 缺省为既有正序游标，倒序读取继续沿最近资源向前翻页。 */
+  direction?: 'forward' | 'tail';
   after: ResourceOrderKey;
   through: ResourceOrderKey;
   throughEventSeq: number;
@@ -1708,11 +1710,14 @@ export class ConversationSnapshotV2Repository {
     return buildSequencePage(context, items);
   }
 
-  listResourcePage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationResourcePageItem> {
+  /** 首屏可从近到远读取预览，完整资源列表仍沿原正序分页。 */
+  listResourcePage(input: { conversationId: string; cursor?: string; direction?: 'forward' | 'tail'; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationResourcePageItem> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const limits = normalizePageLimits(input.entryLimit, input.byteLimit);
     const decoded = input.cursor ? decodeCursor(input.cursor) : null;
     const cursor = decoded ? requireResourceCursor(decoded, conversationId) : null;
+    /** 续页沿用游标方向，已有正序游标没有方向字段。 */
+    const tail = (cursor ? cursor.direction : input.direction) === 'tail';
     const through =
       cursor?.through ??
       mapResourceOrderKey(
@@ -1788,9 +1793,9 @@ export class ConversationSnapshotV2Repository {
               created_at, updated_at
          FROM conversation_resources
         WHERE conversation_id = ?
-          ${after ? 'AND (created_at, source_index, id) > (?, ?, ?)' : ''}
+          ${after ? `AND (created_at, source_index, id) ${tail ? '<' : '>'} (?, ?, ?)` : ''}
           AND (created_at, source_index, id) <= (?, ?, ?)
-        ORDER BY created_at, source_index, id
+        ORDER BY ${tail ? 'created_at DESC, source_index DESC, id DESC' : 'created_at, source_index, id'}
         LIMIT ?`,
       [conversationId, ...(after ? [after.createdAt, after.sourceIndex, after.id] : []), through.createdAt, through.sourceIndex, through.id, limits.entryLimit + 1],
     );
@@ -1833,6 +1838,7 @@ export class ConversationSnapshotV2Repository {
           type: 'resource',
           kind: 'resources',
           conversationId,
+          ...(tail ? { direction: 'tail' as const } : {}),
           after: { createdAt: item.createdAt, sourceIndex: item.sourceIndex, id: item.id },
           through: upper,
           throughEventSeq,
@@ -3246,6 +3252,7 @@ function requireResourceCursor(payload: CursorPayload, conversationId: string): 
     payload.type !== 'resource' ||
     payload.kind !== 'resources' ||
     payload.conversationId !== conversationId ||
+    (payload.direction !== undefined && payload.direction !== 'forward' && payload.direction !== 'tail') ||
     !validResourceKey(payload.after) ||
     !validResourceKey(payload.through) ||
     !validNonNegativeSequence(payload.throughEventSeq) ||
