@@ -1350,14 +1350,44 @@ function parseGitNameStatus(stdout: string): Array<{ path: string; originalPath?
   return entries;
 }
 
+/** 固定提交对复用最近十六份重命名清单；可变工作区只合并并发读取。 */
+const gitPreviewRenameReads = new Map<string, Promise<ReturnType<typeof parseGitNameStatus>>>();
+
+/** 普通修改无需全仓扫描，增删候选才需要匹配另一条路径。 */
+async function readGitPreviewRename(cwd: string, comparison: string[], path: string, committed = false) {
+  /** 补丁与全文使用相同的比较参数和字面量路径。 */
+  const args = ['diff', '--no-ext-diff', '--no-textconv', ...comparison, '--name-status', '-z'];
+  const changed = await runGit(cwd, [...args, '--no-renames', '--diff-filter=AD', '--', `:(literal)${path}`]);
+  if (!changed.stdout) return undefined;
+  /** 以仓库和完整比较端点隔离缓存，避免跨工作树复用。 */
+  const key = JSON.stringify([cwd, comparison, committed]);
+  let read = gitPreviewRenameReads.get(key);
+  if (!read) {
+    const scan = runGit(cwd, [...args, '--find-renames', '--diff-filter=RC', '--']).then((result) => parseGitNameStatus(result.stdout));
+    read = scan.then(
+      (entries) => {
+        if (!committed && gitPreviewRenameReads.get(key) === read) gitPreviewRenameReads.delete(key);
+        return entries;
+      },
+      (error: unknown) => {
+        if (gitPreviewRenameReads.get(key) === read) gitPreviewRenameReads.delete(key);
+        throw error;
+      },
+    );
+    gitPreviewRenameReads.set(key, read);
+    if (gitPreviewRenameReads.size > 16) gitPreviewRenameReads.delete(gitPreviewRenameReads.keys().next().value!);
+  }
+  return (await read).find((entry) => entry.path === path || entry.originalPath === path);
+}
+
 /** 读取任务分支单个文件的已提交差异，不依赖任务 worktree 是否仍然存在。 */
 export async function getTaskBranchFileDiff(repositoryPath: string, sourceBranch: string, taskBranch: string, path: string, frozenSourceHeadSha?: string): Promise<TaskWorkspaceFileDiff> {
   const safePath = requireSafeWorkspacePath(path);
   const comparison = await getTaskBranchDiffRange(repositoryPath, sourceBranch, taskBranch, frozenSourceHeadSha);
   /** 名称映射保留重命名两端，补丁正文仍只读取所选文件。 */
-  const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', `${comparison.mergeBaseSha}..${comparison.taskHeadSha}`];
-  const names = (await runGit(repositoryPath, [...args, '--name-status', '-z', '--', '.'])).stdout;
-  const entry = parseGitNameStatus(names).find((file) => file.path === safePath || file.originalPath === safePath);
+  const endpoints = [comparison.mergeBaseSha, comparison.taskHeadSha];
+  const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', ...endpoints];
+  const entry = await readGitPreviewRename(repositoryPath, endpoints, safePath, true);
   const paths = [...new Set([safePath, ...(entry?.originalPath ? [entry.originalPath, entry.path] : [])])].map((path) => `:(literal)${path}`);
   const diffText = await readGitDiffAllowChanges(repositoryPath, [...args, '--binary', '--', ...paths]);
   return { path: safePath, diff: diffSummaryFromText(diffText) };
@@ -3746,14 +3776,15 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
     throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected directory is not a Git repository.');
   });
   const revision = mode === 'current' || mode === 'working-tree' ? await resolveCommit(topLevel, branchName) : null;
+  /** 选中已提交文件时固定两端，供补丁和授权全文共用重命名结果。 */
+  const committedHead = path !== undefined && !summaryOnly && mode === 'current' ? await resolveCommit(topLevel, 'HEAD') : null;
   /** 文件清单保留真实增删统计和重命名，不生成全部文件的补丁。 */
-  const comparison = mode === 'staged' ? ['--cached'] : mode === 'unstaged' ? [] : [mode === 'working-tree' ? revision! : `${revision}..HEAD`];
+  const comparison = committedHead ? [revision!, committedHead] : mode === 'staged' ? ['--cached'] : mode === 'unstaged' ? [] : [mode === 'working-tree' ? revision! : `${revision}..HEAD`];
   const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', ...comparison];
   if (!summaryOnly) {
     if (path !== undefined) {
       /** 重命名检测先读取名称，补丁仍限定为选中文件的两个路径。 */
-      const names = (await runGit(topLevel, [...args, '--name-status', '-z', '--', '.'])).stdout;
-      const entry = parseGitNameStatus(names).find((entry) => entry.path === path || entry.originalPath === path);
+      const entry = await readGitPreviewRename(topLevel, comparison, requireSafeWorkspacePath(path), Boolean(committedHead));
       if (entry?.originalPath) paths.push(`:(literal)${entry.originalPath}`, `:(literal)${entry.path}`);
     }
     return diffSummaryFromText((await runGit(topLevel, [...args, '--', ...paths])).stdout);
@@ -4342,49 +4373,15 @@ export async function getGitFilePreviewSources(
     after = input.comparisonMode === 'working-tree' ? 'worktree' : head;
   } else if (input.stage === 'staged') after = 'index';
   else if (input.stage === 'unstaged') before = 'index';
-  /** 名称状态用于还原重命名前路径，不需要加载任何文件正文。 */
-  const args =
-    after === 'index'
-      ? ['diff', '--cached', ...(before ? [before] : [])]
-      : after === 'worktree'
-        ? ['diff', ...(before && before !== 'index' ? [before] : [])]
-        : before
-          ? ['diff', before, after]
-          : ['diff-tree', '--root', '--no-commit-id', '-r', after];
-  /** 禁止外部差异驱动，路径记录使用零字节分隔。 */
-  const entries = (await runGit(cwd, [...args, '--no-ext-diff', '--find-renames', '--name-status', '-z', '--'])).stdout.split('\0');
+  /** 空基线没有重命名；其他范围只为实际增删候选读取重命名配对。 */
+  const comparison = after === 'index' ? ['--cached', ...(before ? [before] : [])] : after === 'worktree' ? (before && before !== 'index' ? [before] : []) : [before!, after];
+  const rename = before ? await readGitPreviewRename(cwd, comparison, path, after !== 'index' && after !== 'worktree') : undefined;
   /** 默认同名读取；新增和删除由对象或文件的存在性判定。 */
-  let oldPath = path;
-  let newPath = path;
-  for (let index = 0; index < entries.length - 1;) {
-    /** 重命名和复制记录包含两个路径。 */
-    const status = entries[index++];
-    const left = entries[index++];
-    const right = /^[RC]/u.test(status) ? entries[index++] : left;
-    if (left === path || right === path) {
-      oldPath = left;
-      newPath = right;
-      break;
-    }
-  }
+  const oldPath = rename?.originalPath ?? path;
+  const newPath = rename?.path ?? path;
   /** 未暂存比较可能建立在已暂存的重命名上，归属仍追溯 HEAD 的原路径。 */
-  let blamePath = oldPath;
-  if (before === 'index' && head) {
-    /** 只读取名称映射，避免为归属重新加载全部补丁。 */
-    const stagedNames = (await runGit(cwd, ['diff', '--cached', head, '--no-ext-diff', '--find-renames', '--name-status', '-z', '--'])).stdout.split('\0');
-    for (let index = 0; index < stagedNames.length - 1;) {
-      /** 每条记录先读状态，再按重命名或复制规则读取前后路径。 */
-      const status = stagedNames[index++]!;
-      /** HEAD 中用于追溯归属的路径。 */
-      const left = stagedNames[index++]!;
-      /** 索引中的目标路径；普通变更沿用原路径。 */
-      const right = /^[RC]/u.test(status) ? stagedNames[index++]! : left;
-      if (right === oldPath) {
-        blamePath = left;
-        break;
-      }
-    }
-  }
+  const stagedRename = before === 'index' && head ? await readGitPreviewRename(cwd, ['--cached', head], oldPath) : undefined;
+  const blamePath = stagedRename?.path === oldPath ? (stagedRename.originalPath ?? oldPath) : oldPath;
   /** 使用 Git 模式区分普通文件与子模块，符号链接和冲突索引不作为正文解码。 */
   async function side(revision: string | null, name: string, prefix: string, fallback?: string | null): Promise<FilePreviewSource> {
     const label = `${prefix} · ${revision === 'worktree' ? '工作区' : revision === 'index' ? '暂存区' : (revision?.slice(0, 12) ?? '不存在')}`;

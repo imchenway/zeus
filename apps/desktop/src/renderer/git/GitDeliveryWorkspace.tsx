@@ -158,8 +158,6 @@ export function DeliveryRepositoryFileTree(props: {
   disabled: boolean;
   onScopeChange: (scope: DiffScope) => void;
   onSelectFile: (workspaceId: string, path: string) => void;
-  /** 悬停与键盘聚焦提前准备同一文件，不改变选择。 */
-  onPreloadFile?: (workspaceId: string, path: string) => void;
   onToggleWorkspace: (workspaceId: string, selected: boolean) => void;
   onToggleBranch: (workspaceIds: string[], selected: boolean) => void;
   /** 目录批量选择与单文件选择共用状态入口。 */
@@ -301,7 +299,6 @@ export function DeliveryRepositoryFileTree(props: {
                         zh={props.zh}
                         onToggle={(paths, selected) => props.onToggleFiles(workspaceId, paths, selected)}
                         onSelect={(path) => props.onSelectFile(workspaceId, path)}
-                        onPreload={(path) => props.onPreloadFile?.(workspaceId, path)}
                         onOpen={(path) => props.onOpenFile(workspaceId, path)}
                       />
                     ) : !(group.loadState ?? props.detailStates[workspaceId]) ? (
@@ -393,8 +390,6 @@ function DeliveryDirectoryFiles(props: {
   onToggle: (paths: string[], selected: boolean) => void;
   /** 单击更新下方差异。 */
   onSelect: (path: string) => void;
-  /** 鼠标或键盘进入文件行时提前准备正文差异。 */
-  onPreload?: (path: string) => void;
   /** 双击打开独立窗口。 */
   onOpen: (path: string) => void;
   /** 点击节点决定上下文动作范围。 */
@@ -504,8 +499,6 @@ function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFile
                     if (props.selectedFile !== path) beginGitDiffSelection(path);
                     return props.onSelect(path);
                   }}
-                  onPointerEnter={() => props.onPreload?.(path)}
-                  onFocus={() => props.onPreload?.(path)}
                   onDoubleClick={() => props.onOpen(path)}
                   disabled={props.disabled}
                 >
@@ -674,6 +667,10 @@ export function GitDeliveryWorkspace(props: {
   /** 与文件树使用同一状态，未跟踪文件不由补丁推断。 */
   fileStatus?: FileStatus;
   diffLoading: boolean;
+  /** 读取失败留在当前文件附近，可重新请求同一个补丁。 */
+  diffError?: unknown;
+  /** 只重试当前选中文件。 */
+  onRetryDiff?: () => void;
   diff: TaskGitDiffSummary | null;
   revision: string | number;
   /** 与补丁同时准备的授权全文，不重复读取或变更文件权限。 */
@@ -698,6 +695,11 @@ export function GitDeliveryWorkspace(props: {
               {props.diffTitle}
             </strong>
           </header>
+          {props.diffError != null ? (
+            <p className="task-git-review-error" role="alert">
+              <VisibleApplicationError error={props.diffError} language={props.zh ? 'zh-CN' : 'en'} action={props.onRetryDiff ? { label: props.zh ? '重试' : 'Retry', onClick: props.onRetryDiff } : undefined} />
+            </p>
+          ) : null}
           {!props.selectedFile ? (
             <div className="task-git-delivery-empty">
               <strong>{props.zh ? '选择文件，查看代码变化' : 'Select a file to review changes'}</strong>
@@ -721,6 +723,7 @@ export function GitDeliveryWorkspace(props: {
               diff={props.diff}
               zh={props.zh}
               title={props.diffTitle}
+              showPatchEarly
               fill
             />
           )}

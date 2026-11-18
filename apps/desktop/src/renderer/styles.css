@@ -16295,6 +16295,34 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: none;
 }
 
+/* 局部错误保留独立行，剩余空间继续显示当前文件正文。 */
+.macos-ai-app .task-git-delivery-diff-main:has(> .task-git-review-error) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.macos-ai-app .task-git-delivery-diff-main:has(> .task-git-review-error):has(> .file-preview > .project-git-diff-preview) {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* 只动画文件行背景和已就绪的正文，避免影响尺寸、焦点与点击。 */
+@media (prefers-reduced-motion: no-preference) {
+  .macos-ai-app .task-git-delivery-file-row {
+    transition: background-color var(--zeus-motion-duration-state) var(--zeus-motion-ease-out);
+  }
+
+  .macos-ai-app .task-git-delivery-diff-main :is(.code-diff-view, .code-diff-editable, .file-preview-pair, .file-preview-single),
+  .macos-ai-app.project-git-diff-window :is(.code-diff-view, .code-diff-editable, .file-preview-pair, .file-preview-single) {
+    animation: zeus-git-delivery-content-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out);
+  }
+}
+
+/* 从轻微透明过渡到正常正文，不叠加旧文件的画面。 */
+@keyframes zeus-git-delivery-content-enter {
+  from {
+    opacity: 0.76;
+  }
+}
+
 /* 文件范围是紧凑的分段切换，字号与布局不继承正文，窄侧栏也不拆行。 */
 .macos-ai-app .task-git-delivery-diff-tabs {
   padding: 6px 8px;

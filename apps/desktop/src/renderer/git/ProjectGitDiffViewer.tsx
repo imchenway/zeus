@@ -30,8 +30,8 @@ interface SideBySideDiffProps {
   preparedPreview?: PreparedFilePreview;
   /** 固定文件的正文已开始读取，文本差异等待同范围补丁。 */
   pendingDiff?: boolean;
-  /** 单文件正文读取成功时保留可操作的补丁错误。 */
-  diffError?: unknown;
+  /** 等待授权全文时可以先显示已经取得的文本补丁。 */
+  showPatchEarly?: boolean;
   /** 保存当前版本后刷新所属文件清单。 */
   onSaved?: () => void | Promise<void>;
   diff: GitDiffSummary | null;
@@ -86,18 +86,6 @@ export function ProjectGitDiffWindow(props: {
     const source = props.source;
     if (source.kind === 'task-git') {
       setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
-      if (source.scope === 'working') {
-        // 文件状态用于呈现状态色，补丁可以先交给正文。
-        void props.client
-          .loadTaskGitWorkspaceSnapshot(source.taskId, source.workspaceId)
-          .then((snapshot) => {
-            const review = snapshot.workspace.review;
-            if (!cancelled && review) setFileStatuses(Object.fromEntries([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => [file.path, file.category])));
-          })
-          .catch((cause: unknown) => {
-            if (!cancelled) console.warn('Git file status refresh failed', cause);
-          });
-      }
     }
     const request =
       source.kind === 'snapshot'
@@ -136,6 +124,18 @@ export function ProjectGitDiffWindow(props: {
         setDiff(next);
         // 明确选择的非文本或未跟踪文件即使没有补丁，也必须保留其身份。
         setSelectedPath((current) => props.source.path || (next.fileDiffs.some((file) => file.newPath === current || file.oldPath === current) ? current : next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || ''));
+        /** 状态色可随后补齐，优先完成独立窗口请求的单文件差异。 */
+        if (source.kind === 'task-git' && source.scope === 'working') {
+          void props.client
+            .loadTaskGitWorkspaceSnapshot(source.taskId, source.workspaceId)
+            .then(({ workspace }) => {
+              const review = workspace.review;
+              if (!cancelled && review) setFileStatuses(Object.fromEntries([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => [file.path, file.category])));
+            })
+            .catch((cause: unknown) => {
+              if (!cancelled) console.warn('Git file status refresh failed', cause);
+            });
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason);
@@ -160,7 +160,7 @@ export function ProjectGitDiffWindow(props: {
         diff={selectedDiff}
         revision={selectedPath}
         pendingDiff={!diff && !error}
-        diffError={error}
+        showPatchEarly
         zh={zh}
         title={selectedPath || title}
         onSaved={() => setSavedRevision((value) => value + 1)}
@@ -170,9 +170,9 @@ export function ProjectGitDiffWindow(props: {
 
   return (
     <main className={`macos-ai-app zeus-shell theme-${appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
-      {error && !previewRequest ? (
+      {error != null ? (
         <div className="project-git-diff-window-error">
-          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} action={{ label: zh ? '重试' : 'Retry', onClick: () => setSavedRevision((value) => value + 1) }} />
         </div>
       ) : null}
       <div className={diff && diff.fileDiffs.length > 1 ? 'project-git-diff-window-layout' : undefined} style={!diff || diff.fileDiffs.length <= 1 ? { display: 'contents' } : undefined}>
@@ -356,9 +356,8 @@ export function SideBySideDiff(props: SideBySideDiffProps) {
       request={props.previewRequest}
       revision={props.revision ?? props.diff?.diffText}
       preparedPreview={props.preparedPreview}
-      waitForContent
+      waitForContent={!props.showPatchEarly}
       pendingDiff={props.pendingDiff}
-      diffError={props.diffError}
       onSaved={props.onSaved}
       zh={props.zh}
       fileStatus={props.fileStatus ?? props.diff?.fileDiffs[0]?.changeType}

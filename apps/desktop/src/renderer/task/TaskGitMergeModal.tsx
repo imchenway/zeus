@@ -4,12 +4,11 @@ import type { ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
 import { GitDeliveryRunControl, readGitDeliverySettings, type GitDeliveryClient } from '../git/GitDeliveryRunControl.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { readCachedGitDiff, useGitDiffReadAhead, usePreparedGitDiffSelection, type GitDiffRead, type GitDiffReadTarget } from '../git/gitDiffReadAhead.js';
+import { useGitDiffReadAhead, useGitDeliveryFileDiff, type GitDiffRead, type GitDiffReadTarget } from '../git/gitDiffReadAhead.js';
 import { buildTaskCommitMessageSuggestion, gitConflictPreservationInstructions, type GitDeliveryInput, type GitDeliverySettings, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
   TaskBranchFileChange,
-  TaskGitDiffSummary,
   TaskGitFileStatus,
   TaskIntegrationConflictFile,
   TaskIntegrationConflictPermissionMode,
@@ -172,11 +171,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [selectedFile, setSelectedFile] = useState('');
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
   const [selectedPathsByWorkspace, setSelectedPathsByWorkspace] = useState<Record<string, string[]>>({});
-  /** 当前审阅文件的差异内容，与完整交付范围分别保存。 */
-  const [fileDiff, setFileDiff] = useState<TaskGitDiffSummary | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  /** 差异结果绑定文件与范围，后台刷新不能清空同一文件或混入另一文件。 */
-  const [fileDiffIdentity, setFileDiffIdentity] = useState('');
   const [message, setMessage] = useState('');
   /** 流式结果只作预览，生成失败、停止或手动编辑时保留已有提交说明。 */
   const [generatedMessage, setGeneratedMessage] = useState<string | null>(null);
@@ -213,20 +207,18 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const diffIdentity = JSON.stringify([props.task.id, workspaceId, selectedFile, diffScope]);
   /** 四十八个文件以内复用同一审核快照的结果与在途请求；刷新后重新核验。 */
   const fileDiffReads = useMemo(() => new Map<string, GitDiffRead>(), [props.client, props.task.id, snapshotRevision]);
-  /** 切回已读文件的当前帧即可显示已有差异。 */
-  const cachedFileDiff = fileDiffReads.get(diffIdentity)?.result;
   /** 任务预读仍使用原工作区与范围接口，不借用项目默认仓库。 */
   const fileDiffTarget = useCallback(
     (id: string, path: string): GitDiffReadTarget | null => {
       const client = props.client;
       if (!client || !path) return null;
       return {
-        key: JSON.stringify([props.task.id, id, path, diffScope]),
+        key: JSON.stringify([props.task.id, id, path, diffScope, snapshotRevision]),
         previewRequest: { kind: 'task-git', taskId: props.task.id, workspaceId: id, path, scope: diffScope },
         load: () => client.loadTaskWorkspaceFileDiff(props.task.id, id, path, diffScope).then((result) => result.diff),
       };
     },
-    [props.client, props.task.id, diffScope],
+    [props.client, props.task.id, diffScope, snapshotRevision],
   );
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
   /** 当前差异标题保留仓库与完整路径，合并工具栏后仍能识别文件来源。 */
@@ -324,9 +316,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       return target ? [target] : [];
     });
   }, [repositoryGroups, workspaceId, selectedFile, fileDiffTarget]);
-  useGitDiffReadAhead(fileDiffReads, readAheadTargets, interactionOpen && busyAction === null);
-  /** 只在最新一次选择的补丁与授权正文齐备后改变当前文件。 */
-  const selectPreparedFile = usePreparedGitDiffSelection(fileDiffReads, fileDiffTarget, (id, path) => selectWorkspace(id, diffScope, path), setError, interactionOpen && busyAction === null);
+  /** 当前可见工作区的文件立即成为审阅目标，补丁独立更新。 */
+  const diffTarget = useMemo(() => (interactionOpen && selectedWorkspace?.id ? fileDiffTarget(selectedWorkspace.id, selectedFile) : null), [interactionOpen, selectedWorkspace?.id, selectedFile, fileDiffTarget]);
+  const fileReview = useGitDeliveryFileDiff(fileDiffReads, diffTarget, diffIdentity);
+  useGitDiffReadAhead(fileDiffReads, readAheadTargets, interactionOpen && busyAction === null && !fileReview.diffLoading);
 
   /** 文件范围变化后审阅首个实际变动，不保留已隐藏目录的差异。 */
   useEffect(() => {
@@ -339,7 +332,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
     if (!first) {
       setSelectedFile('');
-      setFileDiff(null);
     }
   }, [repositoryGroups, workspaceId]);
   const totalWorkingFiles = useMemo(() => visibleWorkspaceItems.reduce((total, workspace) => total + collectWorkingFiles(workspaceDetails[workspace.id]).length, 0), [visibleWorkspaceItems, workspaceDetails]);
@@ -387,7 +379,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setSelectedPathsByWorkspace({});
     setDiffScope('working');
     setSelectedFile('');
-    setFileDiff(null);
   }, [interactionOpen]);
 
   useEffect(() => {
@@ -474,37 +465,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map(toWorkingDeliveryFile);
     setSelectedFile((current) => (nextFiles.some((file) => file.path === current) ? current : (nextFiles[0]?.path ?? '')));
   }, [workspaceId, diffScope, committedFiles, workingFiles]);
-
-  useEffect(() => {
-    if (!interactionOpen || !props.task || !props.client || !selectedWorkspace || !selectedFile) {
-      setFileDiff(null);
-      // 文件在提交后消失时，取消中的旧请求不能让空白审查区永远显示加载。
-      setDiffLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setDiffLoading(true);
-    /** 同文件快速往返只保留一次读取，避免旧请求挤占新文件。 */
-    const target = fileDiffTarget(selectedWorkspace.id, selectedFile);
-    if (!target) return;
-    /** 请求身份同时限定工作区、文件和快照。 */
-    const requested = readCachedGitDiff(fileDiffReads, target);
-    void requested.read
-      .then((diff) => {
-        if (cancelled) return;
-        setFileDiff(diff);
-        setFileDiffIdentity(diffIdentity);
-        setDiffLoading(false);
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) return;
-        setDiffLoading(false);
-        setError(reason);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [interactionOpen, props.task?.id, props.client, selectedWorkspace?.id, selectedFile, diffScope, snapshotRevision, zh, fileDiffReads, fileDiffTarget]);
 
   useEffect(() => {
     if (!interactionOpen || !props.task || !props.client || !activeConflict || !conflictPath) {
@@ -1171,10 +1131,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   zh={zh}
                   disabled={busy}
                   onScopeChange={setDiffScope}
-                  onSelectFile={selectPreparedFile}
-                  onPreloadFile={(id, path) => {
-                    const target = fileDiffTarget(id, path);
-                    if (target) return readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
+                  onSelectFile={(id, path) => {
+                    if (id !== workspaceId || path !== selectedFile) selectWorkspace(id, diffScope, path);
                   }}
                   onToggleWorkspace={toggleWorkspaceSelection}
                   onToggleBranch={toggleBranchSelection}
@@ -1316,10 +1274,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               selectedFile={selectedFile}
               fileStatus={diffScope === 'working' ? workingFiles.find((file) => file.path === selectedFile)?.category : committedFiles.find((file) => file.path === selectedFile)?.status}
               diffTitle={selectedDiffTitle}
-              diffLoading={diffLoading && fileDiffIdentity !== diffIdentity && !cachedFileDiff}
-              diff={cachedFileDiff ?? (fileDiffIdentity === diffIdentity ? fileDiff : null)}
+              {...fileReview}
               revision={snapshotRevision}
-              preparedPreview={fileDiffReads.get(diffIdentity)?.preview}
               onFileSaved={() => reload(workspaceId)}
               previewRequest={selectedWorkspace ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope } : undefined}
               onShowCommitted={diffScope === 'working' && totalCommittedFiles > 0 ? () => setDiffScope('committed') : undefined}
