@@ -4258,14 +4258,22 @@ a {
 }
 /* 原生单选框覆盖全局文本框样式，保留方向键切换和系统选中状态。 */
 .macos-ai-app .project-git-update-strategies input[type='radio'] {
+  accent-color: var(--zeus-product-accent);
   appearance: auto;
   background: transparent;
   block-size: 16px;
   border: 0;
   box-shadow: none;
   inline-size: 16px;
+  margin: 0;
   min-block-size: 16px;
   padding: 0;
+}
+/* 表单中的合入方式通过单选组标题标明字段。 */
+.macos-ai-app .zeus-form-fields .project-git-update-strategies > legend {
+  margin-block-end: 8px;
+  padding: 0;
+  font-weight: 600;
 }
 .project-git-update-remember {
   margin-inline-end: auto;
@@ -15912,6 +15920,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   block-size: min(980px, calc(100vh - 28px));
   max-block-size: none;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  background: var(--zeus-product-panel);
+}
+
+/* 交付区域共用窗口底色，控件和 Diff 内容继续绘制自己的状态。 */
+.macos-ai-app .task-git-delivery-modal :is(.task-git-merge-header, .task-git-merge-footer, .task-git-review-pane-title) {
+  background: transparent;
 }
 
 body[data-surface='task-git-delivery'] {
@@ -15943,12 +15957,39 @@ body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[
 }
 
 body[data-surface='task-git-delivery'] .task-git-merge-header {
+  position: relative;
   box-sizing: border-box;
   min-block-size: 52px;
   justify-content: center;
   padding-inline: 84px;
   text-align: center;
   -webkit-app-region: drag;
+}
+
+/* 独立窗口的设置入口靠右，不改变原生标题的居中位置。 */
+.macos-ai-app .git-delivery-settings-host {
+  flex: none;
+  margin-inline-start: auto;
+}
+.macos-ai-app .git-delivery-settings-host:empty {
+  display: none;
+}
+body[data-surface='task-git-delivery'] .task-git-merge-header > .git-delivery-settings-host {
+  position: absolute;
+  inset-inline-end: 16px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+.macos-ai-app .git-delivery-settings-host > .zeus-button[data-zeus-primitive='button'] {
+  inline-size: 28px;
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding: 4px;
+}
+.macos-ai-app .git-delivery-settings-host > .zeus-button:not(:hover):not(:focus-visible) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, input, select, textarea) {
@@ -16040,8 +16081,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 0;
 }
 
+/* 分隔条用细线划分区域，拖动与键盘焦点仍使用共享高亮。 */
+.macos-ai-app .task-git-delivery-layout > :is(.git-separator-delivery-height, .git-separator-delivery-actions) {
+  background: transparent;
+}
 .macos-ai-app .task-git-delivery-layout > .git-separator-delivery-height {
   grid-area: separator;
+  border-block-start: 1px solid var(--zeus-control-border);
 }
 
 .macos-ai-app .task-git-delivery-layout > .git-separator-delivery-actions {
@@ -16057,7 +16103,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border-inline-end: 1px solid var(--zeus-control-border);
-  background: var(--zeus-product-panel-muted);
 }
 
 .macos-ai-app .task-git-delivery-file-tree {
@@ -16390,7 +16435,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 0;
   padding: 0;
-  background: var(--zeus-product-panel);
+  background: transparent;
   font-size: 12px;
   line-height: 1.45;
   container-type: inline-size;
@@ -16439,21 +16484,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-size: 13px;
 }
 
-/* 合入方式靠近合入按钮，选择器按当前方式名称取宽。 */
-.macos-ai-app .task-git-delivery-merge-controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 6px;
-  max-inline-size: 100%;
-  margin-inline-start: auto;
-}
-.macos-ai-app .task-git-delivery-merge-controls > .zeus-select {
-  inline-size: auto;
-}
-
-/* 组合设置与独立动作都使用原有按钮的键盘、忙碌和禁用状态。 */
+/* 独立动作在各分组标题的同一右边线上。 */
 .macos-ai-app .task-git-delivery-step-heading > .zeus-button {
   flex: none;
   margin-inline-start: auto;
@@ -16508,12 +16539,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 4px;
 }
 
-/* 分支、命令和任务状态的标签与控件同行，多仓目标沿控件列展开。 */
+/* 分支、命令和任务状态共用标签列，选择器占用剩余宽度。 */
 .macos-ai-app .task-git-delivery-field-row {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: clamp(86px, 36%, 144px) minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .macos-ai-app .task-git-delivery-field-row > span {
   color: var(--zeus-product-muted);
@@ -16523,50 +16554,24 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
 }
 
-/* 有空间时两项收尾设置同行，放不下时按原顺序换行。 */
+/* 每个收尾开关和对应选择器各占一行。 */
 .git-delivery-follow-up-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-}
-.git-delivery-follow-up-fields > section {
-  flex: 0 1 calc(7.5em + 8px + 7.5rem);
-  min-inline-size: 0;
-}
-.git-delivery-follow-up-fields > .git-delivery-completion:has(> .git-delivery-checkbox) {
-  flex-basis: 100%;
-}
-.macos-ai-app .git-delivery-follow-up-fields .task-git-delivery-field-row {
-  grid-template-columns: 7.5em minmax(0, 1fr);
-  gap: 8px;
-}
-.macos-ai-app .git-delivery-follow-up-fields .task-git-delivery-field-row > .zeus-select {
-  inline-size: min(100%, 7.5rem);
+  display: grid;
+  gap: 5px;
+  margin-block-start: 4px;
 }
 
-/* 组合选择和附属 AI 选项各占一行，避免与独立执行按钮混排。 */
+/* 组合区与底栏共用窗口底色，以底栏边界分隔。 */
 .macos-ai-app .task-git-delivery-actions-scroll > .git-delivery-workflow {
-  margin-inline: -16px;
-  padding: 12px 16px 16px;
-  border: 0;
-  background: color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-panel));
-}
-.macos-ai-app .git-delivery-workflow > .task-git-delivery-step-heading > .zeus-button[data-zeus-primitive='button'] {
-  inline-size: 28px;
-  min-inline-size: 28px;
-  padding: 4px;
-}
-.macos-ai-app .git-delivery-workflow > .task-git-delivery-step-heading > .zeus-button:not(:hover):not(:focus-visible) {
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
+  padding-block-end: 16px;
+  border-block-end: 0;
 }
 .git-delivery-workflow-steps,
 .git-delivery-workflow-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 24px;
+  gap: 10px 20px;
 }
 .git-delivery-workflow-steps {
   padding-block: 2px;
@@ -16697,12 +16702,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 /* 合入结果并入标题栏，使用中性入口，不再单独铺设提示横幅。 */
 .macos-ai-app .task-git-merge-header.has-results > span {
   flex: 1;
-  min-inline-size: 0;
 }
 
-/* 长标题与分支名在标题栏内省略，保留结果入口与关闭按钮的可用空间。 */
-.macos-ai-app .task-git-merge-header.has-results > span > strong,
-.macos-ai-app .task-git-merge-header.has-results > span > small {
+/* 长标题与分支名在标题栏内省略，给窗口操作留出空间。 */
+.macos-ai-app .task-git-delivery-modal > .task-git-merge-header > span {
+  min-inline-size: 0;
+}
+.macos-ai-app .task-git-delivery-modal > .task-git-merge-header > span > :is(strong, small) {
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -23848,7 +23854,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .git-delivery-combination-footer {
   border-block-start: 1px solid var(--zeus-control-border);
   padding: 8px 16px;
-  background: color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-panel));
 }
 .git-delivery-combination-footer > .zeus-button {
   inline-size: 100%;
@@ -23955,20 +23960,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: transparent;
   box-shadow: none;
 }
-/* 窄栏缩短目标分支的标签列，组合选项可换行。 */
+/* 窄栏收紧列距，较长的组合选项可换行。 */
 @container git-delivery-actions (max-width: 300px) {
   .macos-ai-app .task-git-delivery-field-row {
-    grid-template-columns: 64px minmax(0, 1fr);
     gap: 8px;
   }
   .git-delivery-workflow-steps,
   .git-delivery-workflow-options {
     column-gap: 16px;
   }
-}
-/* 未勾选推送时保留命令偏好，灰化说明本次组合不会执行这些命令。 */
-.git-delivery-command-selection[data-enabled='false'] {
-  opacity: 0.6;
 }
 .git-delivery-conflict-dialog {
   inline-size: min(1200px, 94vw);

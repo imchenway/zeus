@@ -1,11 +1,12 @@
-import { describeUserFacingError, type GitDeliveryRun, type GitDeliveryStep } from '@zeus/shared';
+import { describeUserFacingError, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep } from '@zeus/shared';
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import './gitDeliveryProgress.css';
 
-/** 固定步骤名称同时用于操作按钮与执行进度。 */
-export function gitDeliveryActionLabel(action: GitDeliveryStep['action'], zh: boolean): string {
+/** 操作按钮与进度共用步骤名称，执行前可标明压缩合入。 */
+export function gitDeliveryActionLabel(action: GitDeliveryStep['action'], zh: boolean, mode?: GitDeliveryInput['mode']): string {
+  if (action === 'merge' && mode === 'squash') return zh ? '压缩合入' : 'Squash merge';
   return {
     commit: zh ? '提交' : 'Commit',
     merge: zh ? '合入' : 'Merge',

@@ -46,6 +46,8 @@ export function GitDeliveryRunControl(props: {
   taskId?: string | null;
   /** 当前输入；点击时再次固定副本。 */
   input: Omit<GitDeliveryInput, 'settings'>;
+  /** 保存设置后，单步与组合交付同时使用选中的合入方式。 */
+  onModeChange: (mode: GitDeliveryInput['mode']) => void;
   /** 原页正在处理单步操作。 */
   disabled: boolean;
   /** 当前语言。 */
@@ -56,11 +58,11 @@ export function GitDeliveryRunControl(props: {
   /** 功能区与底部按钮读取同一份组合，避免勾选和执行不一致。 */
   const combination = useContext(GitDeliveryCombinationContext);
   if (!combination) throw new Error('代码交付运行按钮必须位于交付操作栏。');
-  const { settings, setSettings, settingsOpen, setSettingsOpen, setRunning, footerHost } = combination;
+  const { settings, setSettings, executionSettings, followUps, setFollowUps, canMerge, settingsOpen, setSettingsOpen, setRunning, footerHost } = combination;
   /** 任务工作区与关联任务的普通会话共享任务收尾。 */
   const taskId = props.input.scope.kind === 'task' ? props.input.scope.taskId : props.taskId;
-  /** 设置弹窗草稿。 */
-  const [draft, setDraft] = useState<GitDeliverySettings | null>(null);
+  /** 设置草稿只包含该弹窗可编辑的合入与冲突选项。 */
+  const [draft, setDraft] = useState<(Pick<GitDeliverySettings, 'permissionMode' | 'skillId'> & Pick<GitDeliveryInput, 'mode'>) | null>(null);
   /** 项目当前真实状态定义。 */
   const [statuses, setStatuses] = useState<TaskManagementStatusDefinition[]>([]);
   /** 命令目录沿用项目与全局合并结果，不在交付页复制脚本配置。 */
@@ -136,7 +138,7 @@ export function GitDeliveryRunControl(props: {
     };
   }, [props.client, props.projectId]);
 
-  /** 功能区的设置按钮只在打开时读取当前项目状态。 */
+  /** 每次打开交付设置时恢复当前合入方式和冲突选项。 */
   useEffect(() => {
     if (!settingsOpen) {
       setDraft(null);
@@ -144,7 +146,7 @@ export function GitDeliveryRunControl(props: {
     }
     let active = true;
     setError(null);
-    setDraft({ ...settings });
+    setDraft({ mode: props.input.mode, permissionMode: settings.permissionMode, skillId: settings.skillId });
     void props.client
       .loadGitDeliveryOptions(props.projectId)
       .then((result) => {
@@ -156,7 +158,7 @@ export function GitDeliveryRunControl(props: {
     return () => {
       active = false;
     };
-  }, [settingsOpen, props.client, props.projectId]);
+  }, [settingsOpen, props.client, props.projectId, props.input.mode, settings.permissionMode, settings.skillId]);
 
   /** 接纳与后台运行期间，功能旁的复选框不能改变正在执行的组合。 */
   useEffect(() => {
@@ -176,8 +178,10 @@ export function GitDeliveryRunControl(props: {
       /** 读取模型前固定文件和设置，接纳重试继续使用同一快照。 */
       const sourceJson = JSON.stringify({
         ...props.input,
-        postPushCommands: settings.push ? (settings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 })) : [],
-        settings: { ...settings, finalTaskStatus: taskId ? settings.finalTaskStatus : null, archiveConversation: !taskId && settings.archiveConversation === true },
+        postPushCommands: executionSettings.push
+          ? (executionSettings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 }))
+          : [],
+        settings: executionSettings,
       });
       await window.zeus?.setTaskGitDeliverySubmissionState?.('pending');
       if (request.current?.sourceJson !== sourceJson) {
@@ -286,52 +290,70 @@ export function GitDeliveryRunControl(props: {
     }
   }
 
-  /** 任务状态变更保留按钮提示，具体配置统一在设置中查看。 */
-  const finalStatusLabel = statuses.find((status) => status.id === settings.finalTaskStatus)?.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][settings.finalTaskStatus ?? ''] ?? settings.finalTaskStatus;
+  /** 单步操作及后台运行期间锁定收尾配置。 */
+  const controlsDisabled = props.disabled || busy || running;
+  /** 只有启用推送才可开启命令；目录读取失败时仍能取消勾选。 */
+  const commandToggleDisabled = controlsDisabled || !settings.push;
+  /** 只计入本次会执行的已选命令。 */
+  const commandCount = executionSettings.push ? (executionSettings.postPushCommandIds?.length ?? 0) : 0;
+  /** 任务状态提示使用本次实际提交的状态。 */
+  const finalTaskStatus = executionSettings.finalTaskStatus;
+  /** 优先显示项目定义的状态名称。 */
+  const finalStatusLabel = statuses.find((status) => status.id === finalTaskStatus)?.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][finalTaskStatus ?? ''] ?? finalTaskStatus;
   /** 按钮名称直接表达实际执行顺序，不再重复渲染功能说明。 */
   const summary = (['commit', 'merge', 'push'] as const)
-    .filter((action) => settings[action])
-    .map((action) => actionLabel(action, props.zh))
-    .concat(settings.push && settings.postPushCommandIds?.length ? [props.zh ? `命令（${settings.postPushCommandIds.length}）` : `Commands (${settings.postPushCommandIds.length})`] : [])
+    .filter((action) => executionSettings[action])
+    .map((action) => actionLabel(action, props.zh, props.input.mode))
+    .concat(commandCount ? [props.zh ? `命令（${commandCount}）` : `Commands (${commandCount})`] : [])
     .join(' → ');
   return (
     <>
       <div className="git-delivery-follow-up-fields">
-        <section className="git-delivery-command-selection" data-enabled={settings.push} aria-label={props.zh ? '推送后执行命令' : 'Run commands after push'}>
+        <div className="task-git-delivery-field-row">
+          <label className="git-delivery-checkbox" aria-disabled={commandToggleDisabled || undefined}>
+            <input
+              type="checkbox"
+              checked={followUps.commands}
+              disabled={commandToggleDisabled}
+              onChange={(event) => setFollowUps((current) => ({ ...current, commands: event.target.checked }))}
+            />
+            {props.zh ? '推送后执行命令' : 'Run after push'}
+          </label>
+          <GitDeliveryCommandSelect
+            commands={commands}
+            selectedIds={settings.postPushCommandIds ?? []}
+            disabled={commandToggleDisabled || !followUps.commands || !commandsLoaded}
+            zh={props.zh}
+            onChange={(ids) => setSettings((current) => ({ ...current, postPushCommandIds: ids }))}
+          />
+        </div>
+        {taskId ? (
           <div className="task-git-delivery-field-row">
-            <span>{props.zh ? '推送后执行命令' : 'Run after push'}</span>
-            <GitDeliveryCommandSelect
-              commands={commands}
-              selectedIds={settings.postPushCommandIds ?? []}
-              disabled={props.disabled || busy || running || !settings.push || !commandsLoaded}
-              zh={props.zh}
-              onChange={(ids) => setSettings((current) => ({ ...current, postPushCommandIds: ids }))}
+            <label className="git-delivery-checkbox" aria-disabled={controlsDisabled || undefined}>
+              <input
+                type="checkbox"
+                checked={followUps.taskStatus}
+                disabled={controlsDisabled}
+                onChange={(event) => setFollowUps((current) => ({ ...current, taskStatus: event.target.checked }))}
+              />
+              {props.zh ? '修改任务状态' : 'Set task status'}
+            </label>
+            <ZeusSelect
+              size="compact"
+              disabled={controlsDisabled || !followUps.taskStatus}
+              value={settings.finalTaskStatus ?? ''}
+              triggerLabel={settings.finalTaskStatus ? undefined : props.zh ? '选择状态' : 'Select status'}
+              options={statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id }))}
+              onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value }))}
+              ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
             />
           </div>
-        </section>
-        <section className="git-delivery-completion">
-          {taskId ? (
-            <div className="task-git-delivery-field-row">
-              <span>{props.zh ? '交付后设状态' : 'Set task status'}</span>
-              <ZeusSelect
-                size="compact"
-                disabled={props.disabled || busy || running}
-                value={settings.finalTaskStatus ?? ''}
-                options={[
-                  { value: '', label: props.zh ? '不变更' : 'Do not change' },
-                  ...statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id })),
-                ]}
-                onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value || null }))}
-                ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
-              />
-            </div>
-          ) : (
-            <label className="git-delivery-checkbox">
-              <input type="checkbox" disabled={props.disabled || busy || running} checked={settings.archiveConversation === true} onChange={(event) => setSettings((current) => ({ ...current, archiveConversation: event.target.checked }))} />
-              {props.zh ? '交付成功后自动归档会话' : 'Archive conversation after delivery succeeds'}
-            </label>
-          )}
-        </section>
+        ) : (
+          <label className="git-delivery-checkbox">
+            <input type="checkbox" disabled={controlsDisabled} checked={settings.archiveConversation === true} onChange={(event) => setSettings((current) => ({ ...current, archiveConversation: event.target.checked }))} />
+            {props.zh ? '交付成功后自动归档会话' : 'Archive conversation after delivery succeeds'}
+          </label>
+        )}
       </div>
       <section className="git-delivery-combination" aria-label={props.zh ? '执行交付' : 'Run delivery'}>
         {error || runsError ? (
@@ -405,13 +427,13 @@ export function GitDeliveryRunControl(props: {
                 variant="primary"
                 size="compact"
                 busy={busy}
-                disabled={props.disabled || busy || running || !props.input.repositories.length || !summary || (settings.push && Boolean(settings.postPushCommandIds?.length) && !commandsLoaded)}
+                disabled={controlsDisabled || !props.input.repositories.length || !summary || (commandCount > 0 && !commandsLoaded)}
                 data-icon-tooltip={
-                  settings.finalTaskStatus && taskId
+                  finalTaskStatus && taskId
                     ? props.zh
                       ? `完成后状态：${finalStatusLabel}`
                       : `Final status: ${finalStatusLabel}`
-                    : !taskId && settings.archiveConversation
+                    : executionSettings.archiveConversation
                       ? props.zh
                         ? '交付成功后归档会话'
                         : 'Archive conversation after delivery succeeds'
@@ -427,7 +449,7 @@ export function GitDeliveryRunControl(props: {
         {cleanupRun ? <GitDeliveryCleanupConfirmation run={cleanupRun} zh={props.zh} busy={busy} error={error} onClose={() => setCleanupRun(null)} onConfirm={() => resume(cleanupRun, true)} /> : null}
         {draft ? (
           <FormDialog
-            title={props.zh ? '组合操作设置' : 'Combination settings'}
+            title={props.zh ? '交付设置' : 'Delivery settings'}
             zh={props.zh}
             busy={busy}
             submitLabel={props.zh ? '保存' : 'Save'}
@@ -437,13 +459,25 @@ export function GitDeliveryRunControl(props: {
             }}
             onSubmit={(event) => {
               event.preventDefault();
-              setSettings(draft);
+              props.onModeChange(draft.mode);
+              setSettings((current) => ({ ...current, permissionMode: draft.permissionMode, skillId: draft.skillId }));
               setDraft(null);
               setSettingsOpen(false);
             }}
           >
             {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
-            {draft.resolveConflicts ? (
+            <fieldset className="project-git-update-strategies" disabled={!canMerge}>
+              <legend>{props.zh ? '合入方式' : 'Merge method'}</legend>
+              <label className="git-delivery-checkbox">
+                <input type="radio" name="git-delivery-merge-mode" value="merge" checked={draft.mode === 'merge'} onChange={() => setDraft({ ...draft, mode: 'merge' })} />
+                {props.zh ? '保留提交' : 'Preserve commits'}
+              </label>
+              <label className="git-delivery-checkbox">
+                <input type="radio" name="git-delivery-merge-mode" value="squash" checked={draft.mode === 'squash'} onChange={() => setDraft({ ...draft, mode: 'squash' })} />
+                {props.zh ? '合成一个提交' : 'Squash into one commit'}
+              </label>
+            </fieldset>
+            {settings.resolveConflicts ? (
               <>
                 <ConflictAiPermissions zh={props.zh} value={draft.permissionMode} disabled={busy} onChange={(value) => setDraft({ ...draft, permissionMode: value })} />
                 <SkillSelector client={props.client} projectId={props.projectId} value={draft.skillId ?? ''} onChange={(value) => setDraft({ ...draft, skillId: value || null })} language={props.zh ? 'zh-CN' : 'en-US'} />

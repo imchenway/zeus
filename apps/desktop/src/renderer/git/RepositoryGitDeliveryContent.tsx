@@ -127,6 +127,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const [scope, setScope] = useState<DiffScope>('working');
   /** 单独合入与组合交付使用同一合入方式。 */
   const [mode, setMode] = useState<'merge' | 'squash'>('merge');
+  /** 标题栏承载当前交付操作区的设置入口。 */
+  const [deliverySettingsHost, setDeliverySettingsHost] = useState<HTMLDivElement | null>(null);
   /** 手动编辑和生成失败均保留提交说明。 */
   const [drafts, setDrafts] = useGitCommitDrafts(props.conversation ? `${props.project.id}:conversation:${props.conversation.id}` : props.project.id);
   /** 项目全量、单仓和会话分别保存草稿，避免不同提交范围互相覆盖。 */
@@ -652,6 +654,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 busyAction={busyAction}
                 generationClient={props.client}
                 projectId={props.project.id}
+                hasTask={Boolean(props.conversation?.taskId)}
+                settingsHost={deliverySettingsHost}
                 currentDirectory={props.conversationWorkspaceMode === 'direct'}
                 canGenerate={Boolean(commitCount)}
                 onGenerate={() => generateMessage()}
@@ -684,7 +688,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 onCopyBranch={copyBranchName}
                 mergeDisabled={!props.conversation || snapshot.repositories.some((repository) => repository.snapshot.detached || Boolean(repository.snapshot.integrationState) || repository.snapshot.conflictFiles.length > 0)}
                 mode={mode}
-                onModeChange={setMode}
                 mergeCount={props.conversation ? snapshot.repositories.length : 0}
                 onMerge={(settings) => mergeSelected(settings)}
                 combination={
@@ -695,6 +698,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                       taskId={props.conversation.taskId}
                       zh={zh}
                       disabled={Boolean(busyAction)}
+                      onModeChange={setMode}
                       onAccepted={() => props.onClose?.()}
                       input={{
                         scope: { kind: 'conversation', conversationId: props.conversation.id },
@@ -751,6 +755,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
               {props.conversation ? ` · ${props.conversation.title}` : ''}
             </small>
           </span>
+          <div className="git-delivery-settings-host" ref={setDeliverySettingsHost} />
           {!standaloneWindow ? (
             <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={Boolean(busyAction && busyAction !== 'loading' && busyAction !== 'commit-message')}>
               ×

@@ -30,11 +30,19 @@ export function readGitDeliverySettings(projectId: string, currentDirectory = fa
 
 /** 同一操作栏的步骤选择、详细设置与运行按钮共享当前组合。 */
 export interface GitDeliveryCombinationState {
-  /** 当前勾选只在运行被接纳后保存为项目偏好。 */
+  /** 表单保留未启用的命令和状态选择，供本窗口内重新启用。 */
   settings: GitDeliverySettings;
-  /** 组合区的复选框直接更新本次运行输入。 */
+  /** 更新组合表单的选择。 */
   setSettings: Dispatch<SetStateAction<GitDeliverySettings>>;
-  /** 详细设置从组合区标题打开，底部只保留运行按钮。 */
+  /** 单步合入及组合运行读取已启用的收尾参数。 */
+  executionSettings: GitDeliverySettings;
+  /** 命令与任务状态分别启用，当前值不会因取消勾选而清除。 */
+  followUps: { commands: boolean; taskStatus: boolean };
+  /** 切换命令或任务状态的启用状态。 */
+  setFollowUps: Dispatch<SetStateAction<GitDeliveryCombinationState['followUps']>>;
+  /** 具备有效目标分支时允许更改合入方式。 */
+  canMerge: boolean;
+  /** 窗口标题栏打开本次交付的详细设置。 */
   settingsOpen: boolean;
   /** 关闭弹窗不改变尚未保存的详细设置。 */
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
