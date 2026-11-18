@@ -8,12 +8,13 @@ import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { Collapsible } from '../ui/Collapsible.js';
 import {
   Suspense,
   forwardRef,
   lazy,
+  memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -122,6 +123,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
+  /** 已点击的新文件立即进入等待态，正文读取期间仍可继续切换。 */
+  const [openingPath, setOpeningPath] = useState<string | null>(null);
+  /** 只有最近一次打开请求可以修改标签和审阅焦点。 */
+  const pendingFileOpen = useRef<{ path: string } | null>(null);
+  /** 目录连续开合共享同一次在途读取。 */
+  const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(() => new Set());
+  /** 先提交目录和标签选中态，再创建新文件的编辑器。 */
+  const deferredActivePath = useDeferredValue(activePath);
+  const openingDocument = openingPath !== null || deferredActivePath !== activePath;
   /** 每个文件记住本次会话中的查看方式，不影响已有源码偏好。 */
   const [viewModes, setViewModes] = useState<Record<string, SourceViewMode>>({});
   /** 当前源码的查找入口也支持从效果预览切回编辑器。 */
@@ -153,6 +163,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const activeTabElementRef = useRef<HTMLDivElement | null>(null);
   const dirtyRef = useRef(false);
   const fileOpenRequestedRef = useRef(false);
+  /** 编辑器更新时保留目录树的回调引用，各动作仍读取当前工作区状态。 */
+  const treeActions = useRef({ toggleDirectory, openFileContextMenu, handleFileShortcut });
+  useLayoutEffect(() => {
+    treeActions.current = { toggleDirectory, openFileContextMenu, handleFileShortcut };
+  });
+  /** 目录节点共享稳定的动作入口。 */
+  const treeHandlers = useMemo(
+    () => ({
+      onToggle: (path: string) => treeActions.current.toggleDirectory(path),
+      onContextMenu: (entry: ProjectSourceEntry, event: ReactMouseEvent<HTMLButtonElement>) => treeActions.current.openFileContextMenu(entry, event),
+      onShortcut: (entry: ProjectSourceEntry, event: ReactKeyboardEvent<HTMLElement>) => treeActions.current.handleFileShortcut(entry, event),
+    }),
+    [],
+  );
   directoriesRef.current = directories;
   tabsRef.current = tabs;
   activePathRef.current = activePath;
@@ -163,7 +187,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const viewMode: SourceViewMode = renderedPreviewKind && activePath ? (viewModes[activePath] ?? 'source') : 'source';
   /** 查找完整源码，保留标签与当前草稿。 */
   function openSourceFind(): void {
-    if (!activePath || !activeTab?.document.editable) return;
+    if (openingDocument || !activePath || !activeTab?.document.editable) return;
     setViewModes((current) => ({ ...current, [activePath]: 'source' }));
     setFindRequest((request) => request + 1);
   }
@@ -176,24 +200,27 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }, [activePath, tabs.length]);
 
   const loadDirectory = useCallback(
-    async (relativePath: string, force = false) => {
-      if (!bridge?.listProjectSourceDirectory || (!force && directories[relativePath])) return;
+    async (relativePath: string) => {
+      if (!bridge?.listProjectSourceDirectory) return;
       const snapshot = await bridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath });
       setDirectories((current) => ({ ...current, [relativePath]: snapshot }));
     },
-    [bridge, directories, props.project.id],
+    [bridge, props.project.id],
   );
 
   const openFile = useCallback(
     async (relativePath: string, line?: number, column?: number) => {
       fileOpenRequestedRef.current = true;
+      if (pendingFileOpen.current?.path === relativePath && line === undefined) return;
       /** 保留每次定位的对象身份，重复查找同一位置也能重新定位。 */
       const revealLocation = line === undefined ? undefined : { line, column };
       // 搜索与 Git 的行定位必须显示源码，不能把位置藏在效果预览后。
       if (line !== undefined) setViewModes((current) => ({ ...current, [relativePath]: 'source' }));
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
-        setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLocation: revealLocation ?? tab.revealLocation } : tab)));
+        pendingFileOpen.current = null;
+        setOpeningPath(null);
+        if (revealLocation) setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLocation } : tab)));
         setActivePath(relativePath);
         setTreeDrawerOpen(false);
         return;
@@ -202,10 +229,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setError(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.');
         return;
       }
-      setBusyPath(relativePath);
+      /** 同一文件也可能携带不同定位，新请求接管旧回执。 */
+      const request = { path: relativePath };
+      pendingFileOpen.current = request;
+      setOpeningPath(relativePath);
       setError(null);
       try {
         const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
+        if (pendingFileOpen.current !== request) return;
         // 后端返回的规范路径同时用于去重、行定位和选中，避免入口路径写法差异生成重复标签。
         if (line !== undefined) setViewModes((current) => ({ ...current, [document.relativePath]: 'source' }));
         setTabs((current) => {
@@ -227,9 +258,12 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setActivePath(document.relativePath);
         setTreeDrawerOpen(false);
       } catch (loadError) {
-        setError(loadError);
+        if (pendingFileOpen.current === request) setError(loadError);
       } finally {
-        setBusyPath(null);
+        if (pendingFileOpen.current === request) {
+          pendingFileOpen.current = null;
+          setOpeningPath(null);
+        }
       }
     },
     [bridge, props.project.id, zh],
@@ -458,23 +492,33 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }, [activePath, expandedDirectories, loadingTree, props.onPreferenceChange, tabs, treeWidth]);
 
   async function toggleDirectory(path: string): Promise<void> {
-    if (expandedDirectories.has(path)) {
+    /** 收起保留目录快照，读取失败时也能再次点击重试。 */
+    const collapse = () =>
       setExpandedDirectories((current) => {
+        if (!current.has(path)) return current;
         const next = new Set(current);
         next.delete(path);
         return next;
       });
+    if (expandedDirectories.has(path)) {
+      collapse();
       return;
     }
-    setBusyPath(path);
+    /** 已有快照立即展开，目录仍在后台与真实文件系统核对。 */
+    setExpandedDirectories((current) => new Set(current).add(path));
+    if (loadingDirectories.has(path)) return;
+    setLoadingDirectories((current) => new Set(current).add(path));
     try {
-      // 再次展开也读取磁盘，避免外部文件操作后一直显示旧快照。
-      await loadDirectory(path, true);
-      setExpandedDirectories((current) => new Set(current).add(path));
+      await loadDirectory(path);
     } catch (loadError) {
+      collapse();
       setError(loadError);
     } finally {
-      setBusyPath(null);
+      setLoadingDirectories((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
     }
   }
 
@@ -584,7 +628,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     try {
       if (operation.kind === 'create-file' || operation.kind === 'create-directory') {
         const entry = await bridge.createProjectSourceEntry({ projectId: props.project.id, parentRelativePath: operationParent, name: operationName, kind: operation.kind === 'create-file' ? 'file' : 'directory' });
-        await loadDirectory(operationParent, true);
+        await loadDirectory(operationParent);
         if (entry.kind === 'file') await openFile(entry.relativePath);
         setNotice(zh ? `已创建 ${entry.relativePath}` : `Created ${entry.relativePath}`);
       } else if (operation.kind === 'save-as') {
@@ -603,7 +647,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         });
         setTabs((current) => [...current, { document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }]);
         setActivePath(document.relativePath);
-        await loadDirectory(operationParent, true);
+        await loadDirectory(operationParent);
         setNotice(zh ? `已另存为 ${document.relativePath}` : `Saved as ${document.relativePath}`);
       } else if (operation.kind === 'rename' || operation.kind === 'move') {
         const entry = await bridge.moveProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath, targetParentRelativePath: operationParent, targetName: operationName });
@@ -618,7 +662,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             return rootSnapshot ? { '': rootSnapshot } : {};
           });
         }
-        await Promise.all([loadDirectory(parentPath(oldPath), true), loadDirectory(operationParent, true)]);
+        await Promise.all([loadDirectory(parentPath(oldPath)), loadDirectory(operationParent)]);
         setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
@@ -643,7 +687,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           const nextIndex = currentTabs.slice(0, activeIndex).filter((tab) => !isSameOrChild(tab.document.relativePath, operation.entry.relativePath)).length;
           setActivePath(remainingTabs[Math.min(nextIndex, remainingTabs.length - 1)]?.document.relativePath ?? null);
         }
-        await loadDirectory(parentPath(operation.entry.relativePath), true);
+        await loadDirectory(parentPath(operation.entry.relativePath));
         setNotice(zh ? '已移入系统废纸篓，可在 Finder 中恢复。' : 'Moved to system Trash. You can restore it in Finder.');
       }
       setOperation(null);
@@ -854,7 +898,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               {searchQuery.trim() ? (
                 <SearchResults
                   entries={searchResults}
-                  activePath={activePath}
+                  activePath={openingPath ?? activePath}
                   gitFileStatuses={gitFileStatuses}
                   truncated={searchTruncated}
                   busyPath={busyPath}
@@ -867,17 +911,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
               ) : (
                 <TreeRows
+                  {...treeHandlers}
                   directoryPath=""
                   depth={0}
                   directories={directories}
                   expandedDirectories={expandedDirectories}
-                  activePath={activePath}
+                  loadingDirectories={loadingDirectories}
+                  activePath={openingPath ?? activePath}
                   gitFileStatuses={gitFileStatuses}
                   busyPath={busyPath}
-                  onToggle={(path) => toggleDirectory(path)}
-                  onOpen={(path) => openFile(path)}
-                  onContextMenu={openFileContextMenu}
-                  onShortcut={handleFileShortcut}
+                  onOpen={openFile}
+                  zh={zh}
                 />
               )}
             </div>
@@ -920,15 +964,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     aria-selected={tab.document.relativePath === activePath}
                     tabIndex={tab.document.relativePath === activePath ? 0 : -1}
                     className="zeus-workspace-tab"
-                    onClick={() => {
-                      setActivePath(tab.document.relativePath);
-                    }}
+                    data-busy-behavior="background"
+                    onClick={() => openFile(tab.document.relativePath)}
                     onKeyDown={(event) => {
                       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                       event.preventDefault();
                       /** 复用终端标签的循环选择方式，首尾键直接定位边界。 */
                       const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-                      setActivePath(tabs[nextIndex]!.document.relativePath);
+                      void openFile(tabs[nextIndex]!.document.relativePath);
                       event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
                     }}
                   >
@@ -957,7 +1000,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               ))}
             </div>
           </div>
-          {activeTab ? (
+          {openingDocument ? (
+            <>
+              <div className="project-source-editor-track-placeholder" aria-hidden="true" />
+              <section className="project-source-editor-empty" role="status">
+                {zh ? '正在读取文件…' : 'Loading file…'}
+              </section>
+            </>
+          ) : activeTab ? (
             <>
               <div className="project-source-file-toolbar">
                 <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
@@ -1050,7 +1100,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </>
           )}
           <footer className="project-source-statusbar">
-            {activeTab ? (
+            {openingDocument ? null : activeTab ? (
               !activeTab.document.editable ? (
                 <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
               ) : (
@@ -1081,7 +1131,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             ) : (
               <span>{zh ? '未打开文件' : 'No file open'}</span>
             )}
-            {activeTab?.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
+            {!openingDocument && activeTab?.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
           </footer>
         </main>
       </div>
@@ -1287,21 +1337,26 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }
 });
 
-/** 目录树复用 Git 快照的状态色，目录和展开图标保持独立。 */
-function TreeRows(props: {
+/** 目录分支共用磁盘快照、展开状态和文件动作。 */
+interface SourceTreeRowsProps {
   directoryPath: string;
   depth: number;
   directories: Record<string, ProjectSourceDirectorySnapshot>;
   expandedDirectories: Set<string>;
+  loadingDirectories: Set<string>;
   activePath: string | null;
   gitFileStatuses: Record<string, string>;
   busyPath: string | null;
+  zh: boolean;
   onToggle(path: string): void;
   onOpen(path: string): void;
   onContextMenu(entry: ProjectSourceEntry, event: ReactMouseEvent<HTMLButtonElement>): void;
   /** 文件行与右键菜单共享操作快捷键。 */
   onShortcut(entry: ProjectSourceEntry, event: ReactKeyboardEvent<HTMLElement>): void;
-}) {
+}
+
+/** 目录树只挂载展开的分支。 */
+const TreeRows = memo(function SourceDirectoryRows(props: SourceTreeRowsProps) {
   const directory = props.directories[props.directoryPath];
   if (!directory) return null;
   return directory.entries.map((entry) => {
@@ -1309,38 +1364,71 @@ function TreeRows(props: {
     const expanded = directoryEntry && props.expandedDirectories.has(entry.relativePath);
     return (
       <div key={entry.relativePath} role="none">
-        <Button
-          data-busy-behavior="background"
-          unstyled
-          type="button"
-          role="treeitem"
-          aria-selected={entry.relativePath === props.activePath}
-          aria-expanded={directoryEntry ? expanded : undefined}
-          className={entry.relativePath === props.activePath ? 'selected' : ''}
-          style={{ paddingInlineStart: `${10 + props.depth * 14}px` }}
+        <SourceTreeRow
+          entry={entry}
+          depth={props.depth}
+          expanded={expanded}
+          selected={entry.relativePath === props.activePath}
           disabled={!entry.accessible || props.busyPath === entry.relativePath}
-          onClick={() => (directoryEntry ? props.onToggle(entry.relativePath) : props.onOpen(entry.relativePath))}
-          onContextMenu={(event) => props.onContextMenu(entry, event)}
-          data-file-path={entry.relativePath}
-          data-icon-tooltip={entry.name}
-          onKeyDown={(event) => props.onShortcut(entry, event)}
-        >
-          <span className="project-source-disclosure" aria-hidden="true">
-            {directoryEntry ? expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
-          </span>
-          {directoryEntry ? expanded ? <FolderOpen weight="regular" aria-hidden="true" /> : <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
-          <span data-file-status={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}>{entry.name}</span>
-          {entry.kind === 'symlink' ? <small>↗</small> : null}
-        </Button>
-        {directoryEntry ? (
-          <Collapsible open={expanded}>
-            <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} />
-          </Collapsible>
+          fileStatus={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}
+          onAction={directoryEntry ? props.onToggle : props.onOpen}
+          onContextMenu={props.onContextMenu}
+          onShortcut={props.onShortcut}
+        />
+        {expanded ? (
+          <div role="group">
+            {props.loadingDirectories.has(entry.relativePath) && !props.directories[entry.relativePath] ? (
+              <p className="project-source-empty" role="status">
+                {props.zh ? '正在读取目录…' : 'Loading folder…'}
+              </p>
+            ) : null}
+            <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} activePath={props.activePath?.startsWith(`${entry.relativePath}/`) ? props.activePath : null} />
+          </div>
         ) : null}
       </div>
     );
   });
-}
+});
+
+/** 展开同级目录或切换正文时，状态没变的文件按钮继续复用。 */
+const SourceTreeRow = memo(function SourceTreeRow(
+  props: Pick<SourceTreeRowsProps, 'depth' | 'onContextMenu' | 'onShortcut'> & {
+    entry: ProjectSourceEntry;
+    expanded: boolean;
+    selected: boolean;
+    disabled: boolean;
+    fileStatus?: string;
+    onAction(path: string): void;
+  },
+) {
+  /** 只有目录行参与展开，普通文件和符号链接维持打开行为。 */
+  const directory = props.entry.kind === 'directory';
+  return (
+    <Button
+      data-busy-behavior="background"
+      unstyled
+      type="button"
+      role="treeitem"
+      aria-selected={props.selected}
+      aria-expanded={directory ? props.expanded : undefined}
+      className={props.selected ? 'selected' : ''}
+      style={{ paddingInlineStart: `${10 + props.depth * 14}px` }}
+      disabled={props.disabled}
+      onClick={() => props.onAction(props.entry.relativePath)}
+      onContextMenu={(event) => props.onContextMenu(props.entry, event)}
+      data-file-path={props.entry.relativePath}
+      data-icon-tooltip={props.entry.name}
+      onKeyDown={(event) => props.onShortcut(props.entry, event)}
+    >
+      <span className="project-source-disclosure" aria-hidden="true">
+        {directory ? props.expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
+      </span>
+      {directory ? props.expanded ? <FolderOpen weight="regular" aria-hidden="true" /> : <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={props.entry.name} />}
+      <span data-file-status={props.fileStatus}>{props.entry.name}</span>
+      {props.entry.kind === 'symlink' ? <small>↗</small> : null}
+    </Button>
+  );
+});
 
 /** 搜索结果沿用目录树的选中态和 Git 状态色。 */
 function SearchResults(props: {

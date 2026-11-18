@@ -3,13 +3,9 @@
   flex: none;
   min-inline-size: 0;
 }
+/* CodeMirror 给外置面板添加了高优先级的 flex 样式，关闭时要让空容器退出布局。 */
 .file-find-slot:empty {
-  display: none;
-}
-.file-find-slot:not(:empty) {
-  /* 外部面板沿用编辑器主题，单独限制为查找栏自身的高度。 */
-  display: block;
-  height: auto;
+  display: none !important;
 }
 .cm-panels.cm-panels-top:has(.file-find-bar),
 .file-find-slot:has(> .file-find-bar) {

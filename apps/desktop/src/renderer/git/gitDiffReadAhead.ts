@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import type { FilePreviewRequest } from '@zeus/shared';
 import type { GitDiffSummary } from '../apiClient.js';
 import { prepareFilePreview, type PreparedFilePreview } from '../code/preparedFilePreview.js';
@@ -107,6 +107,8 @@ export function useGitDiffReadAhead(cache: Map<string, GitDiffRead>, targets: Gi
 
 /** 选中状态由文件树立即提交，补丁结果只更新与其对应的审阅文件。 */
 export function useGitDeliveryFileDiff(cache: Map<string, GitDiffRead>, target: GitDiffReadTarget | null, identity: string) {
+  /** 命中补丁缓存时也先提交文件选中态，再构建差异正文。 */
+  const displaying = useDeferredValue(identity) === identity;
   /** 刷新时保留同一个文件的补丁，失败则允许重读该文件。 */
   const [settled, setSettled] = useState<{ target: GitDiffReadTarget; identity: string; diff: GitDiffSummary | null; error?: unknown }>();
   /** 失败已移出缓存，重试只触发当前文件。 */
@@ -130,10 +132,10 @@ export function useGitDeliveryFileDiff(cache: Map<string, GitDiffRead>, target: 
   /** 已预读的补丁可直接显示，仍在读取的全文交给共享预览处理。 */
   const entry = target ? cache.get(target.key) : undefined;
   /** 当前工作区及比较范围相同才允许保留上一次差异。 */
-  const diff = entry?.result ?? (settled?.identity === identity ? settled.diff : null);
+  const diff = displaying ? (entry?.result ?? (settled?.identity === identity ? settled.diff : null)) : null;
   return {
     diff,
-    diffLoading: Boolean(target && !diff && settled?.target !== target),
+    diffLoading: Boolean(target && (!displaying || (!diff && settled?.target !== target))),
     diffError: settled?.target === target ? settled?.error : undefined,
     preparedPreview: entry?.preview,
     /** 重新请求失败的补丁，审阅焦点和其他仓库状态不动。 */
