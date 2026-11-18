@@ -37,6 +37,7 @@ import type { DashboardClient } from '../dashboardClient.js';
 import { readTaskZentaoLink, ZentaoPushModal } from './ZentaoSyncModal.js';
 import { ZentaoEffortModal } from './ZentaoEffortModal.js';
 import { useZentaoInstances } from './useZentaoInstances.js';
+import { TaskDetailDeliverables } from './TaskDetailDeliverables.js';
 import './task-detail.css';
 
 export interface TaskDetailPaneCopy {
@@ -81,6 +82,8 @@ export interface TaskDetailPaneCopy {
 export interface TaskDetailPaneContentProps {
   /** 各种详情呈现方式共用同一禅道客户端。 */
   zentaoClient?: DashboardClient;
+  /** 限定当前任务的交付物列表和正文接口。 */
+  deliverableClient?: DashboardClient;
   /** 同步后合并完整任务到现有共享缓存。 */
   onZentaoTaskUpdated?: (task: TaskRecord) => void;
   /** 可选择的项目来自当前工作区快照。 */
@@ -1348,6 +1351,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <section className="task-detail-requirements" aria-label={zh ? '任务说明' : 'Requirements'}>
             {taskOverview}
           </section>
+          {props.deliverableClient ? <TaskDetailDeliverables key={props.task.id} taskId={props.task.id} client={props.deliverableClient} language={props.language} revision={props.events[0]?.id ?? props.task.updatedAt} /> : null}
           <section className="task-detail-block" aria-label={props.copy.conversationsTitle} aria-busy={props.conversationsLoading}>
             <h2 className="task-detail-section-heading">{props.copy.conversationsTitle}</h2>
             {props.conversationsError ? (

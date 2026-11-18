@@ -19,6 +19,12 @@ export function activeSystemWindow(owner: BrowserWindow): BrowserWindow {
   return [...systemWindows.values()].find((entry) => entry.owner === owner && entry.window === focused)?.window ?? owner;
 }
 
+/** 按创建者和名称定位界面所属窗口，后台切换焦点不会改变归属。 */
+export function ownedSystemWindow(owner: BrowserWindow, name: string): BrowserWindow | undefined {
+  const entry = systemWindows.get(name);
+  return entry?.owner === owner && !entry.window.isDestroyed() ? entry.window : undefined;
+}
+
 /** 创建固定类型的同源空白窗口；外链、表单提交和未知名称仍全部拒绝。 */
 export function systemWindowOpenHandler(owner: BrowserWindow): Parameters<Electron.WebContents['setWindowOpenHandler']>[0] {
   return (details) => {

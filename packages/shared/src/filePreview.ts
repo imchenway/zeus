@@ -69,6 +69,15 @@ export type FilePreviewRequest = (
   textEncoding?: FilePreviewTextEncoding;
 };
 
+/** PDF 阅读器只接受界面位置和查找指令，内容来源由已有文件令牌确定。 */
+export type PdfPreviewCommand =
+  | { action: 'layout'; target: string; bounds: { x: number; y: number; width: number; height: number } | null }
+  | { action: 'find'; request: number; query: string; forward: boolean; restart: boolean; matchCase: boolean }
+  | { action: 'clear' | 'focus' | 'close' };
+
+/** 匹配事件保留查找代次，避免快速输入时显示旧结果。 */
+export type PdfPreviewEvent = { id: string; action: 'match'; request: number; active: number; count: number } | { id: string; action: 'open-find' | 'close-find' } | { id: string; action: 'navigate'; backwards: boolean };
+
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
   /** Git 子模块只展示固定提交和工作区状态，不授予目录文件的读写权限。 */
@@ -101,6 +110,19 @@ export interface FilePreviewSource {
 export interface FilePreviewIntent {
   /** 读取来源由后端授权生成。 */
   sides: FilePreviewSource[];
+}
+
+/** 监听令牌及本次读取与开始监听之间是否发生变动。 */
+export interface FilePreviewWatch {
+  /** 关闭预览时释放的窗口关联令牌。 */
+  id: string;
+  /** 已显示的文件版本需要刷新。 */
+  changed: boolean;
+}
+
+/** 用文件属性标识已经读取的版本，大小用字节，时间用毫秒。 */
+export function filePreviewRevision(identity: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }): string {
+  return `${identity.dev}:${identity.ino}:${identity.size}:${identity.mtimeMs}:${identity.ctimeMs}`;
 }
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */

@@ -1,13 +1,15 @@
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { TaskWorkReviewPanel } from './TaskWorkReviewPanel.js';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ConversationMarkdown } from '../../session/ConversationMarkdown.js';
 import { TextFilePreview } from '../../code/TextFilePreview.js';
+import { FileFindButton, fileFindShortcut, openFileFindIn, useFileFindGroup, type FileFindGroup, type FileFindSide } from '../../code/fileFind.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { TaskWorkDeliverableRecord } from './digitalEmployeeContracts.js';
+import './digitalEmployees.css';
 
 /** 已冻结成果的阅读空间；只读历史与待验收成果共用同一内容接口。 */
 export function TaskDeliverableReader(props: {
@@ -28,6 +30,9 @@ export function TaskDeliverableReader(props: {
 }) {
   /** 阅读文案沿用界面语言。 */
   const zh = props.language === 'zh-CN';
+  /** 同一个成果阅读器只保留一个查找范围栏。 */
+  const findGroup = useFileFindGroup();
+  findGroup.labels = { before: zh ? '对照修订' : 'Comparison revision', after: zh ? '当前修订' : 'Current revision' };
   /** 标题身份避免同屏浮层冲突。 */
   const titleId = useId();
   /** 历史对照不会改变右侧正在审查的成果身份。 */
@@ -84,8 +89,9 @@ export function TaskDeliverableReader(props: {
             />
           </div>
         ) : null}
+        <div ref={findGroup.host} className="file-find-slot" />
         <div className={`task-deliverable-reader-body${comparison ? ' is-comparing' : ''}`}>
-          {comparison ? <TaskDeliverableComparison key={`${comparison.id}:${comparison.contentSha256}`} taskId={props.taskId} deliverable={comparison} client={props.client} language={props.language} /> : null}
+          {comparison ? <TaskDeliverableComparison key={`${comparison.id}:${comparison.contentSha256}`} taskId={props.taskId} deliverable={comparison} findGroup={findGroup} client={props.client} language={props.language} /> : null}
           <section className="task-deliverable-current" aria-label={zh ? '当前审查成果' : 'Current deliverable'}>
             {comparison ? (
               <h3>
@@ -100,7 +106,7 @@ export function TaskDeliverableReader(props: {
                 </Button>
               </div>
             ) : content !== null ? (
-              <TaskDeliverableContent key={props.deliverable.id} id={props.deliverable.id} title={props.deliverable.title} content={content} language={props.language} />
+              <TaskDeliverableContent key={props.deliverable.id} id={props.deliverable.id} title={props.deliverable.title} content={content} language={props.language} findGroup={findGroup} findSide="after" />
             ) : (
               <p role="status">{zh ? '正在读取成果全文…' : 'Loading deliverable…'}</p>
             )}
@@ -120,7 +126,7 @@ export function TaskDeliverableReader(props: {
 }
 
 /** 对照独立读取与校验历史正文，失败不会遮挡当前成果或混淆验收对象。 */
-function TaskDeliverableComparison(props: { taskId: string; deliverable: TaskWorkDeliverableRecord; client: DigitalEmployeeApiClient; language: 'zh-CN' | 'en-US' }) {
+function TaskDeliverableComparison(props: { findGroup: FileFindGroup; taskId: string; deliverable: TaskWorkDeliverableRecord; client: DigitalEmployeeApiClient; language: 'zh-CN' | 'en-US' }) {
   /** 历史内容和读取错误分别保留。 */
   const [state, setState] = useState<{ content: string | null; error: unknown }>({ content: null, error: null });
   /** 重试只重读选中的历史修订。 */
@@ -154,7 +160,7 @@ function TaskDeliverableComparison(props: { taskId: string; deliverable: TaskWor
           </Button>
         </div>
       ) : state.content !== null ? (
-        <TaskDeliverableContent id={props.deliverable.id} title={props.deliverable.title} content={state.content} language={props.language} />
+        <TaskDeliverableContent id={props.deliverable.id} title={props.deliverable.title} content={state.content} language={props.language} findGroup={props.findGroup} findSide="before" />
       ) : (
         <p role="status">{props.language === 'zh-CN' ? '正在读取对照成果…' : 'Loading comparison deliverable…'}</p>
       )}
@@ -172,18 +178,46 @@ export function TaskDeliverableContent(props: {
   content: string;
   /** 界面语言。 */
   language: 'zh-CN' | 'en-US';
+  /** 比对界面通过共同的范围切换查找正文。 */
+  findGroup?: FileFindGroup;
+  findSide?: FileFindSide;
 }) {
   /** 阅读和原文切换不会修改交付物。 */
   const [raw, setRaw] = useState(false);
+  /** 成果阅读和原文共用当前文件的查找入口。 */
+  const reader = useRef<HTMLElement>(null);
+  /** 原文尚未挂载时，把本次聚焦请求传给编辑器。 */
+  const [searchRequest, setSearchRequest] = useState(0);
+  /** 按页面语言显示查找控件。 */
+  const zh = props.language === 'zh-CN';
+  /** 切到原文后搜索完整的成果文件。 */
+  function openSourceFind(): void {
+    setRaw(true);
+    setSearchRequest((request) => request + 1);
+  }
   return (
-    <section className="task-deliverable-content" aria-label={props.title}>
+    <section ref={reader} className="task-deliverable-content" aria-label={props.title} onKeyDown={(event) => fileFindShortcut(event, openSourceFind)}>
       <div className="task-deliverable-view-controls">
-        <Button variant="secondary" size="compact" aria-pressed={raw} onClick={() => setRaw((value) => !value)}>
+        <FileFindButton
+          zh={zh}
+          onFind={() => {
+            if (!openFileFindIn(reader.current)) openSourceFind();
+          }}
+        />
+        <Button
+          variant="secondary"
+          size="compact"
+          aria-pressed={raw}
+          onClick={() => {
+            setSearchRequest(0);
+            setRaw((value) => !value);
+          }}
+        >
           {props.language === 'zh-CN' ? (raw ? '返回阅读' : '查看原文') : raw ? 'Read document' : 'View source'}
         </Button>
       </div>
       {raw ? (
-        <TextFilePreview id={props.id} title={props.title} content={props.content} />
+        <TextFilePreview id={props.id} title={props.title} content={props.content} zh={zh} searchRequest={searchRequest} findGroup={props.findGroup} findSide={props.findSide} />
       ) : (
         <ConversationMarkdown text={props.content} streamId={props.id} phase="final" language={props.language} documentMode renderImmediately={props.content.length <= 24_000} />
       )}

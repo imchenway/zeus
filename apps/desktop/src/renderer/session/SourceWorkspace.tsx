@@ -2,7 +2,6 @@ import type { ConversationResource, ConversationFileLocation } from '@zeus/share
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
-import { FileMagnifyingGlassIcon as FileMagnifyingGlass } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
@@ -13,6 +12,7 @@ import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, FileSourceEditButton, PreviewImage } from '../code/FilePreview.js';
+import { FileFindButton, fileFindShortcut, openFileFindIn } from '../code/fileFind.js';
 import { Suspense, lazy, useEffect, useRef, useState, type Dispatch, type SetStateAction, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -123,6 +123,7 @@ export function SourceWorkspace(
     props.onLoadPreview ? { kind: 'resource', projectId: active.preview.resource.projectId, conversationId: active.preview.resource.conversationId, resourceId: active.preview.resource.id } : null,
     refreshPreview,
     (error) => setRefreshError({ id: sourceWorkspaceTabId(active.preview), error }),
+    { revision: active.preview.fileRevision },
   );
   useEffect(
     () => () => {
@@ -219,6 +220,11 @@ function SourceWorkspaceView(props: {
   const [openTargets, setOpenTargets] = useState<ConversationResourceOpenTarget[]>([]);
   /** 每次点击都请求聚焦当前文件的查找面板，关闭后也能再次打开。 */
   const [searchRequest, setSearchRequest] = useState(0);
+  /** Markdown 效果页先切回源码，等正文挂载后聚焦查找。 */
+  function openSourceFind(): void {
+    props.onViewModeChange('source');
+    setSearchRequest((request) => request + 1);
+  }
   useEffect(() => {
     /** 文件切换后拒绝上一文件的迟到检测结果。 */
     let active = true;
@@ -404,6 +410,7 @@ function SourceWorkspaceView(props: {
     <section
       ref={props.workspaceRef}
       className="session-context-workspace session-source-workspace"
+      onKeyDown={(event) => fileFindShortcut(event, sourcePreview ? openSourceFind : undefined)}
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
@@ -419,7 +426,6 @@ function SourceWorkspaceView(props: {
             ? { kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id, comparison: 'head' }
             : undefined
         }
-        sourceRequest={searchRequest}
         key={`${tabId}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
         review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
         zh={zh}
@@ -435,19 +441,14 @@ function SourceWorkspaceView(props: {
               {sourcePreview && props.preview.resource.kind === 'file' ? (
                 <FileSourceEditButton zh={zh} request={{ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id }} />
               ) : null}
-              <Button
-                unstyled
-                type="button"
-                aria-label={zh ? '在文件中搜索' : 'Find in file'}
-                data-icon-tooltip={zh ? '在文件中搜索' : 'Find in file'}
-                disabled={!sourcePreview}
-                onClick={() => {
-                  props.onViewModeChange('source');
-                  setSearchRequest((request) => request + 1);
-                }}
-              >
-                <FileMagnifyingGlass aria-hidden="true" />
-              </Button>
+              {sourcePreview ? (
+                <FileFindButton
+                  zh={zh}
+                  onFind={() => {
+                    if (!openFileFindIn(props.workspaceRef?.current ?? null)) openSourceFind();
+                  }}
+                />
+              ) : null}
               {markdownPreview ? (
                 <Button size="compact" className="session-source-mode-toggle" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
                   {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}

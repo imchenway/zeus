@@ -108,6 +108,8 @@ export interface ConversationResourceOpenTarget {
 export interface ConversationSourcePreview {
   /** 宿主按已授权真实路径生成的文件标识；缺省时只能按资源记录区分标签。 */
   fileIdentity?: string;
+  /** 已读取的文件版本，用于检查开始监听前是否发生过变动。 */
+  fileRevision?: string;
   /** 当前文件的 Git 审阅状态。 */
   review?: FileReview;
   kind: 'source';
@@ -122,6 +124,8 @@ export interface ConversationSourcePreview {
 export interface ConversationImagePreview {
   /** 与源码预览共用文件标识，不包含明文路径或文件访问权限。 */
   fileIdentity?: string;
+  /** 文件版本与已返回的图片字节对应。 */
+  fileRevision?: string;
   /** 项目内图片与文本预览共用真实 Git 文件状态。 */
   review?: FileReview;
   kind: 'image';

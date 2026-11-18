@@ -1,3 +1,4 @@
+import { nativeViewportOccluded, nativeViewportOverlaysChanged, nativeViewportPopoverSelector } from '../ui/nativeViewport.js';
 import { platformShortcutLabel } from '../platform.js';
 import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
@@ -258,25 +259,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     let frame = 0;
     /** 旧标签或旧布局订阅返回的截图不能写入当前工作面。 */
     let disposed = false;
-    // 复用公共浮层标记，同时识别门户和应用内部挂载的菜单。
-    const overlaySelector = '[data-motion-surface="popover"], [data-zeus-primitive="modal"], [data-zeus-primitive="drawer"], [data-zeus-primitive="overlay"]';
-    // 只订阅存活浮层的尺寸，移除后解除观察，避免长期保留菜单节点。
+    // 只订阅存活浮层的尺寸，移除后解除观察。
     const popovers = new Set<HTMLElement>();
-    // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
-    const isSuspended = (): boolean => {
-      // 项目工具接管右侧时立即隐藏原生网页，不能等动画帧或覆盖新面板。
-      if (viewport.closest('[hidden], [inert]')) return true;
-      if ([...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport))) return true;
-      // 菜单和项目底栏只在实际覆盖网页时隐藏原生视图，保留原占位尺寸。
-      const viewportRect = viewport.getBoundingClientRect();
-      return [...popovers].some((surface) => {
-        // 退场动画仍需要让位；被其他弹窗隔离的背景菜单不参与遮挡判断。
-        if (surface.closest('[inert]') && surface.dataset.motionState !== 'closing') return false;
-        // 使用实际绘制表面，不能用无尺寸的选择器门户包装节点判断重叠。
-        const rect = surface.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && rect.left < viewportRect.right && rect.right > viewportRect.left && rect.top < viewportRect.bottom && rect.bottom > viewportRect.top;
-      });
-    };
+    /** 与其他原生预览统一处理前台浮层的遮挡。 */
+    const isSuspended = (): boolean => nativeViewportOccluded(viewport, popovers);
     // 每次提交都重新读取弹窗状态和尺寸，避免延迟回调把网页重新盖到弹窗上。
     const syncLayout = (): void => {
       if (closedTabIdsRef.current.has(tabId)) return;
@@ -317,7 +303,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         observer.unobserve(surface);
         popovers.delete(surface);
       }
-      for (const surface of document.querySelectorAll<HTMLElement>('[data-motion-surface="popover"], [data-zeus-primitive="overlay"]')) {
+      for (const surface of document.querySelectorAll<HTMLElement>(nativeViewportPopoverSelector)) {
         if (popovers.has(surface)) continue;
         popovers.add(surface);
         observer.observe(surface);
@@ -326,12 +312,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     // 下拉可挂在应用内部；只处理浮层增删和自身状态变化，不随正文更新提交原生布局。
     const overlayObserver = new MutationObserver((records) => {
       // 普通文本、图标和输入内容的变化不影响原生视图的覆盖关系。
-      const overlayChanged = records.some((record) =>
-        record.type === 'attributes'
-          ? record.target instanceof Element && (record.target.matches(overlaySelector) || ((record.attributeName === 'hidden' || record.attributeName === 'inert') && record.target.contains(viewport)))
-          : [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches(overlaySelector) || node.querySelector(overlaySelector))),
-      );
-      if (!overlayChanged) return;
+      if (!nativeViewportOverlaysChanged(records, viewport)) return;
       observePopovers();
       apply();
     });

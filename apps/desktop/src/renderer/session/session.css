@@ -13581,47 +13581,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: #d8a43b;
 }
 
-/* 原生查找面板保持紧凑，窄文件面板可换行，颜色随会话主题变化。 */
-.session-source-code-preview .cm-search {
-  background: var(--session-canvas);
-  color: var(--session-text);
-  padding: 8px 40px 8px 12px;
-}
-.session-source-code-preview .cm-search input[name='search'] {
-  inline-size: min(240px, 100%);
-  min-inline-size: 0;
-  box-sizing: border-box;
-}
-/* 查找、关闭和选项标签都保留至少 24px 的点击范围。 */
-.session-source-code-preview .cm-search button,
-.session-source-code-preview .cm-search label {
-  min-block-size: 28px;
-}
-/* 原生按钮的浅色渐变不能覆盖深色主题，保证文字始终可读。 */
-.session-source-code-preview .cm-search button:not([name='close']) {
-  background: var(--session-control-hover);
-  color: var(--session-text);
-  border: 1px solid var(--session-line);
-  border-radius: 6px;
-}
-.session-source-code-preview .cm-search label {
-  display: inline-flex;
-  align-items: center;
-}
-.session-source-code-preview .cm-search button[name='close'] {
-  inline-size: 28px;
-  inset-block-start: 8px;
-  inset-inline-end: 8px;
-}
-/* 匹配高亮在深浅主题下都保留当前源码文字颜色。 */
-.session-source-code-preview .cm-searchMatch {
-  background: color-mix(in srgb, var(--session-focus-outline) 25%, transparent);
-}
-.session-source-code-preview .cm-searchMatch-selected {
-  background: color-mix(in srgb, var(--session-focus-outline) 40%, transparent);
-  outline: 1px solid var(--session-focus-outline);
-}
-
 .session-open-with-target-label {
   display: inline-flex;
   align-items: center;

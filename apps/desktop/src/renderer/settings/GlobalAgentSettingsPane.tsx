@@ -2,6 +2,7 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref
 import type { GlobalAgentSettingsSnapshot } from '@zeus/shared';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { CodeEditor } from '../code/CodeEditor.js';
+import { FileFindButton, fileFindShortcut, openFileFindIn } from '../code/fileFind.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
@@ -114,13 +115,16 @@ export function GlobalAgentSettingsPane(props: {
     },
   }));
 
+  /** 查找范围是当前打开的规则文件。 */
+  const rules = useRef<HTMLElement>(null);
   return (
-    <section className="settings-product-pane global-agent-settings" aria-label={zh ? '全局规则' : 'Global rules'} aria-busy={busy !== null}>
+    <section ref={rules} className="settings-product-pane global-agent-settings" aria-label={zh ? '全局规则' : 'Global rules'} aria-busy={busy !== null} onKeyDown={fileFindShortcut}>
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '全局规则' : 'Global rules'}</h2>
         </span>
         <div className="settings-heading-actions">
+          <FileFindButton zh={zh} disabled={!snapshot} onFind={() => openFileFindIn(rules.current)} />
           <Button
             size="compact"
             variant="secondary"
@@ -187,6 +191,7 @@ export function GlobalAgentSettingsPane(props: {
         {snapshot ? (
           <div className="global-agent-settings-editor">
             <CodeEditor
+              locale={zh ? 'zh-CN' : 'en-US'}
               path={snapshot.path}
               language="markdown"
               label={zh ? 'AGENTS.md 全局规则内容' : 'AGENTS.md global rules content'}

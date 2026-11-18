@@ -9,6 +9,7 @@ import { Text, Prec, RangeSet, type Extension } from '@codemirror/state';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
 import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
 import { CodeEditor } from './CodeEditor.js';
+import { fileFindShortcut, requestGroupedFileFind, useFileFindGroup } from './fileFind.js';
 import { CommentWidget } from './SourceCodePreview.js';
 import './codeDiffView.css';
 import { FilePreviewDataContext } from './FilePreview.js';
@@ -68,6 +69,8 @@ interface AnnotationPair {
 }
 /** 共用差异视图保留不同入口的行排列及操作能力。 */
 export interface CodeDiffViewProps {
+  /** 外部文件工具栏已提供查找入口。 */
+  hideFindButton?: boolean;
   /** 已解析的补丁，只在文件内容变化时转换一次。 */
   file: TaskGitFileDiff;
   /** 父级已核对的完整差异；undefined 才由当前视图核对一次。 */
@@ -116,6 +119,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
 const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffViewProps) {
   /** 所有差异入口共享已有文件读取，版本切换不会重新授权。 */
   const preview = useContext(FilePreviewDataContext);
+  /** 两侧只显示一个查找栏，切换范围时保持文件身份。 */
+  const findGroup = useFileFindGroup();
   /** 父级已重建并核对正文时直接复用；其他入口仍自行绑定恢复后的新正文。 */
   const original = useMemo(() => (props.completeFile !== undefined ? props.file : refreshedFileDiff(props.file, preview?.items ?? null, preview?.reverted)), [props.completeFile, props.file, preview?.items, preview?.reverted]);
   /** 确认操作绑定当时的两端令牌，预览变化后不再执行旧坐标。 */
@@ -436,11 +441,12 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
       onUnifiedChange={preview?.onUnifiedChange ?? setLocalUnified}
       onPreview={preview?.onPreview}
       onRefresh={preview?.onRefresh}
+      onFind={props.hideFindButton ? undefined : () => requestGroupedFileFind(findGroup)}
     />
   );
   if ((preview?.full || preview?.reverted) && !complete) return <p role="status">{preview.zh ? '差异与文件内容不一致，请刷新差异后重试。' : 'The diff no longer matches the file contents. Refresh the diff and retry.'}</p>;
   return (
-    <div className="code-diff-container">
+    <div className="code-diff-container" onKeyDown={(event) => fileFindShortcut(event, () => requestGroupedFileFind(findGroup))}>
       {pending ? (
         <ModalPortal
           role="alertdialog"
@@ -490,6 +496,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
         </ModalPortal>
       ) : null}
       {preview?.toolbarTarget ? createPortal(toolbar, preview.toolbarTarget) : toolbar}
+      <div className="file-find-slot" ref={findGroup.host} />
       <div className={`code-diff-view${unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
         {!unified && !singleSide ? <DiffConnectorLayer /> : null}
         {singleSide !== 'right' ? (
@@ -498,6 +505,8 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
             language={detectSourceLanguage(unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
             content={documents.left}
             readOnly
+            findGroup={findGroup}
+            findSide="before"
             blameLines={authors.left}
             locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
             label={props.label}
@@ -517,6 +526,8 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
             language={detectSourceLanguage(props.file.newPath) ?? null}
             content={documents.right}
             readOnly
+            findGroup={findGroup}
+            findSide="after"
             blameLines={authors.right}
             locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
             label={props.label}

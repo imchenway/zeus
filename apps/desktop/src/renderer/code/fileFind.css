@@ -1,0 +1,141 @@
+/* 搜索栏在正文上方占一行，双栏共用同一位置。 */
+.file-find-slot {
+  flex: none;
+  min-inline-size: 0;
+}
+.file-find-slot:empty {
+  display: none;
+}
+.file-find-slot:not(:empty) {
+  /* 外部面板沿用编辑器主题，单独限制为查找栏自身的高度。 */
+  display: block;
+  height: auto;
+}
+.cm-panels.cm-panels-top:has(.file-find-bar),
+.file-find-slot:has(> .file-find-bar) {
+  background: var(--zeus-product-panel);
+  border-bottom: 1px solid var(--zeus-control-border);
+  color: var(--zeus-control-text);
+}
+.file-find-bar {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+  padding: 4px 8px;
+}
+.file-find-line,
+.file-find-replace {
+  align-items: center;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  padding: 3px;
+}
+.file-find-query {
+  align-items: center;
+  background: var(--zeus-control-bg-hover);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 4px;
+  display: flex;
+  flex: 1 1 158px;
+  inline-size: 212px;
+  min-inline-size: 0;
+  padding-inline: 6px;
+}
+.file-find-bar .file-find-query input {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  flex: 1 1 auto;
+  inline-size: 0;
+  min-block-size: 26px;
+  min-inline-size: 42px;
+  padding: 0;
+}
+.file-find-query:focus-within {
+  border-color: var(--zeus-brand-text);
+}
+.file-find-query output {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding-inline-start: 6px;
+  white-space: nowrap;
+}
+.file-find-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-inline-size: 100%;
+}
+.file-find-controls button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  min-block-size: 26px;
+  min-inline-size: 26px;
+  padding: 0 3px;
+}
+.file-find-controls button svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+.file-find-controls button:hover:not(:disabled),
+.file-find-controls button[aria-pressed='true'],
+.file-find-controls button[aria-expanded='true'] {
+  background: var(--zeus-control-bg-active);
+  color: var(--zeus-brand-text);
+}
+.file-find-controls button:disabled {
+  opacity: 0.45;
+}
+.file-find-controls select,
+.file-find-replace input {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 4px;
+  color: var(--zeus-control-text);
+  font: inherit;
+  font-size: 12px;
+  min-block-size: 26px;
+  min-inline-size: 0;
+  padding: 0 4px;
+}
+.file-find-bar .file-find-controls select {
+  appearance: auto;
+  box-shadow: none;
+  flex: none;
+  inline-size: auto;
+  max-inline-size: 9rem;
+}
+.file-find-replace input {
+  flex: 1 1 128px;
+  inline-size: 185px;
+}
+.file-find-bar :is(button, select, input):focus-visible {
+  outline: 2px solid var(--zeus-brand-text);
+  outline-offset: 1px;
+}
+.file-find-bar .file-find-query input:focus-visible {
+  outline: none;
+}
+.cm-editor[data-file-find] .cm-searchMatch {
+  background: light-dark(#ffe5a2, #60491e);
+}
+.cm-editor[data-file-find] .cm-searchMatch-selected {
+  background: light-dark(#ffcf76, #8a571d);
+  outline: 1px solid light-dark(#986012, #e7b46f);
+}

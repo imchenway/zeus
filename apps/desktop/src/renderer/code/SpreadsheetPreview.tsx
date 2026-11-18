@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import { ClientSideRowModelModule, RenderApiModule, type ColDef } from 'ag-grid-community';
+import { CellApiModule, CellStyleModule, ClientSideRowModelModule, RenderApiModule, ScrollApiModule, type ColDef } from 'ag-grid-community';
 import { filePreviewLimits } from '@zeus/shared';
 import { dataGridTheme } from '../ui/dataGridTheme.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import { useReadingState } from '../ui/readingState.js';
+import { FileFindControls, FileFindMatchCase } from './fileFind.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import type { SpreadsheetPreviewData, SpreadsheetPreviewRequest, SpreadsheetPreviewResponse, SpreadsheetPreviewRow } from './spreadsheetPreview.worker.js';
 
 /** 只读预览仅加载免费的客户端行模型。 */
-const spreadsheetModules = [ClientSideRowModelModule, RenderApiModule];
+const spreadsheetModules = [CellApiModule, CellStyleModule, ClientSideRowModelModule, RenderApiModule, ScrollApiModule];
 /** 工作表保留网格线，固定行高用于准确显示合并区域。 */
 const spreadsheetTheme = dataGridTheme.withParams({ rowHeight: 32, rowBorder: true, columnBorder: true, headerRowBorder: true });
 /** 所有列均只读，不对原文件的行顺序增加排序或筛选。 */
@@ -25,7 +26,7 @@ const spreadsheetErrors = {
 } as const;
 
 /** Excel 复用文件授权与数据表，只展示内容，不执行公式或写回文件。 */
-export function SpreadsheetPreview(props: { url: string; name: string; readingKey: string; zh: boolean }) {
+export function SpreadsheetPreview(props: { url: string; name: string; readingKey: string; zh: boolean; searchRequest: number }) {
   /** 工作表偏好沿用文件阅读作用域，不绑定短期授权令牌。 */
   const [sheetName, setSheetName] = useReadingState(`spreadsheet-sheet:${props.readingKey}`, '');
   /** 最近请求的工作表用于丢弃快速切换时已过期的回复。 */
@@ -38,6 +39,46 @@ export function SpreadsheetPreview(props: { url: string; name: string; readingKe
   const [cell, setCell] = useState({ row: 0, column: 0 });
   /** 解析失败保留上方既有系统打开按钮。 */
   const [error, setError] = useState('');
+
+  /** 表格的可见区域随当前命中滚动，查找期间保留输入焦点。 */
+  const grid = useRef<AgGridReact<SpreadsheetPreviewRow>>(null);
+  /** 解析中或空工作表返回到同一文件正文。 */
+  const body = useRef<HTMLDivElement>(null);
+  /** 关闭只清除本次查找请求，下次唤起沿用词和大小写选项。 */
+  const [closedRequest, setClosedRequest] = useState(0);
+  const [query, setQuery] = useState('');
+  const [matchCase, setMatchCase] = useState(false);
+  const [active, setActive] = useState(0);
+  const openFind = props.searchRequest > closedRequest;
+  /** 仅在条件或工作表改变时扫描一次，导航按表格行列顺序。 */
+  const hits = useMemo(() => {
+    if (!openFind || !query || data?.sheetName !== sheetName) return [];
+    const needle = matchCase ? query : query.toLowerCase();
+    return data.rows.flatMap(({ index: row, values }) => values.flatMap((value, column) => ((matchCase ? value : value.toLowerCase()).includes(needle) ? [{ row, column }] : [])));
+  }, [data, sheetName, openFind, query, matchCase]);
+  /** 虚拟化单元格在进入视口时也应用最新高亮。 */
+  const marks = useRef(new Map<string, string>());
+  marks.current = useMemo(() => new Map(hits.map(({ row, column }, index) => [`${row}:${column}`, index === active ? 'active' : 'match'])), [hits, active]);
+
+  /** 新条件从第一处匹配开始，找不到时保留原阅读位置。 */
+  useEffect(() => setActive(0), [hits]);
+  useEffect(() => {
+    const match = hits[active];
+    const api = grid.current?.api;
+    if (match) {
+      api?.ensureIndexVisible(match.row, 'middle');
+      api?.ensureColumnVisible(String(match.column));
+      setCell(match);
+    }
+    api?.refreshCells({ force: true });
+  }, [hits, active]);
+
+  /** Esc 将焦点还给当前单元格，空工作表返回正文区域。 */
+  function closeFind(): void {
+    setClosedRequest(props.searchRequest);
+    if (grid.current?.api) grid.current.api.setFocusedCell(cell.row, String(cell.column));
+    else body.current?.focus();
+  }
 
   useEffect(() => {
     /** 中止旧文件的读取，不让关闭后的回复更新界面。 */
@@ -120,6 +161,10 @@ export function SpreadsheetPreview(props: { url: string; name: string; readingKe
               valueGetter: ({ data: row }) => row?.values[column] ?? '',
               colSpan: ({ data: row }) => row?.spans?.[column]?.columns ?? 1,
               rowSpan: ({ data: row }) => row?.spans?.[column]?.rows ?? 1,
+              cellClassRules: {
+                'spreadsheet-find-match': ({ data: row }) => Boolean(row && marks.current.has(`${row.index}:${column}`)),
+                'spreadsheet-find-active': ({ data: row }) => Boolean(row && marks.current.get(`${row.index}:${column}`) === 'active'),
+              },
               cellClass: ({ data: row }) => (row?.spans?.[column] ? 'spreadsheet-preview-merged' : undefined),
             })),
           ],
@@ -127,7 +172,22 @@ export function SpreadsheetPreview(props: { url: string; name: string; readingKe
   );
 
   return (
-    <div className="spreadsheet-preview">
+    <div ref={body} className="spreadsheet-preview" tabIndex={-1}>
+      {openFind ? (
+        <div className="file-find-slot">
+          <FileFindControls
+            zh={props.zh}
+            value={query}
+            status={!query || !data || data.sheetName !== sheetName ? '' : hits.length ? `${Math.min(active + 1, hits.length)} / ${hits.length}` : props.zh ? '无匹配' : 'No matches'}
+            hasMatches={hits.length > 0}
+            request={props.searchRequest}
+            options={<FileFindMatchCase zh={props.zh} value={matchCase} onChange={setMatchCase} />}
+            onChange={setQuery}
+            onNavigate={(backwards) => setActive((index) => (index + hits.length + (backwards ? -1 : 1)) % hits.length)}
+            onClose={closeFind}
+          />
+        </div>
+      ) : null}
       {error ? (
         <p role="alert">{error}</p>
       ) : !data ? (
@@ -169,6 +229,7 @@ export function SpreadsheetPreview(props: { url: string; name: string; readingKe
               </label>
               <div className="spreadsheet-preview-table">
                 <AgGridReact<SpreadsheetPreviewRow>
+                  ref={grid}
                   key={data.sheetName}
                   modules={spreadsheetModules}
                   theme={spreadsheetTheme}
