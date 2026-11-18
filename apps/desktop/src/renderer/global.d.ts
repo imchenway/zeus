@@ -158,7 +158,7 @@ declare global {
       setTaskGitDeliverySubmissionState: (state: 'pending' | 'accepted' | 'failed') => Promise<{ state: 'pending' | 'accepted' | 'failed' }>;
       /** 所有范围都关闭当前真实交付窗口。 */
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId?: string; projectId?: string; conversationId?: string }>;
-      getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;
+      getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null; opened: boolean }>;
       notifyTaskGitDeliveryCurrentContext: (context: { taskId: string | null; workspaceId: string | null }) => void;
       notifyTaskGitDeliveryChanged: (taskId: string) => void;
       openTaskGitDeliveryConversation: (input: { taskId: string; conversationId: string } | { projectId: string; conversationId: string }) => Promise<{ opened: true }>;
@@ -196,7 +196,7 @@ declare global {
       }) => Promise<import('./apiClient.js').GitDiffSummary>;
       cancelProjectGitAction: (repositoryId: string) => Promise<{ cancelled: boolean }>;
       executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
-      onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null }) => void) => () => void;
+      onTaskGitDeliveryCurrentContext: (listener: (context: { taskId: string | null; workspaceId: string | null; opened: boolean }) => void) => () => void;
       onTaskGitDeliveryAppearance: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       /** 独立仓库差异窗口沿用应用主题，返回取消订阅函数。 */
       onProjectGitDiffAppearance: (listener: (appearance: 'light' | 'dark' | 'system') => void) => () => void;

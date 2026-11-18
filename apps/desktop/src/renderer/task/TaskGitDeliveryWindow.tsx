@@ -12,6 +12,8 @@ import { ConversationGitDeliveryContent } from '../session/ConversationGitDelive
 export interface TaskGitDeliveryCurrentContext {
   taskId: string | null;
   workspaceId: string | null;
+  /** 原生窗口是否已经收到正式打开请求。 */
+  opened?: boolean;
 }
 
 /** 同一窗口按真实任务、会话、项目或仓库加载交付内容，不创建替代身份。 */
@@ -37,7 +39,27 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
   /** 系统标题使用当前固定交付对象。 */
   const scopeTitle = props.scope.kind === 'task' ? (props.scope.task.taskCode ?? props.scope.task.id) : props.scope.kind === 'conversation' ? props.scope.conversation.title : props.scope.project.name;
 
-  useEffect(() => window.zeus?.onTaskGitDeliveryCurrentContext?.(setCurrentContext), []);
+  useEffect(() => {
+    /** 正式打开可能发生在首份上下文返回后、事件订阅前。订阅后再读取一次仍在预热的任务窗口。 */
+    let needsContext = props.scope.kind === 'task' && props.initialCurrentContext.opened === false;
+    /** 同一条广播更新会话范围和正式打开状态，避免用旧范围加载文件。 */
+    const unsubscribe = window.zeus?.onTaskGitDeliveryCurrentContext?.((context) => {
+      needsContext = false;
+      setCurrentContext(context);
+    });
+    if (needsContext) {
+      void window.zeus
+        ?.getTaskGitDeliveryCurrentContext?.()
+        .then((context) => {
+          if (needsContext) setCurrentContext(context);
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      needsContext = false;
+      unsubscribe?.();
+    };
+  }, [props.scope.kind, props.initialCurrentContext.opened]);
   useEffect(() => window.zeus?.onTaskGitDeliveryAppearance?.(setSurfaceSettings), []);
   useEffect(() => {
     /** 原生系统窗口与页面使用同一外观，不另建内嵌弹窗。 */
@@ -56,7 +78,7 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
       <MotionPresence>
         {props.scope.kind === 'task' ? (
           <TaskGitMergeModal
-            open
+            open={currentContext.opened !== false}
             language={surfaceSettings.language}
             task={props.scope.task}
             projectName={props.scope.projectName}

@@ -18,6 +18,7 @@ import {
   type AiRuntimeLogEntry,
   type AiRuntimeSession,
   type CodexAppServerManager,
+  bundledCodexReasoningCatalog,
   createAiRuntimeSessionManager,
   createCodexRuntimeGenerationManager,
   createOptionalNodePtyRuntimeSpawn,
@@ -1257,10 +1258,21 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       })
     : undefined;
   const modelConnections = createModelConnectionService({
+    /** 按模型合并档位，运行目录缺项时仍可从缓存和随包目录匹配。 */
     readCodexReasoningCatalog() {
+      /** 本机 Codex 缓存覆盖随包档位，覆盖范围仅限实际有档位的型号。 */
+      const cached = readCodexModelCatalogCache(codexHome ?? null)?.visibleReasoningEfforts;
+      /** 从低到高应用同一个型号的来源优先级。 */
+      const catalog = new Map([...bundledCodexReasoningCatalog, ...(cached ?? [])]);
+      /** 运行目录提供当前型号档位，空档位不清除其他来源的有效清单。 */
       const state = codexAppServerManager.getState();
-      if (state.type !== 'ready') return readCodexModelCatalogCache(codexHome ?? null)?.visibleReasoningEfforts;
-      return new Map(state.capabilities.models.map((model) => [model.model, { efforts: model.supportedReasoningEfforts, defaultEffort: model.defaultReasoningEffort ?? null }] as const));
+      if (state.type === 'ready') {
+        for (const model of state.capabilities.models) {
+          if (!model.supportedReasoningEfforts.length) continue;
+          catalog.set(model.model, { efforts: model.supportedReasoningEfforts, defaultEffort: model.defaultReasoningEffort ?? null });
+        }
+      }
+      return catalog;
     },
     async onPricingUpdated(connection, catalog) {
       if (readOnlyValidation) return;
