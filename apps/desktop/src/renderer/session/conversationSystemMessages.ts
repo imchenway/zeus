@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { parseConversationSystemMessage, redactUserFacingErrorDetails, type ConversationSystemMessage, type ConversationSystemMessageInput } from '@zeus/shared';
+import { parseConversationSystemMessage, redactUserFacingErrorDetails, userFacingErrorCause, type ConversationSystemMessage, type ConversationSystemMessageInput, type UserFacingErrorCause } from '@zeus/shared';
 
 /** 原消息已承载的发送错误不再生成第二条系统消息；弱引用不延长错误对象寿命。 */
 export const handledMessageDeliveryErrors = new WeakSet<object>();
+
+/** 仅确认本机离线导致的传输失败，普通超时、鉴权和服务错误保留原分类。 */
+export function isLocalNetworkOffline(error: unknown, offline = globalThis.navigator?.onLine === false): boolean {
+  for (let cause: UserFacingErrorCause | undefined = userFacingErrorCause(error); cause; cause = cause.cause) {
+    if (cause.code === 'ERR_INTERNET_DISCONNECTED' || cause.code === 'ENETDOWN' || /^net::ERR_INTERNET_DISCONNECTED(?:\s|:|$)/u.test(cause.message)) return true;
+    if (offline && (cause.code === 'ENETUNREACH' || (!cause.code && cause.message === 'Failed to fetch'))) return true;
+  }
+  return false;
+}
 
 /** 仅保存尚未由 Core 接纳的记录；草稿和会话使用明确隔离的键。 */
 const storageKey = 'zeus.system-message-outbox';

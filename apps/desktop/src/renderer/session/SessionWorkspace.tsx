@@ -7,13 +7,13 @@ import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionSt
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
-import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
+import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors, isLocalNetworkOffline } from './conversationSystemMessages.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
-import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
+import { temporaryWorkspaceId, isConversationWorktreeOptions, userFacingErrorCause, type ConversationWorktreeOptions, type AsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -316,6 +316,8 @@ export interface NativeConversationStartPreparation {
 export interface NativeConversationStartFailure {
   /** 服务端错误码用于原地打开接入引导。 */
   code?: string;
+  /** 发送结果和网络原因在本地化前保留，供输入区判断是否需要故障记录。 */
+  cause?: UserFacingErrorCause;
   state: 'failed';
   message: string;
 }
@@ -3867,6 +3869,10 @@ export function NewConversationComposer(props: {
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  /** 仅主动发送受阻时在输入区显示网络状态，结果未知时保留原请求。 */
+  const [offlineSubmission, setOfflineSubmission] = useState<'blocked' | 'unconfirmed' | null>(null);
+  /** 实际联网事件触发一次目录重读，初次挂载仍使用现有缓存。 */
+  const [networkRevision, setNetworkRevision] = useState(0);
   /** 创建回执到达前共用发送投影，原草稿只保留用于失败恢复。 */
   const [startingTranscript, setStartingTranscript] = useState<NativeSessionState | null>(null);
   /** 正文出现首发消息时，输入框同步消费同一发送状态中的正文、附件和网页批注。 */
@@ -3900,6 +3906,14 @@ export function NewConversationComposer(props: {
     },
     [systemScope],
   );
+  /** 主动发送失败先判断原始原因，离线反馈只留在输入区。 */
+  function showSubmissionFailure(error: unknown, message: string): void {
+    if (isLocalNetworkOffline(error)) {
+      setOfflineSubmission(userFacingErrorCause(error).code === 'ZEUS_LOCAL_API_WRITE_OUTCOME_UNKNOWN' ? 'unconfirmed' : 'blocked');
+      return;
+    }
+    setLocalError(message);
+  }
   /** 用户修改即保存，切换项目和重新打开创建入口时恢复。 */
   function changeCreationPreferences(change: Partial<ProjectConversationCreationPreferences>): void {
     /** 保留同项目未修改的另一项选择。 */
@@ -4058,6 +4072,16 @@ export function NewConversationComposer(props: {
   }, [props.capabilities, props.owner?.projectId, recoverDraftOperation]);
 
   useEffect(() => {
+    /** 只清理临时状态并读取目录，首条消息仍由用户提交。 */
+    const refreshAfterReconnect = (): void => {
+      setOfflineSubmission(null);
+      setNetworkRevision((current) => current + 1);
+    };
+    window.addEventListener('online', refreshAfterReconnect);
+    return () => window.removeEventListener('online', refreshAfterReconnect);
+  }, []);
+
+  useEffect(() => {
     const projectId = props.owner?.projectId;
     if (!projectId) return;
     /** 后台刷新保留同项目目录，切换项目时不沿用其他项目的能力。 */
@@ -4073,7 +4097,7 @@ export function NewConversationComposer(props: {
         }
       })
       .catch((error: unknown) => {
-        if (active) recordSystemMessage(systemScope, error, 'model_capabilities', '模型选项读取失败。');
+        if (active && !isLocalNetworkOffline(error)) recordSystemMessage(systemScope, error, 'model_capabilities', '模型选项读取失败。');
       })
       .finally(() => {
         if (active) setCapabilitiesLoading(false);
@@ -4081,7 +4105,7 @@ export function NewConversationComposer(props: {
     return () => {
       active = false;
     };
-  }, [props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, systemScope, recoverDraftOperation]);
+  }, [props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, networkRevision, systemScope, recoverDraftOperation]);
 
   /** 模型目录只应用于其所属项目，不用旧项目目录覆盖新选择。 */
   const activeCapabilities = capabilities?.projectId === props.owner?.projectId ? capabilities : null;
@@ -4165,6 +4189,12 @@ export function NewConversationComposer(props: {
       (goalInputActive && !submittedGoal)
     )
       return;
+    /** Codex 和 Copilot 依赖远端服务；自定义模型仍可通过本机端点运行。 */
+    if (window.navigator.onLine === false && (selectedModel?.sourceId === 'codex' || selectedModel?.sourceId === 'copilot')) {
+      setOfflineSubmission('blocked');
+      return;
+    }
+    setOfflineSubmission(null);
     if (needsModelSetup) {
       setLocalError(null);
       modelSetupRequestRef.current?.abort();
@@ -4276,7 +4306,7 @@ export function NewConversationComposer(props: {
       }
       if (accepted === false) return;
       if (accepted && typeof accepted === 'object' && accepted.state === 'failed') {
-        setLocalError(accepted);
+        showSubmissionFailure(accepted.cause ?? accepted, accepted.message);
         return;
       }
       if (selectedModel && (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing')) {
@@ -4311,7 +4341,7 @@ export function NewConversationComposer(props: {
       }
       await props.onAccepted?.();
     } catch (error) {
-      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+      showSubmissionFailure(error, formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setSubmitting(false);
       setStartingTranscript(null);
@@ -4343,6 +4373,17 @@ export function NewConversationComposer(props: {
       onDragLeave={inputResources.handleDragLeave}
       onDrop={inputResources.handleDrop}
     >
+      {offlineSubmission ? (
+        <p className="session-composer-unavailable" role="status">
+          {offlineSubmission === 'unconfirmed'
+            ? props.language === 'zh-CN'
+              ? '暂未确认发送结果，联网后可重试。'
+              : 'Delivery is unconfirmed. Retry when you’re back online.'
+            : props.language === 'zh-CN'
+              ? '网络已断开，联网后可重试。'
+              : 'You’re offline. Retry when you’re back online.'}
+        </p>
+      ) : null}
       <ConversationComposerAttachments
         attachments={composerState.attachments}
         pendingResources={inputResources.pendingResources}

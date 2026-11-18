@@ -357,6 +357,8 @@ export interface NativeConversationChoiceTaskLoadState {
   status: Exclude<NativeConversationChoiceLoadState, 'empty'>;
   choicesKnown: boolean;
   error: string | null;
+  /** 读取时已确认本机离线，供新会话跳过故障提示。 */
+  offline?: boolean;
 }
 
 export function beginNativeConversationChoiceTaskLoad(previous: NativeConversationChoiceTaskLoadState | undefined): NativeConversationChoiceTaskLoadState {
@@ -368,8 +370,9 @@ export function completeNativeConversationChoiceTaskLoad(previous?: NativeConver
   return { status: 'ready', choicesKnown: true, error: null };
 }
 
-export function failNativeConversationChoiceTaskLoad(previous: NativeConversationChoiceTaskLoadState | undefined, error: string): NativeConversationChoiceTaskLoadState {
-  return { status: 'error', choicesKnown: previous?.choicesKnown ?? false, error };
+/** 保留可读列表和读取失败原因，草稿能识别离线结果。 */
+export function failNativeConversationChoiceTaskLoad(previous: NativeConversationChoiceTaskLoadState | undefined, error: string, offline = false): NativeConversationChoiceTaskLoadState {
+  return { status: 'error', choicesKnown: previous?.choicesKnown ?? false, error, offline };
 }
 
 export interface NativeConversationChoiceLoadCoordinator {
