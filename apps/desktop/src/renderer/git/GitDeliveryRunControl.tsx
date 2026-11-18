@@ -1,4 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { GitDeliveryCombinationContext } from './gitDeliverySettings.js';
 import { defaultTaskManagementStatusLabels, type CommandDefinition, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
@@ -55,7 +56,7 @@ export function GitDeliveryRunControl(props: {
   /** 功能区与底部按钮读取同一份组合，避免勾选和执行不一致。 */
   const combination = useContext(GitDeliveryCombinationContext);
   if (!combination) throw new Error('代码交付运行按钮必须位于交付操作栏。');
-  const { settings, setSettings, settingsOpen, setSettingsOpen, setRunning } = combination;
+  const { settings, setSettings, settingsOpen, setSettingsOpen, setRunning, footerHost } = combination;
   /** 任务工作区与关联任务的普通会话共享任务收尾。 */
   const taskId = props.input.scope.kind === 'task' ? props.input.scope.taskId : props.taskId;
   /** 设置弹窗草稿。 */
@@ -70,6 +71,11 @@ export function GitDeliveryRunControl(props: {
   const [busy, setBusy] = useState(false);
   /** 保留失败原因与手动重读入口。 */
   const [error, setError] = useState<unknown>(null);
+  /** 从底栏执行失败时，滚动到表单中的错误原因。 */
+  const actionErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) actionErrorRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [error]);
   /** 终态清理只能在用户看到真实影响后明确确认。 */
   const [cleanupRun, setCleanupRun] = useState<GitDeliveryRun | null>(null);
   /** 真实接纳身份在未知响应重试时保持不变。 */
@@ -290,44 +296,46 @@ export function GitDeliveryRunControl(props: {
     .join(' → ');
   return (
     <>
-      <section className="git-delivery-command-selection" data-enabled={settings.push} aria-label={props.zh ? '推送后命令' : 'Commands after push'}>
-        <div className="task-git-delivery-field-row">
-          <span>{props.zh ? '推送后命令' : 'After push'}</span>
-          <GitDeliveryCommandSelect
-            commands={commands}
-            selectedIds={settings.postPushCommandIds ?? []}
-            disabled={props.disabled || busy || running || !settings.push || !commandsLoaded}
-            zh={props.zh}
-            onChange={(ids) => setSettings((current) => ({ ...current, postPushCommandIds: ids }))}
-          />
-        </div>
-      </section>
-      <section className="git-delivery-completion">
-        {taskId ? (
+      <div className="git-delivery-follow-up-fields">
+        <section className="git-delivery-command-selection" data-enabled={settings.push} aria-label={props.zh ? '推送后执行命令' : 'Run commands after push'}>
           <div className="task-git-delivery-field-row">
-            <span>{props.zh ? '交付后状态' : 'Final status'}</span>
-            <ZeusSelect
-              size="compact"
-              disabled={props.disabled || busy || running}
-              value={settings.finalTaskStatus ?? ''}
-              options={[
-                { value: '', label: props.zh ? '不变更' : 'Do not change' },
-                ...statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id })),
-              ]}
-              onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value || null }))}
-              ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
+            <span>{props.zh ? '推送后执行命令' : 'Run after push'}</span>
+            <GitDeliveryCommandSelect
+              commands={commands}
+              selectedIds={settings.postPushCommandIds ?? []}
+              disabled={props.disabled || busy || running || !settings.push || !commandsLoaded}
+              zh={props.zh}
+              onChange={(ids) => setSettings((current) => ({ ...current, postPushCommandIds: ids }))}
             />
           </div>
-        ) : (
-          <label className="git-delivery-checkbox">
-            <input type="checkbox" disabled={props.disabled || busy || running} checked={settings.archiveConversation === true} onChange={(event) => setSettings((current) => ({ ...current, archiveConversation: event.target.checked }))} />
-            {props.zh ? '交付成功后自动归档会话' : 'Archive conversation after delivery succeeds'}
-          </label>
-        )}
-      </section>
+        </section>
+        <section className="git-delivery-completion">
+          {taskId ? (
+            <div className="task-git-delivery-field-row">
+              <span>{props.zh ? '交付后设状态' : 'Set task status'}</span>
+              <ZeusSelect
+                size="compact"
+                disabled={props.disabled || busy || running}
+                value={settings.finalTaskStatus ?? ''}
+                options={[
+                  { value: '', label: props.zh ? '不变更' : 'Do not change' },
+                  ...statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id })),
+                ]}
+                onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value || null }))}
+                ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
+              />
+            </div>
+          ) : (
+            <label className="git-delivery-checkbox">
+              <input type="checkbox" disabled={props.disabled || busy || running} checked={settings.archiveConversation === true} onChange={(event) => setSettings((current) => ({ ...current, archiveConversation: event.target.checked }))} />
+              {props.zh ? '交付成功后自动归档会话' : 'Archive conversation after delivery succeeds'}
+            </label>
+          )}
+        </section>
+      </div>
       <section className="git-delivery-combination" aria-label={props.zh ? '执行交付' : 'Run delivery'}>
         {error || runsError ? (
-          <div role="alert">
+          <div ref={actionErrorRef} role="alert">
             <VisibleApplicationError error={error || runsError} language={props.zh ? 'zh-CN' : 'en'} />
             <Button
               size="compact"
@@ -391,28 +399,31 @@ export function GitDeliveryRunControl(props: {
             </section>
           );
         })}
-        <div className="git-delivery-combination-buttons">
-          <Button
-            variant="primary"
-            size="compact"
-            busy={busy}
-            disabled={props.disabled || busy || running || !props.input.repositories.length || !summary || (settings.push && Boolean(settings.postPushCommandIds?.length) && !commandsLoaded)}
-            data-icon-tooltip={
-              settings.finalTaskStatus && taskId
-                ? props.zh
-                  ? `完成后状态：${finalStatusLabel}`
-                  : `Final status: ${finalStatusLabel}`
-                : !taskId && settings.archiveConversation
-                  ? props.zh
-                    ? '交付成功后归档会话'
-                    : 'Archive conversation after delivery succeeds'
-                  : undefined
-            }
-            onClick={() => start()}
-          >
-            {summary || (props.zh ? '执行交付' : 'Run delivery')}
-          </Button>
-        </div>
+        {footerHost
+          ? createPortal(
+              <Button
+                variant="primary"
+                size="compact"
+                busy={busy}
+                disabled={props.disabled || busy || running || !props.input.repositories.length || !summary || (settings.push && Boolean(settings.postPushCommandIds?.length) && !commandsLoaded)}
+                data-icon-tooltip={
+                  settings.finalTaskStatus && taskId
+                    ? props.zh
+                      ? `完成后状态：${finalStatusLabel}`
+                      : `Final status: ${finalStatusLabel}`
+                    : !taskId && settings.archiveConversation
+                      ? props.zh
+                        ? '交付成功后归档会话'
+                        : 'Archive conversation after delivery succeeds'
+                      : undefined
+                }
+                onClick={() => start()}
+              >
+                {summary || (props.zh ? '执行交付' : 'Run delivery')}
+              </Button>,
+              footerHost,
+            )
+          : null}
         {cleanupRun ? <GitDeliveryCleanupConfirmation run={cleanupRun} zh={props.zh} busy={busy} error={error} onClose={() => setCleanupRun(null)} onConfirm={() => resume(cleanupRun, true)} /> : null}
         {draft ? (
           <FormDialog

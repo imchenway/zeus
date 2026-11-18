@@ -44,7 +44,7 @@ export function GitDeliveryCommandSelect(props: {
       value=""
       selectedValues={props.selectedIds}
       triggerLabel={label}
-      ariaLabel={props.zh ? '推送后命令' : 'Commands after push'}
+      ariaLabel={props.zh ? '推送后执行命令' : 'Run commands after push'}
       options={[
         ...props.commands.map((command) => ({ value: command.id, label: command.title, disabled: props.selectedIds.length >= 50 && !props.selectedIds.includes(command.id) })),
         ...selected.filter((command) => !props.commands.some((available) => available.id === command.id)).map((command) => ({ value: command.id, label: command.title })),

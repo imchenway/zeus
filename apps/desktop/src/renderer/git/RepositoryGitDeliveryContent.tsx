@@ -684,6 +684,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 busyAction={busyAction}
                 generationClient={props.client}
                 projectId={props.project.id}
+                currentDirectory={props.conversationWorkspaceMode === 'direct'}
                 canGenerate={Boolean(commitCount)}
                 onGenerate={() => generateMessage()}
                 message={generated ?? message}
