@@ -344,6 +344,7 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
     <>
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'MenuBarUsageWindow')}>
         <MenuBarUsageWindow client={client} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} />
+        <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
     </>,
