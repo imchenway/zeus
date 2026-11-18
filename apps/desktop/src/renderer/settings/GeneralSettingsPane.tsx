@@ -39,22 +39,25 @@ export function GeneralSettingsPane(props: {
   const suggestionModelValue = suggestions.followConversationModel ? 'conversation' : (suggestions.modelRef ?? '');
   /** 模型目录只在通用设置打开或用户刷新时读取。 */
   const [suggestionModels, setSuggestionModels] = useState<InputSuggestionModelOption[]>([]);
-  /** 目录失败只在本设置区提示，不弹窗或更换已保存模型。 */
-  const [suggestionModelWarning, setSuggestionModelWarning] = useState('');
+  /** 区分整个目录读取失败与只缺少 Codex 模型。 */
+  const [suggestionCatalogIssue, setSuggestionCatalogIssue] = useState<{ message: string; codexOnly: boolean } | null>(null);
   /** 刷新序号避免旧目录覆盖用户刚刷新后的结果。 */
   const [modelsRevision, setModelsRevision] = useState(0);
   /** 加载期间保持已保存的选择，不自动挑选第一个模型。 */
   const [modelsLoading, setModelsLoading] = useState(false);
   /** 专用模型读取自身能力，跟随模式在生成时再解析具体模型。 */
   const selectedSuggestionModel = suggestions.followConversationModel ? undefined : suggestionModels.find((model) => model.id === suggestions.modelRef);
-  /** 已失效的显式档位保留可见提示，不静默改用其他档位。 */
-  const suggestionEfforts = suggestions.followConversationModel ? [...new Set(suggestionModels.flatMap((model) => model.supportedReasoningEfforts ?? []))] : (selectedSuggestionModel?.supportedReasoningEfforts ?? []);
-  /** 全局跟随配置列出已配置模型的能力，具体会话仍在生成前核对，不静默降档。 */
-  const suggestionServiceTiers = suggestions.followConversationModel ? [...new Map(suggestionModels.flatMap((model) => model.serviceTiers ?? []).map((tier) => [tier.id, tier])).values()] : (selectedSuggestionModel?.serviceTiers ?? []);
-  /** 跟随模型时，以可选目录的档位集合展示可用的速度。 */
-  const suggestionSpeedModel = { serviceTiers: suggestionServiceTiers };
+  /** 只列出所选专用模型支持的推理档位。 */
+  const suggestionEfforts = selectedSuggestionModel?.supportedReasoningEfforts ?? [];
+  /** 速度选项复用当前专用模型公布的能力。 */
+  const suggestionSpeedModel = { serviceTiers: selectedSuggestionModel?.serviceTiers ?? [] };
   /** 未开放超快时，设置中也省略对应档位说明。 */
   const canUseSuggestionUltrafast = supportsUltrafast(suggestionSpeedModel);
+  /** 目录状态只在影响已选专用模型时显示。 */
+  const suggestionModelWarning =
+    !suggestions.followConversationModel && suggestions.modelRef && !selectedSuggestionModel && suggestionCatalogIssue && (!suggestionCatalogIssue.codexOnly || suggestions.modelRef.startsWith('codex:'))
+      ? suggestionCatalogIssue.message
+      : '';
 
   useEffect(() => {
     /** 返回窗口或登录能力变化后重新读取目录，省去常驻刷新按钮。 */
@@ -77,10 +80,10 @@ export function GeneralSettingsPane(props: {
       .then((result) => {
         if (controller.signal.aborted) return;
         setSuggestionModels(result.items);
-        setSuggestionModelWarning(result.warning);
+        setSuggestionCatalogIssue(result.warning ? { message: result.warning, codexOnly: true } : null);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setSuggestionModelWarning(zh ? '模型目录暂不可用，请刷新。' : 'Models are unavailable. Refresh to retry.');
+        if (!controller.signal.aborted) setSuggestionCatalogIssue({ message: zh ? '模型目录暂不可用，请重试。' : 'Models are unavailable. Retry loading.', codexOnly: false });
       })
       .finally(() => {
         if (!controller.signal.aborted) setModelsLoading(false);
@@ -210,9 +213,11 @@ export function GeneralSettingsPane(props: {
               ariaLabel={zh ? '输入建议模型' : 'Input suggestion model'}
               value={suggestionModelValue}
               triggerLabel={suggestionModelValue ? undefined : zh ? '未设置' : 'Not set'}
-              disabled={!props.client || (modelsLoading && !suggestionModels.length)}
-              onChange={(value) =>
-                save({
+              disabled={!props.client}
+              onChange={(value) => {
+                // 重选当前模型只关闭菜单，保留已保存的档位。
+                if (value === suggestionModelValue) return;
+                void save({
                   inputSuggestions: {
                     ...suggestions,
                     modelRef: value === 'conversation' ? suggestions.modelRef : value,
@@ -220,8 +225,8 @@ export function GeneralSettingsPane(props: {
                     effort: null,
                     serviceTier: null,
                   },
-                })
-              }
+                });
+              }}
               options={[
                 { value: 'conversation', label: zh ? '跟随当前会话模型' : 'Use current conversation model' },
                 ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
@@ -229,40 +234,44 @@ export function GeneralSettingsPane(props: {
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow title={zh ? '推理深度' : 'Reasoning effort'} description={zh ? '较高档位可能更慢、用量更多。' : 'Higher effort may take longer and use more tokens.'}>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '输入建议推理深度' : 'Input suggestion reasoning effort'}
-              value={suggestions.effort ?? ''}
-              disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel) || (!suggestionEfforts.length && !suggestions.effort)}
-              searchable={false}
-              onChange={(effort) => save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
-              options={[
-                { value: '', label: suggestionEfforts.length ? (zh ? '自动（最低档位）' : 'Automatic (lowest effort)') : zh ? '模型未提供可选档位' : 'No selectable effort' },
-                ...suggestionEfforts.map((effort) => ({ value: effort, label: effort })),
-                ...(suggestions.effort && !suggestionEfforts.includes(suggestions.effort) ? [{ value: suggestions.effort, label: `${suggestions.effort} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
-              ]}
-            />
-          </NativeControlRow>
-          <NativeControlRow
-            title={zh ? '生成速度' : 'Generation speed'}
-            description={
-              zh
-                ? `${canUseSuggestionUltrafast ? '快速和超快' : 'Fast'} 可能增加用量或费用，可用档位取决于建议模型。`
-                : `${canUseSuggestionUltrafast ? 'Fast and Ultrafast' : 'Fast mode'} may increase usage or cost. Available speeds depend on the suggestion model.`
-            }
-          >
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}
-              value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
-              triggerLabel={suggestions.serviceTier === 'ultrafast' && !canUseSuggestionUltrafast ? '—' : undefined}
-              disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel)}
-              searchable={false}
-              onChange={(value) => save({ inputSuggestions: { ...suggestions, serviceTier: isCodexAcceleratedServiceTier(value) ? value : null } })}
-              options={serviceTierOptions(suggestionSpeedModel, zh ? 'zh-CN' : 'en-US')}
-            />
-          </NativeControlRow>
+          {suggestions.followConversationModel || !suggestions.modelRef ? null : (
+            <>
+              <NativeControlRow title={zh ? '推理深度' : 'Reasoning effort'} description={zh ? '较高档位可能更慢、用量更多。' : 'Higher effort may take longer and use more tokens.'}>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '输入建议推理深度' : 'Input suggestion reasoning effort'}
+                  value={suggestions.effort ?? ''}
+                  disabled={!props.client || !selectedSuggestionModel || (!suggestionEfforts.length && !suggestions.effort)}
+                  searchable={false}
+                  onChange={(effort) => save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
+                  options={[
+                    { value: '', label: suggestionEfforts.length ? (zh ? '自动（最低档位）' : 'Automatic (lowest effort)') : zh ? '模型未提供可选档位' : 'No selectable effort' },
+                    ...suggestionEfforts.map((effort) => ({ value: effort, label: effort })),
+                    ...(suggestions.effort && !suggestionEfforts.includes(suggestions.effort) ? [{ value: suggestions.effort, label: `${suggestions.effort} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
+                  ]}
+                />
+              </NativeControlRow>
+              <NativeControlRow
+                title={zh ? '生成速度' : 'Generation speed'}
+                description={
+                  zh
+                    ? `${canUseSuggestionUltrafast ? '快速和超快' : 'Fast'} 可能增加用量或费用，可用档位取决于建议模型。`
+                    : `${canUseSuggestionUltrafast ? 'Fast and Ultrafast' : 'Fast mode'} may increase usage or cost. Available speeds depend on the suggestion model.`
+                }
+              >
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}
+                  value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
+                  triggerLabel={suggestions.serviceTier === 'ultrafast' && !canUseSuggestionUltrafast ? '—' : undefined}
+                  disabled={!props.client || !selectedSuggestionModel}
+                  searchable={false}
+                  onChange={(value) => save({ inputSuggestions: { ...suggestions, serviceTier: isCodexAcceleratedServiceTier(value) ? value : null } })}
+                  options={serviceTierOptions(suggestionSpeedModel, zh ? 'zh-CN' : 'en-US')}
+                />
+              </NativeControlRow>
+            </>
+          )}
           {suggestionModelWarning ? (
             <p className="settings-field-error" role="status">
               {suggestionModelWarning}

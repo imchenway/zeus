@@ -1030,6 +1030,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     settings.setJson('archive.project-task-view-settings', { preferences: legacyTaskViewSettings, archivedAt: now().toISOString() });
   }
   let appShellSettings: AppShellSettingsSnapshot = normalizeAppShellSettings(persistedAppShellSettings, localLogDirectory, localConfigPath, settingsIdentityCatalog);
+  /** 旧版空偏好没有模型、跟随模式或档位，显式关闭和已选档位按原值保留。 */
+  const storedInputSuggestions = persistedAppShellSettings?.inputSuggestions;
+  /** 早期空偏好可以缺少推理深度和速度字段。 */
+  const useDefaultInputSuggestions =
+    storedInputSuggestions == null ||
+    (storedInputSuggestions.enabled === false &&
+      storedInputSuggestions.modelRef === null &&
+      storedInputSuggestions.followConversationModel === undefined &&
+      storedInputSuggestions.effort == null &&
+      storedInputSuggestions.serviceTier == null);
+  if (useDefaultInputSuggestions) appShellSettings.inputSuggestions = defaultInputSuggestionSettings;
   /** 所有网络客户端使用固定回环入口，保存代理配置时立即切换出口。 */
   await initializeNetworkProxyRuntime(normalizeNetworkProxySettings(appShellSettings.networkProxy));
   server.addHook('onClose', closeNetworkProxyRuntime);
@@ -1040,13 +1051,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     reply.header('Cache-Control', 'no-store');
     return { url: (await networkProxyRuntimeEnvironment()).HTTP_PROXY };
   });
-  if (newDatabase) {
-    appShellSettings = {
-      ...appShellSettings,
-      modelSetupStatus: 'pending',
-      /** 新资料默认用当前会话模型生成输入建议。 */
-      inputSuggestions: { ...defaultInputSuggestionSettings, enabled: true, followConversationModel: true },
-    };
+  if (newDatabase) appShellSettings.modelSetupStatus = 'pending';
+  // 回复完成时直接读取持久开关，启动时将生效的默认值一并保存。
+  if (!readOnlyValidation && (newDatabase || useDefaultInputSuggestions)) {
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }
