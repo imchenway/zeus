@@ -91,9 +91,9 @@ export class BrowserPasswordStore {
     return this.serial(async () => (await this.load()).entries.filter((entry) => !origin || entry.origin === origin).map(({ id, origin: site, username }) => ({ id, origin: site, username })));
   }
 
-  /** 专属隔离世界读取本站凭据；只供主进程的受控内容脚本桥使用。 */
-  credentials(origin: string): Promise<PasswordEntry[]> {
-    return this.serial(async () => (await this.load()).entries.filter((entry) => entry.origin === origin));
+  /** 用户选中账号后，按登录框来源和账号 ID 读取一条凭据。 */
+  credential(origin: string, id: string): Promise<PasswordEntry | undefined> {
+    return this.serial(async () => (await this.load()).entries.find((entry) => entry.origin === origin && entry.id === id));
   }
 
   /** 原子删除选定账号，不删除其他站点或账号。 */

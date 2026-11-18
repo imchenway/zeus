@@ -9,7 +9,8 @@ import type { BrowserTranslationSegment } from '@zeus/shared';
 import { installBrowserPasswordAutofill } from './browserPasswordAutofill.js';
 
 function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 'zeus:browser-page:save-comment'): Promise<unknown> {
-  const commandId = globalThis.crypto.randomUUID();
+  /** HTTP 页面也要生成命令标识；随机数接口在非安全上下文中可用。 */
+  const commandId = globalThis.crypto.randomUUID?.() ?? globalThis.crypto.getRandomValues(new Uint32Array(4)).join('-');
   const envelope = Object.freeze({
     schemaGeneration: 'zeus-command-envelope-v1',
     commandId,
@@ -24,8 +25,8 @@ function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 
   return ipcRenderer.invoke(channel, Object.freeze({ envelope, body }));
 }
 
-/** 登录字段识别、动态监听与填充统一由固定的上游内容脚本负责。 */
-installBrowserPasswordAutofill((generation) => invokeBrowserPageCommand('desktop.browser.autofill', { generation }, 'zeus:browser-page:show-passwords'));
+/** 各 frame 独立识别自己的登录框。 */
+installBrowserPasswordAutofill((documentId) => invokeBrowserPageCommand('desktop.browser.autofill', { documentId }, 'zeus:browser-page:show-passwords'));
 
 type Rect = { x: number; y: number; width: number; height: number };
 type DesignChange = { kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string };
@@ -118,8 +119,6 @@ const pageTranslation = createBrowserPageTranslation({
   report: (runId, state, message) => ipcRenderer.send('zeus:browser-page:translation-state', { runId, state, message }),
   onLayout: () => render(),
 });
-window.addEventListener('pagehide', () => pageTranslation.stop(), { once: true });
-
 function install(): void {
   if (document.getElementById(overlayRootId)) return;
   rootHost = document.createElement('div');
@@ -861,7 +860,8 @@ function commonSelectionElement(selection: Selection): HTMLElement | null {
   return source instanceof HTMLElement ? source : null;
 }
 
-ipcRenderer.on('zeus-browser-page:command', (_event, message: unknown) => {
+/** 批注和翻译命令只由顶层页面处理。 */
+function handleBrowserPageCommand(_event: unknown, message: unknown): void {
   if (!message || typeof message !== 'object') return;
   const command = message as { type?: unknown; enabled?: unknown; comments?: unknown; annotationMode?: unknown; commentId?: unknown; runId?: unknown; serviceId?: unknown };
   if (command.type === 'start_translation' && typeof command.runId === 'string' && typeof command.serviceId === 'string') {
@@ -882,7 +882,11 @@ ipcRenderer.on('zeus-browser-page:command', (_event, message: unknown) => {
   } else if (command.type === 'focus_comment' && typeof command.commentId === 'string') {
     focusComment(command.commentId);
   }
-});
+}
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
-else install();
+if (process.isMainFrame) {
+  window.addEventListener('pagehide', () => pageTranslation.stop(), { once: true });
+  ipcRenderer.on('zeus-browser-page:command', handleBrowserPageCommand);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
+  else install();
+}

@@ -1,5 +1,22 @@
 import { browserCredentialPromptHtml } from './browserCredentialPrompt.js';
-import { BrowserWindow, clipboard, dialog, ipcMain, Menu, MenuItem, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
+import {
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  MenuItem,
+  MessageChannelMain,
+  nativeImage,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  type Rectangle,
+  session,
+  type Session,
+  type WebContents,
+  type WebFrameMain,
+  WebContentsView,
+} from 'electron';
 import { randomUUID } from 'node:crypto';
 import { publishFile } from '@zeus/storage/platform-security';
 import { readFileSync } from 'node:fs';
@@ -38,6 +55,7 @@ import { BrowserPasswordStore, browserPasswordOrigin } from './browserPasswords.
 import { BrowserCuaHost } from './browserCuaHost.js';
 import type { BrowserCuaSurface } from './browserCuaBridge.js';
 import type { ComputerHost } from './computerHost.js';
+import type { BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
 
 /** 仅保存长期设置与书签；标签、活动页和分组随本次应用运行结束。 */
 interface PersistedBrowserState {
@@ -570,35 +588,29 @@ export class BrowserHost implements BrowserAutomationPort {
         return { deleted: true };
       });
     });
-    /** 专属内容脚本使用单独的只读凭据接口，网页及模型工具没有此桥。 */
-    ipcMain.handle('zeus:browser-page:autofill-runtime', async (event, input: unknown) => {
-      const tab = this.requirePageTab(event);
+    /** 各 frame 只读取自身的运行身份，凭据由原生菜单在用户选择后交接。 */
+    ipcMain.handle('zeus:browser-page:autofill-runtime', (event) => {
+      this.requirePageTab(event);
       this.assertWritableBrowserCapability();
-      if (!this.settings.enabled || event.senderFrame !== event.sender.mainFrame) throw new Error('自动填充请求不属于受信任的顶层文档。');
-      const origin = browserPasswordOrigin(event.sender.getURL());
-      const value = asRecord(input);
-      if (value.action === 'context') return { origin, generation: tab.documentGeneration, language: this.options.language?.() ?? 'zh-CN', tabId: event.sender.id };
-      const request = asRecord(value.request);
-      if (value.generation !== tab.documentGeneration || request.action !== 'credentials' || browserPasswordOrigin(requireNonEmptyString(request.url, 'url')) !== origin) throw new Error('自动填充请求的页面身份已变化。');
-      const generation = tab.documentGeneration;
-      const credentials = await this.options.passwords.credentials(origin);
-      if (event.sender.isDestroyed() || generation !== tab.documentGeneration || browserPasswordOrigin(event.sender.getURL()) !== origin) throw new Error('自动填充请求的页面身份已变化。');
-      return credentials.map((entry) => {
-        (tab.passwordValues ??= new Set()).add(entry.password);
-        return { uuid: entry.id, login: entry.username, password: entry.password, name: entry.username || entry.origin, group: '', stringFields: [], totp: '', expired: 'false', skipAutoSubmit: 'true' };
-      });
+      const origin = browserPasswordFrameOrigin(event.sender, event.senderFrame);
+      if (!origin || !this.settings.enabled) return null;
+      return { origin, language: this.options.language?.() ?? 'zh-CN', tabId: event.sender.id };
     });
     ipcMain.handle('zeus:browser-page:show-passwords', async (event, request: MainCommandRequest) => {
       const tab = this.requirePageTab(event);
-      if (event.senderFrame !== event.sender.mainFrame) return;
+      const frame = event.senderFrame;
+      const origin = browserPasswordFrameOrigin(event.sender, frame);
+      if (!frame || !origin) return;
       const window = tab.ownerWindowId ? this.windows.get(tab.ownerWindowId) : undefined;
       if (!window || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id || !this.settings.enabled) return;
-      if (asRecord(request?.body).generation !== tab.documentGeneration) return;
+      const { documentId } = asRecord(request?.body);
+      if (typeof documentId !== 'string') return;
+      const generation = tab.documentGeneration;
       try {
-        if (!(await this.options.passwords.list(browserPasswordOrigin(event.sender.getURL()))).length) return;
+        if (!(await this.options.passwords.list(origin)).length) return;
         await this.options.mainCommandLedger().execute(request, 'desktop.browser.autofill', async (_input, command) => {
-          if (asRecord(_input).generation !== tab.documentGeneration) return { completed: false };
-          await this.showPasswordMenu(window, tab, true, () => command.markWriteStarted());
+          if (generation !== tab.documentGeneration || browserPasswordFrameOrigin(event.sender, frame) !== origin) return { completed: false };
+          await this.showPasswordMenu(window, tab, frame, () => command.markWriteStarted(), documentId);
           return { completed: true };
         });
       } catch (error) {
@@ -1152,6 +1164,8 @@ export class BrowserHost implements BrowserAutomationPort {
         preload: this.options.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
+        // Electron 用此选项把沙箱 preload 和 IPC 分发到子 frame。
+        nodeIntegrationInSubFrames: true,
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
@@ -1254,49 +1268,53 @@ export class BrowserHost implements BrowserAutomationPort {
     return view;
   }
 
-  /** 原生账号菜单覆盖网页，列表及密码都不交给网页脚本。 */
-  private async showPasswordMenu(window: BrowserWindow, tab: LiveBrowserTab, quiet = false, beforeFill?: () => Promise<void>): Promise<void> {
+  /** 显式选择和焦点触发共用原生菜单，始终填回同一个 frame 文档。 */
+  private async showPasswordMenu(window: BrowserWindow, tab: LiveBrowserTab, frame: WebFrameMain, beforeFill?: () => Promise<void>, requestedDocumentId?: string): Promise<void> {
     this.assertWritableBrowserCapability();
     const contents = this.ensureView(tab).webContents;
-    let origin: string;
-    try {
-      origin = browserPasswordOrigin(contents.getURL());
-    } catch {
+    const origin = browserPasswordFrameOrigin(contents, frame);
+    const quiet = requestedDocumentId !== undefined;
+    if (!origin) {
       if (quiet) return;
       throw new Error(this.text('当前页面不支持密码填充。', 'Password filling is unavailable on this page.'));
     }
     const generation = tab.documentGeneration;
+    /** 异步查询或等待选择期间，切页、换标签或关闭窗口都使请求失效。 */
+    const isCurrent = (): boolean =>
+      this.settings.enabled && !window.isDestroyed() && this.visibleTabByWindow.get(window.id) === tab.snapshot.id && tab.documentGeneration === generation && browserPasswordFrameOrigin(contents, frame) === origin;
     const accounts = await this.options.passwords.list(origin);
-    if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    if (!isCurrent()) return;
     if (!accounts.length && quiet) return;
+    let documentId: unknown;
     if (accounts.length) {
-      const detected = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `globalThis.zeusAutofill?.probe(${JSON.stringify(origin)}) ?? false` }]);
-      if (!detected) {
+      const reply = (await requestBrowserPasswordFrame(frame, { action: 'probe', origin })) as { documentId?: unknown } | null;
+      documentId = reply?.documentId;
+      if (!isCurrent() || (quiet && documentId !== requestedDocumentId)) return;
+      if (typeof documentId !== 'string') {
         if (quiet) return;
         throw new Error(this.text('自动填充尚未就绪，或页面没有可填充的登录框。', 'Autofill is not ready, or no supported sign-in field was found.'));
       }
-      if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
     }
     const selected = await new Promise<string | null>((resolveSelection) => {
       const menu = new Menu();
+      if (accounts.length && origin !== contents.mainFrame.origin) menu.append(new MenuItem({ label: origin, enabled: false }));
       for (const account of accounts) menu.append(new MenuItem({ label: (account.username || this.text('无用户名', 'No username')).replace(/&/gu, '&&').slice(0, 240), click: () => resolveSelection(account.id) }));
       if (!accounts.length) menu.append(new MenuItem({ label: this.text('此站点没有已保存的密码', 'No saved passwords for this site'), enabled: false }));
       menu.popup({ window, callback: () => resolveSelection(null) });
     });
-    if (!selected) return;
-    if (contents.isDestroyed() || tab.documentGeneration !== generation || browserPasswordOrigin(contents.getURL()) !== origin || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
+    if (!selected || typeof documentId !== 'string' || !isCurrent()) return;
+    const credential = await this.options.passwords.credential(origin, selected);
+    if (!isCurrent()) return;
+    if (!credential) throw new Error(this.text('该账号已删除，请重新选择。', 'This account was deleted. Select an account again.'));
     await beforeFill?.();
-    if (contents.isDestroyed() || tab.documentGeneration !== generation || this.visibleTabByWindow.get(window.id) !== tab.snapshot.id) return;
-    let status: unknown;
-    try {
-      status = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `globalThis.zeusAutofill?.fill(${JSON.stringify(origin)},${JSON.stringify(selected)}) ?? 'unavailable'` }], true);
-    } catch {
-      throw new Error(this.text('密码填充失败，请重新聚焦登录框后重试。', 'Password filling failed. Focus the sign-in field and try again.'));
-    }
+    if (!isCurrent()) return;
+    const { id, username, password } = credential;
+    (tab.passwordValues ??= new Set()).add(password);
+    const status = await requestBrowserPasswordFrame(frame, { action: 'fill', origin, documentId, selection: { id, username, password } });
+    if (!isCurrent()) return;
     if (status === 'filled') return;
     if (status === 'unavailable') throw new Error(this.text('自动填充组件尚未就绪，请在页面加载后重试。', 'Autofill is not ready. Try again after the page loads.'));
     if (status === 'page_changed') throw new Error(this.text('页面已变化，请重新选择账号。', 'The page changed. Select an account again.'));
-    if (status === 'account_missing') throw new Error(this.text('该账号已删除，请重新选择。', 'This account was deleted. Select an account again.'));
     throw new Error(
       status === 'multiple_forms' ? this.text('页面有多个登录表单，请先点击要填充的登录框。', 'Focus the sign-in field in the form you want to fill.') : this.text('未找到可填充的登录框。', 'No supported sign-in field was found.'),
     );
@@ -1330,7 +1348,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!command || typeof command !== 'object' || typeof command.action !== 'string') throw new TypeError('Browser command is invalid.');
     switch (command.action) {
       case 'autofill':
-        await this.showPasswordMenu(window, tab);
+        await this.showPasswordMenu(window, tab, view.webContents.focusedFrame ?? view.webContents.mainFrame);
         break;
       case 'navigate':
         await loadUserFacingBrowserUrl(view.webContents, normalizeBrowserUrl(command.url));
@@ -3272,6 +3290,42 @@ function normalizeDesignChanges(value: unknown): ZeusBrowserDesignChange[] {
 
 function nextCommentNumber(comments: ZeusBrowserComment[]): number {
   return comments.reduce((maximum, comment) => Math.max(maximum, comment.number), 0) + 1;
+}
+
+/** 用 Chromium 的文档来源校验目标，拒绝继承来源的空白页和不透明的沙箱 frame。 */
+function browserPasswordFrameOrigin(contents: WebContents, frame: WebFrameMain | null): string | undefined {
+  if (!frame || contents.isDestroyed() || frame.isDestroyed() || frame.detached || frame.top?.frameTreeNodeId !== contents.mainFrame.frameTreeNodeId) return undefined;
+  try {
+    const origin = browserPasswordOrigin(frame.url);
+    return frame.origin === origin ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 单次消息端口把命令定位到目标 preload，并在 frame 离开或失去响应时结束等待。 */
+function requestBrowserPasswordFrame(frame: WebFrameMain, request: BrowserPasswordFrameRequest): Promise<unknown> {
+  return new Promise((resolve) => {
+    const { port1, port2 } = new MessageChannelMain();
+    /** 只等待 frame 探测或填充回执，用户选择账号的时间不在此限制内。 */
+    const timeout = setTimeout(() => finish('unavailable'), 5000);
+    /** 回复、断开及超时共用清理。 */
+    const finish = (result: unknown): void => {
+      clearTimeout(timeout);
+      resolve(result);
+      port1.removeAllListeners();
+      port1.close();
+    };
+    port1.once('message', ({ data }) => finish(data));
+    port1.once('close', () => finish('unavailable'));
+    port1.start();
+    try {
+      frame.postMessage('zeus:browser-page:password-frame', request, [port2]);
+    } catch {
+      port2.close();
+      finish('unavailable');
+    }
+  });
 }
 
 function safeOrigin(value: string): string | undefined {
