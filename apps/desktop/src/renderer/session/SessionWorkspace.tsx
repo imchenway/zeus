@@ -1934,7 +1934,7 @@ function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state
 function SessionQueueProjection(props: Omit<QueuedConversationMessagesProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
   const { controller, state: fallbackState, ...queueProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationQueueStateSelector);
-  return <QueuedConversationMessages {...queueProps} state={state} />;
+  return <QueuedConversationMessages key={JSON.stringify([state.projectId, state.conversationId])} {...queueProps} state={state} />;
 }
 
 const labels = {

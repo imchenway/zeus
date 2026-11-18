@@ -2,8 +2,13 @@ import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionItemBuff
 
 /** 输入框排队区同时承载权威提交和等待服务端接纳的本地投影。 */
 export interface ComposerQueuedSubmission extends NativeQueuedSubmission {
-  /** 本地投影尚无权威队列记录，只能展示，不能执行编辑、引导、删除或排序。 */
+  /** 本地投影使用客户端消息身份，操作发出前由控制器查找权威提交。 */
   localOnly: boolean;
+}
+
+/** 客户端消息身份在发送回执接管卡片时保持稳定。 */
+export function queuedSubmissionIdentity(submission: NativeQueuedSubmission): string {
+  return submission.clientUserMessageId || submission.id;
 }
 
 /** 仅未确认接纳的本地消息进入待发区域；等待原生回显不等于仍在排队。 */
@@ -87,7 +92,7 @@ export function isSubmissionWaitingInQueue(state: NativeSessionState, submission
   return hasUnfinishedConversationTurn(state) || firstWaiting?.id !== submission.id;
 }
 
-/** 输入框卡片立即接管活跃轮次后的本地消息；权威队列到达后再开放操作。 */
+/** 输入框卡片立即接管活跃轮次后的本地消息。 */
 export function composerQueuedSubmissions(state: NativeSessionState): ComposerQueuedSubmission[] {
   /** 排队区不会在关闭或失败的 Provider 下渲染；此时消息必须回到正文，不能被互斥规则隐藏。 */
   if (state.snapshot?.providerState === 'failed' || state.snapshot?.providerState === 'closed') return [];
@@ -112,15 +117,15 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
     /** HTTP 回执可能先补齐 submissionId；实时队列随后到达时同样不得重复展示。 */
     const submissionId = typeof item.payload.submissionId === 'string' ? item.payload.submissionId : null;
     if (submissionId && durableSubmissionIds.has(submissionId)) return [];
-    /** 附件来自本地冻结的发送信封，只用于首帧展示，不作为权威操作参数。 */
+    /** 附件来自本地冻结的发送信封，用于首帧展示和编辑初值。 */
     const attachments = Array.isArray(item.payload.attachments) ? (item.payload.attachments as NativeQueuedSubmission['attachments']) : undefined;
     return [
       {
         id: clientUserMessageId,
         conversationId: item.conversationId,
         content: item.text,
-        composerDraft: item.text,
-        status: item.status,
+        composerDraft: typeof item.payload.composerDraft === 'string' ? item.payload.composerDraft : item.text,
+        status: 'queued',
         delivery: 'queue',
         ...(attachments?.length ? { attachments } : {}),
         /** 首帧保留原题关系，权威队列接管前同样可以显示答案摘要。 */
