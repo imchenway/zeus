@@ -55,6 +55,7 @@ import {
 import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
 import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
 import { handledMessageDeliveryErrors } from './conversationSystemMessages.js';
+import { reorderableQueuedSubmissions } from './conversationQueuePresentation.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 会话前台恢复先退避五次，之后转入低频后台恢复。 */
@@ -688,6 +689,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       clientUserMessageId: envelope.clientUserMessageId,
       durableClientUserMessageId: envelope.clientUserMessageId,
       draft: envelope.displayText,
+      composerDraft: envelope.draft,
       attachments: envelope.composerAttachments,
       submittedAttachments: envelope.attachments,
       browserSubmission: envelope.browserSubmission,
@@ -719,6 +721,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       clientUserMessageId: recoveredSend.clientUserMessageId,
       durableClientUserMessageId: recoveredSend.clientUserMessageId,
       draft: recoveredSend.displayText,
+      composerDraft: recoveredSend.draft,
       attachments: recoveredSend.composerAttachments,
       submittedAttachments: recoveredSend.attachments,
       browserSubmission: recoveredSend.browserSubmission,
@@ -767,6 +770,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         clientUserMessageId: envelope.clientUserMessageId,
         durableClientUserMessageId: envelope.clientUserMessageId,
         draft: envelope.displayText,
+        composerDraft: envelope.draft,
         attachments: envelope.composerAttachments,
         submittedAttachments: envelope.attachments,
         browserSubmission: envelope.browserSubmission,
@@ -844,6 +848,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   /** 权威事件可独立结束接纳等待，不必等待原 HTTP 连接关闭。 */
   const sendAcceptanceResolvers = new Map<string, (acceptance: NativeOperationAcceptance | void) => void>();
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
+  /** 卡片动作按点击顺序执行，等待发送接纳时不占用会话操作锁。 */
+  let queueMutationTail = Promise.resolve();
   let browserCommentMarkFlush: Promise<void> | null = null;
   let nextTurnSettingsWrite: Promise<NativeNextTurnSettings> | null = null;
   let nextTurnSettingsRevision = 0;
@@ -1229,6 +1235,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       clientUserMessageId: envelope.clientUserMessageId,
       durableClientUserMessageId: envelope.clientUserMessageId,
       draft: envelope.displayText,
+      composerDraft: envelope.draft,
       attachments: envelope.composerAttachments,
       submittedAttachments: envelope.attachments,
       browserSubmission: envelope.browserSubmission,
@@ -2640,6 +2647,52 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return promise;
   }
 
+  /** 以原发送身份等待 HTTP 或实时事件接纳，保留原有送达超时。 */
+  function resolveQueueSubmissionId(id: string): Promise<string> {
+    /** 回执可能先于用户点击到达，同一客户端消息仍定位到当初那条提交。 */
+    const admitted = () => state.queue?.submissions.find((entry) => entry.id === id || entry.clientUserMessageId === id)?.id;
+    /** 连续发送中，原信封可能还在等待前一条消息的接纳。 */
+    const pending = () => {
+      const send = recoverableSend(id);
+      return deferredSends.some((entry) => entry.clientUserMessageId === id) || Boolean(send && send.deliveryState !== 'failed' && send.deliveryState !== 'uncertain');
+    };
+    /** 存量调用仍可直接交给原接口处理服务端提交身份。 */
+    const existingId = admitted();
+    if (existingId || !pending()) return Promise.resolve(existingId ?? id);
+    /** 发送失败或超时时只报告用户这次操作，继续由送达链路核对原消息。 */
+    const unavailable = () => new Error('排队消息尚未接纳，操作未保存。');
+    /** 一次监听同时接收发送状态和队列接管，完成后立即释放。 */
+    let listener: () => void;
+    const acceptance = new Promise<string>((resolve, reject) => {
+      listener = () => {
+        const submissionId = admitted();
+        if (submissionId) resolve(submissionId);
+        else if (!pending()) reject(unavailable());
+      };
+      listeners.add(listener);
+    });
+    return withSessionTimeout(acceptance, conversationSendAcceptanceTimeoutMs, unavailable).finally(() => listeners.delete(listener));
+  }
+
+  /** 串行保存卡片动作，保存期间输入框仍可继续编辑和发送。 */
+  function enqueueQueueMutation<T>(ids: string[], mutate: (submissionIds: string[]) => Promise<T>): Promise<T> {
+    /** 立即订阅客户端身份，避免等前一操作结束时错过发送接纳。 */
+    const identities = Promise.all(ids.map(resolveQueueSubmissionId));
+    void identities.catch(() => undefined);
+    /** 失败只拒绝本次操作，后续点击仍可继续。 */
+    const result = queueMutationTail.then(async () => {
+      const resolvedIds = await identities;
+      while (activeOperation) await activeOperation.promise.catch(() => undefined);
+      if (disposed) throw new DOMException('会话已关闭。', 'AbortError');
+      return mutate(resolvedIds);
+    });
+    queueMutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   /** 发送入口拒绝由 Composer 记录，不写入会话级错误或其他消息。 */
   function rejectSend(error: Error): Promise<never> {
     return Promise.reject(error);
@@ -2672,6 +2725,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         clientUserMessageId: trackedEnvelope.clientUserMessageId,
         durableClientUserMessageId: trackedEnvelope.clientUserMessageId,
         draft: trackedEnvelope.displayText,
+        composerDraft: trackedEnvelope.draft,
         attachments: trackedEnvelope.composerAttachments,
         submittedAttachments: trackedEnvelope.attachments,
         browserSubmission: trackedEnvelope.browserSubmission,
@@ -2815,6 +2869,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         clientUserMessageId: envelope.clientUserMessageId,
         durableClientUserMessageId: envelope.clientUserMessageId,
         draft: envelope.displayText,
+        composerDraft: envelope.draft,
         attachments: envelope.composerAttachments,
         submittedAttachments: envelope.attachments,
         browserSubmission: envelope.browserSubmission,
@@ -3949,12 +4004,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     cancelPendingSend,
-    editQueuedSubmission(submissionId, content, attachments) {
-      return runOperation(
-        `queue:edit:${submissionId}:${JSON.stringify({ content, attachments })}`,
-        () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content, attachments),
-        (queue) => applyAuthoritativeQueue(queue, submissionId),
-      );
+    editQueuedSubmission(id, content, attachments) {
+      return enqueueQueueMutation([id], async ([submissionId]) => {
+        const queue = await options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId!, content, attachments);
+        await applyAuthoritativeQueue(queue, submissionId);
+        return queue;
+      });
     },
     retryQueuedSubmission(submissionId) {
       return runOperation(
@@ -3987,38 +4042,44 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (queue) => applyAuthoritativeQueue(queue, submissionId),
       );
     },
-    deleteQueuedSubmission(submissionId) {
-      /** 删除回执可能晚于队列事件，提前保存原题身份以清理过期的待送达状态。 */
-      const submission = state.queue?.submissions.find((candidate) => candidate.id === submissionId);
-      /** 普通排队消息仍沿用原客户端身份移除本地投影。 */
-      const clientUserMessageId = submission?.clientUserMessageId;
-      return runOperation(
-        `queue:delete:${submissionId}`,
-        () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
-        (queue) => {
-          dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(submission?.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}), queue });
-          removeAcceptedDisplay(submissionId, clientUserMessageId);
-          persistDraft();
-        },
-        false,
-      );
+    deleteQueuedSubmission(id) {
+      return enqueueQueueMutation([id], async (ids) => {
+        /** 删除回执可能晚于队列事件，提前保存原题身份和本地卡片身份。 */
+        const submissionId = ids[0]!;
+        const submission = state.queue?.submissions.find((candidate) => candidate.id === submissionId);
+        const clientUserMessageId = submission?.clientUserMessageId;
+        const queue = await options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId);
+        dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(submission?.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}), queue });
+        removeAcceptedDisplay(submissionId, clientUserMessageId);
+        persistDraft();
+        return queue;
+      });
     },
     reorderQueue(orderedSubmissionIds) {
-      return runOperation(
-        `queue:reorder:${JSON.stringify(orderedSubmissionIds)}`,
-        () => options.client.reorderNativeQueue(options.projectId, options.conversationId, orderedSubmissionIds),
-        (queue) => applyAuthoritativeQueue(queue),
-      );
+      return enqueueQueueMutation(orderedSubmissionIds, async (resolvedIds) => {
+        /** 新到达的成员和隐藏项仍占据服务端队列的原位置。 */
+        const current = reorderableQueuedSubmissions(state.queue);
+        /** 编辑在原位置换代，仍可承接保存之前发出的调序。 */
+        const byPreviousId = new Map(current.map((entry) => [entry.replacementOfSubmissionId, entry.id]));
+        const currentIds = new Set(current.map((entry) => entry.id));
+        const requested = new Set(resolvedIds.map((id) => byPreviousId.get(id) ?? id).filter((id) => currentIds.has(id)));
+        const target = requested.values();
+        const ordered = current.map((entry) => (requested.has(entry.id) ? target.next().value! : entry.id));
+        const queue = await options.client.reorderNativeQueue(options.projectId, options.conversationId, ordered);
+        await applyAuthoritativeQueue(queue);
+        return queue;
+      });
     },
-    sendQueuedNow(submissionId) {
-      return runOperation(
-        `queue:send-now:${submissionId}`,
-        () => options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId),
-        async (acceptance) => {
-          // 引导回执只交接当前权威队列，正文由明确的 Provider 接纳事件生成。
-          if (acceptance.queue) await applyAuthoritativeQueue(acceptance.queue);
-        },
-      );
+    sendQueuedNow(id) {
+      /** 用户引导的是点击时正在执行的轮次。 */
+      const turnId = state.activeTurnId;
+      return enqueueQueueMutation([id], async ([submissionId]) => {
+        if (!turnId || state.activeTurnId !== turnId || state.terminalTurnIds[turnId]) throw new Error('原回复已结束，消息仍按队列状态处理。');
+        const acceptance = await options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId!);
+        // 引导回执交接队列，正文由 Provider 接纳事件生成。
+        if (acceptance.queue) await applyAuthoritativeQueue(acceptance.queue);
+        return acceptance;
+      });
     },
     resumeQueue() {
       return runOperation(

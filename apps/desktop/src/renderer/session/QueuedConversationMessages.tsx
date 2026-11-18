@@ -1,5 +1,5 @@
 import { platformShortcutLabel } from '../platform.js';
-import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type FormEvent, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -17,6 +17,9 @@ import { useConversationInputResources } from './useConversationInputResources.j
 import { formatAsyncQuestionAnswer } from '@zeus/shared';
 import { Form } from '../ui/Form.js';
 import { Button } from '../ui/Button.js';
+import { queuedSubmissionIdentity } from './conversationQueuePresentation.js';
+import { useListReorderMotion } from '../ui/useListReorderMotion.js';
+import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 
 /** 输入框上方排队卡片所需的权威操作。 */
 export interface QueuedConversationMessagesProps {
@@ -53,12 +56,11 @@ const labels = {
     cancel: '取消',
     steer: '引导到当前回复',
     steerHelp: '补充给当前回复，不中断当前执行',
-    steerHeadOnly: '请先处理更早的排队消息',
-    steerUnavailable: '当前回复还未准备好接受引导',
     remove: '删除排队消息',
     moveUp: '上移排队消息',
     moveDown: '下移排队消息',
     editFailed: '保存失败，编辑内容已保留。',
+    editUnavailable: '消息已离开队列，仍可复制编辑内容。',
     actionFailed: '操作失败，请重试。',
     reordered: (position: number, total: number) => `排队消息已移到第 ${position} 项，共 ${total} 项`,
   },
@@ -81,58 +83,77 @@ const labels = {
     cancel: 'Cancel',
     steer: 'Steer into the current response',
     steerHelp: 'Add to the current response without interrupting it',
-    steerHeadOnly: 'Handle the earlier queued message first',
-    steerUnavailable: 'The current response is not ready for steering',
     remove: 'Delete queued message',
     moveUp: 'Move queued message up',
     moveDown: 'Move queued message down',
     editFailed: 'Save failed. Your edit is preserved.',
+    editUnavailable: 'The message has left the queue. You can still copy your edit.',
     actionFailed: 'The action failed. Try again.',
     reordered: (position: number, total: number) => `Queued message moved to position ${position} of ${total}`,
   },
 } as const;
 
+/** 同一条消息只执行一个写操作，其余卡片可以继续交互。 */
+type QueueAction = 'edit' | 'delete' | 'steer' | 'resume';
+
 /** 在输入框上方展示仍未进入供应商轮次的普通排队消息。 */
 export function QueuedConversationMessages(props: QueuedConversationMessagesProps) {
   /** 当前语言对应的短文案。 */
   const copy = labels[props.language];
-  /** 当前展开编辑器的提交身份。 */
-  const [editingId, setEditingId] = useState<string | null>(null);
-  /** 当前进行中的操作用于阻止重复点击。 */
-  const [actionId, setActionId] = useState<string | null>(null);
+  /** 独立保存草稿，切换卡片时仍保留正在写入或失败的编辑。 */
+  const [editingRows, setEditingRows] = useState<ReadonlyMap<string, NativeQueuedSubmission>>(() => new Map());
+  /** 写入按消息身份隔离，重复点击同步去重。 */
+  const actionRef = useRef(new Map<string, QueueAction>());
+  /** 写入进度只用于本行反馈。 */
+  const [actions, setActions] = useState<ReadonlyMap<string, QueueAction>>(() => new Map());
   /** 操作失败紧邻原消息展示，不污染整段会话。 */
-  const [actionError, setActionError] = useState<{ submissionId: string; message: string } | null>(null);
+  const [actionErrors, setActionErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
   /** 原消息的高亮与辅助播报使用稳定提交身份。 */
   const [reorderFeedback, setReorderFeedback] = useState<{ submissionId: string } | null>(null);
   /** 移动后在当前排队区查找原消息，不依赖改变后的行号。 */
   const regionRef = useRef<HTMLElement>(null);
   /** 换位后立即恢复原按钮焦点，不等待保存回执。 */
   const reorderFocusRef = useRef<HTMLButtonElement | null>(null);
+  /** 从编辑态退出时回到原卡片的编辑入口。 */
+  const editFocusRef = useRef<string | null>(null);
   /** 展示顺序即时更新，持久化仍走原会话队列入口。 */
   const ordering = useQueuedMessageReorder({
     state: props.state,
-    blocked: Boolean(actionId),
+    isDismissing(submission) {
+      const action = actionRef.current.get(queuedSubmissionIdentity(submission));
+      return action === 'delete' || action === 'steer';
+    },
     onReorder: props.onReorder,
     /** 保存失败恢复原卡片的错误展示并清除本次位置反馈。 */
     onError(submissionId, error) {
-      setActionError({ submissionId, message: actionErrorMessage(error, copy.actionFailed) });
+      setActionError(submissionId, actionErrorMessage(error, copy.actionFailed));
       setReorderFeedback(null);
       reorderFocusRef.current = null;
     },
   });
   /** 完整队列保留隐藏成员，卡片列表仅保留普通等待项。 */
   const { queue, fullQueue: reorderableQueue } = ordering;
+  /** 队列身份在本地接入权威快照时保持不变。 */
+  const queueIds = queue.map(queuedSubmissionIdentity);
+  /** 轮次切换或发送失败时保留已打开的草稿，直到用户主动关闭。 */
+  const rows = [...queue, ...[...editingRows].filter(([id]) => !queueIds.includes(id)).map(([, submission]) => submission)];
+  /** 插入、编辑或换位时，其他行从上一帧位置平滑移动。 */
+  const listRef = useListReorderMotion<HTMLOListElement>(JSON.stringify([queueIds, [...editingRows.keys()], [...actions], [...actionErrors]]));
+  /** 同一条卡片只在首次出现时进入。 */
+  const enteringIds = useNewItemMotionIds(queueIds);
   /** 辅助播报读取当前实际行序，隐藏或删除后不再报告旧位置。 */
-  const reorderedIndex = reorderFeedback ? queue.findIndex((submission) => submission.id === reorderFeedback.submissionId) : -1;
-  /** 只有真实可写连接允许修改权威队列。 */
-  const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
-  /** 控制器操作和组件本地操作共同锁定按钮。 */
-  const busy = Boolean(props.state.busyOperation || actionId || ordering.saving);
+  const reorderedIndex = reorderFeedback ? queueIds.indexOf(reorderFeedback.submissionId) : -1;
+  /** 历史只读会话不提供队列写入口。 */
+  const writable = props.state.conversationState !== 'legacy_readonly';
 
-  useEffect(() => {
-    if (!editingId || queue.some((submission) => submission.id === editingId)) return;
-    setEditingId(null);
-  }, [editingId, queue]);
+  useLayoutEffect(() => {
+    const identity = editFocusRef.current;
+    if (!identity || editingRows.has(identity)) return;
+    editFocusRef.current = null;
+    if (document.activeElement !== document.body) return;
+    const row = listRef.current?.querySelector(`[data-list-motion-id="${CSS.escape(identity)}"]`);
+    row?.querySelector<HTMLButtonElement>('[data-queue-edit]')?.focus({ preventScroll: true });
+  }, [editingRows, listRef]);
 
   useLayoutEffect(() => {
     if (!reorderFeedback || !reorderFocusRef.current) return;
@@ -143,64 +164,72 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     /** 到达首尾后原方向禁用，消息本身接管焦点，不跳到另一条消息。 */
     const row = regionRef.current?.querySelector<HTMLElement>('[data-reordered="true"]');
     if (!row) return;
-    (button.disabled ? row : button).focus({ preventScroll: true });
+    (button.isConnected ? button : row).focus({ preventScroll: true });
     row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [reorderFeedback, queue]);
 
-  if (queue.length === 0 || props.state.snapshot?.providerState === 'failed' || props.state.snapshot?.providerState === 'closed') return null;
+  if (rows.length === 0) return null;
+
+  /** 错误由原卡片保留，其他卡片的操作不会覆盖它。 */
+  function setActionError(id: string, message?: string): void {
+    setActionErrors((current) => {
+      if (current.get(id) === message) return current;
+      const errors = new Map(current);
+      if (message) errors.set(id, message);
+      else errors.delete(id);
+      return errors;
+    });
+  }
 
   /** 进入编辑态时优先恢复用户在 Composer 中实际输入的草稿。 */
   function startEdit(submission: NativeQueuedSubmission): void {
-    setEditingId(submission.id);
-    setActionError(null);
+    const identity = queuedSubmissionIdentity(submission);
+    setEditingRows((current) => new Map([...current].filter(([id]) => actionRef.current.has(id) || actionErrors.has(id) || !queueIds.includes(id)).concat([[identity, submission]])));
+    setActionError(identity);
     setReorderFeedback(null);
   }
 
   /** 退出编辑态但不触碰权威排队内容。 */
-  function cancelEdit(): void {
-    setEditingId(null);
-    setActionError(null);
+  function cancelEdit(identity: string): void {
+    setEditingRows((current) => new Map([...current].filter(([id]) => id !== identity)));
+    setActionError(identity);
   }
 
   /** 保存仍使用原提交身份，服务端负责原子替换排队内容。 */
   async function saveEdit(submission: NativeQueuedSubmission, content: string, attachments: NativeConversationAttachment[]): Promise<void> {
-    if (!props.onEdit || (!content.trim() && attachments.length === 0) || busy) return;
-    setActionId(`edit:${submission.id}`);
-    setActionError(null);
-    try {
-      await props.onEdit(submission.id, content.trim(), attachments);
-      setEditingId(null);
-    } catch (error) {
-      setActionError({ submissionId: submission.id, message: actionErrorMessage(error, copy.editFailed) });
-    } finally {
-      setActionId(null);
-    }
+    if (!props.onEdit || (!content.trim() && attachments.length === 0)) return;
+    /** 保存期间允许编辑别的卡片；旧回执只关闭自己打开的编辑框。 */
+    const identity = queuedSubmissionIdentity(submission);
+    const saved = await runAction(identity, 'edit', () => props.onEdit?.(submission.id, content.trim(), attachments));
+    if (saved) cancelEdit(identity);
   }
 
-  /** 所有单击操作共用忙碌态和消息旁错误反馈。 */
-  async function runAction(submissionId: string, action: string, operation: (() => void | Promise<void>) | undefined): Promise<boolean> {
-    if (!operation || busy) return false;
-    setActionId(`${action}:${submissionId}`);
-    setActionError(null);
+  /** 删除和引导先淡出卡片，写入失败时恢复原卡片并显示原因。 */
+  async function runAction(submissionId: string, action: QueueAction, operation: () => void | Promise<void>): Promise<boolean> {
+    if (actionRef.current.has(submissionId)) return false;
+    actionRef.current.set(submissionId, action);
+    setActions(new Map(actionRef.current));
+    setActionError(submissionId);
     setReorderFeedback(null);
     try {
       await operation();
       return true;
     } catch (error) {
-      setActionError({ submissionId, message: actionErrorMessage(error, copy.actionFailed) });
+      setActionError(submissionId, actionErrorMessage(error, action === 'edit' ? copy.editFailed : copy.actionFailed));
       return false;
     } finally {
-      setActionId(null);
+      actionRef.current.delete(submissionId);
+      setActions(new Map(actionRef.current));
     }
   }
 
   /** 按完整队列立即移动一位，连续点击由共享调序逻辑串行保存。 */
   function reorder(submission: NativeQueuedSubmission, direction: -1 | 1, button: HTMLButtonElement): void {
-    if (!ordering.canMove(submission.id, direction)) return;
+    const identity = queuedSubmissionIdentity(submission);
+    if (!ordering.move(identity, direction)) return;
     reorderFocusRef.current = button;
-    setActionError(null);
-    setReorderFeedback({ submissionId: submission.id });
-    ordering.move(submission.id, direction);
+    setActionError(identity);
+    setReorderFeedback({ submissionId: identity });
   }
 
   return (
@@ -209,10 +238,14 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
         {reorderedIndex >= 0 ? copy.reordered(reorderedIndex + 1, queue.length) : ''}
       </output>
-      <ol>
-        {queue.map((submission) => {
-          /** 本地待接纳投影只负责稳定首帧位置，服务端身份到达前禁止修改。 */
-          const submissionWritable = writable && !submission.localOnly;
+      <ol ref={listRef}>
+        {rows.map((submission) => {
+          /** 编辑、动画和反馈跨越本地投影和权威提交的交接。 */
+          const identity = queuedSubmissionIdentity(submission);
+          const action = actions.get(identity);
+          const dismissing = action === 'delete' || action === 'steer';
+          const editing = editingRows.has(identity);
+          const leftQueue = !queueIds.includes(identity);
           /** 旧暂停卡片保留明确继续入口；活动回复和未知送达不能从这里绕过。 */
           const resumable =
             submission.status === 'paused' &&
@@ -223,36 +256,42 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
           const sendAction = resumable ? props.onResumeQueue : props.onSendNow ? () => props.onSendNow?.(submission.id) : undefined;
           /** 操作名称明确区分引导当前回复与继续整个队列。 */
           const sendLabel = resumable ? copy.resume : copy.steer;
-          /** 引导保持可聚焦，禁用原因通过标题和可访问名称说明。 */
-          const steerReason = resumable ? null : submission.localOnly ? copy.steerUnavailable : queuedSteerUnavailableReason(props.state, reorderableQueue, submission, copy);
+          /** 只有队首和已接受引导的活动轮次才显示引导入口。 */
+          const canSend = resumable || (reorderableQueue[0]?.id === submission.id && submission.status === 'queued' && canSteerActiveTurn(props.state));
           /** 上移只允许与相邻普通排队项交换。 */
-          const canMoveUp = ordering.canMove(submission.id, -1);
+          const canMoveUp = ordering.canMove(identity, -1);
           /** 下移只允许与相邻普通排队项交换。 */
-          const canMoveDown = ordering.canMove(submission.id, 1);
+          const canMoveDown = ordering.canMove(identity, 1);
           /** 当前行的错误保持在原提交旁。 */
-          const rowError = actionError?.submissionId === submission.id ? actionError.message : submission.error?.message;
+          const rowError = actionErrors.get(identity) ?? (!action && leftQueue ? copy.editUnavailable : submission.error?.message);
           /** 附件与正文分别投影，纯附件消息不再退化成空白或泛化占位。 */
           const attachments = submission.attachments ?? [];
           /** 折叠态正文保持单行，编辑态仍使用完整原稿。 */
           const textPreview = queuedMessageTextPreview(submission);
           return (
-            <li key={submission.id}>
+            <li key={identity} data-list-motion-id={identity} data-dismissing={dismissing || undefined} inert={dismissing}>
               <article
                 className="session-queued-message"
                 tabIndex={-1}
-                data-reordered={reorderFeedback?.submissionId === submission.id || undefined}
+                data-motion-surface="list-item"
+                data-motion-state={enteringIds.has(identity) ? 'entering' : undefined}
+                data-reordered={reorderFeedback?.submissionId === identity || undefined}
                 data-queue-status={submission.status}
-                data-editing={editingId === submission.id || undefined}
-                aria-busy={actionId?.endsWith(submission.id) || (ordering.saving && reorderFeedback?.submissionId === submission.id) || undefined}
+                data-editing={editing || undefined}
+                aria-busy={Boolean(action) || (ordering.saving && reorderFeedback?.submissionId === identity) || undefined}
               >
-                {editingId === submission.id ? (
+                {editing ? (
                   <QueuedMessageEditor
                     submission={submission}
                     language={props.language}
-                    busy={busy || !submissionWritable}
+                    busy={action === 'edit'}
+                    canSave={!leftQueue && writable && Boolean(props.onEdit)}
                     onSave={(content, attachments) => saveEdit(submission, content, attachments)}
-                    onCancel={cancelEdit}
-                    onError={(message) => setActionError({ submissionId: submission.id, message })}
+                    onCancel={() => {
+                      editFocusRef.current = identity;
+                      cancelEdit(identity);
+                    }}
+                    onError={(message) => setActionError(identity, message)}
                   />
                 ) : (
                   <div className="session-queued-message-content" data-icon-tooltip={queuedMessageAccessiblePreview(submission, copy.attachmentOnly, props.language)}>
@@ -267,44 +306,49 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     ) : null}
                   </div>
                 )}
-                {editingId === submission.id ? null : (
+                {!editing && writable ? (
                   <footer className="session-queued-message-actions">
-                    <Button unstyled type="button" data-icon-tooltip={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
-                      <PencilSimple aria-hidden="true" />
-                    </Button>
-                    <Button
-                      unstyled
-                      type="button"
-                      className="session-queued-message-steer"
-                      data-icon-tooltip={steerReason ?? sendLabel}
-                      aria-label={`${sendLabel}. ${steerReason ?? (resumable ? copy.resumeHelp : copy.steerHelp)}`}
-                      aria-disabled={Boolean(!submissionWritable || busy || !sendAction || steerReason)}
-                      onClick={() => {
-                        if (!submissionWritable || busy || !sendAction || steerReason) return;
-                        return runAction(submission.id, resumable ? 'resume' : 'steer', sendAction);
-                      }}
-                    >
-                      <ArrowBendUpRight aria-hidden="true" weight="bold" />
-                    </Button>
-                    <Button
-                      unstyled
-                      type="button"
-                      className="session-queued-message-delete"
-                      data-icon-tooltip={copy.remove}
-                      aria-label={copy.remove}
-                      onClick={() => runAction(submission.id, 'delete', () => props.onDelete?.(submission.id))}
-                      disabled={!submissionWritable || busy || !props.onDelete}
-                    >
-                      <Trash aria-hidden="true" />
-                    </Button>
-                    <Button unstyled type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={(event) => reorder(submission, -1, event.currentTarget)} disabled={!submissionWritable || !canMoveUp}>
-                      <ArrowUp aria-hidden="true" />
-                    </Button>
-                    <Button unstyled type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={(event) => reorder(submission, 1, event.currentTarget)} disabled={!submissionWritable || !canMoveDown}>
-                      <ArrowDown aria-hidden="true" />
-                    </Button>
+                    {props.onEdit ? (
+                      <Button unstyled type="button" data-queue-edit data-icon-tooltip={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)}>
+                        <PencilSimple aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                    {canSend && sendAction ? (
+                      <Button
+                        unstyled
+                        type="button"
+                        className="session-queued-message-steer"
+                        data-icon-tooltip={sendLabel}
+                        aria-label={`${sendLabel}. ${resumable ? copy.resumeHelp : copy.steerHelp}`}
+                        onClick={() => void runAction(identity, resumable ? 'resume' : 'steer', sendAction)}
+                      >
+                        <ArrowBendUpRight aria-hidden="true" weight="bold" />
+                      </Button>
+                    ) : null}
+                    {props.onDelete ? (
+                      <Button
+                        unstyled
+                        type="button"
+                        className="session-queued-message-delete"
+                        data-icon-tooltip={copy.remove}
+                        aria-label={copy.remove}
+                        onClick={() => void runAction(identity, 'delete', () => props.onDelete?.(submission.id))}
+                      >
+                        <Trash aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                    {canMoveUp ? (
+                      <Button unstyled type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={(event) => reorder(submission, -1, event.currentTarget)}>
+                        <ArrowUp aria-hidden="true" />
+                      </Button>
+                    ) : null}
+                    {canMoveDown ? (
+                      <Button unstyled type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={(event) => reorder(submission, 1, event.currentTarget)}>
+                        <ArrowDown aria-hidden="true" />
+                      </Button>
+                    ) : null}
                   </footer>
-                )}
+                ) : null}
                 {rowError ? (
                   <small className="session-queued-message-error" role="alert">
                     <VisibleApplicationError error={rowError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -327,6 +371,8 @@ function QueuedMessageEditor(props: {
   language: SessionUiLanguage;
   /** 权威操作期间锁定编辑与重复提交。 */
   busy: boolean;
+  /** 已经派发或失败的原消息仍可复制草稿，停止保存到旧提交。 */
+  canSave: boolean;
   /** 正文与附件通过同一次队列操作保存。 */
   onSave(content: string, attachments: NativeConversationAttachment[]): Promise<void>;
   /** 取消只卸载当前草稿。 */
@@ -365,7 +411,7 @@ function QueuedMessageEditor(props: {
     onError: props.onError,
   });
   /** 导入尚未完成时不能保存一份缺少附件的消息。 */
-  const saveDisabled = props.busy || inputResources.processing || (!draft.trim() && attachments.length === 0);
+  const saveDisabled = !props.canSave || props.busy || inputResources.processing || (!draft.trim() && attachments.length === 0);
 
   useLayoutEffect(() => {
     textareaRef.current?.focus();
@@ -474,13 +520,6 @@ function queuedMessageAccessiblePreview(submission: NativeQueuedSubmission, atta
   const attachments = submission.attachments ?? [];
   const attachmentSummary = attachments.length > 0 ? queuedMessageAttachmentSummary(attachments, language) : '';
   return [text || (attachmentSummary ? attachmentOnly : ''), attachmentSummary].filter(Boolean).join(' · ');
-}
-
-/** 只有普通队首且当前轮次可引导时开放引导操作。 */
-function queuedSteerUnavailableReason(state: NativeSessionState, queue: readonly NativeQueuedSubmission[], submission: NativeQueuedSubmission, copy: (typeof labels)[SessionUiLanguage]): string | null {
-  if (queue[0]?.id !== submission.id) return copy.steerHeadOnly;
-  if (submission.status !== 'queued' || !canSteerActiveTurn(state)) return copy.steerUnavailable;
-  return null;
 }
 
 /** 将未知异常收敛为简短的用户可读反馈。 */

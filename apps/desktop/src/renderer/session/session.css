@@ -896,7 +896,24 @@
 
 .session-codex-parity-v1 .session-queued-messages > ol > li {
   border-block-end: 0;
+  display: grid;
+  grid-template-rows: 1fr;
   min-inline-size: 0;
+  transition:
+    grid-template-rows var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out),
+    opacity var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out);
+}
+
+/* 删除和引导立即退出交互，行高随既有离场节奏收起。 */
+.session-codex-parity-v1 .session-queued-messages > ol > li[data-dismissing] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.session-codex-parity-v1 .session-queued-messages > ol > li[data-dismissing] > article {
+  min-block-size: 0;
+  overflow: clip;
+  padding-block: 0;
 }
 
 .session-codex-parity-v1 .session-queued-messages > ol > li:last-child {
@@ -910,6 +927,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   min-inline-size: 0;
   padding: 7px 8px 7px 10px;
+  transition: padding-block var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out);
 }
 
 .session-codex-parity-v1 .session-queued-message[data-editing='true'] {
@@ -1053,11 +1071,22 @@
   align-items: center;
   display: inline-flex;
   justify-content: center;
+  transition:
+    background-color var(--zeus-button-motion),
+    color var(--zeus-button-motion);
 }
 
 .session-codex-parity-v1 .session-queued-message-actions button > svg {
   block-size: 15px;
   inline-size: 15px;
+  transition: scale var(--zeus-button-motion);
+}
+
+/* 按压只改变图标，按钮热区保持原尺寸。 */
+@media (prefers-reduced-motion: no-preference) {
+  .session-codex-parity-v1 .session-queued-message-actions button:active > svg {
+    scale: 0.9;
+  }
 }
 
 .session-codex-parity-v1 .session-queued-message-actions .session-queued-message-steer {
@@ -1101,6 +1130,7 @@
 
 .session-codex-parity-v1 .session-queued-message-editor {
   /* 外层队列已提供边界；表单仅负责附件、正文和操作的排布。 */
+  animation: zeus-object-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
   background: transparent;
   border: 0;
   border-radius: 0;
