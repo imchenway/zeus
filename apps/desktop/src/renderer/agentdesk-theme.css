@@ -3378,7 +3378,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 分栏顶栏必须与正文共用完整宽度，不能再叠加普通标题栏的左右留白。 */
-.macos-ai-app.zeus-shell.project-navigation-rail-shell .session-thread-header:not([data-context-toolbar='true']) {
+.macos-ai-app.zeus-shell.project-navigation-rail-shell .session-thread-header:not(.session-sidecar-layout > .session-thread-header, [data-context-toolbar='true']) {
   padding-inline-end: 24px;
 }
 /* 任务页复用统一外框，移除内部重复卡片及其外围空隙。 */
