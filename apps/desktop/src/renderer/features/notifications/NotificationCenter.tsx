@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BellIcon } from '@phosphor-icons/react/dist/csr/Bell';
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
-import { formatTaskDeadline, type AutomationNotificationStatus, type CommandRunNotification } from '@zeus/shared';
+import { formatZeusDateTime, formatTaskDeadline, type AutomationNotificationStatus, type CommandRunNotification } from '@zeus/shared';
 import type { NotificationsModel } from './useNotifications.js';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -204,7 +204,7 @@ export function NotificationCenter({
                             </div>
                           )}
                           <time className="automation-notification-time" dateTime={item.occurredAt}>
-                            {new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.occurredAt))}
+                            {formatZeusDateTime(item.occurredAt, language, { dateStyle: 'short', timeStyle: 'short' })}
                           </time>
                           <Button
                             size="compact"

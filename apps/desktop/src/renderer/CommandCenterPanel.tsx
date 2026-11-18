@@ -17,7 +17,7 @@ import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { commandNeedsHighRiskConfirmation, commandShells, type CommandShell, type CommandRiskFlags } from '@zeus/shared';
+import { formatZeusDateTime, commandNeedsHighRiskConfirmation, commandShells, type CommandShell, type CommandRiskFlags } from '@zeus/shared';
 import { ZeusSelect } from './ZeusSelect.js';
 import { projectTerminalOutput } from '@zeus/shared';
 import {
@@ -1695,7 +1695,7 @@ function joinRuntimeLogEntries(logs: CommandRunDetail['logs']): string {
 }
 
 function formatRunTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
+  return formatZeusDateTime(value, undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatRunDuration(run: CommandRun, nowMs: number, zh: boolean): string {

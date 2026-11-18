@@ -1,4 +1,4 @@
-import type { CodexAcceleratedServiceTier, GitEnvironmentScope, GitEnvironmentStatus, GitDeliveryInput, GitDeliveryRun, TaskManagementStatusDefinition } from '@zeus/shared';
+import type { CodexServiceTierId, GitEnvironmentScope, GitEnvironmentStatus, GitDeliveryInput, GitDeliveryRun, TaskManagementStatusDefinition } from '@zeus/shared';
 import type {
   CreateGitConfirmationRequest,
   ExecuteGitOperationRequest,
@@ -69,7 +69,7 @@ export interface GitApiClient {
       /** 推理档位使用所选模型目录中的原始身份。 */
       effort?: string;
       /** 标准速率显式清除 Provider 的默认加速档位。 */
-      serviceTier?: CodexAcceleratedServiceTier | null;
+      serviceTier?: CodexServiceTierId | null;
       selection?: Array<{ repositoryId: string; relativePath: string; paths: string[] }>;
     },
     onText?: (text: string) => void,

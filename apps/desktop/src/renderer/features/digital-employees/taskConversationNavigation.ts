@@ -1,4 +1,4 @@
-import { digitalEmployeeAvatarIds, digitalTeamExecutionDefinition, type DigitalEmployeeAvatarId, type DigitalTeamWorkflowTemplateRecord } from '@zeus/shared';
+import { formatZeusDateTime, digitalEmployeeAvatarIds, digitalTeamExecutionDefinition, type DigitalEmployeeAvatarId, type DigitalTeamWorkflowTemplateRecord } from '@zeus/shared';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import type { DigitalTeamRunProjection } from '../digital-teams/digitalTeamApiClient.js';
 import { digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from '../digital-teams/digitalTeamRunPresentation.js';
@@ -151,7 +151,7 @@ export function buildTaskConversationNavigation(input: {
     const group: TaskConversationExecutionGroup = {
       id: team.run.id,
       name: input.templates.find((template) => template.id === team.run.templateId)?.name ?? (zh ? '数字团队' : 'Digital team'),
-      description: `${new Date(team.run.createdAt).toLocaleString(input.language, { dateStyle: 'short', timeStyle: 'medium' })} · ${digitalTeamRunStatusLabel(team.run, zh)}`,
+      description: `${formatZeusDateTime(team.run.createdAt, input.language, { dateStyle: 'short', timeStyle: 'medium' })} · ${digitalTeamRunStatusLabel(team.run, zh)}`,
       team,
       employees: [],
     };

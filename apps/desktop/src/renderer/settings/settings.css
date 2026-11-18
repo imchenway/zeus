@@ -908,13 +908,106 @@
     flex: 1 1 240px;
     min-inline-size: 0;
   }
+  /* 价格源配置以紧凑图标与更新按钮并列。 */
+  .model-connection-pricing-source-button {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 30px;
+    block-size: 30px;
+    padding: 0;
+  }
   .model-connection-pricing-status {
     color: var(--zeus-product-muted);
     font-size: 12px;
     overflow-wrap: anywhere;
   }
+  /* 费率浮层贴近按钮，可滚动阅读完整目录。 */
+  .model-connection-rate-popover {
+    position: fixed;
+    inset: auto;
+    top: anchor(bottom);
+    left: anchor(left);
+    position-try-fallbacks: flip-inline, flip-block, flip-inline flip-block;
+    inline-size: max-content;
+    max-inline-size: min(740px, calc(100vw - 24px));
+    max-block-size: min(340px, calc(100dvh - 24px));
+    margin: 4px 0 0;
+    padding: 0;
+    overflow: auto;
+    border: 1px solid var(--zeus-product-line);
+    border-radius: 8px;
+    background: var(--zeus-solid-surface-bg);
+    color: var(--zeus-product-text);
+    box-shadow: var(--zeus-popover-shadow);
+  }
+  /* 表头和单元格共用细网格，金额按列对齐。 */
+  .model-connection-rate-table {
+    border-spacing: 0;
+    inline-size: 100%;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .model-connection-rate-table :is(th, td) {
+    padding: 6px 8px;
+    border-inline-end: 1px solid var(--zeus-product-line);
+    border-block-end: 1px solid var(--zeus-product-line);
+    text-align: start;
+  }
+  .model-connection-rate-table :is(th, td):last-child {
+    border-inline-end: 0;
+  }
+  .model-connection-rate-table tbody tr:last-child > * {
+    border-block-end: 0;
+  }
+  .model-connection-rate-table thead th {
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--zeus-product-selected);
+    color: var(--zeus-product-text);
+    white-space: nowrap;
+  }
+  .model-connection-rate-table [data-numeric='true'] {
+    text-align: end;
+    white-space: nowrap;
+  }
+  .model-connection-rate-table tbody th {
+    overflow-wrap: anywhere;
+  }
+  .model-connection-rate-table tbody tr:hover {
+    background: var(--zeus-interaction-hover);
+  }
+  @media (max-width: 600px) {
+    .model-connection-rate-popover {
+      inset-inline: 12px;
+      inline-size: auto;
+    }
+  }
   .model-connection-pricing > p {
     margin: 0;
+  }
+  /* 读取失败的摘要可换行，详情始终位于整行末端。 */
+  .model-connection-pricing-failure > .application-error-inline {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .model-connection-pricing-failure .application-error-inline-summary {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .model-connection-pricing-failure .application-error-details-link {
+    justify-content: center;
+    inline-size: 28px;
+    block-size: 28px;
+    min-inline-size: 28px;
+    min-block-size: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+  }
+  .model-connection-pricing-failure .application-error-details-link:hover {
+    background: var(--zeus-interaction-hover);
   }
   .model-connection-enabled {
     display: flex;

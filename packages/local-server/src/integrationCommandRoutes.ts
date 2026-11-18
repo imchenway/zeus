@@ -49,7 +49,7 @@ export function registerIntegrationCommandRoutes(options: {
         destinationId: 'model_connection',
         resourceId: parsed.operationIdentity,
         externalOperationId: externalOperationId(parsed),
-        sensitiveValues: sensitiveValues(parsed.input.apiKey),
+        sensitiveValues: sensitiveValues(parsed.input.apiKey, parsed.input.pricingAccessToken),
         invoke: async () => {
           const connection = await options.modelConnections.createWithId(parsed.operationIdentity, parsed.input);
           await options.refreshModelRuntime();
@@ -72,7 +72,7 @@ export function registerIntegrationCommandRoutes(options: {
         destinationId: 'model_connection',
         resourceId: request.params.connectionId,
         externalOperationId: externalOperationId(parsed),
-        sensitiveValues: sensitiveValues(parsed.input.apiKey),
+        sensitiveValues: sensitiveValues(parsed.input.apiKey, parsed.input.pricingAccessToken),
         invoke: async () => {
           const connection = await options.modelConnections.update(request.params.connectionId, parsed.input);
           await options.refreshModelRuntime();
@@ -537,7 +537,7 @@ function appendZentaoAudit(options: Pick<Parameters<typeof registerIntegrationCo
 }
 
 function assertModelConnectionInput(input: SaveModelConnectionRequest): void {
-  assertAllowedKeys(input, ['name', 'templateId', 'baseUrl', 'modelsPath', 'pricingUrl', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
+  assertAllowedKeys(input, ['name', 'templateId', 'baseUrl', 'modelsPath', 'pricingUrl', 'pricingProfile', 'pricingAccessToken', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
 }
 
 function assertZentaoInput(input: SaveZentaoInstanceRequest): void {

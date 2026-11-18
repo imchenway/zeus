@@ -1,4 +1,4 @@
-import { formatCodexCredits, formatEstimatedCosts, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
+import { formatZeusDateTime, formatCodexCredits, formatEstimatedCosts, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageRange, type UsageAnalyticsSnapshot, type UsageProviderAnalytics } from '@zeus/shared';
@@ -904,12 +904,12 @@ function formatWindow(minutes: number | null, language: Language): string {
 
 /** 官方时间戳转换为账户额度重置时间。 */
 function formatReset(timestamp: number, language: Language): string {
-  return `${language === 'zh-CN' ? '重置于' : 'Resets'} ${new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1000))}`;
+  return `${language === 'zh-CN' ? '重置于' : 'Resets'} ${formatZeusDateTime(timestamp * 1000, language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 }
 
 /** 更新时间采用界面语言的日期格式。 */
 function formatDateTime(value: string, language: Language): string {
-  return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  return formatZeusDateTime(value, language, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** 刷新时间保持次级说明，不当作告警。 */

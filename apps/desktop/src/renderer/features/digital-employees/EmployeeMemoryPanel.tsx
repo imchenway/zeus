@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -102,7 +103,7 @@ export function EmployeeMemoryPanel(props: {
             return (
               <details className="employee-memory-use" key={run.id}>
                 <summary>
-                  <time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(props.language)}</time>
+                  <time dateTime={run.createdAt}>{formatZeusDateTime(run.createdAt, props.language)}</time>
                   <span>{zh ? `加入 ${selectedCount} 条记忆` : `${selectedCount} memories included`}</span>
                 </summary>
                 {selection ? (

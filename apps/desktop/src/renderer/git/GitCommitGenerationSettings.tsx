@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { isCodexAcceleratedServiceTier } from '@zeus/shared';
+import { isCodexServiceTierId } from '@zeus/shared';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
 import type { GitCommitModelOption } from '../features/git/gitApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -148,7 +148,7 @@ export function GitCommitGenerationSettingsButton(props: { client: GitCommitMode
               options={serviceTierOptions(selected, props.zh ? 'zh-CN' : 'en-US')}
               disabled={loading || !selected}
               searchable={false}
-              onChange={(value) => setSettings((current) => (current ? { ...current, serviceTier: isCodexAcceleratedServiceTier(value) ? value : null } : current))}
+              onChange={(value) => setSettings((current) => (current ? { ...current, serviceTier: isCodexServiceTierId(value) ? value : null } : current))}
             />
           </label>
           {loading ? <small role="status">{props.zh ? '正在读取模型…' : 'Loading models…'}</small> : null}

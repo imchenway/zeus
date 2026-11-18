@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ZeusComputerPreview } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -175,7 +176,7 @@ export function SessionComputerPreview(props: { conversationId: string; language
                 <span>
                   {status} · {preview.action}
                 </span>
-                {preview.capturedAt ? <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time> : null}
+                {preview.capturedAt ? <time dateTime={preview.capturedAt}>{formatZeusDateTime(preview.capturedAt, props.language, { timeStyle: 'medium' })}</time> : null}
                 {errorMessage ? <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} summary={zh ? '未能停止屏幕控制。' : 'Screen control could not be stopped.'} /> : null}
                 {/* 失败诊断按需打开；用户接管等正常说明保留原意，不误报成错误。 */}
                 {preview.detail ? preview.state === 'error' ? <VisibleApplicationError error={preview.detail} language={zh ? 'zh-CN' : 'en'} summary={zh ? '控制说明' : 'Control information'} /> : <span>{preview.detail}</span> : null}

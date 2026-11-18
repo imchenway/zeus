@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -250,7 +251,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
               <li key={entry.conversationId ?? entry.attemptIds?.[0] ?? entry.workRunIds?.[0] ?? entry.workItemIds?.[0] ?? entry.nodeIds?.[0]}>
                 <Button unstyled type="button" aria-current={entry === selected ? 'true' : undefined} onClick={() => selectEntry(entry, member.id)}>
                   <span>{entry.title}</span>
-                  <small>{new Date(entry.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'medium' })}</small>
+                  <small>{formatZeusDateTime(entry.createdAt, props.language, { dateStyle: 'short', timeStyle: 'medium' })}</small>
                 </Button>
                 <div>{entryStatus(entry)}</div>
               </li>
@@ -276,7 +277,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
           <div className="task-conversation-execution-caption">
             {group.team ? (
               <>
-                <time dateTime={group.team.run.createdAt}>{new Date(group.team.run.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</time>
+                <time dateTime={group.team.run.createdAt}>{formatZeusDateTime(group.team.run.createdAt, props.language, { dateStyle: 'short', timeStyle: 'short' })}</time>
                 {blocker ? <VisibleApplicationError error={blocker.reason} summary={digitalTeamRunStatusLabel(group.team.run, zh)} language={zh ? 'zh-CN' : 'en'} /> : <span>{digitalTeamRunStatusLabel(group.team.run, zh)}</span>}
               </>
             ) : null}
@@ -362,7 +363,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             {discussions.map((entry) => (
               <Button unstyled key={entry.conversationId} type="button" aria-current={entry.conversationId === target ? 'true' : undefined} onClick={() => selectEntry(entry, 'discussion')}>
                 <strong>{entry.title}</strong>
-                <small>{new Date(entry.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+                <small>{formatZeusDateTime(entry.createdAt, props.language, { dateStyle: 'short', timeStyle: 'short' })}</small>
               </Button>
             ))}
           </nav>

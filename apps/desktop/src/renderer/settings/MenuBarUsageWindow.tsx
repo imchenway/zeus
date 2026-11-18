@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
+import { formatZeusDateTime, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
 import type { CodexOfficialRateWindow, KiloAccountUsage, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -1212,6 +1212,7 @@ function formatModelRate(entry: UsageModelCostBreakdown, language: Language): st
     return [
       entry.missingPriceReason === 'sync_failed' ? (language === 'zh-CN' ? '价格同步失败' : 'Price sync failed') : entry.missingPriceReason === 'unconfirmed' ? (language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed') : text.noPrice,
     ];
+  if (rate.charges?.length) return rate.charges.map((charge) => `${charge.meter} ${charge.amount === null ? '—' : formatRateAmount(charge.amount, rate.currency, language)} / ${charge.quantityPerPrice} ${charge.unit}`);
   if (rate.perRequest !== null) return [`${text.perRequestPrice} ${formatRateAmount(rate.perRequest, rate.currency, language)}`];
   if (!rate.perMillion) return [text.noPrice];
   /** 普通输入输出始终成对展示，便于横向比较。 */
@@ -1233,6 +1234,7 @@ function formatPricePeriod(period: NonNullable<UsageModelCostBreakdown['pricePer
 
 /** 每行费用直接展示后台按请求价格快照汇总的原币金额。 */
 function formatModelEstimatedCost(entry: UsageModelCostBreakdown, language: Language): string {
+  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'missing_usage') return language === 'zh-CN' ? '缺量' : 'Usage unavailable';
   if (!entry.estimatedCosts.length && entry.missingPriceReason === 'sync_failed') return language === 'zh-CN' ? '价格同步失败' : 'Price sync failed';
   if (!entry.estimatedCosts.length && entry.missingPriceReason === 'unconfirmed') return language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed';
   const costs = entry.estimatedCosts;
@@ -1402,12 +1404,12 @@ function formatIncompleteUsd(value: number, complete: boolean, language: Languag
 
 /** 直接显示本地日期和时间，跨日重置无需悬停猜测。 */
 function formatReset(timestamp: number, language: Language, prefix: string): string {
-  return `${prefix} ${new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000))}`;
+  return `${prefix} ${formatZeusDateTime(timestamp * 1_000, language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
 }
 
 /** 顶部更新时间只显示时间，过期状态继续由颜色和完整提示表达。 */
 function formatUpdatedAt(value: string, language: Language): string {
-  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  return formatZeusDateTime(value, language, { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatShortDate(value: string, language: Language): string {

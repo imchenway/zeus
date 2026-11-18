@@ -60,7 +60,7 @@ import {
 } from '@zeus/git-core';
 import { normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
-import { isCodexAcceleratedServiceTier, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
+import { isCodexServiceTierId, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,
   AutomationTaskRepository,
@@ -1043,7 +1043,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         (body.taskId !== undefined && (typeof body.taskId !== 'string' || !body.taskId.trim() || body.taskId.length > 200 || body.selection === undefined)) ||
         (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000)) ||
         (body.effort !== undefined && (typeof body.effort !== 'string' || body.effort.length > 100)) ||
-        (body.serviceTier !== undefined && body.serviceTier !== null && !isCodexAcceleratedServiceTier(body.serviceTier))
+        (body.serviceTier !== undefined && body.serviceTier !== null && !isCodexServiceTierId(body.serviceTier))
       ) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
       }
@@ -1129,7 +1129,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           ...(selection ? { scope: 'selection' as const } : {}),
           ...(typeof body.modelRef === 'string' ? { modelRef: body.modelRef } : {}),
           ...(typeof body.effort === 'string' ? { effort: body.effort } : {}),
-          ...(body.serviceTier === null || isCodexAcceleratedServiceTier(body.serviceTier) ? { serviceTier: body.serviceTier } : {}),
+          ...(body.serviceTier === null || isCodexServiceTierId(body.serviceTier) ? { serviceTier: body.serviceTier } : {}),
         };
         const run = async () => {
           if (input.modelRef?.startsWith('codex:')) {

@@ -2,6 +2,7 @@ import { contextCapacitySelectionAllowed, contextCapacitySelectionOptions, conte
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  formatZeusDateTime,
   buildTaskPushLayout,
   type TaskPushContextConversationOption,
   type TaskPushContextOption,
@@ -326,7 +327,7 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
                       <strong>{conversation.title}</strong>
                       <small>
                         {props.zh ? '最后更新：' : 'Last updated: '}
-                        <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                        <time dateTime={conversation.activityAt}>{formatZeusDateTime(conversation.activityAt, props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
                       </small>
                       <small>
                         {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
@@ -419,7 +420,7 @@ function TaskPushContextPicker(props: {
                             <strong>{conversation.title}</strong>
                             <small>
                               {props.zh ? '最后更新：' : 'Last updated: '}
-                              <time dateTime={conversation.activityAt}>{new Date(conversation.activityAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
+                              <time dateTime={conversation.activityAt}>{formatZeusDateTime(conversation.activityAt, props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
                             </small>
                             <small>
                               {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}

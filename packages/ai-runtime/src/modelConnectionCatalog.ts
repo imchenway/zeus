@@ -5,6 +5,7 @@ import { OPENCODE_MODELS } from '@earendil-works/pi-ai/providers/opencode.models
 import { QWEN_TOKEN_PLAN_CN_MODELS } from '@earendil-works/pi-ai/providers/qwen-token-plan-cn.models';
 import { ZAI_MODELS } from '@earendil-works/pi-ai/providers/zai.models';
 import { readOfficialModelVersion } from './modelVersionNames.js';
+import { parseModelPricingProfile } from '@zeus/shared';
 
 export type ModelConnectionTemplateId = 'custom' | 'deepseek' | 'bailian' | 'kimi' | 'zai' | 'kilo';
 
@@ -14,7 +15,19 @@ export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'x
 
 export type OpenAiThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
-export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
+/** 模型配置记录实际端点协议。 */
+export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'openai_images' | 'anthropic_messages';
+
+/** 已核对的官方目录协议用于纠正旧配置中默认使用聊天协议的模型。 */
+const officialBailianProtocols: ReadonlyMap<string, ModelProtocolFamily> = new Map<string, ModelProtocolFamily>([['qwen-image-2.1-pro', 'openai_images']]);
+
+/** Pi 运行、诊断和供应商设置共用协议名转换。 */
+export function modelProtocolApi(protocol: ModelProtocolFamily): 'openai-responses' | 'openai-completions' | 'openai-images' | 'anthropic-messages' {
+  if (protocol === 'openai_images') return 'openai-images';
+  if (protocol === 'openai_responses') return 'openai-responses';
+  if (protocol === 'anthropic_messages') return 'anthropic-messages';
+  return 'openai-completions';
+}
 
 /** 模型请求使用明确的认证头；默认采用 Authorization: Bearer。 */
 export type ModelAuthenticationScheme = 'bearer' | 'x_api_key';
@@ -124,6 +137,10 @@ export interface ModelConnectionRecord {
   modelsPath: string;
   /** 可选价格清单页面；空值使用内置来源。 */
   pricingUrl?: string;
+  /** 自定义价目和回执字段的 JSON 配置。 */
+  pricingProfile?: string;
+  /** 价格源专用密钥的本地身份，响应永远不包含密钥。 */
+  pricingCredentialId?: string;
   /** 仅用于展示的价格读取状态，不参与连接配置存储。 */
   pricingCatalog?: import('@zeus/shared').ModelPricingCatalog | null;
   enabled: boolean;
@@ -141,6 +158,8 @@ export interface SaveModelConnectionInput {
   modelsPath?: string;
   /** 自定义供应商只需提供一个价格清单页面。 */
   pricingUrl?: string;
+  /** 空字符串清除配置，省略时由更新入口保留原配置。 */
+  pricingProfile?: string;
   enabled?: boolean;
   models?: ConfiguredModelDefinition[];
 }
@@ -248,7 +267,7 @@ export function parseModelRef(value: string): { sourceId: string; modelId: strin
 
 export function normalizeModelConnection(
   input: SaveModelConnectionInput,
-  options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string },
+  options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string; pricingCredentialId?: string },
   codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>,
 ): ModelConnectionRecord {
   const templateId = normalizeTemplateId(input.templateId);
@@ -256,6 +275,8 @@ export function normalizeModelConnection(
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
+  const pricingProfile = input.pricingProfile?.trim();
+  if (pricingProfile) parseModelPricingProfile(pricingProfile);
   const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) =>
     applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }, codexCatalog),
   );
@@ -266,6 +287,8 @@ export function normalizeModelConnection(
     baseUrl,
     modelsPath,
     ...(input.pricingUrl?.trim() ? { pricingUrl: normalizePricingPageUrl(input.pricingUrl) } : {}),
+    ...(pricingProfile ? { pricingProfile } : {}),
+    ...(options.pricingCredentialId && /^[0-9a-f-]{36}$/u.test(options.pricingCredentialId) ? { pricingCredentialId: options.pricingCredentialId } : {}),
     enabled: input.enabled !== false,
     apiKeyConfigured: options.apiKeyConfigured,
     models,
@@ -286,7 +309,13 @@ export function normalizeStoredModelConnections(value: unknown, codexCatalog?: R
       const createdAt = normalizeIsoDate(candidate.createdAt) ?? new Date(0).toISOString();
       const updatedAt = normalizeIsoDate(candidate.updatedAt) ?? createdAt;
       records.push(
-        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, { id, apiKeyConfigured: candidate.apiKeyConfigured === true, createdAt, updatedAt }, codexCatalog),
+        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, {
+          id,
+          apiKeyConfigured: candidate.apiKeyConfigured === true,
+          ...(typeof candidate.pricingCredentialId === 'string' ? { pricingCredentialId: candidate.pricingCredentialId } : {}),
+          createdAt,
+          updatedAt,
+        }, codexCatalog),
       );
       ids.add(id);
     } catch {
@@ -308,6 +337,13 @@ export function isOfficialDeepSeekApiConnection(connection: Pick<ModelConnection
   }
 }
 
+/** 北京共享域名和业务空间专属域名使用同一份公开区域价目。 */
+export function isOfficialBailianBeijingConnection(connection: Pick<ModelConnectionRecord, 'templateId' | 'baseUrl'>): boolean {
+  if (connection.templateId !== 'bailian' || !URL.canParse(connection.baseUrl)) return false;
+  const endpoint = new URL(connection.baseUrl);
+  return endpoint.protocol === 'https:' && !endpoint.port && (endpoint.hostname === 'dashscope.aliyuncs.com' || /^[a-z0-9-]+\.cn-beijing\.maas\.aliyuncs\.com$/u.test(endpoint.hostname));
+}
+
 /** Agent 目录要求工具能力；纯文本场景只要求连接和模型可用。 */
 export function listSelectableConnectionModels(connections: readonly ModelConnectionRecord[], purpose: 'agent' | 'text' = 'agent'): SelectableConnectionModel[] {
   return connections.flatMap((connection) =>
@@ -323,7 +359,9 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
           ? '模型供应商尚未配置 API Key。'
           : !model.enabled
             ? '模型已停用。'
-            : purpose === 'agent' && tools === 'unsupported'
+            : purpose === 'text' && model.protocolFamily === 'openai_images'
+              ? '图片生成模型不提供文本生成。'
+              : purpose === 'agent' && tools === 'unsupported' && model.protocolFamily !== 'openai_images'
               ? '模型明确不支持工具调用，只能保存在诊断目录中。'
               : '模型已配置，由 Zeus 内核执行；真实外部能力仍以运行探针结果为准。';
       return {
@@ -334,7 +372,7 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
         sourceName: connection.name,
         agentKind,
         enabled: connection.enabled && model.enabled,
-        available: available && (purpose === 'text' || tools !== 'unsupported'),
+        available: available && (purpose === 'text' ? model.protocolFamily !== 'openai_images' : tools !== 'unsupported' || model.protocolFamily === 'openai_images'),
         availabilityReason,
         supportedReasoningEfforts: model.capability.reasoning.options.map((option) => option.id),
         defaultReasoningEffort: model.capability.reasoning.defaultId,
@@ -434,7 +472,7 @@ export function modelConnectionSecretAccount(connectionId: string): string {
 }
 
 export function buildModelsUrl(connection: Pick<ModelConnectionRecord, 'baseUrl' | 'modelsPath'>): string {
-  const catalogBaseUrl = connection.baseUrl.replace(/\/(?:v1\/messages|chat\/completions|responses)$/u, '');
+  const catalogBaseUrl = connection.baseUrl.replace(/\/(?:v1\/messages|chat\/completions|responses|images\/generations)$/u, '');
   return new URL(connection.modelsPath.replace(/^\/+/, ''), `${catalogBaseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
@@ -445,13 +483,14 @@ export function modelConnectionRuntimeBaseUrl(baseUrl: string, protocolFamily: M
   const normalized = baseUrl.replace(/\/+$/u, '');
   if (protocolFamily === 'anthropic_messages') return normalized.replace(/\/v1\/messages$/u, '').replace(/\/v1$/u, '');
   if (protocolFamily === 'openai_completions') return normalized.replace(/\/chat\/completions$/u, '');
+  if (protocolFamily === 'openai_images') return normalized.replace(/\/images\/generations$/u, '');
   return normalized.replace(/\/responses$/u, '');
 }
 
 /** 返回不含密钥的最终 HTTP 端点，供运行证据和诊断展示使用。 */
 export function modelConnectionRequestEndpoint(baseUrl: string, protocolFamily: ModelProtocolFamily): string {
   const runtimeBaseUrl = modelConnectionRuntimeBaseUrl(baseUrl, protocolFamily);
-  const requestPath = protocolFamily === 'anthropic_messages' ? 'v1/messages' : protocolFamily === 'openai_responses' ? 'responses' : 'chat/completions';
+  const requestPath = protocolFamily === 'anthropic_messages' ? 'v1/messages' : protocolFamily === 'openai_responses' ? 'responses' : protocolFamily === 'openai_images' ? 'images/generations' : 'chat/completions';
   return new URL(requestPath, `${runtimeBaseUrl.replace(/\/+$/u, '')}/`).toString();
 }
 
@@ -489,7 +528,7 @@ function normalizeConfiguredModel(value: ConfiguredModelDefinition, fallbackThin
   const maxTokens = Math.min(requestedMaxTokens, contextWindow);
   const speedLabel = speedLabels.has(value.speedLabel) ? value.speedLabel : inferSpeedLabel(id);
   const capability = normalizeCapability(value.capability, fallbackThinkingFormat);
-  const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' ? 'openai_responses' : value.protocolFamily === 'anthropic_messages' ? 'anthropic_messages' : 'openai_completions';
+  const protocolFamily: ModelProtocolFamily = value.protocolFamily === 'openai_responses' || value.protocolFamily === 'openai_images' || value.protocolFamily === 'anthropic_messages' ? value.protocolFamily : 'openai_completions';
   /** 缺省或旧配置中的 protocol_default 统一使用 Bearer；仅 Anthropic 允许显式选择 x-api-key。 */
   const authenticationScheme: ModelAuthenticationScheme = protocolFamily === 'anthropic_messages' && value.authenticationScheme === 'x_api_key' ? 'x_api_key' : 'bearer';
   return { id, displayName, servedModelId, officialVersion, enabled: value.enabled !== false, supports1MContext, contextWindow, maxTokens, speedLabel, protocolFamily, authenticationScheme, capability };
@@ -738,6 +777,11 @@ function applyAutomaticCapabilityProfile(
   codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>,
 ): ConfiguredModelDefinition {
   const baseModel = discardManualCapabilityClaims(model);
+  const protocolFamily = (isOfficialBailianBeijingConnection(route) ? officialBailianProtocols.get(baseModel.id) : undefined) ?? baseModel.protocolFamily;
+  if (protocolFamily === 'openai_images') {
+    const reasoning = normalizeReasoningProfile({ state: 'unsupported', checkedAt: baseModel.capability.reasoning.checkedAt }, baseModel.capability.reasoning.thinkingFormat);
+    return { ...baseModel, protocolFamily, authenticationScheme: 'bearer', capability: { ...baseModel.capability, reasoning } };
+  }
   const reasoning = resolveReasoningProfile(baseModel, { ...route, modelId: baseModel.id, thinkingFormat: baseModel.capability.reasoning.thinkingFormat }, codexCatalog);
   const catalogModel = automaticModelCatalogs[route.templateId][baseModel.id.toLowerCase()];
   if (!catalogModel) return { ...baseModel, capability: { ...baseModel.capability, reasoning } };

@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { PushDialog } from './GitPushDialog.js';
 import { DotsThreeIcon as DotsThree } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { isMacOSPlatform } from '../platform.js';
@@ -1350,7 +1351,7 @@ function GitLogSurface(props: {
                   </span>
                   <code data-icon-tooltip={commit.hash}>{commit.shortHash}</code>
                   <span data-icon-tooltip={commit.author}>{commit.author}</span>
-                  <time dateTime={commit.authoredAt} data-icon-tooltip={new Date(commit.authoredAt).toLocaleString()}>
+                  <time dateTime={commit.authoredAt} data-icon-tooltip={formatZeusDateTime(commit.authoredAt)}>
                     {formatRelativeTime(commit.authoredAt, props.zh)}
                   </time>
                 </Button>
@@ -1398,7 +1399,7 @@ function GitLogSurface(props: {
               <strong>{props.commitDetail.commit.subject}</strong>
               <span>{props.commitDetail.commit.author}</span>
               <small>
-                {props.commitDetail.commit.shortHash} · {new Date(props.commitDetail.commit.authoredAt).toLocaleString()}
+                {props.commitDetail.commit.shortHash} · {formatZeusDateTime(props.commitDetail.commit.authoredAt)}
               </small>
               <div className="project-git-commit-actions">
                 <Button
@@ -1869,7 +1870,7 @@ function ConsoleSurface(props: { zh: boolean; history: ReturnType<typeof useGitO
                 : (operation.action ?? (props.zh ? 'Git 操作' : 'Git operation'))}
             </strong>
             <small>
-              {operation.repositoryName} · <time dateTime={operation.startedAt}>{new Date(operation.startedAt).toLocaleString(props.zh ? 'zh-CN' : 'en-US')}</time>
+              {operation.repositoryName} · <time dateTime={operation.startedAt}>{formatZeusDateTime(operation.startedAt, props.zh ? 'zh-CN' : 'en-US')}</time>
               {operation.durationMs !== null ? ` · ${operation.durationMs} ms` : ''}
             </small>
             <span>{operationStatusLabels[operation.status][props.zh ? 0 : 1]}</span>

@@ -1,3 +1,4 @@
+import { formatZeusDateTime, type MeteredCharge, type ModelPrice } from '@zeus/shared';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from 'react';
@@ -32,6 +33,8 @@ import { Collapsible } from '../ui/Collapsible.js';
 import { compareModelNames, presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { useHoverIntent } from '../ui/useHoverIntent.js';
+import { FormDialog } from '../ui/FormDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */
@@ -154,6 +157,8 @@ export function ModelConnectionsSettingsPane(props: {
   /** 引导为后续新项目选定的完整模型引用。 */
   const [defaultModelRef, setDefaultModelRef] = useState('');
   const [pendingInsecureHttpSave, setPendingInsecureHttpSave] = useState<SaveModelConnectionRequest | null>(null);
+  /** 价目令牌只在价格源弹窗的临时状态中存在。 */
+  const [pricingSourceDraft, setPricingSourceDraft] = useState<{ profile: string; token: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -206,12 +211,14 @@ export function ModelConnectionsSettingsPane(props: {
   }, [navigationBusy, props.onBusyChange]);
   useEffect(() => {
     if (props.active !== false) return;
+    setPricingSourceDraft(null);
     setDraft((value) => ({ ...value, apiKey: '' }));
     setPendingInsecureHttpSave(null);
   }, [props.active]);
   const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
   /** 换到别的连接（或清空草稿）时立刻丢掉上一条连接读出来的密钥，避免串台。 */
   useEffect(() => {
+    setPricingSourceDraft(null);
     setRevealedApiKey(null);
     setApiKeyVisible(false);
   }, [draft.id]);
@@ -259,6 +266,14 @@ export function ModelConnectionsSettingsPane(props: {
   const enablePresentation = presentModelOptions(candidateModelOptions, '', props.language);
   const enabledModelIds = enabledModels.map((model) => model.id);
   const enabledModelCount = enabledModelIds.length;
+  /** 价格覆盖按正在展示的已启用模型计算，包含价目表未列出的模型。 */
+  const pricingCatalog = current?.pricingCatalog;
+  const pricedModelIds = new Set(pricingCatalog?.prices.map((price) => price.model));
+  const missingPriceCount = pricingCatalog ? enabledModelIds.filter((id) => !pricedModelIds.has(id)).length : 0;
+  /** 只有读取失败且仍可使用已确认的费率时，才说明沿用上次费率。 */
+  const priceFailureSummary = pricingCatalog?.prices.length
+    ? zh ? '读取价格失败，沿用上次费率' : 'Price refresh failed. Using previous rates.'
+    : zh ? '读取价格失败' : 'Price refresh failed';
 
   /** 批量和单项展开共用同一状态，保留搜索范围之外的展开选择。 */
   function setModelsExpanded(ids: string[], expanded: boolean): void {
@@ -381,6 +396,7 @@ export function ModelConnectionsSettingsPane(props: {
       setApiKeyVisible(false);
       setDraft({ ...saved, id: saved.id, apiKey: '', pricingUrl: saved.pricingUrl || saved.pricingCatalog?.url || '', models: saved.models.map(cloneModel) });
       setSaveState('saved');
+      setPricingSourceDraft(null);
       if (props.onComplete) await refreshDefaultModels(saved.id);
     } catch (error) {
       setSaveState('failed');
@@ -732,9 +748,9 @@ export function ModelConnectionsSettingsPane(props: {
             ) : null}
           </div>
 
-          <section className="model-connection-pricing" aria-label={zh ? '公开价格' : 'Public pricing'}>
+          <section className="model-connection-pricing" aria-label={zh ? '价格源' : 'Pricing source'}>
             <div className="model-connection-pricing-field">
-              <label htmlFor={pricingInputId}>{zh ? '公开价格页面' : 'Public pricing page'}</label>
+              <label htmlFor={pricingInputId}>{zh ? '价格源地址' : 'Pricing source URL'}</label>
               <span className="model-connection-pricing-input">
                 <input
                   id={pricingInputId}
@@ -747,24 +763,73 @@ export function ModelConnectionsSettingsPane(props: {
                 <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => refreshPricing()}>
                   {zh ? '更新价格' : 'Refresh prices'}
                 </Button>
+                <Button
+                  unstyled
+                  type="button"
+                  className="model-connection-pricing-source-button"
+                  aria-label={zh ? '价格源配置' : 'Price source settings'}
+                  data-icon-tooltip={zh ? '价格源配置' : 'Price source settings'}
+                  disabled={busy || !current}
+                  onClick={() => setPricingSourceDraft({ profile: current?.pricingProfile ?? '', token: '' })}
+                >
+                  <GearIcon size={16} aria-hidden="true" />
+                </Button>
               </span>
             </div>
             <div className="model-connection-pricing-status" role="status">
-              <small>{zh ? '读取价格可能产生模型用量' : 'Reading prices may incur model usage'}</small>
-              {current?.pricingCatalog?.retrievedAt ? (
+              {pricingCatalog?.retrievedAt ? (
                 <small>
                   {zh ? '上次读取：' : 'Last read: '}
-                  {new Date(current.pricingCatalog.retrievedAt).toLocaleString()}
+                  {formatZeusDateTime(pricingCatalog.retrievedAt, props.language)}
+                </small>
+              ) : null}
+              {pricingCatalog && enabledModelCount > 0 ? <ProviderRatePopover key={current?.id} modelIds={enabledModelIds} prices={pricingCatalog.prices} language={props.language} /> : null}
+              {missingPriceCount > 0 ? (
+                <small>
+                  {zh ? `${missingPriceCount}/${enabledModelCount} 缺价` : `${missingPriceCount}/${enabledModelCount} missing`}
                 </small>
               ) : null}
             </div>
-            {current?.pricingCatalog?.error ? (
-              <p className="model-connection-diagnostic warning" role="alert">
-                <VisibleApplicationError error={current.pricingCatalog.error} language={zh ? 'zh-CN' : 'en'} summary={zh ? '价格读取异常' : 'Pricing issue'} />
-                {current.pricingCatalog.retrievedAt && current.pricingCatalog.retrievedAt !== current.pricingCatalog.checkedAt ? (zh ? '，沿用上次价格' : '; using previous prices') : ''}
+            {pricingCatalog?.error ? (
+              <p className="model-connection-pricing-failure" role="alert">
+                <VisibleApplicationError error={pricingCatalog.error} language={zh ? 'zh-CN' : 'en'} summary={priceFailureSummary} title={zh ? '读取价格失败' : 'Price refresh failed'} />
               </p>
             ) : null}
           </section>
+          {pricingSourceDraft ? (
+            <FormDialog
+              title={zh ? '价格源配置' : 'Price source settings'}
+              submitLabel={zh ? '保存' : 'Save'}
+              zh={zh}
+              busy={busy}
+              onClose={() => setPricingSourceDraft(null)}
+              onSubmit={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                return persistConnection({
+                  ...createSaveInput(),
+                  pricingProfile: pricingSourceDraft.profile.trim(),
+                  ...(pricingSourceDraft.token.trim() ? { pricingAccessToken: pricingSourceDraft.token.trim() } : {}),
+                });
+              }}
+            >
+              <label>
+                {zh ? '价目与回执映射（JSON）' : 'Price and usage mapping (JSON)'}
+                <textarea rows={10} spellCheck={false} value={pricingSourceDraft.profile} onChange={(event) => setPricingSourceDraft({ ...pricingSourceDraft, profile: event.target.value })} />
+              </label>
+              <label>
+                {zh ? '价格源令牌' : 'Price source token'}
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={current?.pricingCredentialId ? zh ? '已保存' : 'Saved' : undefined}
+                  value={pricingSourceDraft.token}
+                  onChange={(event) => setPricingSourceDraft({ ...pricingSourceDraft, token: event.target.value })}
+                />
+              </label>
+              {message ? <p role="alert">{message}</p> : null}
+            </FormDialog>
+          ) : null}
 
           <label className="model-connection-enabled">
             <input
@@ -859,7 +924,6 @@ export function ModelConnectionsSettingsPane(props: {
                   key={`${draft.id ?? 'new'}:${model.id}`}
                   language={props.language}
                   model={model}
-                  prices={current?.pricingCatalog?.prices.filter((price) => price.model === model.id)}
                   expanded={expandedModelIds.has(model.id)}
                   onToggle={() => setModelsExpanded([model.id], !expandedModelIds.has(model.id))}
                   readOnly={draft.templateId !== 'custom' && draft.templateId !== 'kilo'}
@@ -1337,12 +1401,158 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
   }
 }
 
+/** 已启用模型共用一个原生费率浮层，缺价保留空单价。 */
+function ProviderRatePopover(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US' }) {
+  const id = useId();
+  const anchor = `--provider-rates-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const surface = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hoverIntent = useHoverIntent(() => showRates());
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  const zh = props.language === 'zh-CN';
+  const title = zh ? '费率' : 'Rates';
+
+  /** 焦点和鼠标进入均显示锚定浮层。 */
+  function showRates(): void {
+    hoverIntent.cancel();
+    clearTimeout(closeTimer.current);
+    if (!surface.current?.matches(':popover-open')) surface.current?.showPopover();
+  }
+
+  /** 从按钮移到浮层或用 Tab 进入列表时给指针和焦点留出过渡时间。 */
+  function closeRatesLater(): void {
+    hoverIntent.cancel();
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (!trigger.current?.matches(':hover, :focus-visible') && !surface.current?.matches(':hover, :focus-within')) surface.current?.hidePopover();
+    }, 120);
+  }
+
+  return (
+    <div
+      className="model-connection-rate-control"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !surface.current?.matches(':popover-open')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        surface.current.hidePopover();
+      }}
+    >
+      <Button
+        ref={trigger}
+        variant="secondary"
+        size="compact"
+        aria-haspopup="dialog"
+        popoverTarget={id}
+        popoverTargetAction="show"
+        style={{ anchorName: anchor }}
+        onPointerEnter={(event) => {
+          clearTimeout(closeTimer.current);
+          if (event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+        }}
+        onPointerLeave={closeRatesLater}
+        onFocus={(event) => {
+          if (event.currentTarget.matches(':focus-visible')) showRates();
+        }}
+        onBlur={closeRatesLater}
+      >
+        {title}
+      </Button>
+      <div
+        ref={surface}
+        id={id}
+        popover="auto"
+        role="dialog"
+        aria-label={title}
+        tabIndex={0}
+        className="model-connection-rate-popover"
+        style={{ positionAnchor: anchor }}
+        onPointerEnter={() => clearTimeout(closeTimer.current)}
+        onPointerLeave={closeRatesLater}
+        onFocus={() => clearTimeout(closeTimer.current)}
+        onBlur={closeRatesLater}
+      >
+        <ProviderRateTable modelIds={props.modelIds} prices={props.prices} language={props.language} />
+      </div>
+    </div>
+  );
+}
+
+/** 费率表保留币种、计费单位及适用条件，所有数值为空的列自动省略。 */
+function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US' }) {
+  const zh = props.language === 'zh-CN';
+  const rows = props.modelIds.flatMap<{ model: string; price?: ModelPrice; charge?: MeteredCharge }>((model) => {
+    const prices = props.prices.filter((price) => price.model === model);
+    if (!prices.length) return [{ model }];
+    return prices.flatMap<{ model: string; price: ModelPrice; charge?: MeteredCharge }>((price) =>
+      price.metered ? price.metered.charges.map((charge) => ({ model, price, charge })) : [{ model, price }],
+    );
+  });
+  const columns: Array<{ label: string; numeric?: boolean; value(price: ModelPrice | undefined, charge?: MeteredCharge): string | number | null | undefined }> = [
+    { label: zh ? '币种' : 'Currency', value: (price) => price?.currency },
+    { label: zh ? '计量' : 'Meter', value: (_price, charge) => charge?.meter },
+    { label: zh ? '单位' : 'Unit', value: (_price, charge) => charge && `${charge.quantityPerPrice} ${charge.unit}` },
+    { label: zh ? '单价' : 'Rate', numeric: true, value: (_price, charge) => charge?.amount },
+    { label: zh ? '输入 / 百万 Token' : 'Input / 1M tokens', numeric: true, value: (price) => price?.perMillion?.input },
+    { label: zh ? '输出 / 百万 Token' : 'Output / 1M tokens', numeric: true, value: (price) => price?.perMillion?.output },
+    { label: zh ? '缓存读 / 百万 Token' : 'Cache read / 1M tokens', numeric: true, value: (price) => price?.perMillion?.cachedInput },
+    { label: zh ? '缓存写 / 百万 Token' : 'Cache write / 1M tokens', numeric: true, value: (price) => price?.perMillion?.cacheWrite },
+    { label: zh ? '单价 / 次' : 'Per request', numeric: true, value: (price) => price?.perRequest },
+    { label: zh ? '输入区间（Token）' : 'Input range (tokens)', value: (price) => price?.inputRange && `(${price.inputRange.minExclusive}, ${price.inputRange.maxInclusive}]` },
+    { label: zh ? '排除时段（UTC）' : 'Excluded hours (UTC)', value: (price) => price?.excludedUtcWindows?.length ? excludedRateHours(price.excludedUtcWindows, props.language) : undefined },
+    { label: zh ? '适用条件' : 'Conditions', value: (price) => price?.metered && meteredRateConditions(price.metered, props.language) },
+    { label: zh ? '状态' : 'Status', value: (price) => price ? undefined : zh ? '缺价' : 'Missing' },
+  ];
+  const visibleColumns = columns.filter((column) => rows.some(({ price, charge }) => column.value(price, charge) != null));
+  return (
+    <table className="model-connection-rate-table">
+      <thead>
+        <tr>
+          <th scope="col">{zh ? '模型' : 'Model'}</th>
+          {visibleColumns.map((column) => (
+            <th scope="col" key={column.label} data-numeric={column.numeric}>{column.label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ model, price, charge }, index) => (
+          <tr key={`${model}:${index}`}>
+            <th scope="row">{model}</th>
+            {visibleColumns.map((column) => (
+              <td key={column.label} data-numeric={column.numeric}>{column.value(price, charge) ?? '—'}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** 价格表同时呈现已确认的有效区间、匹配字段与地域时间窗口。 */
+function meteredRateConditions(rule: NonNullable<ModelPrice['metered']>, language: string): string | undefined {
+  const windows = rule.windows?.map((window) => `${excludedRateHours([window], language)} ${window.timeZone}`) ?? [];
+  return [
+    ...Object.entries(rule.attributes ?? {}).map(([key, value]) => `${key}=${value}`),
+    ...windows,
+    rule.validFrom && `≥ ${rule.validFrom}`,
+    rule.validUntil && `< ${rule.validUntil}`,
+  ].filter(Boolean).join(' · ') || undefined;
+}
+
+/** 已知的排除时段保留星期和 UTC，避免把分时费率当成全天价格。 */
+function excludedRateHours(windows: NonNullable<ModelPrice['excludedUtcWindows']>, language: string): string {
+  const weekday = new Intl.DateTimeFormat(language, { timeZone: 'UTC', weekday: 'short' });
+  /** 从 UTC 的星期日开始生成星期标签，与 UTC 时段编号一致。 */
+  const sunday = 4; // 1970 年 1 月 4 日
+  const clock = (minutes: number) => `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  return windows.map((window) => `${window.weekdays.map((day) => weekday.format(Date.UTC(1970, 0, sunday + day))).join(' ')} ${clock(window.startMinute)}–${clock(window.endMinute)}`).join(' · ');
+}
+
 /** 模型标题独立控制展开；启用、移除和配置修改沿用各自的业务入口。 */
 function ModelDefinitionEditor(props: {
   language: 'zh-CN' | 'en-US';
   model: ModelConnectionModel;
-  /** 公开价格直接随模型展示，不另建价格目录。 */
-  prices?: NonNullable<ModelConnectionRecord['pricingCatalog']>['prices'];
   readOnly: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -1387,12 +1597,6 @@ function ModelDefinitionEditor(props: {
           <span>
             <strong data-icon-tooltip={model.displayName || model.id}>{model.displayName || model.id}</strong>
             <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
-            {props.prices?.map((price, index) => (
-              <small key={`${price.model}:${index}`}>
-                {price.currency} · {price.perMillion ? `${zh ? '输入' : 'Input'} ${price.perMillion.input} / ${zh ? '输出' : 'Output'} ${price.perMillion.output} / 1M tokens` : `${price.perRequest} / ${zh ? '次' : 'request'}`} ·{' '}
-                {price.basis}
-              </small>
-            ))}
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
         </Button>
@@ -1442,6 +1646,7 @@ function ModelDefinitionEditor(props: {
                     { value: 'openai_completions', label: 'OpenAI Chat Completions' },
                     { value: 'anthropic_messages', label: 'Anthropic Messages' },
                     { value: 'openai_responses', label: 'OpenAI Responses' },
+                    { value: 'openai_images', label: 'OpenAI Images' },
                   ]}
                 />
               </label>

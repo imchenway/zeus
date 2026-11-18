@@ -79,6 +79,7 @@ const probeImageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
  */
 export async function probeConfiguredModel(input: ProbeConfiguredModelInput): Promise<ModelProbeResult> {
   const model = input.model;
+  if (model.protocolFamily === 'openai_images') return { modelId: model.id, ok: false, servedModelId: null, capability: model.capability, message: '图片协议请通过实际图片请求核对，已跳过文本能力探测。' };
   const checkedAt = new Date().toISOString();
   const timeoutMs = input.timeoutMs ?? defaultProbeTimeoutMs;
   const piModel = toPiModel(model, `zeus-probe-${input.connection.id}`, input.connection.baseUrl);
@@ -129,6 +130,7 @@ export async function probeConfiguredModel(input: ProbeConfiguredModelInput): Pr
 
 /** 使用真实运行协议、鉴权和模型发起一次最小文本请求，成功才算连接可用。 */
 export async function probeConfiguredModelConnectivity(input: ProbeConfiguredModelInput): Promise<ModelConnectivityProbeResult> {
+  if (input.model.protocolFamily === 'openai_images') return { ok: false, servedModelId: null, message: '图片协议请通过实际图片请求核对，已跳过文本连接检查。' };
   /** 连接探针与真实会话共用同一模型翻译和协议实现。 */
   const piModel = toPiModel(input.model, `zeus-connectivity-${input.connection.id}`, input.connection.baseUrl);
   const observation = await runProbeRequest(streamApiFor(piModel), piModel, input, {
@@ -174,6 +176,7 @@ export interface ReasoningLevelAuditResult {
  */
 export async function auditConfiguredModelReasoningLevels(input: ProbeConfiguredModelInput): Promise<ReasoningLevelAuditResult> {
   const model = input.model;
+  if (model.protocolFamily === 'openai_images') return { modelId: model.id, entries: [], verdict: '图片协议没有文本推理档位。' };
   const timeoutMs = input.timeoutMs ?? defaultProbeTimeoutMs;
   const piModel = toPiModel(model, `zeus-probe-${input.connection.id}`, input.connection.baseUrl);
   const streams = streamApiFor(piModel);
@@ -252,6 +255,7 @@ function probeReasoningEvidence(model: ConfiguredModelDefinition, checkedAt: str
 
 /** 按协议选择 Pi 的原生流式实现，与运行内核使用同一套适配器。 */
 function streamApiFor(piModel: Model<Api>): ProviderStreams {
+  if (piModel.api === 'openai-images') throw new Error('图片协议不支持独立文本生成。');
   if (piModel.api === 'anthropic-messages') return anthropicMessagesApi();
   if (piModel.api === 'openai-responses') return openAIResponsesApi();
   return openAICompletionsApi();

@@ -1,4 +1,4 @@
-import { isCodexAcceleratedServiceTier, type CodexAcceleratedServiceTier } from './codexServiceTier.js';
+import { isCodexServiceTierId, type CodexServiceTierId } from './codexServiceTier.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
 
@@ -13,7 +13,7 @@ export interface InputSuggestionSettings {
   /** 空值自动选择模型支持的最低档位，显式选择仅用于输入建议和润色。 */
   effort?: string | null;
   /** 空值使用标准速度，加速档位需由所选模型目录声明。 */
-  serviceTier?: CodexAcceleratedServiceTier | null;
+  serviceTier?: CodexServiceTierId | null;
 }
 
 /** 专用模型选择器只需要稳定身份和可读名称。 */
@@ -188,7 +188,7 @@ export function normalizeInputSuggestionSettings(value: unknown): InputSuggestio
     enabled: record.enabled === true && (modelRef !== null || followConversationModel),
     modelRef,
     effort,
-    serviceTier: isCodexAcceleratedServiceTier(record.serviceTier) ? record.serviceTier : null,
+    serviceTier: isCodexServiceTierId(record.serviceTier) ? record.serviceTier : null,
     ...(followConversationModel ? { followConversationModel: true } : {}),
   };
 }

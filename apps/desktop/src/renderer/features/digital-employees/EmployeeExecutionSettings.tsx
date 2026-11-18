@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { isCodexAcceleratedServiceTier, type EmployeeWorkSettings } from '@zeus/shared';
-import { codexAcceleratedServiceTierLabel } from '../../session/serviceTierSelection.js';
+import type { EmployeeWorkSettings } from '@zeus/shared';
+import { codexServiceTierLabel } from '../../session/serviceTierSelection.js';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
 import { compareModelOptions } from '../../modelOptionPresentation.js';
 import { Button } from '../../ui/Button.js';
@@ -153,7 +153,7 @@ export function EmployeeExecutionSettings(props: {
             effective.serviceTier ?? '',
             [
               { value: '', label: zh ? '标准' : 'Standard' },
-              ...(model?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: isCodexAcceleratedServiceTier(tier.id) ? codexAcceleratedServiceTierLabel(tier.id, props.language) : tier.name })),
+              ...(model?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: codexServiceTierLabel(tier, props.language) })),
             ],
             (value) => patch({ serviceTier: value || null }),
           ),

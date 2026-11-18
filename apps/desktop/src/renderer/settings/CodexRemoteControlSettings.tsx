@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect } from 'react';
 import type { RemoteControlApiClient } from '../features/remote/remoteControlApiClient.js';
 import { useRemoteControlFeatureController } from '../features/remote/useRemoteControlFeatureController.js';
@@ -211,7 +212,7 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
                 </code>
               ) : null}
               <small>
-                {labels.expires}: {new Date(pairingExpiresAtMs(pairing.expiresAt)).toLocaleString(props.language)}
+                {labels.expires}: {formatZeusDateTime(pairingExpiresAtMs(pairing.expiresAt), props.language)}
               </small>
             </span>
             <span className="settings-row-action-rail">

@@ -40,7 +40,7 @@ export interface CodexUsageRateSnapshot {
   price?: import('./modelPricing.js').ModelPrice;
   /** 自动获取公开价格的时间，不代表供应商价格生效时间。 */
   retrievedAt?: string;
-  /** 历史缺价按补价时公开单价估算的时间；已有价格不覆盖。 */
+  /** 历史缺价记录完成补算的时间。 */
   backfilledAt?: string;
   catalogDate: string;
   model: string;
@@ -126,6 +126,8 @@ export interface UsageModelRate {
   currency: string;
   perMillion: { input: number; output: number; cachedInput: number | null; cacheWrite: number | null } | null;
   perRequest: number | null;
+  /** 已保存的通用计量单价。 */
+  charges?: import('./meteredPricing.js').MeteredCharge[];
 }
 
 /** 同一计费条件下本地已记录的价格周期；日期不代表官方生效日。 */
@@ -141,7 +143,7 @@ export interface UsageModelCostBreakdown {
   /** 该费用行的价格依据；缺价时仍可展示已配置的公开页面。 */
   sourceUrls?: string[];
   /** 缺价原因独立于账户连接状态，全部费用明细入口共用。 */
-  missingPriceReason?: 'sync_failed' | 'unconfirmed';
+  missingPriceReason?: 'sync_failed' | 'unconfirmed' | 'missing_usage';
   model: string;
   rate: UsageModelRate | null;
   /** Codex 请求快照的服务档位，统一普通和快速档位别名；其他供应源为空。 */
@@ -261,7 +263,7 @@ export interface UsageOverviewSnapshot {
 export interface CodexLocalUsageTotals extends TokenUsageBreakdown {
   /** 按原币汇总的费用。 */
   costs?: import('./modelPricing.js').EstimatedMoney[];
-  /** 汇总中包含按补价时价格估算的记录，界面必须说明此口径。 */
+  /** 汇总中包含历史缺价补算的金额。 */
   hasBackfilledPricing?: boolean;
   conversationCount: number;
   turnCount: number;

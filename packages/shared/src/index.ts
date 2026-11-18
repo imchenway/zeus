@@ -7,6 +7,8 @@ export * from './taskDeadline.js';
 export * from './automationNotifications.js';
 /** 自动化表单、配置存储和调度器共用时间转换与校验。 */
 export * from './automationTime.js';
+/** 桌面视图与原生状态提示共用 24 小时时钟。 */
+export * from './dateTimeFormat.js';
 export * from './notifications.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
@@ -16,6 +18,8 @@ export * from './codexUsage.js';
 /** 会话和独立生成入口共用 Codex 加速档位。 */
 export * from './codexServiceTier.js';
 export * from './modelPricing.js';
+export * from './meteredPricing.js';
+export * from './modelPricingProfile.js';
 export * from './commandEnvelope.js';
 export * from './commandGovernance.js';
 export * from './executionHostStopCommand.js';

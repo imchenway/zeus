@@ -32,7 +32,8 @@ import type {
   StartAgentRunInput,
   SteerAgentRunInput,
 } from './agentRuntimeContracts.js';
-import { type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, modelConnectionRuntimeBaseUrl, reasoningLevelMap, resolvePiThinkingLevel } from './modelConnectionCatalog.js';
+import { type ConfiguredModelDefinition, type ModelAuthenticationScheme, type ModelConnectionRecord, modelConnectionRuntimeBaseUrl, modelProtocolApi, reasoningLevelMap, resolvePiThinkingLevel } from './modelConnectionCatalog.js';
+import { openAiImageGenerationApi } from './openAiImageGeneration.js';
 import { buildProviderCacheDiagnostic } from './providerCacheDiagnostics.js';
 import { PiHeadlessResourceLoader, type PiPluginSkillResource } from './piHeadlessResourceLoader.js';
 
@@ -289,6 +290,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             api: {
               'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload, projectToolImages),
               'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload, projectToolImages),
+              'openai-images': withModelTransport(openAiImageGenerationApi, authenticationSchemes, observePayload, projectToolImages, false),
               'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload, projectToolImages),
             },
           }),
@@ -369,6 +371,9 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       });
     }
     payloadObservers.get(sessionId)?.(diagnostic);
+    /** 发送前记录计费时点，请求正文不进入事件。 */
+    const entry = sessions.get(sessionId);
+    if (entry?.activeRunId) publishSyntheticEvent(entry, entry.activeRunId, 'pricing_request_started', {});
   }
 
   async function createSession(input: OpenAgentSessionInput | (ResumeAgentSessionInput & { cwd: string }), sessionManager: SessionManager): Promise<PiSessionEntry> {
@@ -1218,7 +1223,7 @@ export function toPiModel(model: ConfiguredModelDefinition, providerId: string, 
     id: model.id,
     name: model.displayName,
     provider: providerId,
-    api: anthropicMessages ? ('anthropic-messages' as const) : openAIResponses ? ('openai-responses' as const) : ('openai-completions' as const),
+    api: modelProtocolApi(model.protocolFamily),
     baseUrl: modelConnectionRuntimeBaseUrl(connectionBaseUrl, model.protocolFamily),
     reasoning: supportsReasoning,
     thinkingLevelMap,
@@ -1261,6 +1266,7 @@ function withModelTransport(
   authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>,
   observePayload: (sessionId: string | undefined, model: Model<Api>, payload: unknown) => Promise<void>,
   projectContext: (model: Model<Api>, context: TranscriptContext, options?: StreamOptions) => Promise<TranscriptContext>,
+  responseStartsStream = true,
 ): ProviderStreams {
   /** 只对网络建链计时；确认旧流结束后才允许恢复，不限制连接建立后的生成。 */
   function projectStream(model: Model<Api>, setup: (options: StreamOptions) => Promise<AsyncIterable<AssistantMessageEvent>>, options?: StreamOptions) {
@@ -1282,7 +1288,7 @@ function withModelTransport(
       /** 持久接纳和请求体准备属于写前阶段，不能消耗网络建链时间。 */
       const replacement = await onPayload?.(payload, observedModel);
       stopDeadline();
-      stopDeadline = createModelConnectionDeadline(() => deadline.abort());
+      if (responseStartsStream) stopDeadline = createModelConnectionDeadline(() => deadline.abort());
       return replacement;
     };
     transportOptions.onResponse = async (response, observedModel) => {

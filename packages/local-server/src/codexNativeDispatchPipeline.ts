@@ -1,5 +1,5 @@
 import { type CodexCollaborationMode, type CodexDynamicToolSpec, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
-import { isCodexAcceleratedServiceTier, type CodexAcceleratedServiceTier } from '@zeus/shared';
+import { isCodexServiceTierId, type CodexServiceTierId } from '@zeus/shared';
 import { performance } from 'node:perf_hooks';
 import type { ConversationDispatchPerformanceSample } from './performanceObservability.js';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
@@ -84,7 +84,7 @@ interface CodexNativeDispatchPipelineDependencies {
   persistProviderReportedServiceTierDowngrade(conversationId: string, submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, actualServiceTier: string | null): void;
 
   /** 保存标准速度重试所用的上下文及被拒绝的原档位。 */
-  persistSubmissionDispatchContext(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, rejectedServiceTier: CodexAcceleratedServiceTier): void;
+  persistSubmissionDispatchContext(submission: ZeusConversationSubmissionRecord, context: ConversationDispatchContext, rejectedServiceTier: CodexServiceTierId): void;
 
   planControlModeForSubmission(submission: ZeusConversationSubmissionRecord): ConversationCollaborationMode | null;
 
@@ -706,7 +706,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       runStates.set(conversation.id, { type: 'active', turnId: turn.id, phase: 'prework' });
       /** 只对实际被目录校验降档的显式选择写入提示。 */
       const requestedServiceTier = parseJsonRecord(submission.inputJson).requestedServiceTier;
-      if (!serviceTierFallbackAttempted && isCodexAcceleratedServiceTier(requestedServiceTier) && context.serviceTier == null) {
+      if (!serviceTierFallbackAttempted && isCodexServiceTierId(requestedServiceTier) && context.serviceTier == null) {
         recordServiceTierDowngrade(conversation.id, submission, context, 'model_unsupported');
       }
       const providerSettings = options.conversations.getProviderSettingsSnapshot(conversation.id);
@@ -732,7 +732,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
-      if (!dispatchStopped(submission.id) && !serviceTierFallbackAttempted && isCodexAcceleratedServiceTier(context.serviceTier) && isServiceTierUnavailableError(error)) {
+      if (!dispatchStopped(submission.id) && !serviceTierFallbackAttempted && isCodexServiceTierId(context.serviceTier) && isServiceTierUnavailableError(error, context.serviceTier)) {
         /** 明确拒绝加速档位时，仅用标准速度重试本次提交。 */
         const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
         persistSubmissionDispatchContext(submission, standardContext, context.serviceTier);

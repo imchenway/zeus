@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { useEffect, useId, useState } from 'react';
@@ -167,7 +168,7 @@ export function GoalPanel(props: GoalPanelProps) {
               {[...props.timeline].reverse().map((event) => (
                 <li key={event.id}>
                   <span>{eventLabels[event.kind][zh ? 'zh' : 'en']}</span>
-                  <time dateTime={event.occurredAt}>{new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-US', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(event.occurredAt))}</time>
+                  <time dateTime={event.occurredAt}>{formatZeusDateTime(event.occurredAt, zh ? 'zh-CN' : 'en-US', { dateStyle: 'short', timeStyle: 'short' })}</time>
                 </li>
               ))}
             </ol>
