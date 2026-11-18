@@ -1,7 +1,9 @@
-import { type BrowserWindow, net, screen, session } from 'electron';
+import { type BrowserWindow, screen, session } from 'electron';
+import { Readable } from 'node:stream';
 import { createPersistentWindow } from './persistentWindow.js';
 import { parseThirdPartyTaskUrl, type ThirdPartyTaskExtract, type ThirdPartyTaskLink } from '@zeus/shared';
 import { browserPartition } from './browserHost.js';
+import { createDesktopProxyRequest } from './networkProxy.js';
 import { readBoundedZentaoResponse } from './zentaoApi.js';
 import { extractZentaoTaskInfo, type ZentaoExtractServices } from './zentaoTaskExtract.js';
 
@@ -108,15 +110,44 @@ async function extractGithubIssue(link: Extract<ThirdPartyTaskLink, { apiUrl: st
 
 /** 共用现有有界响应读取，关闭重定向，登录页面不会被误当成工作项内容。 */
 async function fetchSource(url: string, authenticated: boolean, accept = 'application/json'): Promise<SourceResponse> {
-  /** cookies 仅由 Electron 对目标域名按会话规则发送。 */
-  const requester = authenticated ? session.fromPartition(browserPartition, { cache: true }) : net;
-  /** 每次请求只访问已推导的固定接口或原始详情地址。 */
-  const response = await requester.fetch(url, { method: 'GET', redirect: 'manual', credentials: authenticated ? 'include' : 'omit', signal: AbortSignal.timeout(fetchTimeoutMs), headers: { Accept: accept } });
-  if (response.status !== 200) {
-    await response.body?.cancel();
-    return { status: response.status, text: '', contentType: '' };
+  /** 匿名 API 不使用站点凭据，需登录的详情继续使用内置浏览器会话。 */
+  const request = createDesktopProxyRequest({
+    url,
+    method: 'GET',
+    redirect: 'manual',
+    session: authenticated ? session.fromPartition(browserPartition, { cache: true }) : session.defaultSession,
+    credentials: authenticated ? 'include' : 'omit',
+  });
+  request.setHeader('Accept', accept);
+  /** 请求和响应正文共用同一截止时间。 */
+  const timeout = AbortSignal.timeout(fetchTimeoutMs);
+  /** Chromium ClientRequest 通过 abort 终止底层连接和正文流。 */
+  const abortRequest = () => request.abort();
+  timeout.addEventListener('abort', abortRequest, { once: true });
+  try {
+    /** 重定向只保留状态码，交给来源逻辑判断是否需要登录。 */
+    const response = await new Promise<Electron.IncomingMessage | number>((resolve, reject) => {
+      request.once('response', resolve);
+      request.once('redirect', resolve);
+      request.once('error', reject);
+      request.once('abort', () => reject(timeout.reason));
+      request.end();
+    });
+    if (typeof response === 'number') return { status: response, text: '', contentType: '' };
+    if (response.statusCode !== 200) return { status: response.statusCode, text: '', contentType: '' };
+    /** 将 Electron 正文流交给现有读取器，保留声明长度与实际大小限制。 */
+    const body = Readable.toWeb(response as unknown as Readable) as ReadableStream<Uint8Array>;
+    /** 有界读取器在读取正文前先检查来源声明的字节数。 */
+    const headers = { 'content-length': String(response.headers['content-length'] ?? '') };
+    /** 只有完整、未超限的正文才进入解析。 */
+    const bytes = await readBoundedZentaoResponse(new Response(body, { headers }), responseBytesLimit);
+    return { status: response.statusCode, text: new TextDecoder().decode(bytes), contentType: String(response.headers['content-type'] ?? '') };
+  } catch (error) {
+    throw timeout.aborted ? timeout.reason : error;
+  } finally {
+    timeout.removeEventListener('abort', abortRequest);
+    request.abort();
   }
-  return { status: response.status, text: new TextDecoder().decode(await readBoundedZentaoResponse(response, responseBytesLimit)), contentType: response.headers.get('content-type') ?? '' };
 }
 
 /** 接口失败保持可区分原因；404 可能是隐藏的私有工作项，不能直接宣称不存在。 */

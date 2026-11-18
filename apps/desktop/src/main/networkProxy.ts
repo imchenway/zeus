@@ -41,6 +41,22 @@ function runtimeProxyCredentials(authInfo: Electron.AuthInfo): [string, string] 
   return [decodeURIComponent(runtimeProxyAddress.username), decodeURIComponent(runtimeProxyAddress.password)];
 }
 
+/** 主进程请求需要单独应答本机代理的认证。 */
+export function createDesktopProxyRequest(options: Electron.ClientRequestConstructorOptions): Electron.ClientRequest {
+  /** 使用调用方选择的 Chromium 会话。 */
+  const request = net.request(options);
+  /** 每条请求只应答一次认证挑战，避免重复提交被拒绝的凭据。 */
+  let authenticated = false;
+  request.on('login', (authInfo, callback) => {
+    /** 仅向当前 Core 的本机代理提供凭据。 */
+    const credentials = runtimeProxyCredentials(authInfo);
+    if (authenticated || !credentials) return callback();
+    authenticated = true;
+    callback(...credentials);
+  });
+  return request;
+}
+
 /** Main 与 Chromium 都连接 Core 的固定入口，后续配置切换由 Core 统一执行。 */
 export async function applyDesktopNetworkProxy(value: unknown, browserSession: Electron.Session): Promise<void> {
   if (typeof value !== 'string') throw new Error('网络运行地址无效。');
@@ -113,11 +129,9 @@ export async function checkNetworkProxyConnection(address: unknown, checkTarget:
   try {
     return await new Promise<NetworkProxyConnectionResult>((resolve) => {
       /** 沿用正式浏览器会话和代理，禁止携带网站 Cookie 或认证，也不跟随跳转。 */
-      const request = net.request({ url: target.href, method: 'HEAD', session: browserSession, credentials: 'omit', redirect: 'manual', cache: 'no-store' });
+      const request = createDesktopProxyRequest({ url: target.href, method: 'HEAD', session: browserSession, credentials: 'omit', redirect: 'manual', cache: 'no-store' });
       /** 请求完成、失败和超时只允许产生一次回执。 */
       let finished = false;
-      /** 内部代理只尝试一次认证，拒绝循环挑战。 */
-      let authenticated = false;
       /** Chromium ClientRequest 不接收 AbortSignal，超时后主动终止。 */
       const timer = setTimeout(() => finish({ error: 'timeout', latencyMs: elapsedMilliseconds(startedAt) }), networkRequestTimeoutMs);
       /** 取得响应头即可结束，避免下载正文或残留检查连接。 */
@@ -128,13 +142,6 @@ export async function checkNetworkProxyConnection(address: unknown, checkTarget:
         resolve(result);
         request.abort();
       }
-      request.on('login', (authInfo, callback) => {
-        /** 网站或非当前 Core 的代理挑战一律不能取得内部凭据。 */
-        const credentials = runtimeProxyCredentials(authInfo);
-        if (authenticated || !credentials) return callback();
-        authenticated = true;
-        callback(...credentials);
-      });
       request.on('response', (response) => {
         response.on('error', (error) => finish(connectionError(error, startedAt)));
         /** Core 的建连错误与目标网站自己的拒绝响应分别报告。 */
