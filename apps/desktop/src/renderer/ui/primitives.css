@@ -1377,7 +1377,19 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   padding-block-start: 2px;
 }
 
-/* 上报反馈直接放在错误旁，长回执在窄窗口内换行。 */
+/* 上报按钮预留图标和文案的宽度，状态变化时保留操作栏位置。 */
+.macos-ai-app .application-error-report-button {
+  min-inline-size: min(112px, 100%);
+}
+
+/* 已收到回执的按钮仍禁用，成功色用于确认报告已送达。 */
+.macos-ai-app .application-error-report-button[data-reported='true']:disabled {
+  background: color-mix(in srgb, var(--zeus-status-success-text) 10%, var(--zeus-product-panel));
+  border-color: color-mix(in srgb, var(--zeus-status-success-text) 24%, var(--zeus-product-border));
+  color: var(--zeus-status-success-text);
+}
+
+/* 上报失败原因显示在错误旁，并允许长文本在窄窗口中换行。 */
 .macos-ai-app .application-error-report-status {
   margin: 0;
   color: var(--zeus-product-text-muted);
