@@ -256,7 +256,8 @@ declare global {
       /** 用户主动请求系统查看或导出当前预览版本。 */
       /** 交付菜单共享任务与项目工作区操作。 */
       actOnGitDeliveryFiles: (input: import('@zeus/shared').GitDeliveryFileActionInput) => Promise<{ completed: true }>;
-      actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => Promise<void>;
+      /** 目录定位由主进程验证预览令牌和相对父目录。 */
+      actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit' | 'reveal-directory', directoryPath?: string) => Promise<void>;
       /** 只复制或另存预览图片的 PNG 像素，不接收本地文件路径。 */
       actOnImagePreview: (dataUrl: string, action: 'copy' | 'export', name: string) => Promise<void>;
       /** 只恢复两端预览中选中的行区块，并返回更新后的预览授权。 */

@@ -285,7 +285,7 @@ function SourceWorkspaceView(props: {
     }
   }
   /** 图片和文件操作只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
-  async function fileAction(action: 'export' | 'open' | 'reveal'): Promise<void> {
+  async function fileAction(action: 'export' | 'open' | 'reveal' | 'reveal-directory', directoryPath?: string): Promise<void> {
     /** 当前受信桥接同时负责授权读取、系统操作和授权释放。 */
     const bridge = window.zeus;
     if (!bridge) {
@@ -300,7 +300,7 @@ function SourceWorkspaceView(props: {
       const items = await bridge.loadFilePreview({ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id });
       ids = items.map((item) => item.id).filter(Boolean);
       if (!ids[0]) throw new Error(zh ? '当前文件无法执行此操作。' : 'This action is unavailable for the current file.');
-      await bridge.actOnFilePreview(ids[0], action);
+      await bridge.actOnFilePreview(ids[0], action, directoryPath);
     } catch (error) {
       setOpenError(error);
     } finally {
@@ -431,7 +431,7 @@ function SourceWorkspaceView(props: {
         zh={zh}
         toolbar={(reviewActions) => (
           <>
-            <FileWorkspaceToolbar path={displayPath} zh={zh}>
+            <FileWorkspaceToolbar path={displayPath} zh={zh} onRevealDirectory={props.preview.resource.kind === 'file' ? (path) => fileAction('reveal-directory', path) : undefined}>
               {reviewActions}
               {props.onRefresh ? (
                 <Button unstyled type="button" aria-label={zh ? '刷新文件' : 'Refresh file'} data-icon-tooltip={zh ? '刷新文件' : 'Refresh file'} aria-busy={props.refreshing} disabled={props.refreshing} onClick={() => props.onRefresh?.()}>

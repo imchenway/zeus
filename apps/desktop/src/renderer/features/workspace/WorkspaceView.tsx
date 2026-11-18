@@ -553,11 +553,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       }),
     [snapshot.projects, appShellSettings.appLanguage, openProjectSection],
   );
-  /** 源码页挂载后消费准确文件位置，重复打开保留其他标签草稿。 */
+  /** 源码页挂载后消费已授权的文件或目录位置。 */
   useEffect(() => {
-    if (sourceReady && sourceWorkspaceTarget?.relativePath && sourceWorkspaceTarget.ownerProjectId === activeProjectId && activeProjectSection === 'code') {
-      void projectSourceWorkspaceRef.current?.openFile(sourceWorkspaceTarget.relativePath, 1);
-    }
+    if (!sourceReady || !sourceWorkspaceTarget || sourceWorkspaceTarget.ownerProjectId !== activeProjectId || activeProjectSection !== 'code') return;
+    if (sourceWorkspaceTarget.directoryPath) projectSourceWorkspaceRef.current?.revealDirectory(sourceWorkspaceTarget.directoryPath);
+    else if (sourceWorkspaceTarget.relativePath) void projectSourceWorkspaceRef.current?.openFile(sourceWorkspaceTarget.relativePath, 1);
   }, [sourceReady, sourceWorkspaceTarget, activeProjectId, activeProjectSection, projectSourceWorkspaceRef]);
   /** 全局搜索允许跨项目跳转；等目标工作区真正挂载后再打开详情或源码文件。 */
   useEffect(() => {

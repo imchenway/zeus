@@ -975,8 +975,8 @@ function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-deta
   return url.toString();
 }
 
-/** 编辑统一导航到现有主窗口的源码页，不创建额外编辑窗口。 */
-async function openFileSourceWorkspace(parent: BrowserWindow, target: { root: string; path: string }, request: FilePreviewRequest): Promise<void> {
+/** 编辑和目录定位共用现有主窗口的源码页。 */
+async function openFileSourceWorkspace(parent: BrowserWindow, target: { root: string; path: string; directoryPath?: string }, request: FilePreviewRequest): Promise<void> {
   /** 优先返回发起操作的主窗口；独立交付窗口回到现有应用主窗口。 */
   const owner = windows.has(parent) ? parent : [...windows].find((candidate) => !candidate.isDestroyed());
   if (!owner || owner.isDestroyed()) throw new Error('主窗口不可用，请先打开 Zeus 主界面。');
@@ -999,9 +999,11 @@ async function openFileSourceWorkspace(parent: BrowserWindow, target: { root: st
   const project = await loadProjectIdentity(projectId);
   /** 路径使用源码页的跨平台相对格式。 */
   const relativePath = relative(target.root, target.path).split(sep).join('/');
-  const workspace = await registerSourceWorkspace(owner, project, target.root, relativePath);
+  if (target.directoryPath && !relativePath.startsWith(`${target.directoryPath}/`)) throw new Error('此目录已不在当前文件路径中。');
+  /** 定位目录只改变文件树选中状态。 */
+  const workspace = await registerSourceWorkspace(owner, project, target.root, target.directoryPath ? '' : relativePath);
   if (owner.isDestroyed()) throw new Error('主窗口已关闭。');
-  owner.webContents.send('zeus:file-preview:source-open-workspace', workspace);
+  owner.webContents.send('zeus:file-preview:source-open-workspace', { ...workspace, directoryPath: target.directoryPath });
   owner.show();
   owner.focus();
 }

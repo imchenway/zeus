@@ -416,24 +416,14 @@
   font-size: 12px;
   font-weight: 700;
 }
-.project-source-breadcrumbs {
-  display: flex;
+.session-source-breadcrumbs.project-source-breadcrumbs {
   min-height: 30px;
-  align-items: center;
   gap: 4px;
-  overflow: hidden;
-  padding: 0 12px;
-  border-bottom: 0;
-  color: var(--zeus-control-muted-text);
+  padding: 4px 12px;
   font-size: 11px;
 }
-.project-source-breadcrumbs span {
-  white-space: nowrap;
-}
-.project-source-breadcrumbs span:not(:last-child)::after {
-  content: '/';
-  margin-left: 4px;
-  opacity: 0.55;
+.session-source-breadcrumbs.project-source-breadcrumbs > span {
+  gap: 4px;
 }
 .project-source-code-editor {
   min-width: 0;
@@ -632,11 +622,14 @@
     inset: 0 auto 0 0;
     width: min(var(--zeus-source-tree-width), calc(100vw - 56px));
     box-shadow: 14px 0 38px rgb(0 0 0 / 22%);
+    visibility: hidden;
     transform: translateX(-105%);
-    transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out);
+    transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out), visibility 0s linear var(--zeus-motion-duration-layer-enter);
   }
   .project-source-workspace[data-tree-open='true'] .project-source-tree {
+    visibility: visible;
     transform: translateX(0);
+    transition-delay: 0s;
   }
   .project-source-editor-pane {
     grid-column: 1;

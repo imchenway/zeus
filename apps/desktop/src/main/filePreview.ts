@@ -176,7 +176,7 @@ export function registerFilePreview(services: {
   /** 文件写入沿用主进程命令回执，结果未知时禁止自动重放。 */
   commandLedger(): MainCommandLedger;
   /** 只有宿主固定的当前工作区路径能进入源码编辑页。 */
-  openSource(window: BrowserWindow, target: { root: string; path: string }, request: FilePreviewRequest): Promise<void>;
+  openSource(window: BrowserWindow, target: { root: string; path: string; directoryPath?: string }, request: FilePreviewRequest): Promise<void>;
 }): void {
   /** 随机令牌只授予单个文件，绝不包含本地服务密钥。 */
   const grants = new Map<string, PreviewGrant>();
@@ -509,13 +509,16 @@ export function registerFilePreview(services: {
                   : '请用系统应用打开此格式。';
           // 提交归属由现有版本令牌接口另读，正文返回不等待 Git 历史遍历。
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
-          if (source.edit && item.kind === 'text') {
+          if (source.edit) {
             try {
-              // 先核对当前文件存在且仍在工作区内，历史不存在的一侧不伪造编辑目标。
-              await authorizedPath({ ...source.edit, name: source.name, label: source.label });
-              item.canEdit = true;
+              /** 工作区实际根目录用于路径校验和显示。 */
+              const root = await realpath(source.edit.root);
+              /** 编辑和定位都指向工作区中的当前文件。 */
+              const workspacePath = await authorizedPath({ ...source.edit, root, name: source.name, label: source.label });
+              item.workspaceRelativePath = relative(root, workspacePath).split(sep).join('/');
+              if (item.kind === 'text') item.canEdit = true;
             } catch {
-              item.canEdit = false;
+              if (item.kind === 'text') item.canEdit = false;
             }
           }
           item.id = randomUUID();
@@ -875,7 +878,8 @@ export function registerFilePreview(services: {
     }
   });
 
-  ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => {
+  /** 目录定位只接受现有预览授权及其文件的相对父目录。 */
+  ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit' | 'reveal-directory', directoryPath?: unknown) => {
     /** 发起操作的受信窗口。 */
     const window = services.requireWindow(event);
     /** 读取期间切换焦点不改变原来发起操作的预览窗口。 */
@@ -883,11 +887,16 @@ export function registerFilePreview(services: {
     /** 当前窗口持有的资源授权。 */
     const grant = grants.get(id);
     if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
-    if (action === 'edit') {
-      if (!grant.item.canEdit || !grant.source.edit) throw new Error('此文件没有可编辑的工作区版本。');
-      /** 编辑读取最新工作区文件，历史副本只负责提供受信的目标身份。 */
-      const path = await authorizedPath({ ...grant.source.edit, name: grant.item.name, label: grant.item.label });
-      await services.openSource(window, { root: await realpath(grant.source.edit.root), path }, grant.request);
+    if (action === 'edit' || action === 'reveal-directory') {
+      if (!grant.source.edit || (action === 'edit' && !grant.item.canEdit)) throw new Error('此文件没有可编辑的工作区版本。');
+      /** 主进程接收完整的相对父目录，拒绝同级目录及路径前缀误匹配。 */
+      const folder = action === 'reveal-directory' && typeof directoryPath === 'string' ? directoryPath : undefined;
+      if (action === 'reveal-directory' && (!folder || !grant.item.workspaceRelativePath?.startsWith(`${folder}/`))) throw new Error('此目录不属于当前文件路径。');
+      /** 工作区授权根与目标文件使用同一次解析。 */
+      const root = await realpath(grant.source.edit.root);
+      /** 编辑和定位都使用仍在原工作区内的当前文件。 */
+      const path = await authorizedPath({ ...grant.source.edit, root, name: grant.item.name, label: grant.item.label });
+      await services.openSource(window, { root, path, directoryPath: folder }, grant.request);
       return;
     }
     /** 本次读取的准确文件路径。 */

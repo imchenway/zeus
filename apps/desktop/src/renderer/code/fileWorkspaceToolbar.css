@@ -39,18 +39,20 @@
   flex: 0 0 auto;
   min-width: 0;
 }
-/* 路径直接融入工具栏，保留截断与悬停说明，长路径不会挤走操作。 */
+/* 路径独立横向滚动，窄面板仍能触达每一级目录。 */
 .session-source-breadcrumbs {
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   white-space: nowrap;
   gap: 8px;
   align-items: center;
   box-sizing: border-box;
   min-height: 40px;
-  padding: 8px 12px;
+  padding: 4px 12px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -58,17 +60,32 @@
 }
 .session-source-breadcrumbs > span {
   display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 8px;
   color: var(--session-text-muted, var(--zeus-control-muted-text));
 }
 .session-source-breadcrumbs > span:last-child {
   color: var(--session-text, var(--zeus-control-text));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
 }
-.session-source-breadcrumbs > span:last-child > span {
-  margin-right: 8px;
+/* 目录保留路径字号，悬停和键盘焦点提供明确的操作反馈。 */
+.session-source-breadcrumbs .file-path-directory {
+  appearance: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.session-source-breadcrumbs .file-path-directory:hover {
+  color: var(--session-text, var(--zeus-control-text));
+  text-decoration: underline;
+}
+.session-source-breadcrumbs .file-path-directory:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: 2px;
 }
 .session-source-actions {
   display: flex;
