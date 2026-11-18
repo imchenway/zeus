@@ -136,6 +136,8 @@ const windows = new Set<BrowserWindow>();
 let desktopFaultMonitor: ReturnType<typeof startFaultMonitor> | undefined;
 let tray: Tray | undefined;
 let menuBarUsageWindow: BrowserWindow | undefined;
+/** 当前浮窗的托盘锚点与内容测量高度，单位为逻辑像素。 */
+const menuBarUsageLayout: { anchor?: MenuBarUsageClickAnchor; contentHeight?: number } = {};
 let menuBarUsageWindowBlurTimer: ReturnType<typeof setTimeout> | undefined;
 /** 费用明细使用独立透明窗口，避免改变菜单栏主体的原生边界。 */
 let menuBarUsageCostDetailWindow: BrowserWindow | undefined;
@@ -472,11 +474,11 @@ type MenuBarUsageCostDetailPayload = {
   equivalentCost: boolean;
 };
 
+/** 托盘所在屏幕、锚点来源和计算后的原生窗口边界。 */
 type MenuBarUsageWindowPlacement = {
   anchorSource: 'bounds' | 'position';
   display: Electron.Display;
-  x: number;
-  y: number;
+  bounds: Electron.Rectangle;
 };
 const taskGitDeliveryMinimumSize = { width: 560, height: 420 } as const;
 const automaticUpdateIntervalMs = 60 * 60_000;
@@ -2322,18 +2324,16 @@ function setupIpc(): void {
     hideMenuBarUsageWindow();
     return { hidden: true };
   });
-  /** 仅允许菜单栏浮窗调整自身高度，原生宽度始终保持 360px。 */
+  /** 只接受浮窗的内容高度，尺寸与位置都由托盘锚点和屏幕可用区域决定。 */
   ipcMain.handle('zeus:menu-bar-usage:resize', (event, requestedHeight: unknown) => {
     const window = requireMenuBarUsageWindow(event);
     if (typeof requestedHeight !== 'number' || !Number.isFinite(requestedHeight) || requestedHeight <= 0) throw new TypeError('菜单栏用量浮窗高度无效。');
-    /** 高度按内容收缩，宽度不再因费用明细变化。 */
-    const bounds = window.getBounds();
-    const { workArea } = screen.getDisplayMatching(bounds);
-    const width = Math.max(1, Math.min(menuBarUsageWindowSize.width, workArea.width - menuBarUsageWindowGap * 2));
-    const height = Math.max(1, Math.min(Math.max(200, Math.ceil(requestedHeight)), menuBarUsageWindowSize.height, workArea.height - menuBarUsageWindowGap * 2));
-    const x = Math.max(workArea.x + menuBarUsageWindowGap, Math.min(bounds.x, workArea.x + workArea.width - width - menuBarUsageWindowGap));
-    const y = Math.max(workArea.y + menuBarUsageWindowGap, Math.min(bounds.y, workArea.y + workArea.height - height - menuBarUsageWindowGap));
-    if (bounds.width !== width || bounds.height !== height || bounds.x !== x || bounds.y !== y) window.setBounds({ ...bounds, width, height, x, y }, false);
+    /** 隐藏窗口也可先测量内容，打开时再按点击所在的屏幕定位。 */
+    menuBarUsageLayout.contentHeight = Math.ceil(requestedHeight);
+    const { anchor } = menuBarUsageLayout;
+    const placement = anchor && resolveMenuBarUsageWindowPlacement(anchor, menuBarUsageLayout.contentHeight);
+    if (placement) positionMenuBarUsageWindow(window, placement);
+    const { width, height } = window.getBounds();
     return { width, height };
   });
   /** 菜单栏窗口负责提供明细内容和屏幕锚点，主进程创建独立透明窗口。 */
@@ -3439,35 +3439,46 @@ function isUsableTrayBounds(bounds: Electron.Rectangle): boolean {
   return Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0;
 }
 
-function resolveMenuBarUsageWindowPlacement(anchor: MenuBarUsageClickAnchor): MenuBarUsageWindowPlacement | undefined {
-  /** 再次打开或切换屏幕时使用实际高度，避免按最大高度错误向上定位。 */
-  const size = menuBarUsageWindow?.getBounds() ?? menuBarUsageWindowSize;
+/** 首次打开和内容变高或变矮共用定位，保持靠近托盘的窗边贴在原处。 */
+function resolveMenuBarUsageWindowPlacement(anchor: MenuBarUsageClickAnchor, contentHeight: number = menuBarUsageWindowSize.height): MenuBarUsageWindowPlacement | undefined {
   const useBounds = isUsableTrayBounds(anchor.bounds);
   if (!useBounds && !isFiniteScreenPoint(anchor.position)) return undefined;
 
-  /** 整个菜单栏窗口始终以 Tray 图标为锚点；鼠标坐标只在系统缺少有效边界时回退。 */
-  const anchorX = useBounds ? anchor.bounds.x + anchor.bounds.width / 2 : anchor.position.x;
-  const anchorY = useBounds ? anchor.bounds.y + anchor.bounds.height / 2 : anchor.position.y;
+  /** 图标边界缺失时，以点击位置作为零尺寸的锚点，横纵坐标使用同一来源。 */
+  const rect = useBounds ? anchor.bounds : { ...anchor.position, width: 0, height: 0 };
+  const anchorX = rect.x + rect.width / 2;
+  const anchorY = rect.y + rect.height / 2;
   const display = screen.getDisplayNearestPoint({ x: Math.round(anchorX), y: Math.round(anchorY) });
   const { workArea } = display;
-  const preferredX = Math.round(anchorX - size.width / 2);
+  /** 保留内容测量的原始高度，换屏时按新工作区重新限制窗口尺寸。 */
+  const width = Math.max(1, Math.min(menuBarUsageWindowSize.width, workArea.width - menuBarUsageWindowGap * 2));
+  const height = Math.max(1, Math.min(Math.max(200, contentHeight), menuBarUsageWindowSize.height, workArea.height - menuBarUsageWindowGap * 2));
+  const preferredX = Math.round(anchorX - width / 2);
   const minX = workArea.x + menuBarUsageWindowGap;
-  const maxX = workArea.x + workArea.width - size.width - menuBarUsageWindowGap;
+  const maxX = workArea.x + workArea.width - width - menuBarUsageWindowGap;
   const minY = workArea.y + menuBarUsageWindowGap;
-  const maxY = workArea.y + workArea.height - size.height - menuBarUsageWindowGap;
-  const belowTrayY = useBounds ? Math.round(anchor.bounds.y + anchor.bounds.height + menuBarUsageWindowGap) : minY;
-  const preferredY = belowTrayY <= maxY ? belowTrayY : useBounds ? Math.round(anchor.bounds.y - size.height - menuBarUsageWindowGap) : minY;
+  const maxY = workArea.y + workArea.height - height - menuBarUsageWindowGap;
+  /** 顶部托盘优先向下展开，底部托盘向上展开并按新高度重算顶边。 */
+  const belowTrayY = Math.round(rect.y + rect.height + menuBarUsageWindowGap);
+  const preferredY = belowTrayY <= maxY ? belowTrayY : Math.round(rect.y - height - menuBarUsageWindowGap);
 
   return {
     anchorSource: useBounds ? 'bounds' : 'position',
     display,
-    x: Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)),
-    y: Math.min(Math.max(preferredY, minY), Math.max(minY, maxY)),
+    bounds: {
+      x: Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)),
+      y: Math.min(Math.max(preferredY, minY), Math.max(minY, maxY)),
+      width,
+      height,
+    },
   };
 }
 
+/** 一起应用位置和尺寸，避免触发同尺寸的内容测量回报。 */
 function positionMenuBarUsageWindow(window: BrowserWindow, placement: MenuBarUsageWindowPlacement): void {
-  window.setPosition(placement.x, placement.y, false);
+  const current = window.getBounds();
+  const next = placement.bounds;
+  if (current.x !== next.x || current.y !== next.y || current.width !== next.width || current.height !== next.height) window.setBounds(next, false);
 }
 
 /** 创建独立透明费用明细窗口，实际尺寸由 Renderer 内容测量后回传。 */
@@ -3584,7 +3595,11 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
     cancelMenuBarUsageWindowBlurHide();
     if (menuBarUsageCostDetailWindow && !menuBarUsageCostDetailWindow.isDestroyed()) menuBarUsageCostDetailWindow.destroy();
     appCloseLayerActivityByWindow.delete(window.id);
-    if (menuBarUsageWindow === window) menuBarUsageWindow = undefined;
+    if (menuBarUsageWindow === window) {
+      menuBarUsageWindow = undefined;
+      menuBarUsageLayout.anchor = undefined;
+      menuBarUsageLayout.contentHeight = undefined;
+    }
     updateTrayTooltip();
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -3603,7 +3618,7 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
 async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promise<void> {
   if (fatalStartup) return;
   const window = await createMenuBarUsageWindow();
-  const placement = resolveMenuBarUsageWindowPlacement(anchor);
+  const placement = resolveMenuBarUsageWindowPlacement(anchor, menuBarUsageLayout.contentHeight);
   if (!placement) {
     console.warn('Zeus 菜单栏用量浮窗无法解析本次点击位置。', { bounds: anchor.bounds, position: anchor.position });
     return;
@@ -3613,6 +3628,7 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
     hideMenuBarUsageWindow();
     return;
   }
+  menuBarUsageLayout.anchor = anchor;
   positionMenuBarUsageWindow(window, placement);
   window.show();
   // Windows 的 app.focus 会转向首个窗口；仅 macOS 需要先激活应用，再聚焦当前浮窗。

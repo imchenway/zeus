@@ -52,6 +52,11 @@ const copy = {
     noProvidersDetail: '使用 AI 后，这里会显示各个服务的用量。',
     quota: '额度剩余',
     todayToken: '今日 Token',
+    /** 总览汇总可见供应商的本机用量，读屏文案与可见数据保持一致。 */
+    todayLocalTokens: '今日本机 Token',
+    providersUsedToday: (count: number, complete: boolean) => `${complete ? '' : '至少 '}${count} 个供应商今日有用量`,
+    /** 只用于官方明确返回的 Codex 主额度的五小时窗口。 */
+    fiveHourQuota: (remaining: string) => `5 小时额度 · 剩余 ${remaining}`,
     available: '可用',
     localOnly: '本机统计',
     staleStatus: '数据过期',
@@ -126,6 +131,11 @@ const copy = {
     noProvidersDetail: 'Usage for each AI service appears here after you use it.',
     quota: 'Quota remaining',
     todayToken: 'Today tokens',
+    /** Summary counts usage recorded in Zeus across the visible providers. */
+    todayLocalTokens: 'Today’s local tokens',
+    providersUsedToday: (count: number, complete: boolean) => `${complete ? '' : 'At least '}${count} ${count === 1 ? 'provider' : 'providers'} used today`,
+    /** Shown for the official five-hour window in the main Codex quota. */
+    fiveHourQuota: (remaining: string) => `5h quota · ${remaining} left`,
     available: 'Available',
     localOnly: 'Local stats',
     staleStatus: 'Stale data',
@@ -435,7 +445,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
           ) : selectedProvider ? (
             <ProviderDetail provider={selectedProvider} language={surfaceSettings.language} />
           ) : (
-            <AllProviders providers={providers} language={surfaceSettings.language} onSelect={select} onMove={moveProvider} />
+            <AllProviders providers={providers} fullCoverage={snapshot.providerCoverage === 'all-recorded'} language={surfaceSettings.language} onSelect={select} onMove={moveProvider} />
           )}
         </div>
 
@@ -467,16 +477,17 @@ function UsageLoadFailure(props: { error: unknown; language: Language; loading: 
   );
 }
 
-/** 全部供应商列表：独立手柄排序，点击内容仍打开供应商详情。 */
-function AllProviders(props: { providers: UsageProviderSummary[]; language: Language; onSelect: (providerId: string) => void; onMove: (providerId: string, targetId: string) => void }) {
-  const text = copy[props.language];
+/** 本机用量总览，独立手柄排序，点击内容仍打开供应商详情。 */
+function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: boolean; language: Language; onSelect: (providerId: string) => void; onMove: (providerId: string, targetId: string) => void }) {
+  const { language, providers } = props;
+  const text = copy[language];
   /** 只接收从本列表手柄发起的拖拽，外部文本和文件不会修改顺序。 */
   const [draggedId, setDraggedId] = useState<string | null>(null);
   /** 落点仅用于提示，松手后才提交排序，避免悬停时列表来回跳动。 */
   const [dropId, setDropId] = useState<string | null>(null);
   /** 键盘移动后向读屏播报当前位置。 */
   const [announcement, setAnnouncement] = useState('');
-  if (props.providers.length === 0) {
+  if (providers.length === 0) {
     return (
       <div className="menu-bar-usage-empty">
         <strong>{text.noProviders}</strong>
@@ -484,11 +495,25 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
       </div>
     );
   }
+  /** 今日合计与活跃供应商数共用当前列表的本机记录，缺失用量时按下限展示。 */
+  const total = providers.reduce((summary, { overviewRanges: { today } }) => ({
+    tokens: summary.tokens + today.local.totalTokens,
+    activeProviders: summary.activeProviders + (today.local.totalTokens > 0 ? 1 : 0),
+    complete: summary.complete && today.complete,
+  }), { tokens: 0, activeProviders: 0, complete: props.fullCoverage });
   return (
-    <section className="menu-bar-usage-provider-list" aria-label={text.allProviders}>
+    <section className="menu-bar-usage-provider-list" data-reorderable={providers.length > 1} aria-label={text.allProviders}>
+      <div className="menu-bar-usage-provider-total">
+        <span>
+          <b>{text.todayLocalTokens}</b>
+          <small>{text.providersUsedToday(total.activeProviders, total.complete)}</small>
+        </span>
+        <strong>{formatIncompleteTokens(total.tokens, total.complete, language)}</strong>
+      </div>
       <header className="menu-bar-usage-provider-heading" aria-hidden="true">
         <span>{text.providers}</span>
-        <span>{text.todayToken}</span>
+        <span>{text.overviewRanges['7d']}</span>
+        <span>{text.overviewRanges.today}</span>
       </header>
       <span className="menu-bar-usage-sr-only" id="menu-bar-usage-reorder-help">
         {text.reorderHelp}
@@ -496,11 +521,22 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
       <span className="menu-bar-usage-sr-only" role="status">
         {announcement}
       </span>
-      {props.providers.map((provider, index) => {
+      {providers.map((provider, index) => {
         const fullName = providerDisplayName(provider);
         /** 可见数值与读屏摘要共用格式，省略重复文案后仍能识别今日统计口径。 */
         const today = provider.overviewRanges.today;
-        const todayValue = formatIncompleteTokens(today.local.totalTokens, today.complete, props.language);
+        const todayValue = formatIncompleteTokens(today.local.totalTokens, today.complete, language);
+        /** 完整价格覆盖时才展示今日估算，部分金额仍可在详情查看。 */
+        const todayCost = today.complete && today.local.priceCoverage === 1 ? formatUsd(today.local.apiEquivalentUsd, today.local.priceCoverage, language, '') : '';
+        const costLabel = isCodexSubscriptionUsage(provider) ? text.equivalentCost : text.cost;
+        /** 近七日柱高按当前供应商的本机用量峰值缩放，最后一格为当天。 */
+        const slots = buildDailySlots(provider, 'tokens', 'local');
+        const peak = Math.max(...slots.map((slot) => slot.value ?? 0));
+        /** 主额度摘要只取当前可用的官方五小时窗口。 */
+        const quota = !provider.stale && provider.officialState === 'available' && isCodexSubscriptionUsage(provider)
+          ? provider.rateLimitWindows.find((entry) => entry.windowDurationMins === 300 && (isCodexQuotaWindow(entry) || (entry.limitId === 'default' && !entry.limitName)))
+          : undefined;
+        const quotaLabel = quota ? text.fiveHourQuota(formatPercent(quota.remainingPercent / 100, language)) : '';
         const providerDetail = provider.deleted
           ? text.deleted
           : provider.kind === 'subscription'
@@ -531,7 +567,7 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
               setDropId(null);
             }}
           >
-            {props.providers.length > 1 ? (
+            {providers.length > 1 ? (
               <Button
                 unstyled
                 className="menu-bar-usage-drag-handle"
@@ -554,10 +590,10 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                   event.preventDefault();
                   /** 边界按键保持位置和焦点，不循环跳到另一端。 */
                   const targetIndex = index + (event.key === 'ArrowUp' ? -1 : 1);
-                  const target = props.providers[targetIndex];
+                  const target = providers[targetIndex];
                   if (!target) return;
                   props.onMove(provider.providerId, target.providerId);
-                  setAnnouncement(`${fullName} · ${targetIndex + 1} / ${props.providers.length}`);
+                  setAnnouncement(`${fullName} · ${targetIndex + 1} / ${providers.length}`);
                 }}
               >
                 <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -570,16 +606,23 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
               unstyled
               className="menu-bar-usage-provider-open"
               type="button"
-              aria-label={`${fullName} · ${text.todayToken} ${todayValue}`}
-              data-icon-tooltip={`${fullName} · ${providerDetail}`}
+              aria-label={[fullName, `${text.todayToken} ${todayValue}`, todayCost && `${costLabel} ${todayCost}`, quotaLabel].filter(Boolean).join(' · ')}
+              aria-description={peak > 0 ? `${text.overviewRanges['7d']} · ${slots.map(({ value }) => value === null ? text.missingDay : formatTokens(value, language)).join(', ')}` : undefined}
+              data-icon-tooltip={[fullName, providerDetail, todayCost && `${costLabel} ${todayCost}`].filter(Boolean).join(' · ')}
               onClick={() => props.onSelect(provider.providerId)}
             >
               <span className="menu-bar-usage-provider-copy">
                 <strong data-icon-tooltip={provider.deleted ? fullName : undefined}>{fullName}</strong>
-                {provider.deleted ? <small>{text.removedStatus}</small> : null}
+                {provider.deleted ? <small>{text.removedStatus}</small> : quotaLabel && <small>{quotaLabel}</small>}
+              </span>
+              <span className="menu-bar-usage-provider-trend" aria-hidden="true">
+                {peak > 0 && slots.map(({ date, value }) => (
+                  <i key={date} style={{ blockSize: value === null ? 0 : `max(1px, ${value / peak * 100}%)` }} />
+                ))}
               </span>
               <span className="menu-bar-usage-provider-value">
-                <strong>{todayValue}</strong>
+                <small>{todayValue}</small>
+                {todayCost && <strong>{todayCost}</strong>}
               </span>
               <Chevron />
             </Button>
@@ -684,7 +727,7 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   /** 固定 Codex 主额度组在首位，其余组及组内周期保留原顺序。 */
   const orderedGroups = [...groups];
   /** 同时识别官方额度池标识和显示名称，不把 Spark 等独立额度当作主额度。 */
-  const codexIndex = orderedGroups.findIndex(([id, windows]) => id.toLowerCase() === 'codex' || windows[0].limitName?.toLowerCase() === 'codex');
+  const codexIndex = orderedGroups.findIndex(([, windows]) => isCodexQuotaWindow(windows[0]));
   if (provider.providerId === 'codex' && codexIndex > 0) orderedGroups.unshift(...orderedGroups.splice(codexIndex, 1));
   return (
     <section className="menu-bar-usage-account-card" aria-label={`${name} · ${text.quota}`}>
@@ -1287,6 +1330,11 @@ function localDateKey(value: Date): string {
   const month = String(value.getMonth() + 1).padStart(2, '0');
   const day = String(value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/** 官方额度池可通过标识或名称识别；Spark 等独立额度保留各自口径。 */
+function isCodexQuotaWindow(window: CodexOfficialRateWindow): boolean {
+  return window.limitId?.toLowerCase() === 'codex' || window.limitName?.toLowerCase() === 'codex';
 }
 
 /** 分组标题已标明额度池，行内仅显示周期，避免重复模型名称。 */
