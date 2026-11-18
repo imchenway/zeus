@@ -27,7 +27,7 @@ export function blameDecorations(source: BlameSource, labels: { locale?: string 
   );
 }
 
-/** 当前单光标沿用原来的行尾详情，差异补位行没有归属时不生成提示。 */
+/** 单光标所在行有真实归属时，显示行尾提交摘要。 */
 function activeBlameDecorations(view: EditorView, resolveLine: (line: number) => GitBlameLine | undefined, labels: { locale?: string }) {
   const selection = view.state.selection;
   if (!view.hasFocus || selection.ranges.length !== 1 || !selection.main.empty) return Decoration.none;
@@ -37,7 +37,7 @@ function activeBlameDecorations(view: EditorView, resolveLine: (line: number) =>
   return Decoration.set([Decoration.widget({ widget: new BlameWidget(blame, labels), side: 1 }).range(line.to)]);
 }
 
-/** 行尾简要信息可直接阅读，统一提示保留 commit、作者和绝对时间等完整信息。 */
+/** 行尾提交摘要显示作者、相对时间和提交说明。 */
 class BlameWidget extends WidgetType {
   constructor(
     private readonly blame: GitBlameLine,
@@ -60,7 +60,7 @@ class BlameWidget extends WidgetType {
   toDOM(): HTMLElement {
     /** 外层继承代码行高，内层独立设置注释字号，避免裁剪改变基线。 */
     const element = document.createElement('span');
-    /** 长归属信息在同一行省略，完整详情由外层统一提示提供。 */
+    /** 长归属信息在同一行截断，保留代码行高。 */
     const text = document.createElement('span');
     /** 装饰只接收已确认的真实作者，不生成 Unknown 占位。 */
     const author = this.blame.author.trim();
@@ -72,7 +72,6 @@ class BlameWidget extends WidgetType {
     text.className = 'session-source-blame-text';
     text.textContent = `${author}, ${relativeTime} • ${subject}`;
     element.append(text);
-    element.dataset.iconTooltip = [author, formatAbsoluteTime(this.blame.authorTime, this.labels.locale), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
     element.setAttribute('aria-label', `${author}, ${relativeTime}, ${subject}`);
     return element;
   }
@@ -95,14 +94,5 @@ function formatRelativeTime(timestamp: number, locale = 'en-US'): string {
     return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(value, selected.unit);
   } catch {
     return `${Math.abs(value)} ${selected.unit}${Math.abs(value) === 1 ? '' : 's'} ago`;
-  }
-}
-
-function formatAbsoluteTime(timestamp: number, locale = 'en-US'): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return locale.startsWith('zh') ? '时间未知' : 'Unknown time';
-  try {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp * 1_000));
-  } catch {
-    return new Date(timestamp * 1_000).toISOString();
   }
 }

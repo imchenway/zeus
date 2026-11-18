@@ -1,4 +1,3 @@
-/* 当前行归属保留代码阅读优先级，完整详情通过悬停查看。 */
 /* 无额外控制行，代码预览填满源码滚动容器。 */
 .session-source-scroll:has(> .session-source-code-preview) {
   display: flex;
@@ -11,6 +10,7 @@
   min-block-size: 0;
 }
 
+/* 行尾提交摘要使用低强调文字，以便优先阅读源码。 */
 .session-source-blame-inline {
   display: inline-flex;
   align-items: center;
@@ -38,12 +38,6 @@
   line-height: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.session-source-blame-inline:hover,
-.session-source-blame-inline:focus-visible {
-  color: var(--session-text, #1f2937);
-  opacity: 1;
 }
 
 /* 原生正文选区必须覆盖应用外壳的禁选样式，侧栏保持不可复制。 */
@@ -75,9 +69,4 @@
 .code-reading-menu button > span {
   display: inline-block;
   width: 20px;
-}
-
-.session-source-blame-inline:focus-visible {
-  outline: 1px solid var(--session-accent, #408bd8);
-  outline-offset: 2px;
 }
