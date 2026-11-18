@@ -251,6 +251,9 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-list {
+  /* 表头与按钮共用列宽，窄窗口优先给名称和完整金额留空间。 */
+  --usage-provider-columns: minmax(0, 1fr) clamp(38px, 17vw, 62px) clamp(69px, 21vw, 76px) 14px;
+  --usage-provider-gap: 7px;
   display: grid;
   overflow: hidden;
   border: 0;
@@ -258,14 +261,53 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-panel);
 }
 
+/* 总量和使用供应商数共用一块摘要，色彩随现有浮窗主题变化。 */
+.menu-bar-usage-provider-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-block-size: 59px;
+  padding: 8px 11px;
+  border: 1px solid var(--usage-accent-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--usage-accent) 6%, var(--usage-panel));
+}
+
+.menu-bar-usage-provider-total span {
+  display: grid;
+  gap: 3px;
+}
+
+.menu-bar-usage-provider-total small {
+  color: var(--usage-muted);
+  font-size: 10px;
+}
+
+.menu-bar-usage-provider-total strong {
+  font-size: clamp(18px, 7vw, 25px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* 列表只在表头说明统计口径，避免每行重复今日文案。 */
 .menu-bar-usage-provider-heading {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 22px 8px 4px;
+  display: grid;
+  grid-template-columns: var(--usage-provider-columns);
+  gap: var(--usage-provider-gap);
+  padding: 12px 4px 8px;
   color: var(--usage-muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
+}
+
+/* 有独立拖动手柄时，表头偏移同样的宽度来保持数字列对齐。 */
+.menu-bar-usage-provider-list[data-reorderable='true'] .menu-bar-usage-provider-heading {
+  padding-inline-start: 28px;
+}
+
+.menu-bar-usage-provider-heading span:last-child {
+  text-align: end;
 }
 
 /* 手柄与详情按钮分开，拖动排序不会误打开详情。 */
@@ -333,12 +375,11 @@ body:has(.menu-bar-usage-root),
   min-inline-size: 0;
   border-radius: 6px;
   display: grid;
-  /* 移除字母头像后，供应商名称直接占据首列。 */
-  grid-template-columns: minmax(0, 1fr) auto 14px;
+  grid-template-columns: var(--usage-provider-columns);
   align-items: center;
-  gap: 9px;
-  min-block-size: 52px;
-  padding: 8px 4px;
+  gap: var(--usage-provider-gap);
+  min-block-size: 44px;
+  padding: 5px 4px;
   border: 0;
   background: transparent;
   color: var(--usage-text);
@@ -379,12 +420,42 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-provider-value {
-  max-inline-size: 102px;
+  font-variant-numeric: tabular-nums;
   text-align: end;
+}
+
+.menu-bar-usage-provider-value small {
+  font-size: 12px;
+}
+
+.menu-bar-usage-provider-value small:only-child {
+  font-weight: 650;
 }
 
 .menu-bar-usage-provider-value strong {
   font-size: 13px;
+}
+
+/* 每个柱位保留一个自然日，缺失日留空，末柱用强调色区分今日。 */
+.menu-bar-usage-provider-trend {
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  block-size: 20px;
+}
+
+.menu-bar-usage-provider-trend:not(:empty) {
+  border-block-end: 1px solid var(--usage-line);
+}
+
+.menu-bar-usage-provider-trend i {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--usage-accent) 62%, var(--usage-panel));
+}
+
+.menu-bar-usage-provider-trend i:last-child {
+  background: var(--usage-accent);
 }
 
 .menu-bar-usage-root svg {
