@@ -19,7 +19,7 @@ import { TaskWorkPlanningRepository } from '@zeus/storage';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { ConversationSourceContextReader } from './conversationSourceContext.js';
-import { type AiRuntimeSession, type CopilotRuntimeManager, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
+import { type AiRuntimeSession, type CopilotRuntimeManager, createAiRuntimeSessionManager, isGptReasoningModelId, modelConnectionCredentialSlotId, modelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
 import {
   parseCanonicalRequestUserInputQuestions,
@@ -77,7 +77,7 @@ import { nativePendingRequestProjection } from './codexNativeConversationPolicy.
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
 import type { ZeusSkillService } from './zeusSkillService.js';
 import { resolveConversationAttachmentGrant } from './conversationAttachmentGrant.js';
-import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryApplication, resolveModelCapability } from './conversationCapabilityQueryApplication.js';
+import { type ConversationCapabilitiesSnapshot, type ConversationCapabilityModel, ConversationCapabilityQueryApplication, resolveModelCapability } from './conversationCapabilityQueryApplication.js';
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
@@ -239,6 +239,12 @@ export function nativeApiError(code: string, message: string): Error & { code: s
 
 export function isNativeApiRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 已失效的 GPT 家族预设档位按当前模型默认档位处理。 */
+function requestedEffortForModel(model: ConversationCapabilityModel, requested: string | null): string | null {
+  if (model.agentKind === 'pi' && isGptReasoningModelId(model.model) && (model.supportedReasoningEfforts.length === 0 || (requested === 'minimal' && !model.supportedReasoningEfforts.includes(requested)))) return null;
+  return requested;
 }
 
 export function createConversationApplicationOperations(dependencies: ConversationApplicationOperationDependencies) {
@@ -2030,13 +2036,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const capability = resolveModelCapability(capabilities.models, model);
       if (!capability) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected Codex model is not available in the current app-server generation.');
       if (capability.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', capability.availabilityReason || '所选模型当前不可运行。');
-      if (requestedEffort && !capability.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
+      const effort = requestedEffortForModel(capability, requestedEffort);
+      if (effort && !capability.supportedReasoningEfforts.includes(effort)) {
         throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected reasoning effort is not supported by the selected Codex model.');
       }
       selectedModel = capability.model;
       selectedModelSourceId = capability.sourceId ?? null;
       selectedAgentKind = capability.agentKind ?? 'codex';
-      selectedEffort = retry?.frozenEffort === null ? null : (requestedEffort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null);
+      selectedEffort = retry?.frozenEffort === null ? null : (effort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null);
       selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
       selectedContextWindow = capability.contextWindow;
     }
@@ -2849,8 +2856,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
     const selectedAgentKind = selectedModel.agentKind;
     if (body.agentKind !== undefined && body.agentKind !== selectedAgentKind) throw nativeApiError('ZEUS_INVALID_AGENT_KIND', 'The requested agent does not match the selected model.');
-    const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
-    if (requestedEffort && !selectedModel.supportedReasoningEfforts.some((effort) => effort === requestedEffort)) {
+    const requestedEffort = requestedEffortForModel(selectedModel, typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null);
+    if (requestedEffort && !selectedModel.supportedReasoningEfforts.includes(requestedEffort)) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected reasoning effort is not supported by the selected Codex model.');
     }
     const requestedServiceTier = readServiceTierOverride(body);

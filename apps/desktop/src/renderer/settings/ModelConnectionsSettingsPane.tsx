@@ -1071,7 +1071,7 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
     try {
       if (input === null) {
         await client.saveModelConnectionReasoningOptions(connectionId, props.model.id, null);
-        setMessage(zh ? '已恢复自动判定：档位重新按官方档案、模型目录或家族推断决定。' : 'Restored automatic detection.');
+        setMessage(zh ? '已恢复自动判定。' : 'Restored automatic detection.');
       } else {
         await client.saveModelConnectionReasoningOptions(connectionId, props.model.id, {
           options: input.map((row) => ({ id: row.id.trim(), piLevel: row.piLevel, wire: row.wire.trim() ? row.wire.trim() : null })),
@@ -1118,7 +1118,7 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
           </thead>
           <tbody>
             {rows.map((row, index) => (
-              <tr key={`${row.id}:${index}`}>
+              <tr key={index}>
                 <td>
                   <input aria-label={zh ? '页面档位名' : 'Shown level'} value={row.id} disabled={busy} onChange={(event) => updateRow(index, { id: event.currentTarget.value })} />
                 </td>
@@ -1142,13 +1142,13 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
           </tbody>
         </table>
         <span className="model-reasoning-actions">
-          <Button size="compact" variant="secondary" disabled={busy || rows.length === 0} onClick={() => setRows((value) => [...value, { id: '', piLevel: 'medium', wire: '' }])}>
+          <Button size="compact" variant="secondary" disabled={busy || rows.length === PI_THINKING_LEVELS.length} onClick={() => setRows((value) => [...value, { id: '', piLevel: 'medium', wire: '' }])}>
             {zh ? '增加一档' : 'Add level'}
           </Button>
-          <Button size="compact" variant="secondary" disabled={busy} onClick={() => setRows((value) => value.slice(0, -1))}>
+          <Button size="compact" variant="secondary" disabled={busy || rows.length === 0} onClick={() => setRows((value) => value.slice(0, -1))}>
             {zh ? '减少一档' : 'Remove last'}
           </Button>
-          <Button size="compact" disabled={busy || props.context.connectionId === null} busy={status === 'saving'} onClick={() => saveOverride(rows)}>
+          <Button size="compact" disabled={busy || props.context.connectionId === null || rows.length === 0} busy={status === 'saving'} onClick={() => saveOverride(rows)}>
             {zh ? '保存清单' : 'Save list'}
           </Button>
           <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null} onClick={() => saveOverride(null)}>
@@ -1282,11 +1282,9 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
           <span className="model-reasoning-summary">
             {capability.reasoning.options.length === 0
               ? zh
-                ? '未识别：跟随模型默认，不发送任何档位字段'
-                : 'Unidentified: follow the model default and send no thinking field'
-              : capability.reasoning.options.map((option) => option.label || option.id).join(' / ')}
-            {' · '}
-            {reasoningBasisLabel(capability.reasoning.basis, zh)}
+                ? '跟随供应商默认值'
+                : 'Use provider default'
+              : `${capability.reasoning.options.map((option) => option.label || option.id).join(' / ')} · ${reasoningBasisLabel(capability.reasoning.basis, zh)}`}
           </span>
           {props.reasoning?.connectionId ? (
             <Button
@@ -1314,6 +1312,7 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
 function reasoningBasisLabel(basis: ModelReasoningBasis, zh: boolean): string {
   if (basis === 'official_endpoint') return zh ? '依据：官方端点声明（官方文档核对）' : 'Basis: official endpoint (verified against vendor docs)';
   if (basis === 'vendor_docs') return zh ? '依据：厂商文档档位表（同族通用，未逐个渠道验证）' : 'Basis: vendor documentation (same family, per-channel unverified)';
+  if (basis === 'codex_catalog') return zh ? '依据：Codex 模型目录（渠道未逐档验证）' : 'Basis: Codex model catalog (channel unverified)';
   if (basis === 'catalog') return zh ? '依据：内置目录声明（未逐档真机验证）' : 'Basis: built-in catalog (not verified level by level)';
   if (basis === 'catalog_default') return zh ? '依据：目录默认假设，未验证' : 'Basis: catalog default assumption, unverified';
   if (basis === 'model_name') return zh ? '依据：按模型名推断，未验证' : 'Basis: inferred from model name, unverified';

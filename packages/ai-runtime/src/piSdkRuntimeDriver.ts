@@ -236,18 +236,22 @@ const maximumPiDispatchContextBytes = 8 * 1024 * 1024;
 /**
  * 把会话档位交给 Pi。
  * 会话档位是用户词（厂商口径），Pi 只认七个中转词，所以这里用同一个模型的档位清单换算：
- * 认不出就回落到清单默认档，清单为空（未识别）时什么都不设，请求里也不会带任何档位字段。
+ * 认不出就回落到清单默认档，清单为空时清除会话的档位，由供应商使用自己的默认值。
  */
 async function applySessionThinkingLevel(entry: PiSessionEntry, requested: string | null | undefined, loadRuntime: () => Promise<{ connections: PiRuntimeConnection[] }>): Promise<void> {
-  if (!requested) return;
   const sessionModel = entry.session.model;
   if (!sessionModel) return;
   const { connections } = await loadRuntime();
   const sourceId = sourceIdFromPiProvider(sessionModel.provider);
   const definition = connections.find((candidate) => candidate.id === sourceId)?.models.find((model) => model.id === sessionModel.id);
   if (!definition) return;
+  if (definition.capability.reasoning.options.length === 0) {
+    if (entry.session.thinkingLevel !== 'off') entry.session.setThinkingLevel('off');
+    return;
+  }
+  if (!requested && definition.capability.reasoning.basis !== 'codex_catalog') return;
   const piLevel = resolvePiThinkingLevel(definition.capability.reasoning, requested);
-  if (piLevel) entry.session.setThinkingLevel(piLevel);
+  if (piLevel && entry.session.thinkingLevel !== piLevel) entry.session.setThinkingLevel(piLevel);
 }
 
 /**
