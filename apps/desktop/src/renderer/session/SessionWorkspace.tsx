@@ -50,7 +50,8 @@ import {
   type ZeusBrowserConversationSnapshot,
   type ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
-import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, ProjectRecord } from '../apiClient.js';
+import type { ProjectGitQueryClient } from '../git/projectGitWorkbenchState.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -234,7 +235,8 @@ export interface SessionWorkspaceActions {
   onOpenAiSettings?: (section: 'runtime' | 'models') => void;
   onOpenComputerSettings?: () => void;
   onSelectNewConversationProject?: (projectId: string) => void | Promise<void>;
-  onLoadNewConversationProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  /** 新对话使用当前项目的共享 Git 快照。 */
+  newConversationProjectGitClient?: ProjectGitQueryClient;
   onExecuteNewConversationProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   onReconnect?: () => void | Promise<void>;
   onReconnectCodex?: () => void | Promise<void>;
@@ -1820,7 +1822,13 @@ export interface NewConversationDraft {
   tokenDraft: { current: import('./StructuredComposerInput.js').StructuredToken[] };
 }
 
-export type NewConversationDraftStore = Map<string, NewConversationDraft>;
+/** 新对话的可编辑草稿和已离开页面的失败草稿各自保留。 */
+export interface NewConversationDraftStore {
+  /** 编辑中的草稿沿用项目入口和任务入口各自的恢复规则。 */
+  active: Map<string, NewConversationDraft>;
+  /** 失败草稿只在原项目或任务的空输入入口恢复，按失败顺序保留。 */
+  failed: Map<NewConversationDraft, string>;
+}
 
 export interface SessionWorkspaceProps {
   /** 外部选区进入侧栏后聚焦该会话输入框，不影响主会话。 */
@@ -3644,7 +3652,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onLoadDigitalEmployees={actions.onLoadDigitalEmployees}
           onOpenComputerSettings={actions.onOpenComputerSettings}
           onSelectProject={actions.onSelectNewConversationProject}
-          onLoadProjectGit={actions.onLoadNewConversationProjectGit}
+          projectGitClient={actions.newConversationProjectGitClient}
           onExecuteProjectGit={actions.onExecuteNewConversationProjectGit}
           onChooseAttachments={actions.onChooseStartAttachments}
         />
@@ -3807,15 +3815,39 @@ export function NewConversationComposer(props: {
   onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
   onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onSelectProject?: SessionWorkspaceActions['onSelectNewConversationProject'];
-  onLoadProjectGit?: SessionWorkspaceActions['onLoadNewConversationProjectGit'];
+  /** 分支选择器从此客户端的项目缓存读取已有数据。 */
+  projectGitClient?: ProjectGitQueryClient;
   onExecuteProjectGit?: SessionWorkspaceActions['onExecuteNewConversationProjectGit'];
   onChooseAttachments?: SessionWorkspaceActions['onChooseStartAttachments'];
   onAccepted?: () => void | Promise<void>;
 }) {
   const copy = labels[props.language];
   const textareaRef = useRef<ComposerInputHandle | null>(null);
+  /** 项目入口在切换执行项目后仍保留当前未发送的内容。 */
   const draftKey = props.owner?.kind === 'task' ? `task:${props.task?.id}` : 'project';
-  const [restoredDraft] = useState(() => props.drafts?.get(draftKey));
+  /** 离开页面的失败只在原执行项目或原任务恢复。 */
+  const failureKey = props.owner?.kind === 'project' ? `project:${props.owner.projectId}` : draftKey;
+  /** 当前未发送的内容优先，空入口可恢复最早的一条失败草稿。 */
+  const [restored] = useState(() => {
+    const active = props.drafts?.active.get(draftKey);
+    if (!active?.content && !active?.attachments.length && !active?.browserDraft?.submission && !active?.browserOpen && !active?.goalInputOpen && props.drafts) {
+      for (const [draft, ownerKey] of props.drafts.failed) {
+        if (ownerKey === failureKey) return { draft, failed: true };
+      }
+    }
+    return { draft: active };
+  });
+  /** 初始化编辑器时使用的草稿快照。 */
+  const restoredDraft = restored.draft;
+  /** 已离开的发送回执不再写入当前输入框。 */
+  const composerMounted = useRef(false);
+  useLayoutEffect(() => {
+    composerMounted.current = true;
+    if (restored.failed) props.drafts?.failed.delete(restored.draft);
+    return () => {
+      composerMounted.current = false;
+    };
+  }, [props.drafts, restored]);
   /** 创建界面重挂载时保留浏览器归属，不提前创建模型会话。 */
   const [browserDraft, setBrowserDraft] = useState<NewConversationBrowserDraft>(() => restoredDraft?.browserDraft ?? { conversationId: `browser-draft-${crypto.randomUUID()}`, submission: null });
   /** 项目工具覆盖新对话浏览器时统一协调焦点与原生网页。 */
@@ -3923,8 +3955,12 @@ export function NewConversationComposer(props: {
   useEffect(() => () => modelSetupRequestRef.current?.abort(), [props.owner?.projectId]);
   const [goalInputOpen, setGoalInputOpen] = useState(() => restoredDraft?.goalInputOpen ?? false);
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
+  /** 本页失败后的输入恢复提交到界面后，移除对应的备用草稿。 */
+  const [restoredSubmission, setRestoredSubmission] = useState<NewConversationDraft>();
   useLayoutEffect(() => {
-    props.drafts?.set(draftKey, {
+    if (startingTranscript) return;
+    if (restoredSubmission) props.drafts?.failed.delete(restoredSubmission);
+    props.drafts?.active.set(draftKey, {
       browserDraft,
       browserOpen,
       runtimeProjectId: runtimeProjectId ?? undefined,
@@ -3944,6 +3980,8 @@ export function NewConversationComposer(props: {
   }, [
     props.drafts,
     draftKey,
+    restoredSubmission,
+    startingTranscript,
     browserDraft,
     browserOpen,
     runtimeProjectId,
@@ -4202,6 +4240,10 @@ export function NewConversationComposer(props: {
     suggestion.dismiss();
     /** 新会话只提交输入框中显式选择的 Skill 和插件。 */
     const { skillReferences, pluginReferences } = structured;
+    /** 提交后保留发送前的草稿，只用于原请求的失败恢复。 */
+    let submittedDraft: NewConversationDraft | undefined;
+    /** 已受理的提交无需再恢复为草稿。 */
+    let restoreAfterSend = true;
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -4227,6 +4269,8 @@ export function NewConversationComposer(props: {
           startedAt: new Date().toISOString(),
         }),
       );
+      submittedDraft = props.drafts?.active.get(draftKey);
+      props.drafts?.active.delete(draftKey);
       let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
@@ -4279,7 +4323,8 @@ export function NewConversationComposer(props: {
         setLocalError(accepted);
         return;
       }
-      if (selectedModel && (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing')) {
+      restoreAfterSend = Boolean(accepted && typeof accepted === 'object' && accepted.state === 'preparing');
+      if (selectedModel && !restoreAfterSend) {
         try {
           /** 工作区方式仅由推送维护，普通会话不覆盖该选择。 */
           const storage = browserConversationStorage();
@@ -4299,8 +4344,7 @@ export function NewConversationComposer(props: {
           recordSystemMessage(systemScope, error, 'conversation_start', '会话已创建，但配置记忆保存失败。');
         }
       }
-      if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') {
-        props.drafts?.delete(draftKey);
+      if (!restoreAfterSend && composerMounted.current) {
         setContent('');
         setAttachments([]);
         /** 原浏览器已迁移到受理会话，后续空草稿使用独立归属。 */
@@ -4313,9 +4357,13 @@ export function NewConversationComposer(props: {
     } catch (error) {
       setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
-      setSubmitting(false);
-      setStartingTranscript(null);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      if (restoreAfterSend && submittedDraft) props.drafts?.failed.set(submittedDraft, failureKey);
+      if (composerMounted.current) {
+        if (restoreAfterSend) setRestoredSubmission(submittedDraft);
+        setSubmitting(false);
+        setStartingTranscript(null);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      }
     }
   }
 
@@ -4368,7 +4416,7 @@ export function NewConversationComposer(props: {
             onWorkspaceModeChange={(mode) => changeCreationPreferences({ workspaceMode: mode })}
             disabled={submitting}
             onSelectProject={props.onSelectProject}
-            onLoadProjectGit={props.onLoadProjectGit}
+            projectGitClient={props.projectGitClient}
             onExecuteProjectGit={props.onExecuteProjectGit}
             onBusyChange={setExecutionContextBusy}
           />

@@ -1,6 +1,7 @@
 import { branchSwitchRepositories, executeRepositoryBatch, intersectRepositoryValues, repositoryLocalBranches } from '../git/repositoryBranchGroups.js';
 import { temporaryWorkspaceId, type ConversationWorktreeBranchOptions, type ConversationWorktreeOptions } from '@zeus/shared';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { projectGitWorkbenchCacheEntry, type ProjectGitQueryClient } from '../git/projectGitWorkbenchState.js';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
@@ -29,7 +30,8 @@ export interface NewConversationExecutionContextProps {
   onWorkspaceModeChange: (mode: 'direct' | 'worktree') => void;
   disabled?: boolean;
   onSelectProject?: (projectId: string) => void | Promise<void>;
-  onLoadProjectGit?: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
+  /** 按客户端及项目复用分支快照。 */
+  projectGitClient?: ProjectGitQueryClient;
   onExecuteProjectGit?: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   onBusyChange?: (busy: boolean) => void;
 }
@@ -43,13 +45,25 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const [branchBusy, setBranchBusy] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
   const [createBranchName, setCreateBranchName] = useState('');
-  const [workbench, setWorkbench] = useState<ProjectGitWorkbenchSnapshot | null>(null);
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState<unknown>(null);
+  /** 用户发起 Git 操作时的错误独立于后台读取状态。 */
+  const [actionError, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
 
   const temporary = props.projectId === temporaryWorkspaceId;
+  /** 重开同一项目时首帧显示已读快照，后台查询仍按缓存新鲜度执行。 */
+  const gitQuery = useMemo(() => (!temporary && props.projectGitClient ? projectGitWorkbenchCacheEntry(props.projectGitClient, props.projectId) : null), [temporary, props.projectGitClient, props.projectId]);
+  /** 临时会话和无 Git 客户端的入口不订阅工作台。 */
+  const subscribeGit = useCallback((listener: () => void) => gitQuery?.subscribe(listener) ?? (() => undefined), [gitQuery]);
+  /** React 首次渲染即取得本项目已有的数据。 */
+  const getGitSnapshot = useCallback(() => gitQuery?.getSnapshot() ?? null, [gitQuery]);
+  /** 缓存保留已读快照，刷新过程不改变分支控件的可用状态。 */
+  const gitSnapshot = useSyncExternalStore(subscribeGit, getGitSnapshot);
+  const workbench = gitSnapshot?.value ?? null;
+  /** 后台读取失败时保留已经可用的分支；冷读取失败才需要用户处理。 */
+  const readError = temporary || workbench ? null : gitQuery ? gitSnapshot?.error : zh ? '当前无法读取项目分支。' : 'Project branches are unavailable.';
+  const loadState = temporary || workbench ? 'ready' : readError ? 'error' : 'loading';
+  const error = actionError ?? readError;
   const selectedProject = props.projects.find((project) => project.id === props.projectId) ?? null;
   // 只消费当前项目的快照，切换项目的一帧内也不能沿用旧来源。
   const repositories = useMemo(() => (workbench?.projectId === props.projectId ? workbench.repositories : []), [workbench, props.projectId]);
@@ -130,43 +144,21 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   );
 
   useEffect(() => {
-    const version = ++loadVersionRef.current;
-    setWorkbench(null);
+    loadVersionRef.current += 1;
     setScopeIds([]);
-    setLoadState('loading');
     setError(null);
     setRefreshing(false);
     branchBusyRef.current = false;
     setBranchBusy(false);
     setCreateBranchOpen(false);
     setCreateBranchName('');
-    if (temporary) {
-      setLoadState('ready');
-      return;
-    }
-    if (!props.onLoadProjectGit) {
-      setLoadState('error');
-      setError(zh ? '当前无法读取项目分支。' : 'Project branches are unavailable.');
-      return;
-    }
-    void props
-      .onLoadProjectGit(props.projectId)
-      .then((value) => {
-        if (version !== loadVersionRef.current) return;
-        setWorkbench(value);
-        setLoadState('ready');
-      })
-      .catch((reason: unknown) => {
-        if (version !== loadVersionRef.current) return;
-        setLoadState('error');
-        setError(reason);
-      });
+    void gitQuery?.load().catch(() => undefined);
     return () => {
       loadVersionRef.current += 1;
     };
-  }, [props.onLoadProjectGit, props.projectId, temporary, zh]);
+  }, [gitQuery, props.projectId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (temporary || props.workspaceMode !== 'worktree' || !worktreeAvailable) return;
     /** 同一轮默认命名用于全部独立仓库；用户可以逐仓修改。 */
     const branchName = `${props.taskBranchPrefix}/conversation-${crypto.randomUUID().slice(0, 8)}`;
@@ -199,7 +191,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     } else if (props.worktree) props.onWorktreeChange({ ...props.worktree, ...value });
   }
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     props.onBusyChange?.(branchBusy || projectBusy || refreshing || (!temporary && props.workspaceMode === 'worktree' && !validWorktree));
     return () => props.onBusyChange?.(false);
   }, [branchBusy, projectBusy, refreshing, temporary, props.workspaceMode, validWorktree, props.onBusyChange]);
@@ -237,10 +229,13 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           const input = action.type === 'create_branch' ? { ...action, baseRef: repository.snapshot.detached ? undefined : repository.snapshot.branch } : action;
           /** 操作完成后直接采用服务端返回的仓库状态。 */
           const response = await props.onExecuteProjectGit!(props.projectId, repository.id, input);
+          const updated = replaceRepositorySnapshot(gitQuery?.getSnapshot().value ?? null, repository.id, response);
+          if (updated) gitQuery?.set(updated);
           /** 父仓库签出会更新子模块，一起重读相关仓库的分支和提交。 */
-          const refreshed = (action.type === 'checkout' || action.type === 'create_branch') && repository.snapshot.submodules?.some((module) => module.initialized) ? await props.onLoadProjectGit?.(props.projectId) : undefined;
+          if ((action.type === 'checkout' || action.type === 'create_branch') && repository.snapshot.submodules?.some((module) => module.initialized)) {
+            await gitQuery?.load(true);
+          }
           if (version !== loadVersionRef.current) return null;
-          setWorkbench((current) => refreshed ?? replaceRepositorySnapshot(current, repository.id, response));
           return 'completed';
         } catch (reason) {
           failure = reason;

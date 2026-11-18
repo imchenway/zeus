@@ -225,8 +225,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     visibleTasks,
     workspaceScrollRef,
   } = state;
-  // 返回新会话只重新聚焦输入框；未发送草稿随工作区保留，由发送成功负责清理。
-  const [newConversationDrafts] = useState<NewConversationDraftStore>(() => new Map());
+  /** 工作区保留未提交的输入，以及切走后需要恢复的首发草稿。 */
+  const [newConversationDrafts] = useState<NewConversationDraftStore>(() => ({ active: new Map(), failed: new Map() }));
   /** 新建会话与项目预读共用目录请求，回调保持稳定以免输入时反复触发加载。 */
   const loadNewConversationCapabilities = useCallback(
     (projectId: string, force = false) => {
@@ -234,11 +234,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     },
     [props.nativeConversationClient],
   );
-  /** 读取分支快照时跳过差异补丁，并保持回调引用稳定，避免界面重渲染触发重新加载。 */
-  const loadNewConversationProjectGit = useMemo(() => {
-    const client = props.nativeConversationClient;
-    return client ? (projectId: string) => client.loadProjectGitWorkbench(projectId, false) : undefined;
-  }, [props.nativeConversationClient]);
   const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
     const {
       onConfirmRuntimeOperation,
@@ -1975,7 +1970,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
             handleMainNavigate('settings');
           },
           onSelectNewConversationProject: selectNewConversationProject,
-          onLoadNewConversationProjectGit: loadNewConversationProjectGit,
+          newConversationProjectGitClient: props.nativeConversationClient,
           onExecuteNewConversationProjectGit: props.nativeConversationClient ? executeNewConversationProjectGit : undefined,
           onChooseStartAttachments: props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined,
           onSelectTask: (task) => {
