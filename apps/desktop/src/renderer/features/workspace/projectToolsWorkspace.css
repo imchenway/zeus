@@ -101,8 +101,7 @@
   color: var(--zeus-product-muted);
 }
 .project-tools-layout > [hidden],
-.project-tools-panel > [hidden],
-.session-context-sidecar[hidden] {
+.project-tools-panel > [hidden] {
   display: none;
 }
 

@@ -3,7 +3,8 @@ export const nativeViewportOverlaySelector = '[data-motion-surface="popover"], [
 
 /** 前台对话框与实际覆盖正文的菜单会临时接管原生视图区域。 */
 export function nativeViewportOccluded(viewport: HTMLElement, popovers: Iterable<HTMLElement>): boolean {
-  if (viewport.closest('[hidden], [inert]')) return true;
+  /** 退出分栏的 DOM 已停止交互，原生画面仍随剩余宽度收拢。 */
+  if (viewport.closest('[hidden], [inert]:not([data-native-viewport-transition="true"])')) return true;
   if ([...viewport.ownerDocument.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport)))
     return true;
   const bounds = viewport.getBoundingClientRect();

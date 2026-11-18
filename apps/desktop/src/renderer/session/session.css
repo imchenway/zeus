@@ -8223,6 +8223,21 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 /* 会话浏览器沿用 Codex 的左右并置关系：会话始终在左，浏览器作为右侧工作面展开。 */
+@property --session-context-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+.session-codex-parity-v1 .session-sidecar-layout {
+  /* 顶栏、正文和原生视区共用每一帧的分栏宽度。 */
+  transition: --session-context-width 180ms var(--zeus-motion-ease-out);
+}
+
+.session-codex-parity-v1 .session-sidecar-layout[data-context-resizing='true'] {
+  transition: none;
+}
+
 .session-codex-parity-v1 .session-thread-body {
   container-name: session-conversation-area;
   container-type: inline-size;
@@ -8248,29 +8263,26 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-browser-sidecar {
-  border-inline-start: 0;
   /* 分隔线包含在共享宽度内，保证顶栏和正文落在同一条竖线上。 */
   box-sizing: border-box;
   flex: 0 0 auto;
+  inline-size: var(--session-context-width);
+  max-inline-size: 100%;
   min-block-size: 0;
   min-inline-size: 0;
-  opacity: 0;
   overflow: visible;
-  pointer-events: none;
   position: relative;
-  transition:
-    width 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 120ms ease-out,
-    visibility 0s linear 180ms;
-  visibility: hidden;
-  will-change: width, opacity;
   z-index: 33;
 }
 
-.session-codex-parity-v1 .session-browser-sidecar[data-context-open='true'] {
-  pointer-events: auto;
-  transition-delay: 0s;
-  visibility: visible;
+.session-codex-parity-v1 .session-browser-sidecar::before {
+  /* 全宽过渡隐藏拖动手柄，细线仍跟随分栏边缘。 */
+  background: var(--session-line);
+  content: '';
+  inline-size: 1px;
+  inset-block: 0;
+  inset-inline-start: -1px;
+  position: absolute;
 }
 
 .session-codex-parity-v1 .session-browser-pane {
@@ -9483,22 +9495,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   user-select: none;
 }
 
-/* 拖动时宽度立即跟随指针，原生网页沿用尺寸监听同步布局。 */
-.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-resizing='true'] .session-browser-sidecar {
-  transition-duration: 0s, 120ms, 0s;
-}
-
-.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] > .session-conversation-pane {
-  pointer-events: none;
-  visibility: hidden;
-}
-
 .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] .session-browser-resizer {
   visibility: hidden;
-}
-
-.session-codex-parity-v1 .session-conversation-browser-layout[data-browser-expanded='true'] .session-browser-sidecar {
-  border-inline-start: 0;
 }
 
 /* 标签操作与页面导航各占一个明确层级，顶栏挂载时不再占用正文高度。 */
@@ -9630,15 +9628,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 @container session-conversation-area (max-width: 840px) {
-  .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] > .session-conversation-pane {
-    pointer-events: none;
-    visibility: hidden;
-  }
-
-  .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] .session-browser-sidecar {
-    border-inline-start: 0;
-  }
-
   .session-codex-parity-v1 .session-conversation-browser-layout[data-browser-open='true'] .session-browser-resizer {
     visibility: hidden;
   }
@@ -10480,7 +10469,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-browser-sidecar,
+  .session-codex-parity-v1 .session-sidecar-layout,
   .session-codex-parity-v1 .session-terminal-panel {
     transition: none;
   }
@@ -13046,47 +13035,50 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-/* 文件与浏览器顶栏沿用会话底色，分隔线与正文连续。 */
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] {
+/* 开合时保留顶栏高度和操作按钮位置，标题与面板标签在同一行调整宽度。 */
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header {
   align-items: stretch;
-  background: var(--zeus-card-background, var(--session-canvas));
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--session-context-width);
   gap: 0;
-  min-block-size: 46px;
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header > .session-thread-title-copy {
   align-content: center;
+  grid-column: 1;
   max-inline-size: none;
-  padding: 6px 12px;
+  padding-block: 6px;
   padding-inline-start: var(--session-header-inset);
 }
 
-/* 顶栏与正文使用同一分栏宽度，标签起点与内容对齐。 */
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] > .session-context-header-tools {
-  align-items: center;
-  border-inline-start: 0;
-  /* 正文拖动细线位于右栏外侧一像素，顶栏沿用相同位置且不挤占标签宽度。 */
-  box-shadow: -1px 0 0 var(--session-line);
-  padding: 6px 8px;
-}
-
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-thread-title-copy {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'][data-context-full-width='true'] > .session-context-header-tools {
-  border-inline-start: 0;
-  box-shadow: none;
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header > .session-context-header-tools {
   grid-column: 2;
+  justify-content: flex-end;
+  padding: 6px 20px 6px 8px;
 }
 
-.session-codex-parity-v1 .session-thread-header[data-context-toolbar='true'] .session-thread-header-actions {
-  gap: 5px;
-  padding-block-end: 0;
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header[data-context-toolbar='true'] {
+  /* 工具按钮提供最小宽度，标签随可用空间裁剪。 */
+  grid-template-columns: minmax(0, 1fr) minmax(min(var(--session-context-width), 100%), max-content);
+}
+
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header[data-context-toolbar='true'] > .session-thread-title-copy {
+  overflow: clip;
+}
+
+.session-codex-parity-v1 .session-sidecar-layout .session-context-toolbar-host {
+  /* 标签的固有宽度不能撑开正在收拢的列。 */
+  contain: inline-size;
+  overflow: clip;
+}
+
+.session-codex-parity-v1 .session-sidecar-layout > .session-thread-header[data-context-toolbar='true']::after {
+  /* 细线始终位于右栏起点，按钮空间不足时仍与正文对齐。 */
+  background: var(--session-line);
+  content: '';
+  inline-size: 1px;
+  inset-block: 0;
+  inset-inline-end: var(--session-context-width);
+  position: absolute;
 }
 
 .session-codex-parity-v1 .session-context-toolbar-host > :is(.browser-tab-strip, .session-context-workspace-header, .session-side-question-header) {

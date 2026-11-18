@@ -245,7 +245,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       if (!viewportRef.current?.getClientRects().length || viewportRef.current.closest('[hidden], [inert], [data-tool-covered="true"]')) return;
       void closeTab(tabId);
     });
-  }, [activeTab?.id, props.conversationId]);
+  }, [activeTab?.id, props.conversationId, snapshot?.tabs.length]);
 
   useLayoutEffect(() => {
     // 沿用当前标签的原生布局通道，隐藏期间保留网页实例与页面状态。
@@ -426,6 +426,11 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
 
   async function closeTab(tabId: string): Promise<void> {
     if (!window.zeus?.closeBrowserTab || closedTabIdsRef.current.has(tabId)) return;
+    /** 最后一个网页由分栏关闭流程释放，先缩完原生视区再关闭标签。 */
+    if (snapshot?.tabs.length === 1 && snapshot.tabs[0]?.id === tabId) {
+      closeRef.current();
+      return;
+    }
     closedTabIdsRef.current.add(tabId);
     let next: ZeusBrowserConversationSnapshot;
     try {
@@ -436,7 +441,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       return;
     }
     if (next.tabs.length === 0) {
-      props.onClose();
+      closeRef.current();
       return;
     }
     setSnapshot(next);

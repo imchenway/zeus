@@ -12,6 +12,7 @@ import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
+import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
 import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import {
@@ -2152,7 +2153,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const projectTools = useContext(ProjectToolContext);
   /** 仅当前可见的会话工作面可以占用全宽。 */
   const contextFullWidth = requestedContextFullWidth;
-  const contextOpen = contextWorkspace.kind !== 'none';
+  /** 关闭期间保留原工作面的资源，重开或切换入口会中断退出。 */
+  const [closingContext, setClosingContext] = useState<SessionContextWorkspace | null>(null);
+  /** 工作面身份变化后，旧关闭请求不再影响当前面板。 */
+  const contextClosing = closingContext !== null && closingContext === contextWorkspace;
+  /** 交互在收拢开始时关闭，画面在收拢结束时移除。 */
+  const contextOpen = contextWorkspace.kind !== 'none' && !contextClosing;
+  /** 顶栏和正文由同一个元素上的宽度过渡驱动。 */
+  const { ref: contextMotionRef, present: contextPresent } = useMotionPresence<HTMLDivElement>(contextOpen);
+  /** 关闭全宽面板时立即恢复正文的交互。 */
+  const contextCoversConversation = contextOpen && (contextFullWidth || browserLayoutWidth <= 840);
+  /** 支持顶栏挂载的工作面在退出期间继续显示标签及标题。 */
+  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question'].includes(contextWorkspace.kind);
   /** 阅读回执使用持久项目身份，不使用面板导航身份。 */
   const contentProjectId = props.conversation?.projectId;
   /** 正文会话身份在提醒字段刷新时保持稳定。 */
@@ -2161,19 +2173,21 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const reportLatestContentVisibility = useCallback(
     (visible: boolean): void => {
       if (!contentProjectId || !contentConversationId) return;
-      props.onLatestContentVisibilityChange?.(contentProjectId, contentConversationId, visible && props.contentVisible !== false && !contextFullWidth);
+      props.onLatestContentVisibilityChange?.(contentProjectId, contentConversationId, visible && props.contentVisible !== false && !contextCoversConversation);
     },
-    [contentProjectId, contentConversationId, contextFullWidth, props.contentVisible, props.onLatestContentVisibilityChange],
+    [contentProjectId, contentConversationId, contextCoversConversation, props.contentVisible, props.onLatestContentVisibilityChange],
   );
   useLayoutEffect(() => () => reportLatestContentVisibility(false), [reportLatestContentVisibility]);
   /** 通用文件同属审阅，原生焦点通知继续沿用源码类别。 */
   const contextActivityKind = contextWorkspace.kind === 'file' ? 'source' : contextWorkspace.kind;
   const browserOpen = contextOpen && contextWorkspace.kind === 'browser';
+  /** 环境卡留在原位，避免退出期间改变原生网页的可视区域。 */
+  const browserPresent = contextPresent && contextWorkspace.kind === 'browser';
   const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
   /** 环境卡常驻判定只用正文列真实可用宽度：右侧浏览器工作面、停靠终端和全宽工作面占用的空间都不算正文空间。 */
-  const conversationColumnWidth = contextFullWidth ? 0 : Math.max(0, browserLayoutWidth - (contextOpen ? resolvedBrowserTargetWidth : 0));
+  const conversationColumnWidth = contextFullWidth && contextPresent ? 0 : Math.max(0, browserLayoutWidth - (contextPresent ? resolvedBrowserTargetWidth : 0));
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner, props.language), [owner, props.conversation, props.task, props.language]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
@@ -2415,12 +2429,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       event.preventDefault();
       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setContextFullWidth(false);
-      if (!projectTools.open && contextWorkspaceRef.current.kind === 'browser') void closeContextWorkspace();
+      if (!projectTools.open && contextWorkspaceRef.current.kind === 'browser' && !contextClosing) closeContextWorkspace();
       else setContextWorkspace({ kind: 'browser' });
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [legacy, props.conversation, projectTools.open, setContextWorkspace]);
+  }, [legacy, props.conversation, projectTools.open, setContextWorkspace, contextClosing]);
 
   useEffect(() => {
     if (!terminalAvailable || projectTools.open) return;
@@ -2793,7 +2807,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             );
           }
         } catch {
-          setContextWorkspace((current) => (current.kind === 'source' && current.preview.resource.id === activeSource.resource.id ? { kind: 'none' } : current));
+          /** 资源失效时也通过分栏退出流程移除原预览。 */
+          const current = contextWorkspaceRef.current;
+          if (current.kind === 'source' && current.preview.resource.id === activeSource.resource.id) closeContextWorkspace();
         }
       }
     }
@@ -2804,33 +2820,48 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return result;
   }
 
-  /** 明确关闭浏览器先释放标签；普通工作面切换与组件卸载不清理页面。 */
-  async function closeContextWorkspace(options: { focusComposer?: boolean } = {}): Promise<void> {
-    /** 使用实时会话身份，异步关闭完成后不影响用户刚切换的工作面。 */
-    const conversationId = workspaceIdentityRef.current;
-    if (contextWorkspaceRef.current.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
-      if (closingBrowserConversationsRef.current.has(conversationId)) return;
-      closingBrowserConversationsRef.current.add(conversationId);
-      setContextWorkspaceError(null);
-      try {
-        await window.zeus.closeBrowserConversation(conversationId);
-      } catch (error) {
-        setContextWorkspaceError(error);
-        return;
-      } finally {
-        closingBrowserConversationsRef.current.delete(conversationId);
-      }
-      if (workspaceIdentityRef.current !== conversationId || contextWorkspaceRef.current.kind !== 'browser') return;
-      browserSnapshotRef.current = null;
-    }
+  /** 开始收拢时交还焦点，原生标签在视区缩到零后释放。 */
+  function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
+    if (contextClosing || contextWorkspaceRef.current.kind === 'none') return;
+    setClosingContext(contextWorkspaceRef.current);
+    setContextWorkspaceError(null);
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
-    setContextWorkspace({ kind: 'none' });
-    setContextFullWidth(false);
     /** 显式返回输入框时不再恢复工具入口。 */
     const target = options.focusComposer ? null : contextReturnFocusRef.current;
     contextReturnFocusRef.current = null;
     restoreToolFocus(target);
   }
+
+  useEffect(() => {
+    if (!contextClosing || contextPresent) return;
+    /** 异步宿主回执只更新发起关闭的工作面。 */
+    const conversationId = workspaceIdentityRef.current;
+    const isCurrent = (): boolean => workspaceIdentityRef.current === conversationId && contextWorkspaceRef.current === closingContext;
+    /** 先让原生视区走完分栏过渡，再执行原有标签清理。 */
+    async function finishClose(): Promise<void> {
+      if (closingContext?.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
+        if (closingBrowserConversationsRef.current.has(conversationId)) return;
+        closingBrowserConversationsRef.current.add(conversationId);
+        try {
+          await window.zeus.closeBrowserConversation(conversationId);
+        } catch (error) {
+          if (isCurrent()) {
+            setContextWorkspaceError(error);
+            setClosingContext(null);
+          }
+          return;
+        } finally {
+          closingBrowserConversationsRef.current.delete(conversationId);
+        }
+        if (isCurrent()) browserSnapshotRef.current = null;
+      }
+      if (!isCurrent()) return;
+      setContextWorkspace({ kind: 'none' });
+      setContextFullWidth(false);
+      setClosingContext(null);
+    }
+    void finishClose();
+  }, [closingContext, contextClosing, contextPresent, setContextWorkspace, setContextFullWidth]);
 
   async function runGoalAction(action: (() => void | Promise<void>) | undefined, closeAfter = false): Promise<boolean> {
     if (!action || goalBusy) return false;
@@ -3099,15 +3130,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     <>
       <MotionPresence>{imagePreviewRequest ? <FilePreviewDialog request={imagePreviewRequest} zh={props.language === 'zh-CN'} onClose={() => setImagePreviewRequest(null)} /> : null}</MotionPresence>
       {displayedHeader ? (
-        <header
-          className="session-thread-header"
-          data-context-toolbar={(contextOpen && ['browser', 'source', 'file', 'question'].includes(contextWorkspace.kind)) || undefined}
-          data-context-full-width={contextFullWidth || browserLayoutWidth <= 840 || undefined}
-          data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}
-          style={{ '--session-context-width': `${resolvedBrowserTargetWidth}px` } as CSSProperties}
-        >
+        <header className="session-thread-header" data-context-toolbar={contextToolbarPresent || undefined} data-quick-actions-popover-open={quickActionsPopoverOpen || undefined}>
           {!props.embeddedInTask ? (
-            <div key={navigationId} className="session-thread-title-copy" data-conversation-transition="true">
+            <div key={navigationId} className="session-thread-title-copy" data-conversation-transition="true" inert={contextCoversConversation && contextToolbarPresent}>
               <span className="session-thread-title-row">
                 {displayedHeader.taskId && actions.onOpenTaskDetail ? (
                   <Button
@@ -3160,7 +3185,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </div>
           ) : null}
           <div className="session-context-header-tools">
-            <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
+            <div ref={setContextToolbarHost} className="session-context-toolbar-host" inert={!contextOpen} />
             <div className="session-thread-header-actions">
               {props.embeddedInTask ? conversationInformation : null}
               {!legacy && props.conversation && props.state ? (
@@ -3171,7 +3196,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   state={props.state}
                   task={props.task}
                   persistentHost={quickActionsPersistentHost}
-                  dockHost={browserOpen ? browserEnvironmentHost : null}
+                  dockHost={browserPresent ? browserEnvironmentHost : null}
                   conversationColumnWidth={conversationColumnWidth}
                   suppressed={props.quickActionsSuppressed}
                   capabilities={props.capabilities}
@@ -3338,11 +3363,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 ref={browserSplitRef}
                 className="session-conversation-browser-layout"
                 data-browser-open={contextOpen || undefined}
-                data-browser-expanded={contextFullWidth || undefined}
+                data-browser-expanded={(contextOpen && contextFullWidth) || undefined}
                 data-context-kind={contextWorkspace.kind}
                 data-browser-resizing={browserResizing || undefined}
               >
-                <div className="session-conversation-pane">
+                <div className="session-conversation-pane" inert={contextCoversConversation}>
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}
@@ -3455,16 +3480,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 </div>
                 {/* 常驻环境卡与会话并排占位，让正文和输入框一起避让。 */}
                 <div ref={setQuickActionsPersistentHost} className="session-quick-actions-persistent-host" />
-                {props.conversation ? (
+                {props.conversation && contextPresent && contextWorkspace.kind !== 'none' ? (
                   <aside
                     className="session-browser-sidecar session-context-sidecar"
                     data-context-owner={props.conversation.id}
                     aria-label={contextWorkspaceLabel(contextWorkspace, props.language)}
                     aria-hidden={!contextOpen}
-                    hidden={!contextOpen}
                     inert={!contextOpen}
-                    data-context-open={contextOpen}
-                    style={{ width: contextOpen ? resolvedBrowserTargetWidth : 0, opacity: contextOpen ? 1 : 0 }}
+                    data-native-viewport-transition={contextClosing || undefined}
                   >
                     <div
                       className="session-browser-resizer"
@@ -3485,7 +3508,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       }}
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
-                    <div className="session-browser-pane" data-environment-open={(browserOpen && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
+                    <div className="session-browser-pane" data-environment-open={(browserPresent && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
                       <ReadingStateScope id={JSON.stringify([props.conversation.projectId, navigationId])}>
                         {sideQuestionState && props.renderSideQuestion
                           ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace, contextToolbarHost)
@@ -3493,7 +3516,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                         {contextWorkspace.kind === 'browser' ? (
                           <BrowserWorkspace
-                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            toolbarHost={contextToolbarHost}
                             conversationId={props.state?.conversationId ?? props.conversation.id}
                             initialSnapshot={browserSnapshotRef.current}
                             language={props.language}
@@ -3514,7 +3537,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             }}
                           />
                         ) : null}
-                        {browserOpen ? <div ref={setBrowserEnvironmentHost} className="session-browser-environment-host" /> : null}
+                        {browserPresent ? <div ref={setBrowserEnvironmentHost} className="session-browser-environment-host" /> : null}
                         {contextWorkspace.kind === 'subagents' && actions.onLoadSubagents && actions.onLoadSubagentThread ? (
                           <SubagentWorkspace
                             language={props.language}
@@ -3539,7 +3562,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             location={contextWorkspace.location}
                             commentPath={contextWorkspace.commentPath}
                             language={props.language}
-                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            toolbarHost={contextToolbarHost}
                             canSplit={browserLayoutWidth > 840}
                             fullWidth={contextFullWidth}
                             comments={props.state?.contextDraft.codeComments}
@@ -3554,7 +3577,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             onStateChange={setSourceWorkspaceState}
                             onLoadPreview={transcriptReadActionsEnabled ? actions.onLoadResourcePreview : undefined}
                             canSplit={browserLayoutWidth > 840}
-                            toolbarHost={contextOpen ? contextToolbarHost : null}
+                            toolbarHost={contextToolbarHost}
                             preview={contextWorkspace.preview}
                             onOpen={transcriptReadActionsEnabled ? (target, resource) => openConversationResource(resource ?? contextWorkspace.preview.resource, target) : undefined}
                             resources={[
@@ -3673,7 +3696,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none', ownerConversationId: props.conversation?.id });
       }}
     >
-      <div className="session-primary-pane">{primaryPane}</div>
+      <div
+        ref={contextMotionRef}
+        className={`session-primary-pane${!legacy && props.state ? ' session-sidecar-layout' : ''}`}
+        data-context-resizing={browserResizing || undefined}
+        style={{ '--session-context-width': `${contextOpen ? resolvedBrowserTargetWidth : 0}px` } as CSSProperties}
+      >
+        {primaryPane}
+      </div>
       {(terminalMounted || terminalOpen) && terminalAvailable && props.terminalClient && props.conversation && props.projectPath ? (
         <SessionTerminalPanel
           key={props.conversation.projectId}
@@ -3822,11 +3852,16 @@ export function NewConversationComposer(props: {
   const projectTools = useContext(ProjectToolContext);
   /** 浏览器工作面随当前输入草稿恢复。 */
   const [browserOpen, setBrowserOpen] = useState(() => restoredDraft?.browserOpen ?? false);
-  /** 工具覆盖时仍保留草稿浏览器的布局与打开状态。 */
-  const browserVisible = browserOpen;
+  /** 关闭释放标签，批注暂存只收拢网页以供首发迁移。 */
+  const [browserClosing, setBrowserClosing] = useState<'close' | 'hide' | null>(null);
+  /** 退出时立即关闭交互，重新打开时从当前宽度反向过渡。 */
+  const browserVisible = browserOpen && !browserClosing;
+  /** 新会话和已有会话共用同一分栏过渡。 */
+  const { ref: browserMotionRef, present: browserPresent } = useMotionPresence<HTMLElement>(browserVisible);
   /** 主动打开浏览器时收起项目工具。 */
   const openBrowser = useCallback(() => {
     projectTools.revealSessionContext();
+    setBrowserClosing(null);
     setBrowserOpen(true);
   }, [projectTools.revealSessionContext]);
   /** 浏览器全宽只属于当前阅读状态。 */
@@ -3984,19 +4019,38 @@ export function NewConversationComposer(props: {
     });
   }, [browserDraft.conversationId]);
 
-  /** 显式关闭释放标签；确认批注仅收起工作面，保留首发迁移所需的网页。 */
-  const closeBrowser = useCallback(async (): Promise<void> => {
-    try {
-      await window.zeus?.closeBrowserConversation?.(browserDraft.conversationId);
-      recoverDraftOperation('browser_close');
-      window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
-      setBrowserOpen(false);
-      setBrowserExpanded(false);
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    } catch (error) {
-      recordSystemMessage(systemScope, error, 'browser_close', '浏览器关闭失败。');
+  /** 开始收拢时恢复输入框焦点，保持原生视图随尺寸同步。 */
+  const closeBrowser = useCallback((action: 'close' | 'hide' = 'close'): void => {
+    setBrowserClosing((current) => current ?? action);
+    window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!browserClosing || browserPresent) return;
+    /** 重开浏览器后忽略已过期的关闭回执。 */
+    let cancelled = false;
+    /** 动画结束后按关闭来源释放或保留原生标签。 */
+    async function finishClose(): Promise<void> {
+      try {
+        if (browserClosing === 'close') {
+          await window.zeus?.closeBrowserConversation?.(browserDraft.conversationId);
+          if (cancelled) return;
+          recoverDraftOperation('browser_close');
+        }
+        setBrowserOpen(false);
+        setBrowserExpanded(false);
+      } catch (error) {
+        if (!cancelled) recordSystemMessage(systemScope, error, 'browser_close', '浏览器关闭失败。');
+      } finally {
+        if (!cancelled) setBrowserClosing(null);
+      }
     }
-  }, [browserDraft.conversationId, systemScope, recoverDraftOperation]);
+    void finishClose();
+    return () => {
+      cancelled = true;
+    };
+  }, [browserClosing, browserPresent, browserDraft.conversationId, systemScope, recoverDraftOperation]);
 
   useEffect(() => {
     /** 新对话处理自己的浏览器快捷键，停靠输入仅在本容器获得焦点时接管。 */
@@ -4635,31 +4689,30 @@ export function NewConversationComposer(props: {
 
   /** 新对话复用已有会话的浏览器布局，网页和批注不依赖模型能力加载。 */
   const browserWidth = resolveBrowserTargetWidth(browserLayoutWidth, 56, browserExpanded);
+  /** 全宽浏览器打开时，左列保留画面过渡并退出焦点导航。 */
+  const browserCoversConversation = browserVisible && (browserExpanded || browserLayoutWidth <= 840);
   return (
     <section
-      className="session-new-conversation-workspace"
+      ref={browserMotionRef}
+      className="session-new-conversation-workspace session-sidecar-layout"
+      style={{ '--session-context-width': `${browserVisible ? browserWidth : 0}px` } as CSSProperties}
       onPointerDownCapture={(event) => {
         /** 原生网页和输入框沿用已有会话的焦点归属通知。 */
         const active = browserVisible && event.target instanceof Element && Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none', ownerConversationId: browserDraft.conversationId });
       }}
       onFocusCapture={(event) => {
         /** 焦点移入浏览器后，原生关闭标签快捷键只作用于当前网页。 */
         const active = browserVisible && event.target instanceof Element && Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none', ownerConversationId: browserDraft.conversationId });
       }}
     >
-      <header
-        className="session-thread-header"
-        data-context-toolbar={browserVisible || undefined}
-        data-context-full-width={(browserVisible && browserExpanded) || browserLayoutWidth <= 840 || undefined}
-        style={{ '--session-context-width': `${browserWidth}px` } as CSSProperties}
-      >
-        <div className="session-thread-title-copy">
+      <header className="session-thread-header" data-context-toolbar={browserPresent || undefined}>
+        <div className="session-thread-title-copy" inert={browserCoversConversation}>
           <strong>{props.language === 'zh-CN' ? '新对话' : 'New conversation'}</strong>
         </div>
         <div className="session-context-header-tools">
-          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" />
+          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" inert={!browserVisible} />
           <div className="session-thread-header-actions">
             <Button
               unstyled
@@ -4677,7 +4730,7 @@ export function NewConversationComposer(props: {
         </div>
       </header>
       <div ref={browserLayoutRef} className="session-conversation-browser-layout" data-browser-open={browserVisible || undefined} data-browser-expanded={(browserVisible && browserExpanded) || undefined}>
-        <div className="session-conversation-pane">
+        <div className="session-conversation-pane" inert={browserCoversConversation}>
           {startingTranscript || draftSystemMessages.length ? (
             <ConversationTranscript
               state={startingTranscript ?? emptyDraftTranscript}
@@ -4698,38 +4751,33 @@ export function NewConversationComposer(props: {
             )}
           </div>
         </div>
-        <aside
-          className="session-browser-sidecar session-context-sidecar"
-          aria-label={props.language === 'zh-CN' ? '新对话浏览器' : 'New conversation browser'}
-          aria-hidden={!browserVisible}
-          hidden={!browserVisible}
-          inert={!browserVisible}
-          data-context-open={browserVisible}
-          style={{ width: browserVisible ? browserWidth : 0, opacity: browserVisible ? 1 : 0 }}
-        >
-          <div className="session-browser-pane">
-            {browserOpen ? (
+        {browserPresent ? (
+          <aside
+            className="session-browser-sidecar session-context-sidecar"
+            aria-label={props.language === 'zh-CN' ? '新对话浏览器' : 'New conversation browser'}
+            aria-hidden={!browserVisible}
+            inert={!browserVisible}
+            data-native-viewport-transition={!!browserClosing || undefined}
+          >
+            <div className="session-browser-pane">
               <BrowserWorkspace
-                toolbarHost={browserVisible ? browserToolbarHost : null}
+                toolbarHost={browserToolbarHost}
                 conversationId={browserDraft.conversationId}
                 language={props.language}
                 disabled={submitting}
                 expanded={browserExpanded}
                 canSplit={browserLayoutWidth > 840}
-                onClose={closeBrowser}
+                onClose={() => closeBrowser()}
                 onToggleExpanded={() => setBrowserExpanded((current) => !current)}
                 onResetSize={() => setBrowserExpanded(false)}
                 onStageComments={(prepared) => {
                   setBrowserDraft((current) => ({ ...current, submission: mergeBrowserSubmissions(current.submission, prepared) }));
-                  window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
-                  setBrowserOpen(false);
-                  setBrowserExpanded(false);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
+                  closeBrowser('hide');
                 }}
               />
-            ) : null}
-          </div>
-        </aside>
+            </div>
+          </aside>
+        ) : null}
       </div>
     </section>
   );

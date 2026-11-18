@@ -296,13 +296,19 @@ export class BrowserHost implements BrowserAutomationPort {
     return Boolean(contents && !contents.isDestroyed() && contents.isFocused());
   }
 
-  /** 网页与浏览器工具栏共用原生标签状态，连续快捷键不等待 Renderer 换帧。 */
+  /** 从原生网页或工具栏定位标签，多标签关闭时同步交接焦点。 */
   closeActiveContextTab(window: BrowserWindow, conversationId?: string): boolean {
     /** 工具栏提供所属会话；网页焦点则直接定位该窗口的原生标签。 */
     const tabId = this.isVisibleTabFocused(window) ? this.visibleTabByWindow.get(window.id) : conversationId ? this.activeTabByConversation.get(conversationId) : undefined;
     /** 只关闭当前窗口拥有的存活标签。 */
     const tab = tabId ? this.tabs.get(tabId) : undefined;
     if (!tab || tab.ownerWindowId !== window.id) return false;
+    /** 关闭最后一页时先让 Renderer 收拢承载它的分栏。 */
+    if (this.snapshotFor(tab.snapshot.conversationId).tabs.length === 1) {
+      if (this.isVisibleTabFocused(window)) window.webContents.focus();
+      window.webContents.send('zeus:session-context-close-active-tab', tab.snapshot.conversationId);
+      return true;
+    }
     this.closeTab(window, tab.snapshot.conversationId, tab.snapshot.id);
     return true;
   }
