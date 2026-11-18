@@ -219,7 +219,7 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
   }
 
   /** 复制命令独立记录信息级日志；机器读取的摘要和元数据输出不混入日志。 */
-  function runOssutil(args, watchUploadProgress = false) {
+  function runOssutil(args, uploadInstaller = false) {
     /** 日志位于本次私有临时目录，避免并发命令混写或遗留原始请求信息。 */
     const logPath = args[0] === 'cp' ? join(temporary, `ossutil-${randomUUID()}.log`) : null;
     const commandArgs = [
@@ -227,7 +227,8 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       '--region',
       configuration.region,
       '--endpoint',
-      `https://oss-${configuration.region}.aliyuncs.com`,
+      // 安装包走就近接入点，以缩短跨境公网传输路径。
+      uploadInstaller ? 'https://oss-accelerate.aliyuncs.com' : `https://oss-${configuration.region}.aliyuncs.com`,
       '--mode',
       'StsToken',
       '--connect-timeout',
@@ -241,7 +242,7 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       ...(logPath ? ['--log-file', logPath] : []),
       '--quiet',
     ];
-    return execute('ossutil', commandArgs, watchUploadProgress);
+    return execute('ossutil', commandArgs, uploadInstaller);
   }
 
   /** 所有操作只能落在已授权的 zeus 对象前缀内。 */
