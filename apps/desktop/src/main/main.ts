@@ -1171,7 +1171,8 @@ function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
-  app.focus({ steal: true });
+  // Windows 的 app.focus 会把焦点从交付窗口转向首个可见窗口。
+  if (process.platform !== 'win32') app.focus({ steal: true });
   window.webContents.send('zeus:task-git-delivery:request-frame');
 }
 

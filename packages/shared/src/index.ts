@@ -167,6 +167,24 @@ export const defaultTaskManagementStatusLabels: Record<'zh-CN' | 'en-US', Record
   'en-US': { todo: 'To do', in_development: 'In development', in_testing: 'In testing', awaiting_acceptance: 'Awaiting acceptance', blocked: 'Blocked', completed: 'Completed', cancelled: 'Cancelled' },
 };
 
+/** 新建状态在用户命名前使用系统提供的占位名。 */
+export const newTaskManagementStatusLabels = { 'zh-CN': '新状态', 'en-US': 'New status' } as const;
+
+/** 按界面语言显示系统默认名称，用户自定义名称直接显示。 */
+export function formatTaskManagementStatusLabel(status: Pick<TaskManagementStatusDefinition, 'id' | 'label'>, language: 'zh-CN' | 'en-US'): string {
+  /** 状态标识用于区分同名的内置状态和自定义状态。 */
+  const { id } = status;
+  /** 状态标签沿用设置中的首尾空白处理。 */
+  const label = status.label?.trim();
+  if (Object.hasOwn(defaultTaskManagementStatusLabels['en-US'], id) && (!label || label === defaultTaskManagementStatusLabels['zh-CN'][id] || label === defaultTaskManagementStatusLabels['en-US'][id])) {
+    return defaultTaskManagementStatusLabels[language][id] ?? id;
+  }
+  if (id.startsWith('status_') && (label === newTaskManagementStatusLabels['zh-CN'] || label === newTaskManagementStatusLabels['en-US'])) {
+    return newTaskManagementStatusLabels[language];
+  }
+  return label || id;
+}
+
 /** 仅相同标识和颜色可以等价，用户自定义文案与不同颜色仍保留独立含义。 */
 export function taskManagementStatusDefinitionsEquivalent(left: TaskManagementStatusDefinition, right: TaskManagementStatusDefinition): boolean {
   if (left.id !== right.id || left.color !== right.color) return false;

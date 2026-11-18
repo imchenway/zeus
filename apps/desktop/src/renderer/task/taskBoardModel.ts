@@ -1,5 +1,6 @@
 import { taskDeadlineTimes } from '@zeus/shared';
 import {
+  formatTaskManagementStatusLabel,
   taskTypeOrder,
   taskBoardEmptyGroupId,
   taskBoardLayoutKey,
@@ -68,10 +69,6 @@ export interface TaskBoardGroupModel {
 const priorityOptions: TaskBoardGroupOption[] = ['p0', 'p1', 'p2', 'p3', 'p4'].map((id) => ({ id, label: id.toUpperCase() }));
 const runStatusIds: TaskAgentRunStatus[] = ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'];
 const branchStatusIds: TaskBranchStatus[] = ['action_required', 'active', 'pushed', 'merged', 'discarded', 'not_created'];
-const defaultManagementStatusLabels: Record<'zh-CN' | 'en-US', Record<string, string>> = {
-  'zh-CN': { todo: '待开始', in_development: '开发中', in_testing: '测试中', awaiting_acceptance: '待验收', blocked: '已阻塞', completed: '已完成', cancelled: '已取消' },
-  'en-US': { todo: 'To do', in_development: 'In development', in_testing: 'In testing', awaiting_acceptance: 'Awaiting acceptance', blocked: 'Blocked', completed: 'Completed', cancelled: 'Cancelled' },
-};
 
 function uniqueOptions(options: TaskBoardGroupOption[]): TaskBoardGroupOption[] {
   const seen = new Set<string>();
@@ -82,9 +79,10 @@ function uniqueOptions(options: TaskBoardGroupOption[]): TaskBoardGroupOption[] 
   });
 }
 
+/** 看板分组按当前语言使用与任务列表一致的状态名称。 */
 export function taskBoardGroupOptions(context: TaskBoardProjectionContext, property: TaskBoardGroupProperty): TaskBoardGroupOption[] {
   const zh = context.language === 'zh-CN';
-  if (property === 'managementStatus') return context.statusDefinitions.map((status) => ({ id: status.id, label: status.label?.trim() || defaultManagementStatusLabels[context.language][status.id] || status.id, color: status.color }));
+  if (property === 'managementStatus') return context.statusDefinitions.map((status) => ({ id: status.id, label: formatTaskManagementStatusLabel(status, context.language), color: status.color }));
   if (property === 'priority') return priorityOptions;
   if (property === 'taskType') return taskTypeOrder.map((taskType) => ({ id: taskType, label: formatTaskType(taskType, context.language) }));
   if (property === 'tags')

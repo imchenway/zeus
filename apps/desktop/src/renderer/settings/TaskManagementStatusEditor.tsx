@@ -1,7 +1,7 @@
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useEffect, useState } from 'react';
 import type { TaskManagementStatusConfig, TaskManagementStatusDefinition } from '@zeus/shared';
-import { normalizeTaskManagementStatusConfig } from '@zeus/shared';
+import { newTaskManagementStatusLabels, normalizeTaskManagementStatusConfig } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -58,7 +58,8 @@ function StatusNameInput(props: { language: 'zh-CN' | 'en-US'; index: number; di
   useEffect(() => setValue(props.displayName), [props.displayName]);
   const commit = (): void => {
     const label = value.trim();
-    if (!label) {
+    // 只保存实际改名，语言切换后的默认显示名无需写入配置。
+    if (!label || label === props.displayName) {
       setValue(props.displayName);
       return;
     }
@@ -108,7 +109,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
     const id = createStatusId(existingIds);
     const definition: TaskManagementStatusDefinition = {
       id,
-      label: zh ? '新状态' : 'New status',
+      label: newTaskManagementStatusLabels[props.language],
       color: newStatusColors[props.config.statuses.length % newStatusColors.length],
     };
     props.onChange({ statuses: [...props.config.statuses.map((status) => ({ ...status })), definition], roles: { ...props.config.roles } });
