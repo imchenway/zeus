@@ -38,6 +38,7 @@ export { applyNetworkProxyEnvironment, closeNetworkProxyRuntime } from './networ
 export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import {
   cloneTaskManagementStatusConfig,
+  defaultInputSuggestionSettings,
   defaultTaskManagementStatusLabels,
   taskManagementStatusDefinitionsEquivalent,
   type ReadOnlyValidationDescriptor,
@@ -1040,7 +1041,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return { url: (await networkProxyRuntimeEnvironment()).HTTP_PROXY };
   });
   if (newDatabase) {
-    appShellSettings = { ...appShellSettings, modelSetupStatus: 'pending' };
+    appShellSettings = {
+      ...appShellSettings,
+      modelSetupStatus: 'pending',
+      /** 新资料默认用当前会话模型生成输入建议。 */
+      inputSuggestions: { ...defaultInputSuggestionSettings, enabled: true, followConversationModel: true },
+    };
     settings.setJson(appShellSettingsKey, appShellSettings);
     await db.save();
   }

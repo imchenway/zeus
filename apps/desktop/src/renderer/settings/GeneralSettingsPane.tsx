@@ -33,8 +33,10 @@ export function GeneralSettingsPane(props: {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   /** 前缀格式错误属于当前字段，不弹全局错误对话框。 */
   const [taskBranchPrefixError, setTaskBranchPrefixError] = useState<string | null>(null);
-  /** 专用模型与会话默认模型分开，旧用户没有隐式模型。 */
+  /** 输入建议沿用已加载的自动开关和模型偏好。 */
   const suggestions = props.value.inputSuggestions ?? defaultInputSuggestionSettings;
+  /** 空值只表示存量配置未选模型。 */
+  const suggestionModelValue = suggestions.followConversationModel ? 'conversation' : (suggestions.modelRef ?? '');
   /** 模型目录只在通用设置打开或用户刷新时读取。 */
   const [suggestionModels, setSuggestionModels] = useState<InputSuggestionModelOption[]>([]);
   /** 目录失败只在本设置区提示，不弹窗或更换已保存模型。 */
@@ -196,7 +198,7 @@ export function GeneralSettingsPane(props: {
                 type="checkbox"
                 aria-label={zh ? '启用自动输入建议' : 'Enable automatic input suggestions'}
                 checked={suggestions.enabled}
-                disabled={!props.client || (!suggestions.modelRef && !suggestions.followConversationModel)}
+                disabled={!props.client || !suggestionModelValue}
                 onChange={(event) => save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
               />
               <span className="native-switch-track" aria-hidden="true" />
@@ -206,13 +208,14 @@ export function GeneralSettingsPane(props: {
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议模型' : 'Input suggestion model'}
-              value={suggestions.followConversationModel ? 'conversation' : (suggestions.modelRef ?? '')}
+              value={suggestionModelValue}
+              triggerLabel={suggestionModelValue ? undefined : zh ? '未设置' : 'Not set'}
               disabled={!props.client || (modelsLoading && !suggestionModels.length)}
               onChange={(value) =>
                 save({
                   inputSuggestions: {
-                    enabled: suggestions.enabled && Boolean(value),
-                    modelRef: value === 'conversation' ? suggestions.modelRef : value || null,
+                    ...suggestions,
+                    modelRef: value === 'conversation' ? suggestions.modelRef : value,
                     followConversationModel: value === 'conversation',
                     effort: null,
                     serviceTier: null,
@@ -220,8 +223,7 @@ export function GeneralSettingsPane(props: {
                 })
               }
               options={[
-                { value: '', label: zh ? '请选择模型' : 'Choose a model' },
-                { value: 'conversation', label: zh ? '跟随当前会话' : 'Use conversation model' },
+                { value: 'conversation', label: zh ? '跟随当前会话模型' : 'Use current conversation model' },
                 ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
                 ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
               ]}

@@ -4,7 +4,7 @@ import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
 
 /** 所有会话共用的输入建议偏好，与主会话模型选择分开保存。 */
 export interface InputSuggestionSettings {
-  /** 仅显式启用后才自动生成，避免升级后增加模型用量。 */
+  /** 控制自动预测和输入停顿后的补全。 */
   enabled: boolean;
   /** 专用 Codex 或模型连接的完整身份；跟随模式下保留原选择。 */
   modelRef: string | null;
@@ -171,7 +171,7 @@ export function normalizeInputSuggestionUiDiagnostic(value: unknown): InputSugge
   };
 }
 
-/** 未配置的新旧用户均保持关闭，不隐式选择付费模型。 */
+/** 偏好尚未加载或存量资料缺少配置时，自动建议保持关闭。 */
 export const defaultInputSuggestionSettings: InputSuggestionSettings = { enabled: false, modelRef: null, effort: null, serviceTier: null };
 
 /** 在设置读取和写入边界核对类型；缺少有效模型时不能启用。 */
