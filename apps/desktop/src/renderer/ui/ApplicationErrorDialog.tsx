@@ -396,7 +396,9 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                 {current.receipt ? <CheckIcon weight="bold" aria-hidden="true" /> : null}
                 {reportLabel}
               </Button>
-              <span className="visually-hidden" role="status">{current.receipt ? copy.reported : ''}</span>
+              <span className="visually-hidden" role="status">
+                {current.receipt ? copy.reported : ''}
+              </span>
               {current.code === 'ZEUS_CODEX_LOGIN_REQUIRED' || current.code === 'ZEUS_NEW_PROJECT_MODEL_UNAVAILABLE' ? (
                 <Button
                   variant="primary"

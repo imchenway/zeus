@@ -98,16 +98,21 @@ export function estimateModelPrice(model: string, usage: TokenUsageBreakdown, ca
   /** 精确身份在连接内部匹配，其他供应商同名模型不能借价。 */
   const instant = new Date(occurredAt);
   /** 所有适用条件均由程序判断，多个冲突费率同时命中时拒绝猜测。 */
-  const matches = catalog?.prices.filter((entry) => entry.model === model).map((entry) => ({
-    entry,
-    match: entry.metered
-      ? matchMeteredPrice(entry.metered, meteredUsage, occurredAt, catalog?.observedAt ?? catalog?.retrievedAt ?? '', historical)
-      : Number.isFinite(instant.getTime()) &&
-        (!entry.inputRange || (usage.inputTokens > entry.inputRange.minExclusive && usage.inputTokens <= entry.inputRange.maxInclusive)) &&
-        !entry.excludedUtcWindows?.some(
-          (window) => window.weekdays.includes(instant.getUTCDay()) && instant.getUTCHours() * 60 + instant.getUTCMinutes() >= window.startMinute && instant.getUTCHours() * 60 + instant.getUTCMinutes() < window.endMinute,
-        ) && (!historical || instant.getTime() >= Date.parse(catalog?.observedAt ?? catalog?.retrievedAt ?? '')),
-  })).filter(({ match }) => match !== false) ?? [];
+  const matches =
+    catalog?.prices
+      .filter((entry) => entry.model === model)
+      .map((entry) => ({
+        entry,
+        match: entry.metered
+          ? matchMeteredPrice(entry.metered, meteredUsage, occurredAt, catalog?.observedAt ?? catalog?.retrievedAt ?? '', historical)
+          : Number.isFinite(instant.getTime()) &&
+            (!entry.inputRange || (usage.inputTokens > entry.inputRange.minExclusive && usage.inputTokens <= entry.inputRange.maxInclusive)) &&
+            !entry.excludedUtcWindows?.some(
+              (window) => window.weekdays.includes(instant.getUTCDay()) && instant.getUTCHours() * 60 + instant.getUTCMinutes() >= window.startMinute && instant.getUTCHours() * 60 + instant.getUTCMinutes() < window.endMinute,
+            ) &&
+            (!historical || instant.getTime() >= Date.parse(catalog?.observedAt ?? catalog?.retrievedAt ?? '')),
+      }))
+      .filter(({ match }) => match !== false) ?? [];
   const price = matches.length === 1 && matches[0]?.match === true ? matches[0].entry : undefined;
   /** 使用通用空费率建立账本形状，不套用任何模型默认价格。 */
   const snapshot = unavailableRateSnapshot(model);

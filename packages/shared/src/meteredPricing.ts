@@ -73,21 +73,34 @@ export function isMeteredPrice(value: unknown): value is MeteredPrice {
   if (price.validFrom !== undefined && !isPricingInstant(price.validFrom)) return false;
   if (price.validUntil !== undefined && !isPricingInstant(price.validUntil)) return false;
   if (typeof price.validFrom === 'string' && typeof price.validUntil === 'string' && Date.parse(price.validFrom) >= Date.parse(price.validUntil)) return false;
-  if (price.attributes !== undefined && (!price.attributes || typeof price.attributes !== 'object' || Array.isArray(price.attributes) || Object.entries(price.attributes).some(([key, value]) => !isPricingAttribute(key) || typeof value !== 'string' || !value.trim() || value.length > 256))) return false;
+  if (
+    price.attributes !== undefined &&
+    (!price.attributes ||
+      typeof price.attributes !== 'object' ||
+      Array.isArray(price.attributes) ||
+      Object.entries(price.attributes).some(([key, value]) => !isPricingAttribute(key) || typeof value !== 'string' || !value.trim() || value.length > 256))
+  )
+    return false;
   if (price.windows === undefined) return true;
-  return Array.isArray(price.windows) && price.windows.length > 0 && price.windows.length <= 32 && price.windows.every((entry) => {
-    const window = pricingRecord(entry);
-    if (Object.keys(window).some((key) => !['timeZone', 'weekdays', 'startMinute', 'endMinute'].includes(key))) return false;
-    if (typeof window.timeZone !== 'string' || !window.timeZone || !Array.isArray(window.weekdays) || !window.weekdays.length) return false;
-    if (window.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) return false;
-    if (!isPricingAmount(window.startMinute) || !isPricingAmount(window.endMinute) || !Number.isInteger(window.startMinute) || !Number.isInteger(window.endMinute) || window.startMinute >= window.endMinute || window.endMinute > 1440) return false;
-    try {
-      new Intl.DateTimeFormat('en', { timeZone: window.timeZone });
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  return (
+    Array.isArray(price.windows) &&
+    price.windows.length > 0 &&
+    price.windows.length <= 32 &&
+    price.windows.every((entry) => {
+      const window = pricingRecord(entry);
+      if (Object.keys(window).some((key) => !['timeZone', 'weekdays', 'startMinute', 'endMinute'].includes(key))) return false;
+      if (typeof window.timeZone !== 'string' || !window.timeZone || !Array.isArray(window.weekdays) || !window.weekdays.length) return false;
+      if (window.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) return false;
+      if (!isPricingAmount(window.startMinute) || !isPricingAmount(window.endMinute) || !Number.isInteger(window.startMinute) || !Number.isInteger(window.endMinute) || window.startMinute >= window.endMinute || window.endMinute > 1440)
+        return false;
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: window.timeZone });
+        return true;
+      } catch {
+        return false;
+      }
+    })
+  );
 }
 
 /** 缺失维度返回 unknown，无法裁定的较贵规则不能被普通费率掩盖。 */
@@ -97,12 +110,16 @@ export function matchMeteredPrice(price: MeteredPrice, usage: MeteredUsage | und
   if (price.validUntil && instant >= Date.parse(price.validUntil)) return false;
   if (price.validFrom && instant < Date.parse(price.validFrom)) return false;
   if (historical && !price.validFrom && !(instant >= Date.parse(catalogAt))) return 'unknown';
-  if (price.windows && !price.windows.some((window) => {
-    const local = localParts(new Date(instant), window.timeZone);
-    const minute = local.hour * 60 + local.minute;
-    const day = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
-    return window.weekdays.includes(day) && minute >= window.startMinute && minute < window.endMinute;
-  })) return false;
+  if (
+    price.windows &&
+    !price.windows.some((window) => {
+      const local = localParts(new Date(instant), window.timeZone);
+      const minute = local.hour * 60 + local.minute;
+      const day = new Date(Date.UTC(local.year, local.month - 1, local.day)).getUTCDay();
+      return window.weekdays.includes(day) && minute >= window.startMinute && minute < window.endMinute;
+    })
+  )
+    return false;
   const attributes = usage?.attributes ?? {};
   const required = Object.entries(price.attributes ?? {});
   if (required.some(([key, value]) => Object.hasOwn(attributes, key) && attributes[key] !== value)) return false;

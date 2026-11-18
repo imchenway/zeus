@@ -55,7 +55,9 @@ export function createModelPricingService(options: {
   /** 已核对的缓存只适用于同一份价格配置和认证范围。 */
   function sourceRevision(connection: ModelConnectionRecord): string | undefined {
     return connection.pricingProfile || connection.pricingCredentialId
-      ? createHash('sha256').update(JSON.stringify([connection.pricingProfile, connection.pricingCredentialId])).digest('hex')
+      ? createHash('sha256')
+          .update(JSON.stringify([connection.pricingProfile, connection.pricingCredentialId]))
+          .digest('hex')
       : undefined;
   }
 
@@ -112,10 +114,13 @@ export function createModelPricingService(options: {
             ]);
             document = mainDocument;
             let json: unknown;
-            try { json = JSON.parse(document); } catch { /* HTML 交给已有协议判定。 */ }
+            try {
+              json = JSON.parse(document);
+            } catch {
+              /* HTML 交给已有协议判定。 */
+            }
             const standardPrices = readUnifiedPriceDocument(json);
-            recognized = standardPrices ? { prices: standardPrices, unavailableModels: [] }
-              : kilo ? parseKiloPricing(json) : builtIn ? parseBuiltInModelPrices(connection.templateId, document, cacheDocument) : parseNewApiPricing(json);
+            recognized = standardPrices ? { prices: standardPrices, unavailableModels: [] } : kilo ? parseKiloPricing(json) : builtIn ? parseBuiltInModelPrices(connection.templateId, document, cacheDocument) : parseNewApiPricing(json);
             if (builtIn && connection.templateId === 'bailian' && recognized) document = JSON.stringify(recognized);
             if (!recognized && /new[ -]?api|\/static\/js\/|\/assets\//iu.test(document)) {
               try {

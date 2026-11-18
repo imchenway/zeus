@@ -154,7 +154,10 @@ function pricingPromotionTerms(document: string) {
     const endsAt = Date.parse(lastPromotionDay + ' UTC');
     const date = startsAt - endsAt === 86_400_000 ? new Date(startsAt).toISOString().slice(0, 10) : null;
     for (const name of models!.split(/\s*,\s*(?:and\s+)?|\s+and\s+/iu)) {
-      const model = clean(name).toLowerCase().replace(/[‐‑–−]/gu, '-').replace(/\s+/gu, '-');
+      const model = clean(name)
+        .toLowerCase()
+        .replace(/[‐‑–−]/gu, '-')
+        .replace(/\s+/gu, '-');
       const key = JSON.stringify([model, label]);
       const prior = periods.get(key);
       periods.set(key, { model, label, listStartsOn: prior && prior.listStartsOn !== date ? null : date });

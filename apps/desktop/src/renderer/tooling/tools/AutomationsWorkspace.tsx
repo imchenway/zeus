@@ -638,8 +638,7 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; trig
   if (draft.triggerKind === 'once') {
     /** 日期独立使用原生选择器，合并后继续沿用现有的时区解析。 */
     const [date = '', time = ''] = draft.onceAtText.split('T');
-    const updateOnce = (nextDate: string, nextTime: string) =>
-      props.setDraft({ ...draft, onceAtText: nextDate || nextTime ? `${nextDate}T${nextTime}` : '' });
+    const updateOnce = (nextDate: string, nextTime: string) => props.setDraft({ ...draft, onceAtText: nextDate || nextTime ? `${nextDate}T${nextTime}` : '' });
     return (
       <div className="automation-form-field">
         <div className="automation-form-grid">

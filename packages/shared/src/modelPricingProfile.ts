@@ -29,21 +29,33 @@ export interface ModelPricingProfile {
 /** 公开目录价目必须明确模型、原币和完整计费规则。 */
 export function isMeteredCatalogPrice(value: unknown): value is ModelPrice {
   const row = record(value);
-  return Object.keys(row).every((key) => ['model', 'currency', 'basis', 'evidence', 'perMillion', 'perRequest', 'metered'].includes(key)) &&
-    typeof row.model === 'string' && Boolean(row.model.trim()) && row.model.length <= 256 &&
-    typeof row.currency === 'string' && /^[A-Z]{3}$/u.test(row.currency) &&
-    typeof row.basis === 'string' && Boolean(row.basis.trim()) && row.basis.length <= 1024 &&
-    typeof row.evidence === 'string' && Boolean(row.evidence.trim()) && row.evidence.length <= 8192 &&
-    row.perMillion === null && row.perRequest === null &&
-    isMeteredPrice(row.metered);
+  return (
+    Object.keys(row).every((key) => ['model', 'currency', 'basis', 'evidence', 'perMillion', 'perRequest', 'metered'].includes(key)) &&
+    typeof row.model === 'string' &&
+    Boolean(row.model.trim()) &&
+    row.model.length <= 256 &&
+    typeof row.currency === 'string' &&
+    /^[A-Z]{3}$/u.test(row.currency) &&
+    typeof row.basis === 'string' &&
+    Boolean(row.basis.trim()) &&
+    row.basis.length <= 1024 &&
+    typeof row.evidence === 'string' &&
+    Boolean(row.evidence.trim()) &&
+    row.evidence.length <= 8192 &&
+    row.perMillion === null &&
+    row.perRequest === null &&
+    isMeteredPrice(row.metered)
+  );
 }
 
 /** 数据路径只沿 JSON 自有字段读取，空路径指向当前对象。 */
 export function pricingField(value: unknown, path: string): unknown {
-  return path ? path.split('.').reduce<unknown>((current, key) => {
-    const object = record(current);
-    return Object.hasOwn(object, key) ? object[key] : undefined;
-  }, value) : value;
+  return path
+    ? path.split('.').reduce<unknown>((current, key) => {
+        const object = record(current);
+        return Object.hasOwn(object, key) ? object[key] : undefined;
+      }, value)
+    : value;
 }
 
 /** 仅对明确的配置路径开放字段访问。 */
@@ -53,7 +65,7 @@ function isPath(value: unknown): value is string {
 
 /** 定义中只有对象具备可读取字段。 */
 function record(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 /** 配置保存与调用入口共用校验，原文 JSON 与凭据分开。 */
@@ -61,7 +73,11 @@ export function parseModelPricingProfile(input: string): ModelPricingProfile {
   const invalid = () => new Error('价格源配置必须为有效的 JSON 价目、字段映射或回执映射。');
   if (typeof input !== 'string' || input.length > 120_000) throw invalid();
   let profile: ModelPricingProfile;
-  try { profile = JSON.parse(input) as ModelPricingProfile; } catch { throw invalid(); }
+  try {
+    profile = JSON.parse(input) as ModelPricingProfile;
+  } catch {
+    throw invalid();
+  }
   if (!profile || typeof profile !== 'object' || Array.isArray(profile) || Object.keys(profile).some((key) => !['prices', 'source', 'usage'].includes(key))) throw invalid();
   if (profile.prices !== undefined && (!Array.isArray(profile.prices) || !profile.prices.every(isMeteredCatalogPrice))) throw invalid();
   if (profile.source !== undefined) {
@@ -69,16 +85,32 @@ export function parseModelPricingProfile(input: string): ModelPricingProfile {
     if (!s || typeof s !== 'object' || Array.isArray(s) || Object.keys(s).some((key) => !['items', 'entries', 'fields', 'template', 'match', 'cursor', 'bearer'].includes(key))) throw invalid();
     if (!isPath(s.items) || (s.entries !== undefined && !isPath(s.entries)) || !Array.isArray(s.fields) || !s.fields.length || !s.fields.every(isPricingIdentifier)) throw invalid();
     if (!s.template || typeof s.template !== 'object' || Array.isArray(s.template) || (s.bearer !== undefined && typeof s.bearer !== 'boolean')) throw invalid();
-    if (s.match !== undefined && (!s.match || typeof s.match !== 'object' || Array.isArray(s.match) || Object.entries(s.match).some(([key, value]) => !isPath(key) || !key || (value !== null && !['string', 'number', 'boolean'].includes(typeof value))))) throw invalid();
+    if (
+      s.match !== undefined &&
+      (!s.match || typeof s.match !== 'object' || Array.isArray(s.match) || Object.entries(s.match).some(([key, value]) => !isPath(key) || !key || (value !== null && !['string', 'number', 'boolean'].includes(typeof value))))
+    )
+      throw invalid();
     if (s.cursor !== undefined && (!s.cursor || !isPath(s.cursor.path) || !s.cursor.path || !isPricingIdentifier(s.cursor.parameter))) throw invalid();
   }
   if (profile.usage !== undefined) {
     const usage = profile.usage;
     if (!usage || typeof usage !== 'object' || Array.isArray(usage) || Object.keys(usage).some((key) => !['quantities', 'attributes'].includes(key))) throw invalid();
-    if (usage.quantities !== undefined && (!Array.isArray(usage.quantities) || usage.quantities.length > 32 ||
-      usage.quantities.some((item) => !item || !isPricingIdentifier(item.meter) || !isPricingIdentifier(item.unit) || !isPath(item.path) || !item.path) ||
-      new Set(usage.quantities.map((item) => item.meter)).size !== usage.quantities.length)) throw invalid();
-    if (usage.attributes !== undefined && (!usage.attributes || typeof usage.attributes !== 'object' || Array.isArray(usage.attributes) || Object.entries(usage.attributes).some(([key, value]) => !isPricingAttribute(key) || !isPath(value) || !value || !value.split('.').every(isPricingAttribute)))) throw invalid();
+    if (
+      usage.quantities !== undefined &&
+      (!Array.isArray(usage.quantities) ||
+        usage.quantities.length > 32 ||
+        usage.quantities.some((item) => !item || !isPricingIdentifier(item.meter) || !isPricingIdentifier(item.unit) || !isPath(item.path) || !item.path) ||
+        new Set(usage.quantities.map((item) => item.meter)).size !== usage.quantities.length)
+    )
+      throw invalid();
+    if (
+      usage.attributes !== undefined &&
+      (!usage.attributes ||
+        typeof usage.attributes !== 'object' ||
+        Array.isArray(usage.attributes) ||
+        Object.entries(usage.attributes).some(([key, value]) => !isPricingAttribute(key) || !isPath(value) || !value || !value.split('.').every(isPricingAttribute)))
+    )
+      throw invalid();
   }
   return profile;
 }
@@ -101,9 +133,11 @@ export function readMeteredUsage(value: unknown, profile: ModelPricingProfile['u
     if (isPricingAmount(quantity)) quantities.push({ meter, unit, quantity });
   }
   if (completed && !configured.some(({ meter }) => meter === 'requests')) quantities.push({ meter: 'requests', unit: 'request', quantity: 1 });
-  const attributes = Object.fromEntries(Object.entries(profile?.attributes ?? {}).flatMap(([key, path]) => {
-    const valueAtPath = pricingField(value, path);
-    return typeof valueAtPath === 'string' && valueAtPath.trim() ? [[key, valueAtPath]] : [];
-  }));
+  const attributes = Object.fromEntries(
+    Object.entries(profile?.attributes ?? {}).flatMap(([key, path]) => {
+      const valueAtPath = pricingField(value, path);
+      return typeof valueAtPath === 'string' && valueAtPath.trim() ? [[key, valueAtPath]] : [];
+    }),
+  );
   return { quantities, attributes };
 }

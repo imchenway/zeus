@@ -14,9 +14,9 @@ function stream(model: Model<Api>, context: TranscriptContext, options?: StreamO
 async function* generate(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AsyncGenerator<AssistantMessageEvent> {
   const user = context.messages.filter((message): message is UserMessage => message.role === 'user').at(-1);
   const parts = Array.isArray(user?.content) ? user.content : [];
-  const prompt = (typeof user?.content === 'string' ? user.content : parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n')).trim();
+  const prompt = (typeof user?.content === 'string' ? user.content : parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')).trim();
   if (!prompt) throw new Error('生成图片需要文字提示。');
-  const images = parts.flatMap((part) => part.type === 'image' ? [`data:${part.mimeType};base64,${part.data}`] : []);
+  const images = parts.flatMap((part) => (part.type === 'image' ? [`data:${part.mimeType};base64,${part.data}`] : []));
   const request = { model: model.id, prompt, ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}) };
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (options?.apiKey) headers.set('Authorization', `Bearer ${options.apiKey}`);
@@ -27,21 +27,31 @@ async function* generate(model: Model<Api>, context: TranscriptContext, options?
   const payload = (await options?.onPayload?.(request, model)) ?? request;
   const timeout = AbortSignal.timeout(options?.timeoutMs ?? 180_000);
   const response = await (options?.fetch ?? globalThis.fetch)(modelConnectionRequestEndpoint(model.baseUrl, 'openai_images'), {
-    method: 'POST', headers, body: JSON.stringify(payload), redirect: 'error', signal: options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    redirect: 'error',
+    signal: options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
   });
   await options?.onResponse?.({ status: response.status, headers: Object.fromEntries(response.headers) }, model);
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error(`生成图片请求失败（HTTP ${response.status}）。`);
   }
-  const receipt = await response.json() as { data?: Array<{ url?: unknown }>; usage?: { image_count?: unknown }; request_id?: unknown };
+  const receipt = (await response.json()) as { data?: Array<{ url?: unknown }>; usage?: { image_count?: unknown }; request_id?: unknown };
   const count = receipt?.usage?.image_count;
   const imageCount = typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
   const links = Array.isArray(receipt?.data) ? receipt.data.flatMap((item) => providerImageLink(item?.url)) : [];
   const requestId = response.headers.get('x-request-id') ?? response.headers.get('x-dashscope-request-id') ?? (typeof receipt?.request_id === 'string' ? receipt.request_id : undefined);
   const message: AssistantMessage & { usage: AssistantMessage['usage'] & { image_count?: number } } = {
-    role: 'assistant', api: model.api, provider: model.provider, model: model.id, responseId: requestId,
-    content: [], stopReason: 'stop', timestamp: Date.now(),
+    role: 'assistant',
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    responseId: requestId,
+    content: [],
+    stopReason: 'stop',
+    timestamp: Date.now(),
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, image_count: imageCount },
   };
   yield { type: 'start', partial: message };

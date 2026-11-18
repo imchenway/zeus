@@ -103,12 +103,7 @@ export function TaskDeadlineField(props: {
                 </label>
                 <label htmlFor={`${id}-time`}>
                   {zh ? '时间（可选）' : 'Time (optional)'}
-                  <ClockTimeInput
-                    id={`${id}-time`}
-                    disabled={!draft.value}
-                    value={draft.value?.time ?? ''}
-                    onChange={(event) => draft.value && setDraft({ ...draft, value: { ...draft.value, time: event.currentTarget.value || null } })}
-                  />
+                  <ClockTimeInput id={`${id}-time`} disabled={!draft.value} value={draft.value?.time ?? ''} onChange={(event) => draft.value && setDraft({ ...draft, value: { ...draft.value, time: event.currentTarget.value || null } })} />
                 </label>
               </div>
               {draft.value ? (

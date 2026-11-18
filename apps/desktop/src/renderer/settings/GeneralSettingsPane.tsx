@@ -252,12 +252,7 @@ export function GeneralSettingsPane(props: {
                   ]}
                 />
               </NativeControlRow>
-              <NativeControlRow
-                title={zh ? '生成速度' : 'Generation speed'}
-                description={
-                  zh ? '速度档位取决于所选模型，可能影响用量或费用。' : 'Available speeds depend on the model and may affect usage or cost.'
-                }
-              >
+              <NativeControlRow title={zh ? '生成速度' : 'Generation speed'} description={zh ? '速度档位取决于所选模型，可能影响用量或费用。' : 'Available speeds depend on the model and may affect usage or cost.'}>
                 <ZeusSelect
                   size="regular"
                   ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}

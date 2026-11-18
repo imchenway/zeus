@@ -235,7 +235,10 @@ export function parseBuiltInModelPrices(template: string, html: string, cacheHtm
     }
   }
   /** 同一模型多个模式或重复栏目若费率冲突，估算器会拒绝同时命中的条目。 */
-  return { prices: [...new Map(prices.map((entry) => [JSON.stringify({ model: entry.model, perMillion: entry.perMillion, inputRange: entry.inputRange, metered: entry.metered }), entry])).values()], unavailableModels: [...new Set(unavailableModels)] };
+  return {
+    prices: [...new Map(prices.map((entry) => [JSON.stringify({ model: entry.model, perMillion: entry.perMillion, inputRange: entry.inputRange, metered: entry.metered }), entry])).values()],
+    unavailableModels: [...new Set(unavailableModels)],
+  };
 }
 
 /** 只接收同时明确标出峰、谷和币种的官方单元格。 */

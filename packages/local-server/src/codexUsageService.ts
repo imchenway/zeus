@@ -331,7 +331,9 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
           const rows = options.ledger.list({ providerId: 'codex' });
           const models = [
             ...new Set(
-              rows.flatMap((row) => row.estimate.requests?.filter((request) => request.estimate.apiEquivalentUsd === null).map((request) => request.estimate.rateSnapshot.model) ?? (row.estimate.apiEquivalentUsd === null ? [row.model] : [])),
+              rows.flatMap(
+                (row) => row.estimate.requests?.filter((request) => request.estimate.apiEquivalentUsd === null).map((request) => request.estimate.rateSnapshot.model) ?? (row.estimate.apiEquivalentUsd === null ? [row.model] : []),
+              ),
             ),
           ];
           const pending = models;

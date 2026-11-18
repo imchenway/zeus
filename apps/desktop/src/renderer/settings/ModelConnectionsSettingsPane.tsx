@@ -271,9 +271,7 @@ export function ModelConnectionsSettingsPane(props: {
   const pricedModelIds = new Set(pricingCatalog?.prices.map((price) => price.model));
   const missingPriceCount = pricingCatalog ? enabledModelIds.filter((id) => !pricedModelIds.has(id)).length : 0;
   /** 只有读取失败且仍可使用已确认的费率时，才说明沿用上次费率。 */
-  const priceFailureSummary = pricingCatalog?.prices.length
-    ? zh ? '读取价格失败，沿用上次费率' : 'Price refresh failed. Using previous rates.'
-    : zh ? '读取价格失败' : 'Price refresh failed';
+  const priceFailureSummary = pricingCatalog?.prices.length ? (zh ? '读取价格失败，沿用上次费率' : 'Price refresh failed. Using previous rates.') : zh ? '读取价格失败' : 'Price refresh failed';
 
   /** 批量和单项展开共用同一状态，保留搜索范围之外的展开选择。 */
   function setModelsExpanded(ids: string[], expanded: boolean): void {
@@ -784,11 +782,7 @@ export function ModelConnectionsSettingsPane(props: {
                 </small>
               ) : null}
               {pricingCatalog && enabledModelCount > 0 ? <ProviderRatePopover key={current?.id} modelIds={enabledModelIds} prices={pricingCatalog.prices} language={props.language} /> : null}
-              {missingPriceCount > 0 ? (
-                <small>
-                  {zh ? `${missingPriceCount}/${enabledModelCount} 缺价` : `${missingPriceCount}/${enabledModelCount} missing`}
-                </small>
-              ) : null}
+              {missingPriceCount > 0 ? <small>{zh ? `${missingPriceCount}/${enabledModelCount} 缺价` : `${missingPriceCount}/${enabledModelCount} missing`}</small> : null}
             </div>
             {pricingCatalog?.error ? (
               <p className="model-connection-pricing-failure" role="alert">
@@ -822,7 +816,7 @@ export function ModelConnectionsSettingsPane(props: {
                 <input
                   type="password"
                   autoComplete="new-password"
-                  placeholder={current?.pricingCredentialId ? zh ? '已保存' : 'Saved' : undefined}
+                  placeholder={current?.pricingCredentialId ? (zh ? '已保存' : 'Saved') : undefined}
                   value={pricingSourceDraft.token}
                   onChange={(event) => setPricingSourceDraft({ ...pricingSourceDraft, token: event.target.value })}
                 />
@@ -1485,9 +1479,7 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
   const rows = props.modelIds.flatMap<{ model: string; price?: ModelPrice; charge?: MeteredCharge }>((model) => {
     const prices = props.prices.filter((price) => price.model === model);
     if (!prices.length) return [{ model }];
-    return prices.flatMap<{ model: string; price: ModelPrice; charge?: MeteredCharge }>((price) =>
-      price.metered ? price.metered.charges.map((charge) => ({ model, price, charge })) : [{ model, price }],
-    );
+    return prices.flatMap<{ model: string; price: ModelPrice; charge?: MeteredCharge }>((price) => (price.metered ? price.metered.charges.map((charge) => ({ model, price, charge })) : [{ model, price }]));
   });
   const columns: Array<{ label: string; numeric?: boolean; value(price: ModelPrice | undefined, charge?: MeteredCharge): string | number | null | undefined }> = [
     { label: zh ? '币种' : 'Currency', value: (price) => price?.currency },
@@ -1500,9 +1492,9 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
     { label: zh ? '缓存写 / 百万 Token' : 'Cache write / 1M tokens', numeric: true, value: (price) => price?.perMillion?.cacheWrite },
     { label: zh ? '单价 / 次' : 'Per request', numeric: true, value: (price) => price?.perRequest },
     { label: zh ? '输入区间（Token）' : 'Input range (tokens)', value: (price) => price?.inputRange && `(${price.inputRange.minExclusive}, ${price.inputRange.maxInclusive}]` },
-    { label: zh ? '排除时段（UTC）' : 'Excluded hours (UTC)', value: (price) => price?.excludedUtcWindows?.length ? excludedRateHours(price.excludedUtcWindows, props.language) : undefined },
+    { label: zh ? '排除时段（UTC）' : 'Excluded hours (UTC)', value: (price) => (price?.excludedUtcWindows?.length ? excludedRateHours(price.excludedUtcWindows, props.language) : undefined) },
     { label: zh ? '适用条件' : 'Conditions', value: (price) => price?.metered && meteredRateConditions(price.metered, props.language) },
-    { label: zh ? '状态' : 'Status', value: (price) => price ? undefined : zh ? '缺价' : 'Missing' },
+    { label: zh ? '状态' : 'Status', value: (price) => (price ? undefined : zh ? '缺价' : 'Missing') },
   ];
   const visibleColumns = columns.filter((column) => rows.some(({ price, charge }) => column.value(price, charge) != null));
   return (
@@ -1511,7 +1503,9 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
         <tr>
           <th scope="col">{zh ? '模型' : 'Model'}</th>
           {visibleColumns.map((column) => (
-            <th scope="col" key={column.label} data-numeric={column.numeric}>{column.label}</th>
+            <th scope="col" key={column.label} data-numeric={column.numeric}>
+              {column.label}
+            </th>
           ))}
         </tr>
       </thead>
@@ -1520,7 +1514,9 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
           <tr key={`${model}:${index}`}>
             <th scope="row">{model}</th>
             {visibleColumns.map((column) => (
-              <td key={column.label} data-numeric={column.numeric}>{column.value(price, charge) ?? '—'}</td>
+              <td key={column.label} data-numeric={column.numeric}>
+                {column.value(price, charge) ?? '—'}
+              </td>
             ))}
           </tr>
         ))}
@@ -1532,12 +1528,7 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
 /** 价格表同时呈现已确认的有效区间、匹配字段与地域时间窗口。 */
 function meteredRateConditions(rule: NonNullable<ModelPrice['metered']>, language: string): string | undefined {
   const windows = rule.windows?.map((window) => `${excludedRateHours([window], language)} ${window.timeZone}`) ?? [];
-  return [
-    ...Object.entries(rule.attributes ?? {}).map(([key, value]) => `${key}=${value}`),
-    ...windows,
-    rule.validFrom && `≥ ${rule.validFrom}`,
-    rule.validUntil && `< ${rule.validUntil}`,
-  ].filter(Boolean).join(' · ') || undefined;
+  return [...Object.entries(rule.attributes ?? {}).map(([key, value]) => `${key}=${value}`), ...windows, rule.validFrom && `≥ ${rule.validFrom}`, rule.validUntil && `< ${rule.validUntil}`].filter(Boolean).join(' · ') || undefined;
 }
 
 /** 已知的排除时段保留星期和 UTC，避免把分时费率当成全天价格。 */

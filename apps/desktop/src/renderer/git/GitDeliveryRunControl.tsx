@@ -178,9 +178,7 @@ export function GitDeliveryRunControl(props: {
       /** 读取模型前固定文件和设置，接纳重试继续使用同一快照。 */
       const sourceJson = JSON.stringify({
         ...props.input,
-        postPushCommands: executionSettings.push
-          ? (executionSettings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 }))
-          : [],
+        postPushCommands: executionSettings.push ? (executionSettings.postPushCommandIds ?? []).map((commandId) => ({ commandId, expectedRevision: commands.find((command) => command.id === commandId)?.revision ?? 0 })) : [],
         settings: executionSettings,
       });
       await window.zeus?.setTaskGitDeliverySubmissionState?.('pending');
@@ -311,12 +309,7 @@ export function GitDeliveryRunControl(props: {
       <div className="git-delivery-follow-up-fields">
         <div className="task-git-delivery-field-row">
           <label className="git-delivery-checkbox" aria-disabled={commandToggleDisabled || undefined}>
-            <input
-              type="checkbox"
-              checked={followUps.commands}
-              disabled={commandToggleDisabled}
-              onChange={(event) => setFollowUps((current) => ({ ...current, commands: event.target.checked }))}
-            />
+            <input type="checkbox" checked={followUps.commands} disabled={commandToggleDisabled} onChange={(event) => setFollowUps((current) => ({ ...current, commands: event.target.checked }))} />
             {props.zh ? '推送后执行命令' : 'Run after push'}
           </label>
           <GitDeliveryCommandSelect
@@ -330,12 +323,7 @@ export function GitDeliveryRunControl(props: {
         {taskId ? (
           <div className="task-git-delivery-field-row">
             <label className="git-delivery-checkbox" aria-disabled={controlsDisabled || undefined}>
-              <input
-                type="checkbox"
-                checked={followUps.taskStatus}
-                disabled={controlsDisabled}
-                onChange={(event) => setFollowUps((current) => ({ ...current, taskStatus: event.target.checked }))}
-              />
+              <input type="checkbox" checked={followUps.taskStatus} disabled={controlsDisabled} onChange={(event) => setFollowUps((current) => ({ ...current, taskStatus: event.target.checked }))} />
               {props.zh ? '修改任务状态' : 'Set task status'}
             </label>
             <ZeusSelect

@@ -258,9 +258,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
         const position = visibleRows.indexOf(submission);
         const neighbor = visibleRows[position + 1] ?? visibleRows[position - 1];
         if (neighbor) {
-          listRef.current
-            ?.querySelector<HTMLElement>(`[data-list-motion-id="${CSS.escape(queuedSubmissionIdentity(neighbor))}"] > .session-queued-message-clip > article`)
-            ?.focus({ preventScroll: true });
+          listRef.current?.querySelector<HTMLElement>(`[data-list-motion-id="${CSS.escape(queuedSubmissionIdentity(neighbor))}"] > .session-queued-message-clip > article`)?.focus({ preventScroll: true });
         }
       }
     }
@@ -297,13 +295,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
 
   /** 最后一条退出时保留可见表面完成过渡。 */
   const panel = (
-    <PopoverSurface
-      ref={regionRef}
-      className="session-queued-messages"
-      data-queue-restoring={visibleRows.some((submission) => actionErrors.has(queuedSubmissionIdentity(submission))) || undefined}
-      role="region"
-      aria-label={copy.region}
-    >
+    <PopoverSurface ref={regionRef} className="session-queued-messages" data-queue-restoring={visibleRows.some((submission) => actionErrors.has(queuedSubmissionIdentity(submission))) || undefined} role="region" aria-label={copy.region}>
       <h2 className="session-sr-only">{copy.heading(visibleQueueIds.length)}</h2>
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
         {reorderedIndex >= 0 ? copy.reordered(reorderedIndex + 1, visibleQueueIds.length) : ''}

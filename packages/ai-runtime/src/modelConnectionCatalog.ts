@@ -277,9 +277,7 @@ export function normalizeModelConnection(
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
   const pricingProfile = input.pricingProfile?.trim();
   if (pricingProfile) parseModelPricingProfile(pricingProfile);
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) =>
-    applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }, codexCatalog),
-  );
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }, codexCatalog));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -309,13 +307,17 @@ export function normalizeStoredModelConnections(value: unknown, codexCatalog?: R
       const createdAt = normalizeIsoDate(candidate.createdAt) ?? new Date(0).toISOString();
       const updatedAt = normalizeIsoDate(candidate.updatedAt) ?? createdAt;
       records.push(
-        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, {
-          id,
-          apiKeyConfigured: candidate.apiKeyConfigured === true,
-          ...(typeof candidate.pricingCredentialId === 'string' ? { pricingCredentialId: candidate.pricingCredentialId } : {}),
-          createdAt,
-          updatedAt,
-        }, codexCatalog),
+        normalizeModelConnection(
+          candidate as unknown as SaveModelConnectionInput,
+          {
+            id,
+            apiKeyConfigured: candidate.apiKeyConfigured === true,
+            ...(typeof candidate.pricingCredentialId === 'string' ? { pricingCredentialId: candidate.pricingCredentialId } : {}),
+            createdAt,
+            updatedAt,
+          },
+          codexCatalog,
+        ),
       );
       ids.add(id);
     } catch {
@@ -362,8 +364,8 @@ export function listSelectableConnectionModels(connections: readonly ModelConnec
             : purpose === 'text' && model.protocolFamily === 'openai_images'
               ? '图片生成模型不提供文本生成。'
               : purpose === 'agent' && tools === 'unsupported' && model.protocolFamily !== 'openai_images'
-              ? '模型明确不支持工具调用，只能保存在诊断目录中。'
-              : '模型已配置，由 Zeus 内核执行；真实外部能力仍以运行探针结果为准。';
+                ? '模型明确不支持工具调用，只能保存在诊断目录中。'
+                : '模型已配置，由 Zeus 内核执行；真实外部能力仍以运行探针结果为准。';
       return {
         id: modelRef(connection.id, model.id),
         model: model.id,

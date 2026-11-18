@@ -48,7 +48,10 @@ export function FilePathBreadcrumbs({ path, copyPath, name, status, zh, onReveal
 }
 
 /** 源码预览和文件审阅共用路径、操作布局及窄面板换行规则。 */
-export function FileWorkspaceToolbar({ children, ...breadcrumbs }: FilePathBreadcrumbsProps & {
+export function FileWorkspaceToolbar({
+  children,
+  ...breadcrumbs
+}: FilePathBreadcrumbsProps & {
   /** 文件所属页面提供的操作，保留原授权和事件处理。 */
   children: ReactNode;
 }) {

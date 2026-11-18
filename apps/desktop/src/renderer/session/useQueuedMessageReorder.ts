@@ -69,15 +69,7 @@ export function useQueuedMessageReorder(input: {
     let targetIndex = index + direction;
     while (current[targetIndex] && input.isExiting(current[targetIndex]!)) targetIndex += direction;
     const target = current[targetIndex];
-    if (
-      !input.onReorder ||
-      input.state.conversationState === 'legacy_readonly' ||
-      index < 0 ||
-      current[index]?.status !== 'queued' ||
-      target?.status !== 'queued' ||
-      !visibleQueue.some((entry) => entry.id === target.id)
-    )
-      return null;
+    if (!input.onReorder || input.state.conversationState === 'legacy_readonly' || index < 0 || current[index]?.status !== 'queued' || target?.status !== 'queued' || !visibleQueue.some((entry) => entry.id === target.id)) return null;
     return { current, index, targetIndex };
   }
 

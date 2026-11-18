@@ -13,11 +13,7 @@ export function backfillConnectionPrices(connection: ModelConnectionRecord, cata
       if (!row.estimate.requests?.length) continue;
       /** 旧整轮金额与明细不一致时，保留整轮原账。 */
       const previous = aggregateRequestPrices(row.estimate.requests);
-      if (
-        previous.apiEquivalentUsd !== row.estimate.apiEquivalentUsd ||
-        previous.credits !== row.estimate.credits ||
-        JSON.stringify(previous.costs) !== JSON.stringify(sumEstimatedCosts([row.estimate]))
-      ) continue;
+      if (previous.apiEquivalentUsd !== row.estimate.apiEquivalentUsd || previous.credits !== row.estimate.credits || JSON.stringify(previous.costs) !== JSON.stringify(sumEstimatedCosts([row.estimate]))) continue;
       /** 只收集此次补出的金额，避免以账本重建历史会话金额。 */
       const additions: UsageRequestPriceSnapshot[] = [];
       const requests = row.estimate.requests.map((request) => {

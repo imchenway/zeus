@@ -148,14 +148,8 @@ export function EmployeeExecutionSettings(props: {
         {field(
           'serviceTier',
           zh ? '速度' : 'Speed',
-          select(
-            '速度',
-            effective.serviceTier ?? '',
-            [
-              { value: '', label: zh ? '标准' : 'Standard' },
-              ...(model?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: codexServiceTierLabel(tier, props.language) })),
-            ],
-            (value) => patch({ serviceTier: value || null }),
+          select('速度', effective.serviceTier ?? '', [{ value: '', label: zh ? '标准' : 'Standard' }, ...(model?.serviceTiers ?? []).map((tier) => ({ value: tier.id, label: codexServiceTierLabel(tier, props.language) }))], (value) =>
+            patch({ serviceTier: value || null }),
           ),
         )}
         {field(

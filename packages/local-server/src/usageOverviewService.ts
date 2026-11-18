@@ -433,8 +433,12 @@ function usagePriceIdentity(providerId: string, model: string, snapshot: CodexUs
   /** 一条周期链只比较完全相同的计费条件。 */
   const metered = conditions?.metered;
   const seriesKey = JSON.stringify([
-    provider, model, serviceTier, longContext,
-    conditions?.inputRange ? [conditions.inputRange.minExclusive, conditions.inputRange.maxInclusive] : null, [...new Set(windows)],
+    provider,
+    model,
+    serviceTier,
+    longContext,
+    conditions?.inputRange ? [conditions.inputRange.minExclusive, conditions.inputRange.maxInclusive] : null,
+    [...new Set(windows)],
     metered ? [Object.entries(metered.attributes ?? {}).sort(), metered.windows ?? [], metered.charges.map((charge) => [charge.meter, charge.unit, charge.quantityPerPrice, charge.category])] : null,
   ]);
   return {
