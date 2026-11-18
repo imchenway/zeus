@@ -27,7 +27,7 @@ import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
-import { ServiceTierToggle } from './ServiceTierToggle.js';
+import { ServiceTierSelect } from './ServiceTierSelect.js';
 import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
@@ -599,7 +599,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
               <ContextUsageIndicator contextCapacityEvidence={props.state.snapshot?.contextCapacityEvidence} contextCapacityTokens={selectedCapacity} unifiedUsage={props.state.unifiedUsage} language={props.language} />
-              <ServiceTierToggle
+              <ServiceTierSelect
                 language={props.language}
                 model={selectedCapability}
                 value={selectedServiceTier}
@@ -643,7 +643,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   const remembered = props.projectId ? (readProjectModelPreferences(storage, props.projectId, modelId) ?? (resolveModelCapability(props.capabilities?.models, last?.model)?.id === modelId ? last : null)) : null;
                   /** 无已用等级或当前模型不再支持时采用模型默认。 */
                   const effort = remembered && capability?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '');
-                  /** 不支持的 Fast 由现有速度控件说明。 */
+                  /** 速度控件会标明当前目录不可用的档位。 */
                   const normalizedTier = normalizeServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' }, capability);
                   /** 已记住容量失效时使用默认容量，未有记忆时保留当前会话选择。 */
                   const capacity = remembered ? (contextCapacitySelectionAllowed(remembered.contextCapacityTokens, capability?.contextCapacity) ? remembered.contextCapacityTokens : null) : selectedCapacity;

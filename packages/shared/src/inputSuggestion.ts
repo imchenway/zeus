@@ -1,3 +1,4 @@
+import { isCodexAcceleratedServiceTier, type CodexAcceleratedServiceTier } from './codexServiceTier.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
 
@@ -11,8 +12,8 @@ export interface InputSuggestionSettings {
   followConversationModel?: boolean;
   /** 空值自动选择模型支持的最低档位，显式选择仅用于输入建议和润色。 */
   effort?: string | null;
-  /** 空值使用标准速度，Fast 仅在所选模型目录明确支持时启用。 */
-  serviceTier?: 'priority' | null;
+  /** 空值使用标准速度，加速档位需由所选模型目录声明。 */
+  serviceTier?: CodexAcceleratedServiceTier | null;
 }
 
 /** 专用模型选择器只需要稳定身份和可读名称。 */
@@ -23,7 +24,7 @@ export interface InputSuggestionModelOption {
   label: string;
   /** 仅提供模型目录确认支持的档位，不由界面推测。 */
   supportedReasoningEfforts?: string[];
-  /** 沿用现有模型目录的速度能力，缺失时不推断支持 Fast。 */
+  /** 沿用现有模型目录的速度能力，缺失时不推断支持加速档位。 */
   serviceTiers?: Array<{
     /** 目录提供的服务档位身份。 */
     id: string;
@@ -187,7 +188,7 @@ export function normalizeInputSuggestionSettings(value: unknown): InputSuggestio
     enabled: record.enabled === true && (modelRef !== null || followConversationModel),
     modelRef,
     effort,
-    serviceTier: record.serviceTier === 'priority' ? 'priority' : null,
+    serviceTier: isCodexAcceleratedServiceTier(record.serviceTier) ? record.serviceTier : null,
     ...(followConversationModel ? { followConversationModel: true } : {}),
   };
 }

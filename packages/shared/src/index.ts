@@ -13,6 +13,8 @@ import type { UserFacingErrorCause } from './userFacingError.js';
 export * from './taskPush.js';
 export * from './temporaryWorkspace.js';
 export * from './codexUsage.js';
+/** 会话和独立生成入口共用 Codex 加速档位。 */
+export * from './codexServiceTier.js';
 export * from './modelPricing.js';
 export * from './commandEnvelope.js';
 export * from './commandGovernance.js';

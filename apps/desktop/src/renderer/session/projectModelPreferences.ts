@@ -55,7 +55,7 @@ function parsePreferences(value: unknown): ProjectModelPreferences | null {
   return {
     model: preference.model,
     effort: preference.effort,
-    serviceTier: preference.serviceTier?.type === 'catalog' && preference.serviceTier.id === 'priority' ? { type: 'catalog', id: 'priority' } : { type: 'standard' },
+    serviceTier: selectionFromEffectiveServiceTier(preference.serviceTier?.type === 'catalog' ? preference.serviceTier.id : null),
     contextCapacityTokens: typeof preference.contextCapacityTokens === 'number' && Number.isSafeInteger(preference.contextCapacityTokens) && preference.contextCapacityTokens > 0 ? preference.contextCapacityTokens : null,
     workMode: preference.workMode,
     permissionMode: preference.permissionMode,

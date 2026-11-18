@@ -1,3 +1,4 @@
+import type { CodexAcceleratedServiceTier } from './codexServiceTier.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 
 /** 交付入口固定到真实任务或会话，不接受客户端提供的绝对目录。 */
@@ -73,8 +74,8 @@ export interface GitDeliveryInput {
     modelRef: string;
     /** 模型目录中已选的推理档位。 */
     effort: string;
-    /** 标准速率为空，Fast 使用 priority。 */
-    serviceTier: 'priority' | null;
+    /** 使用模型目录中已选的加速档位，空值表示标准速度。 */
+    serviceTier: CodexAcceleratedServiceTier | null;
   };
   /** 任务入口支持已有的合入方式。 */
   mode: 'merge' | 'squash';

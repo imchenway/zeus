@@ -1,3 +1,4 @@
+import type { CodexAcceleratedServiceTier } from '@zeus/shared';
 import { generateConfiguredModelText, modelRef } from '@zeus/ai-runtime';
 import type { ModelConnectionService } from './modelConnectionService.js';
 
@@ -27,8 +28,8 @@ export interface GitCommitMessageInput {
   modelRef?: string;
   /** 模型目录中的推理档位，生成前再次核对支持范围。 */
   effort?: string;
-  /** 标准速率为 null，Fast 只适用于支持该档位的 Codex 模型。 */
-  serviceTier?: 'priority' | null;
+  /** 标准速度为 null，加速档位仅用于支持该档位的 Codex 模型。 */
+  serviceTier?: CodexAcceleratedServiceTier | null;
   recentCommits?: string[];
   diffStat?: string;
   truncated?: boolean;
@@ -46,7 +47,7 @@ export async function generateGitCommitMessage(service: ModelConnectionService, 
   const selected = requestedModelRef ? available.find((entry) => entry.ref === requestedModelRef) : available[0];
   if (!selected) throw failure('所选模型不可用，请选择已启用且配置 API Key 的模型连接。', 409);
   const { connection, model } = selected;
-  if (input.serviceTier) throw failure('所选模型不支持 Fast，请使用标准速率。', 400);
+  if (input.serviceTier) throw failure('所选模型不支持该加速档位，请使用标准速度。', 400);
   if (input.effort && !model.capability.reasoning.options.some((option) => option.id === input.effort)) throw failure('所选模型不支持此推理深度，请重新选择。', 400);
   const { system, prompt } = buildGitCommitPrompt(input);
   const controller = new AbortController();

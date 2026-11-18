@@ -870,9 +870,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       // 热更新替换守护进程后继续使用启动时探测值会把新模型目录误判成旧世代。
       const providerVersion = initializedProviderVersion ?? (remoteControlTransport ? null : providerVersionFallback);
       if (requireFreshModels) await waitForFreshSubscriptionModels(generationId, providerVersion, modelsFreshSince);
-      const models = await readModelCatalogPages(generationId);
+      const { models, goals } = await readAvailableModelCatalog(generationId, !options.lightweightGeneration);
       if (requireFreshModels) assertFreshModelCatalog(providerVersion, models, modelsFreshSince);
-      const goals = options.lightweightGeneration ? { supported: false, enabled: false, stage: null } : await readGoalCapability(generationId);
       if (remoteControlEnabled || remoteControlTransport) await rpc(generationId, 'remoteControl/enable', {});
       const initializedAt = now();
       const modelBudgets = options.lightweightGeneration
@@ -947,6 +946,29 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '模型目录超出有界读取范围，未更新列表。');
   }
 
+  /** 速度选择和派发共用当前连接的模型目录与 Codex 功能开关。 */
+  async function readAvailableModelCatalog(generationId: string, includeGoals: boolean): Promise<Pick<CodexCapabilitiesSnapshot, 'models' | 'goals'>> {
+    /** 模型目录提供当前连接声明的可用模型和速度档位。 */
+    const catalog = await readModelCatalogPages(generationId);
+    /** 只在目录提供超快或需要目标能力时读取功能开关。 */
+    const advertisesUltrafast = catalog.some((model) => model.serviceTiers.some((tier) => tier.id === 'ultrafast'));
+    /** 同一份开关快照同时用于目标能力和服务档位。 */
+    const features = includeGoals || advertisesUltrafast ? await readExperimentalFeatures(generationId) : [];
+    /** 官方客户端还要求本地 Codex 开启 ultrafast_mode。 */
+    const ultrafastEnabled = features.some((feature) => feature.name === 'ultrafast_mode' && feature.enabled === true);
+    return {
+      models:
+        advertisesUltrafast && !ultrafastEnabled
+          ? catalog.map((model) => ({
+              ...model,
+              serviceTiers: model.serviceTiers.filter((tier) => tier.id !== 'ultrafast'),
+              ...(model.defaultServiceTier === 'ultrafast' ? { defaultServiceTier: null } : {}),
+            }))
+          : catalog,
+      goals: goalCapability(includeGoals ? features : []),
+    };
+  }
+
   /** 确认列表确实来自本次允许的官方缓存时间范围，而非失败后的内置回退。 */
   function assertFreshModelCatalog(providerVersion: string | null, models: readonly CodexModelCapability[], minimumFetchedAt: number): void {
     /** 此处只观察官方缓存，不删除、修改或复制它。 */
@@ -1015,7 +1037,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     const request = (async () => {
       const capabilities = await awaitCapabilities();
       const account = parseAccountSnapshot(await retryableReadRpc(capabilities.generationId, 'account/read', { refreshToken: false }), capabilities.generationId, accountFingerprintSalt);
-      const models = await readModelCatalogPages(capabilities.generationId);
+      const { models } = await readAvailableModelCatalog(capabilities.generationId, false);
       if (account.signedIn && account.accountType === 'chatgpt') assertFreshModelCatalog(capabilities.providerVersion, models, Date.now() - MODEL_CATALOG_MAXIMUM_AGE_MS);
       const checkedAt = now();
       const modelBudgets = await resolveModelBudgetSnapshotAfterBoundedRetry({ codexHome, generationId: capabilities.generationId, initializedAt: checkedAt, providerVersion: capabilities.providerVersion, models });
@@ -1241,22 +1263,26 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     }
   }
 
-  async function readGoalCapability(generationId: string): Promise<CodexCapabilitiesSnapshot['goals']> {
+  /** app-server 负责解析功能开关配置，包括由管理员锁定的值。 */
+  async function readExperimentalFeatures(generationId: string): Promise<Record<string, unknown>[]> {
     try {
+      /** 功能目录与模型目录使用同一个 app-server 连接。 */
       const response = asRecord(await retryableReadRpc(generationId, 'experimentalFeature/list', { limit: 200 }));
-      if (!Array.isArray(response.data)) return { supported: false, enabled: false, stage: null };
-      const goal = response.data.find((entry) => isRecord(entry) && entry.name === 'goals');
-      if (!isRecord(goal)) return { supported: false, enabled: false, stage: null };
-      const stage = goal.stage === 'beta' || goal.stage === 'underDevelopment' || goal.stage === 'stable' || goal.stage === 'deprecated' || goal.stage === 'removed' ? goal.stage : null;
-      return {
-        supported: stage !== null && stage !== 'removed',
-        enabled: goal.enabled === true,
-        stage,
-      };
+      return Array.isArray(response.data) ? response.data.filter(isRecord) : [];
     } catch {
-      // 旧版 app-server 没有实验能力目录时，目标入口保持隐藏。
-      return { supported: false, enabled: false, stage: null };
+      // 无法确认的功能不作为当前连接的可用能力。
+      return [];
     }
+  }
+
+  /** 目标入口沿用 Codex 回报的功能阶段与开关。 */
+  function goalCapability(features: readonly Record<string, unknown>[]): CodexCapabilitiesSnapshot['goals'] {
+    /** 未声明 goals 时按当前版本未提供该功能处理。 */
+    const goal = features.find((feature) => feature.name === 'goals');
+    if (!goal) return { supported: false, enabled: false, stage: null };
+    /** 只识别协议支持的生命周期阶段。 */
+    const stage = goal.stage === 'beta' || goal.stage === 'underDevelopment' || goal.stage === 'stable' || goal.stage === 'deprecated' || goal.stage === 'removed' ? goal.stage : null;
+    return { supported: stage !== null && stage !== 'removed', enabled: goal.enabled === true, stage };
   }
 
   function handleWireMessage(generationId: string, message: CodexWireMessage): void {

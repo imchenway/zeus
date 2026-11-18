@@ -115,7 +115,7 @@ import { useInputSuggestion } from './useInputSuggestion.js';
 import { InputSuggestionButton } from './InputSuggestionControl.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
-import { ServiceTierToggle } from './ServiceTierToggle.js';
+import { ServiceTierSelect } from './ServiceTierSelect.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -4566,7 +4566,7 @@ export function NewConversationComposer(props: {
               <span className="session-composer-runtime-settings">
                 <ContextUsageIndicator contextCapacityTokens={contextCapacityTokens} unifiedUsage={null} language={props.language} />
                 {selectedModel && (selectedModel.serviceTiers.length || serviceTierSelection.type === 'catalog') ? (
-                  <ServiceTierToggle
+                  <ServiceTierSelect
                     language={props.language}
                     model={selectedModel}
                     value={serviceTierSelection}

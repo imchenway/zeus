@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { defaultInputSuggestionSettings, normalizeTaskBranchPrefix, type InputSuggestionModelOption } from '@zeus/shared';
+import { defaultInputSuggestionSettings, isCodexAcceleratedServiceTier, normalizeTaskBranchPrefix, type InputSuggestionModelOption } from '@zeus/shared';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import type { AppShellSettings } from '../apiClient.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
@@ -8,7 +8,7 @@ import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
-import { selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierSelectionValue, supportsUltrafast } from '../session/serviceTierSelection.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
 type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled' | 'inputSuggestions'>;
@@ -49,6 +49,10 @@ export function GeneralSettingsPane(props: {
   const suggestionEfforts = suggestions.followConversationModel ? [...new Set(suggestionModels.flatMap((model) => model.supportedReasoningEfforts ?? []))] : (selectedSuggestionModel?.supportedReasoningEfforts ?? []);
   /** 全局跟随配置列出已配置模型的能力，具体会话仍在生成前核对，不静默降档。 */
   const suggestionServiceTiers = suggestions.followConversationModel ? [...new Map(suggestionModels.flatMap((model) => model.serviceTiers ?? []).map((tier) => [tier.id, tier])).values()] : (selectedSuggestionModel?.serviceTiers ?? []);
+  /** 跟随模型时，以可选目录的档位集合展示可用的速度。 */
+  const suggestionSpeedModel = { serviceTiers: suggestionServiceTiers };
+  /** 未开放超快时，设置中也省略对应档位说明。 */
+  const canUseSuggestionUltrafast = supportsUltrafast(suggestionSpeedModel);
 
   useEffect(() => {
     /** 返回窗口或登录能力变化后重新读取目录，省去常驻刷新按钮。 */
@@ -238,15 +242,23 @@ export function GeneralSettingsPane(props: {
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow title={zh ? '生成速度' : 'Generation speed'} description={zh ? 'Fast 可能增加用量或费用；可用档位取决于建议模型。' : 'Fast may increase usage or cost. Options are checked against the model used for generation.'}>
+          <NativeControlRow
+            title={zh ? '生成速度' : 'Generation speed'}
+            description={
+              zh
+                ? `${canUseSuggestionUltrafast ? '快速和超快' : 'Fast'} 可能增加用量或费用，可用档位取决于建议模型。`
+                : `${canUseSuggestionUltrafast ? 'Fast and Ultrafast' : 'Fast mode'} may increase usage or cost. Available speeds depend on the suggestion model.`
+            }
+          >
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}
               value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
+              triggerLabel={suggestions.serviceTier === 'ultrafast' && !canUseSuggestionUltrafast ? '—' : undefined}
               disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel)}
               searchable={false}
-              onChange={(value) => save({ inputSuggestions: { ...suggestions, serviceTier: value === 'priority' ? 'priority' : null } })}
-              options={serviceTierOptions({ serviceTiers: suggestionServiceTiers }, zh ? 'zh-CN' : 'en-US')}
+              onChange={(value) => save({ inputSuggestions: { ...suggestions, serviceTier: isCodexAcceleratedServiceTier(value) ? value : null } })}
+              options={serviceTierOptions(suggestionSpeedModel, zh ? 'zh-CN' : 'en-US')}
             />
           </NativeControlRow>
           {suggestionModelWarning ? (

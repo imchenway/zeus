@@ -15,6 +15,7 @@ import {
   deliveryWorkspacesForConversationBranch,
   resolveGitDeliveryRootWorkspace,
   gitConflictPreservationInstructions,
+  isCodexAcceleratedServiceTier,
   type CommandScopeKind,
   type GitDeliveryInput,
   type GitDeliverySelection,
@@ -189,7 +190,7 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
       generation.modelRef.length > 2000 ||
       typeof generation.effort !== 'string' ||
       generation.effort.length > 100 ||
-      (generation.serviceTier !== null && generation.serviceTier !== 'priority'))
+      (generation.serviceTier !== null && !isCodexAcceleratedServiceTier(generation.serviceTier)))
   )
     throw deliveryError('AI 提交信息模型设置无效。', undefined, 400);
   if (!input.settings.commit && !input.settings.merge && !input.settings.push) throw deliveryError('至少选择一个 Git 操作。', undefined, 400);
@@ -1261,6 +1262,7 @@ export class GitDeliveryExecution {
           `处理代码交付的合入冲突：${merge.sourceBranch}（${merge.sourceHeadSha}）→ ${merge.targetBranch}（${merge.targetHeadSha}）。仅在当前隔离工作目录内解决全仓冲突。解决后保存并暂存全部已解决文件，保留当前合并状态；不要自行提交、切换分支、reset、rebase、合入目标分支或推送，后续操作由交付执行器按用户选择完成。`,
           buildGitConflictIntentContext({ conversations: this.options.conversations, projectId: run.projectId, scope: task ? { taskId: task.id } : { conversationId: run.scope.conversationId }, task }),
           gitConflictPreservationInstructions,
+          isCodexAcceleratedServiceTier,
         ].join('\n\n'),
         ...(aiSettings.skillId ? { skillReferences: [{ id: aiSettings.skillId }] } : {}),
       };
