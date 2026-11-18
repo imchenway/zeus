@@ -6,6 +6,7 @@ import type { TaskRecord } from '../apiClient.js';
 import type { TaskEditResult } from './TaskDetailPaneContent.js';
 import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
+import { ClockTimeInput } from '../ui/ClockTimeInput.js';
 import './task-deadline.css';
 
 /** 创建和详情共用单行截止时间，日期和提醒分别在现有表单弹窗中配置。 */
@@ -102,10 +103,8 @@ export function TaskDeadlineField(props: {
                 </label>
                 <label htmlFor={`${id}-time`}>
                   {zh ? '时间（可选）' : 'Time (optional)'}
-                  <input
+                  <ClockTimeInput
                     id={`${id}-time`}
-                    type="time"
-                    step="60"
                     disabled={!draft.value}
                     value={draft.value?.time ?? ''}
                     onChange={(event) => draft.value && setDraft({ ...draft, value: { ...draft.value, time: event.currentTarget.value || null } })}

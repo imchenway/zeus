@@ -31,7 +31,8 @@ export type ModelReasoningBasis = 'official_endpoint' | 'vendor_docs' | 'catalog
 
 export type ModelThinkingFormat = 'openai' | 'openrouter' | 'deepseek' | 'together' | 'zai' | 'qwen' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling';
 
-export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'anthropic_messages';
+/** 实际模型请求所使用的 HTTP 协议。 */
+export type ModelProtocolFamily = 'openai_responses' | 'openai_completions' | 'openai_images' | 'anthropic_messages';
 
 /** 模型请求使用明确的认证头；默认采用 Authorization: Bearer。 */
 export type ModelAuthenticationScheme = 'bearer' | 'x_api_key';
@@ -87,6 +88,10 @@ export interface ModelConnectionRecord {
   modelsPath: string;
   /** 一个价格清单页面覆盖全部模型。 */
   pricingUrl?: string;
+  /** 已保存的价目与回执映射。 */
+  pricingProfile?: string;
+  /** 本机专用价目凭据已配置时的身份，值由服务端管理。 */
+  pricingCredentialId?: string;
   /** 已校验价格的只读状态。 */
   pricingCatalog?: import('@zeus/shared').ModelPricingCatalog | null;
   enabled: boolean;
@@ -103,6 +108,10 @@ export interface SaveModelConnectionRequest {
   modelsPath: string;
   /** 可选的供应商价格页面。 */
   pricingUrl?: string;
+  /** 自定义价目／回执 JSON，空字符串清除配置。 */
+  pricingProfile?: string;
+  /** 单独发送到价格源的认证令牌。 */
+  pricingAccessToken?: string;
   enabled: boolean;
   models: ModelConnectionModel[];
   apiKey?: string;

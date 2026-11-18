@@ -2,7 +2,7 @@ import { MotionPresence } from '../toolPageHost.js';
 import { formatVisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { formatAutomationOnceInput, parseAutomationOnceInput } from '../toolPageHost.js';
+import { ClockTimeInput, formatAutomationOnceInput, formatZeusDateTime, parseAutomationOnceInput } from '../toolPageHost.js';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';
@@ -635,19 +635,32 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; trig
         <input type="number" min="1" value={draft.triggerConfig?.everyMinutes ?? 60} onChange={(event) => props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, everyMinutes: event.currentTarget.valueAsNumber } })} />
       </label>
     );
-  if (draft.triggerKind === 'once')
+  if (draft.triggerKind === 'once') {
+    /** 日期独立使用原生选择器，合并后继续沿用现有的时区解析。 */
+    const [date = '', time = ''] = draft.onceAtText.split('T');
+    const updateOnce = (nextDate: string, nextTime: string) =>
+      props.setDraft({ ...draft, onceAtText: nextDate || nextTime ? `${nextDate}T${nextTime}` : '' });
     return (
-      <label>
-        <span>{props.zh ? '执行时间' : 'Run at'}</span>
-        <input type="datetime-local" required aria-invalid={Boolean(draft.onceAtText) && !props.triggerValid} value={draft.onceAtText} onChange={(event) => props.setDraft({ ...draft, onceAtText: event.currentTarget.value })} />
-        {draft.onceAtText && !props.triggerValid ? <small role="alert">{props.zh ? '执行时间或时区无效。' : 'The run time or time zone is invalid.'}</small> : null}
-      </label>
+      <div className="automation-form-field">
+        <div className="automation-form-grid">
+          <label>
+            <span>{props.zh ? '执行日期' : 'Run date'}</span>
+            <input type="date" required value={date} onChange={(event) => updateOnce(event.currentTarget.value, time)} />
+          </label>
+          <label>
+            <span>{props.zh ? '执行时间' : 'Run time'}</span>
+            <ClockTimeInput required aria-invalid={Boolean(date && time) && !props.triggerValid} value={time} onChange={(event) => updateOnce(date, event.currentTarget.value)} />
+          </label>
+        </div>
+        {date && time && !props.triggerValid ? <small role="alert">{props.zh ? '执行时间或时区无效。' : 'The run time or time zone is invalid.'}</small> : null}
+      </div>
     );
+  }
   if (draft.triggerKind === 'daily' || draft.triggerKind === 'weekly')
     return (
       <label>
         <span>{props.zh ? '当地时间' : 'Local time'}</span>
-        <input type="time" value={draft.triggerConfig?.localTime ?? '09:00'} onChange={(event) => props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, localTime: event.currentTarget.value } })} />
+        <ClockTimeInput value={draft.triggerConfig?.localTime ?? '09:00'} onChange={(event) => props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, localTime: event.currentTarget.value } })} />
       </label>
     );
   if (draft.triggerKind === 'rrule')
@@ -791,7 +804,7 @@ function projectNames(ids: string[], projects: ProjectRecord[], zh: boolean): st
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  return formatZeusDateTime(value, undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 /** 复用列表排程文案，区分已暂停与自定义规则已无后继时间。 */
 function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {

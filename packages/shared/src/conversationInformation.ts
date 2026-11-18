@@ -1,4 +1,4 @@
-import { estimateModelUsageWithSnapshot, sumEstimatedCosts, type EstimatedMoney, type UsageRequestPriceSnapshot } from './modelPricing.js';
+import { estimateModelUsageWithSnapshot, splitMeteredRequestCosts, sumEstimatedCosts, type EstimatedMoney, type UsageRequestPriceSnapshot } from './modelPricing.js';
 import type { CodexUsageEstimate } from './codexUsage.js';
 
 /** 会话浮层按需读取的信息，不参与消息首屏和实时事件的加载。 */
@@ -18,6 +18,16 @@ export function conversationCostBreakdown(requests: UsageRequestPriceSnapshot[])
   for (const request of requests) {
     /** 请求的历史费率决定拆分方式。 */
     const rate = request.estimate.rateSnapshot;
+    if (rate.price?.metered) {
+      const metered = splitMeteredRequestCosts(request);
+      if (metered) {
+        parts.input.push({ ...request.estimate, costs: metered.input });
+        parts.output.push({ ...request.estimate, costs: metered.output });
+        parts.perRequest.push({ ...request.estimate, costs: metered.perRequest });
+      }
+      complete &&= metered !== null;
+      continue;
+    }
     if (rate.price?.perRequest != null) {
       parts.perRequest.push(request.estimate);
       complete &&= Boolean(request.estimate.costs?.length || request.estimate.apiEquivalentUsd !== null);

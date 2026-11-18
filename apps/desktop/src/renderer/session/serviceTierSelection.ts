@@ -1,75 +1,54 @@
-import { codexAcceleratedServiceTiers, isCodexAcceleratedServiceTier, type CodexAcceleratedServiceTier } from '@zeus/shared';
+import { isCodexServiceTierId, normalizeCodexPricingServiceTier } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, NativeServiceTierSelection } from './sessionTypes.js';
 
-/** 标准速度的选择器值，和 Codex 目录中的档位 ID 区分。 */
+/** 标准速度的选择器值，与供应商档位 ID 区分。 */
 const standardValue = '__zeus_standard__';
+
+/** 速度选择与费用估算共用档位 ID，标准速度通过单独选项表达。 */
+type ServiceTierModel = Pick<CodexTaskPushModelCapability, 'serviceTiers'>;
 
 /** 将已保存的档位转换为选择器值。 */
 export function serviceTierSelectionValue(selection: NativeServiceTierSelection): string {
   return selection.type === 'catalog' ? selection.id : standardValue;
 }
 
-/** 已确认的连接目录决定是否展示超快选择。 */
-export function supportsUltrafast(model: Pick<CodexTaskPushModelCapability, 'serviceTiers'> | null | undefined): boolean {
-  return model?.serviceTiers.some((tier) => tier.id === 'ultrafast') ?? false;
-}
-
-/** 本次会按标准运行时，选择器显示标准并保留原配置。 */
-export function serviceTierPickerValue(selection: NativeServiceTierSelection, model: Pick<CodexTaskPushModelCapability, 'serviceTiers'> | null | undefined): string {
-  /** 保存的超快档位在当前目录不可用时没有对应的菜单项。 */
+/** 目录已撤下的档位在表单中显示当前实际可用的标准速度。 */
+export function serviceTierPickerValue(selection: NativeServiceTierSelection, model: ServiceTierModel | null | undefined): string {
   const value = serviceTierSelectionValue(selection);
-  return value === 'ultrafast' && !supportsUltrafast(model) ? standardValue : value;
+  return model?.serviceTiers.some((tier) => tier.id === value) ? value : standardValue;
 }
 
-/** 空值显式请求标准速度，可覆盖线程之前的加速设置。 */
-export function serviceTierWireOverride(selection: NativeServiceTierSelection): { serviceTier: CodexAcceleratedServiceTier | null } {
-  return { serviceTier: selection.type === 'catalog' && isCodexAcceleratedServiceTier(selection.id) ? selection.id : null };
+/** 保留目录原始 ID，派发时由服务端核对模型能力。 */
+export function serviceTierWireOverride(selection: NativeServiceTierSelection): { serviceTier: string | null } {
+  return { serviceTier: selection.type === 'catalog' && isCodexServiceTierId(selection.id) ? selection.id : null };
 }
 
-/** 会话、任务和独立生成共用加速档位的显示名称。 */
-export function codexAcceleratedServiceTierLabel(tier: CodexAcceleratedServiceTier, language: 'zh-CN' | 'en-US'): string {
-  return tier === 'ultrafast' ? (language === 'zh-CN' ? '超快' : 'Ultrafast') : language === 'zh-CN' ? '快速' : 'Fast';
+/** 已有档位保留本地化名称，新档位使用目录的名称。 */
+export function codexServiceTierLabel(tier: ServiceTierModel['serviceTiers'][number], language: 'zh-CN' | 'en-US'): string {
+  if (language === 'zh-CN' && tier.id === 'ultrafast') return '超快';
+  if (language === 'zh-CN' && normalizeCodexPricingServiceTier(tier.id) === 'priority') return '快速';
+  return tier.name || tier.id;
 }
 
-/** 选择器只启用当前连接公布的模型速度档位。 */
-export function serviceTierOptions(model: Pick<CodexTaskPushModelCapability, 'serviceTiers'> | null | undefined, language: 'zh-CN' | 'en-US') {
-  /** 中文和英文使用同一套档位及能力规则。 */
+/** 标准速度和官方目录当前开放的其他档位共用同一选择器。 */
+export function serviceTierOptions(model: ServiceTierModel | null | undefined, language: 'zh-CN' | 'en-US') {
   const zh = language === 'zh-CN';
   return [
     { value: standardValue, label: zh ? '标准' : 'Standard', description: zh ? '默认速度' : 'Default speed', disabled: false },
-    ...codexAcceleratedServiceTiers
-      .filter((tier) => tier !== 'ultrafast' || supportsUltrafast(model))
-      .map((tier) => {
-        /** 未声明该档位时保留选项名称和不可选原因。 */
-        const supported = model?.serviceTiers.some((entry) => entry.id === tier);
-        return {
-          value: tier,
-          label: codexAcceleratedServiceTierLabel(tier, language),
-          description: !supported
-            ? zh
-              ? '当前连接未开放此档位'
-              : 'Unavailable on this connection'
-            : tier === 'ultrafast'
-              ? zh
-                ? '最快响应，消耗更高'
-                : 'Fastest responses, higher usage'
-              : zh
-                ? '响应更快，消耗更多'
-                : 'Faster responses, higher usage',
-          disabled: !supported,
-        };
-      }),
+    ...(model?.serviceTiers ?? [])
+      .filter((tier) => isCodexServiceTierId(tier.id) && normalizeCodexPricingServiceTier(tier.id) !== 'default')
+      .map((tier) => ({ value: tier.id, label: codexServiceTierLabel(tier, language), description: tier.description, disabled: false })),
   ];
 }
 
-/** 保留已记住的加速档位，由服务端根据当前能力实际派发。 */
-export function normalizeServiceTierSelection(selection: NativeServiceTierSelection, model: CodexTaskPushModelCapability | null | undefined): { selection: NativeServiceTierSelection; downgraded: boolean } {
+/** 记住合法的目录 ID，模型能力变化时仍可恢复历史选择。 */
+export function normalizeServiceTierSelection(selection: NativeServiceTierSelection, model: ServiceTierModel | null | undefined): { selection: NativeServiceTierSelection; downgraded: boolean } {
   if (selection.type !== 'catalog') return { selection: { type: 'standard' }, downgraded: false };
-  if (!isCodexAcceleratedServiceTier(selection.id)) return { selection: { type: 'standard' }, downgraded: true };
+  if (!isCodexServiceTierId(selection.id) || normalizeCodexPricingServiceTier(selection.id) === 'default') return { selection: { type: 'standard' }, downgraded: false };
   return { selection, downgraded: !model?.serviceTiers.some((tier) => tier.id === selection.id) };
 }
 
-/** 将目录档位或选择器值恢复为会话速度选项。 */
+/** 将已生效的目录 ID 恢复为选择器状态。 */
 export function selectionFromEffectiveServiceTier(serviceTier: string | null | undefined): NativeServiceTierSelection {
-  return isCodexAcceleratedServiceTier(serviceTier) ? { type: 'catalog', id: serviceTier } : { type: 'standard' };
+  return isCodexServiceTierId(serviceTier) && normalizeCodexPricingServiceTier(serviceTier) !== 'default' ? { type: 'catalog', id: serviceTier } : { type: 'standard' };
 }

@@ -1,4 +1,5 @@
 import {
+  formatZeusDateTime,
   asyncMessageQuestions,
   compareConversationWorkStartedDesc,
   defaultTaskBranchPrefix,
@@ -1106,7 +1107,7 @@ export function formatDataPortabilityStatus(status: DataPortabilityStatusState, 
 export function formatArchivedConversationDate(value: string, appLanguage: AppLanguage): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
-  return new Intl.DateTimeFormat(appLanguage, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
+  return formatZeusDateTime(timestamp, appLanguage, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** Runtime 日志导出状态只存结构化事实，渲染时按当前语言输出，避免英文界面残留中文状态。 */

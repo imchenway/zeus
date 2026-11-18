@@ -1,6 +1,6 @@
 import { createModelPricingService } from './modelPricingService.js';
 import { createKiloAccountUsageService } from './kiloAccountUsage.js';
-import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import { parseModelPricingProfile, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { randomUUID } from 'node:crypto';
 import {
   buildModelsUrl,
@@ -14,7 +14,6 @@ import {
   auditConfiguredModelReasoningLevels,
   probeConfiguredModel,
   probeConfiguredModelConnectivity,
-  generateConfiguredModelText,
   syncDiscoveredModels,
   isPiThinkingLevel,
   type ConfiguredModelDefinition,
@@ -31,6 +30,8 @@ import type { SettingRepository } from '@zeus/storage';
 
 export interface SaveModelConnectionRequest extends SaveModelConnectionInput {
   apiKey?: string;
+  /** 单独绑定到价格源的 Bearer 凭据。 */
+  pricingAccessToken?: string;
   allowInsecureHttp?: boolean;
 }
 
@@ -122,7 +123,6 @@ export function createModelConnectionService(options: {
   save: () => Promise<void>;
   now?: () => string;
   fetch?: typeof fetch;
-  readPricingPage?: (input: { url: string }) => Promise<string>;
   /** 共用目录刷新后的补价入口。 */
   onPricingUpdated?: (connection: ModelConnectionRecord, catalog: import('@zeus/shared').ModelPricingCatalog) => Promise<void>;
 }): ModelConnectionService {
@@ -143,18 +143,12 @@ export function createModelConnectionService(options: {
 
   /** 使用现有连接的模型能力读取价格，页面内容不进入任何用户会话。 */
   const pricing = createModelPricingService({
-    readPricingPage: options.readPricingPage,
     settings: options.settings,
     connections: readStored,
     onCatalogUpdated: options.onPricingUpdated,
     save: options.save,
     now,
-    async extract(connection, text, system, signal) {
-      const model = connection.models.find((candidate) => candidate.enabled);
-      const apiKey = await options.secretStore.getSecret(modelConnectionSecretAccount(connection.id));
-      if (!model || !apiKey) throw new Error('页面需要自动识别，请先启用此连接的模型并配置密钥。');
-      return generateConfiguredModelText({ connection, model, apiKey, text, system, signal });
-    },
+    readPricingToken: (id) => options.secretStore.getSecret(pricingSecretAccount(id)),
   });
 
   /** 仅缓存凭据是否存在；真实推理和密钥查看仍逐次读取 SecretStore。 */
@@ -206,11 +200,27 @@ export function createModelConnectionService(options: {
     const timestamp = now();
     const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
     if (input.apiKey !== undefined && !apiKey) throw serviceError('ZEUS_MODEL_API_KEY_INVALID', 'API Key 不能为空。', 400);
+    const pricingProfile = (input.pricingProfile ?? existing?.pricingProfile)?.trim();
+    const pricingUrl = input.pricingUrl === undefined ? existing?.pricingUrl : input.pricingUrl;
+    let profile: ReturnType<typeof parseModelPricingProfile> | undefined;
+    try {
+      if (pricingProfile) profile = parseModelPricingProfile(pricingProfile);
+    } catch (error) {
+      throw serviceError('ZEUS_MODEL_PRICING_PROFILE_INVALID', error instanceof Error ? error.message : '价格源配置无效。', 400);
+    }
+    const pricingToken = input.pricingAccessToken;
+    if (pricingToken !== undefined && (typeof pricingToken !== 'string' || !/^[!-~]{1,4096}$/u.test(pricingToken) || !profile?.source?.bearer)) {
+      throw serviceError('ZEUS_MODEL_PRICING_TOKEN_INVALID', '价格令牌需对应已配置认证的价格源。', 400);
+    }
+    if (profile?.source?.bearer && !pricingUrl?.startsWith('https://')) throw serviceError('ZEUS_MODEL_PRICING_HTTPS_REQUIRED', '认证价目必须使用 HTTPS。', 400);
+    const oldPricingCredentialId = existing?.pricingCredentialId;
+    const pricingCredentialId = pricingToken ? randomUUID() : profile?.source?.bearer && pricingUrl === existing?.pricingUrl ? oldPricingCredentialId : undefined;
     const record = normalizeModelConnection(
-      { ...input, pricingUrl: input.pricingUrl === undefined ? existing?.pricingUrl : input.pricingUrl },
+      { ...input, pricingUrl, pricingProfile },
       {
         id,
         apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured),
+        pricingCredentialId,
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       },
@@ -227,7 +237,18 @@ export function createModelConnectionService(options: {
       await options.secretStore.setSecret(modelConnectionSecretAccount(id), apiKey);
       credentialStatus.delete(id);
     }
-    await write(records);
+    if (pricingToken && pricingCredentialId) await options.secretStore.setSecret(pricingSecretAccount(pricingCredentialId), pricingToken);
+    try {
+      await write(records);
+    } catch (error) {
+      if (pricingToken && pricingCredentialId) await options.secretStore.deleteSecret(pricingSecretAccount(pricingCredentialId)).catch(() => undefined);
+      throw error;
+    }
+    if (oldPricingCredentialId && oldPricingCredentialId !== pricingCredentialId) await options.secretStore.deleteSecret(pricingSecretAccount(oldPricingCredentialId)).catch(() => undefined);
+    /** 新价格配置保存后立即加入同步，常规设置保存不重复拉取。 */
+    if (record.enabled && pricing.source(record) && (record.pricingProfile !== existing?.pricingProfile || record.pricingUrl !== existing?.pricingUrl || pricingCredentialId !== oldPricingCredentialId)) {
+      void pricing.refresh(record).catch(() => undefined);
+    }
     return { ...record, apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured), pricingCatalog: pricing.read(record) };
   }
 
@@ -294,10 +315,11 @@ export function createModelConnectionService(options: {
       return saveConnection(id, withTemplateDefaults(input), existing);
     },
     async remove(id) {
-      await requireConnection(id);
+      const connection = await requireConnection(id);
       await options.secretStore.deleteSecret(modelConnectionSecretAccount(id));
       credentialStatus.delete(id);
       await write(readStored().filter((candidate) => candidate.id !== id));
+      if (connection.pricingCredentialId) await options.secretStore.deleteSecret(pricingSecretAccount(connection.pricingCredentialId)).catch(() => undefined);
     },
     async clearApiKey(id) {
       const existing = await requireConnection(id);
@@ -475,6 +497,11 @@ function withTemplateDefaults(input: SaveModelConnectionRequest): SaveModelConne
     baseUrl: input.baseUrl || template?.baseUrl || '',
     modelsPath: input.modelsPath ?? template?.modelsPath ?? '/models',
   };
+}
+
+/** 价格密钥和推理密钥使用不同的本地保存身份。 */
+function pricingSecretAccount(id: string): string {
+  return 'model-pricing:' + id;
 }
 
 export function createManualModel(id: string, templateId: ModelConnectionTemplateId): ConfiguredModelDefinition {

@@ -1,4 +1,7 @@
-import type { ModelPrice } from '@zeus/shared';
+import type { MeteredCharge, MeteredPrice, ModelPrice } from '@zeus/shared';
+
+/** 百炼缓存命中倍率来自同一地域的官方缓存说明。 */
+export const bailianCachePricingUrl = 'https://help.aliyun.com/zh/model-studio/context-cache';
 
 /** 固定官方来源支持代理网络；重定向只能停留在同一官方域名。 */
 export async function readBuiltInPricingPage(url: string, signal: AbortSignal): Promise<string> {
@@ -77,7 +80,7 @@ function price(value: string | undefined, currency: 'USD' | 'CNY'): number | nul
 }
 
 /** 内置供应商维护表头与计费语义，模型名称全部来自当前网页。 */
-export function parseBuiltInModelPrices(template: string, html: string): { prices: ModelPrice[]; unavailableModels: string[] } {
+export function parseBuiltInModelPrices(template: string, html: string, cacheHtml = ''): { prices: ModelPrice[]; unavailableModels: string[] } {
   const prices: ModelPrice[] = [];
   const unavailableModels: string[] = [];
   if (template === 'deepseek') {
@@ -162,10 +165,15 @@ export function parseBuiltInModelPrices(template: string, html: string): { price
   } else if (template === 'bailian') {
     /** 内置连接是北京地域接口；不能拿海外地域或批处理折扣计价。 */
     let beijing = false;
+    let service = '';
+    const schedule = publishedPriceWindows(text(html));
+    const cacheDiscounts = publishedCacheMultipliers(cacheHtml);
     for (const section of html.matchAll(/<(h[1-6]|table)\b[^>]*>([\s\S]*?)<\/\1>/giu)) {
       if (section[1] !== 'table') {
-        const heading = text(section[2]!);
-        if (/北京|弗吉尼亚|新加坡|法兰克福|东京/gu.test(heading)) beijing = heading.replace(/\s/gu, '') === '华北2（北京）';
+        const heading = text(section[2]!).replace(/\s/gu, '');
+        const areaHeading = /^(?:华北\d|美国|德国|日本|中国香港|新加坡)(?:[（(]|$)/u.test(heading);
+        if (/^h[1-3]$/u.test(section[1]!) || (section[1] === 'h4' && !areaHeading)) service = heading;
+        if (areaHeading || /^h[1-4]$/u.test(section[1]!)) beijing = heading === '华北2（北京）';
         continue;
       }
       if (!beijing) continue;
@@ -174,13 +182,40 @@ export function parseBuiltInModelPrices(template: string, html: string): { price
       const inputColumn = header.findIndex((cell) => /^输入单价（每百万\s*Token）/u.test(cell));
       const outputColumn = header.findIndex((cell) => /^输出单价（每百万\s*Token）/u.test(cell));
       const rangeColumn = header.findIndex((cell) => /单次请求的输入/u.test(cell));
-      if (header[0] !== '模型 ID（Model ID）' || inputColumn < 0 || outputColumn < 0 || rangeColumn < 0) continue;
+      if (header[0] !== '模型 ID（Model ID）') continue;
       for (const row of rows.slice(1)) {
         const model = row[0]?.match(/^([a-z0-9][a-z0-9._/-]*)(?:\s|$)/u)?.[1];
+        if (!model) continue;
+        if (service === '千问图像生成与编辑2.0系列' && header.join('|') === '模型 ID（Model ID）|输出单价|免费额度') {
+          const unitPrice = row[1]?.match(/^(\d+(?:\.\d+)?)\s*元\s*\/\s*张$/u);
+          if (!unitPrice) unavailableModels.push(model);
+          else prices.push(meteredTablePrice(model, { charges: [{ meter: 'output_images', unit: 'image', quantityPerPrice: 1, amount: Number(unitPrice[1]), category: 'output' }] }, '北京公开按张价', { header, row }));
+          continue;
+        }
+        if (inputColumn < 0 || outputColumn < 0) continue;
+        if (rangeColumn < 0 && /忙时|闲时/u.test(`${row[inputColumn]} ${row[outputColumn]}`)) {
+          const input = readPeakPrices(row[inputColumn]);
+          const output = readPeakPrices(row[outputColumn]);
+          const cache = cacheDiscounts.get(model);
+          if (!schedule || !input || !output || !cache) unavailableModels.push(model);
+          else {
+            for (const kind of ['busy', 'idle'] as const) {
+              /** 实时推理采用隐式缓存。显式缓存写入由另一套条件计价。 */
+              const charges: MeteredCharge[] = [
+                { meter: 'input_tokens', unit: 'token', quantityPerPrice: 1_000_000, amount: input[kind], category: 'input' },
+                { meter: 'cached_input_tokens', unit: 'token', quantityPerPrice: 1_000_000, amount: input[kind] * cache.multiplier, category: 'input' },
+                { meter: 'cache_write_tokens', unit: 'token', quantityPerPrice: 1_000_000, amount: null, category: 'input' },
+                { meter: 'output_tokens', unit: 'token', quantityPerPrice: 1_000_000, amount: output[kind], category: 'output' },
+              ];
+              prices.push(meteredTablePrice(model, { charges, windows: schedule[kind] }, '北京实时推理公开价和隐式缓存折扣', { header, row, cache: cache.evidence, schedule: schedule.evidence }));
+            }
+          }
+          continue;
+        }
+        if (rangeColumn < 0) continue;
         const input = price(row[inputColumn], 'CNY');
         const output = price(row[outputColumn], 'CNY');
         const band = row[rangeColumn]?.replace(/\s/gu, '').match(/^(\d+)([KM]?)<Token≤(\d+)([KM]?)$/iu);
-        if (!model) continue;
         if (input === null || output === null || (!band && row[rangeColumn] !== '无阶梯计价')) {
           unavailableModels.push(model);
           continue;
@@ -200,5 +235,49 @@ export function parseBuiltInModelPrices(template: string, html: string): { price
     }
   }
   /** 同一模型多个模式或重复栏目若费率冲突，估算器会拒绝同时命中的条目。 */
-  return { prices: [...new Map(prices.map((entry) => [JSON.stringify({ model: entry.model, perMillion: entry.perMillion, inputRange: entry.inputRange }), entry])).values()], unavailableModels: [...new Set(unavailableModels)] };
+  return { prices: [...new Map(prices.map((entry) => [JSON.stringify({ model: entry.model, perMillion: entry.perMillion, inputRange: entry.inputRange, metered: entry.metered }), entry])).values()], unavailableModels: [...new Set(unavailableModels)] };
+}
+
+/** 只接收同时明确标出峰、谷和币种的官方单元格。 */
+function readPeakPrices(value: string | undefined): { busy: number; idle: number } | null {
+  const values = value?.match(/^忙时\s*(\d+(?:\.\d+)?)\s*元\s*闲时\s*(\d+(?:\.\d+)?)\s*元$/u);
+  return values ? { busy: Number(values[1]), idle: Number(values[2]) } : null;
+}
+
+/** 从原文解析每天互补的时段，跨午夜拆成两个区间。 */
+function publishedPriceWindows(body: string): { busy: NonNullable<MeteredPrice['windows']>; idle: NonNullable<MeteredPrice['windows']>; evidence: string } | null {
+  const found = body.match(/忙时为北京时间\s*(\d{2}:\d{2})\s*至\s*(\d{2}:\d{2})\s*，\s*闲时为北京时间\s*\2\s*至次日\s*\1\s*。/u);
+  if (!found) return null;
+  const [start, end] = [found[1]!, found[2]!].map((clock) => {
+    const [hour, minute] = clock.split(':').map(Number);
+    return hour! < 24 && minute! < 60 ? hour! * 60 + minute! : NaN;
+  });
+  if (!(start! > 0 && end! < 1440 && start! < end!)) return null;
+  const window = (startMinute: number, endMinute: number) => ({ timeZone: 'Asia/Shanghai', weekdays: [0, 1, 2, 3, 4, 5, 6], startMinute, endMinute });
+  return { busy: [window(start!, end!)], idle: [window(0, start!), window(end!, 1440)], evidence: found[0] };
+}
+
+/** 按文档给出的精确 ID 为隐式缓存匹配输入费率倍率。 */
+function publishedCacheMultipliers(html: string): Map<string, { multiplier: number; evidence: string }> {
+  const multipliers = new Map<string, { multiplier: number; evidence: string }>();
+  const disputed = new Set<string>();
+  for (const item of html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/giu)) {
+    const evidence = text(item[1]!);
+    const rule = evidence.match(/^([a-z0-9][a-z0-9._-]*(?:\s*、\s*[a-z0-9][a-z0-9._-]*)*)\s*：\s*cached_token\s*单价为\s*input_token\s*单价的\s*(\d+(?:\.\d+)?)%/u);
+    if (!rule) continue;
+    const multiplier = Number(rule[2]) / 100;
+    if (!(multiplier >= 0 && multiplier <= 1)) continue;
+    for (const model of rule[1]!.split('、').map((id) => id.trim())) {
+      const old = multipliers.get(model);
+      if (old && old.multiplier !== multiplier) disputed.add(model);
+      multipliers.set(model, { multiplier, evidence });
+    }
+  }
+  for (const model of disputed) multipliers.delete(model);
+  return multipliers;
+}
+
+/** 所有计量价目写入相同的目录类型，当前页面的读取时间由目录保存。 */
+function meteredTablePrice(model: string, metered: MeteredPrice, basis: string, evidence: object): ModelPrice {
+  return { model, currency: 'CNY', perMillion: null, perRequest: null, metered, basis, evidence: JSON.stringify(evidence) };
 }

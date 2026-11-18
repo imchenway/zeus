@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from '@codemirror/view';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { hasBlameCommit } from './blamePresentation.js';
@@ -101,7 +102,7 @@ function formatRelativeTime(timestamp: number, locale = 'en-US'): string {
 function formatAbsoluteTime(timestamp: number, locale = 'en-US'): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return locale.startsWith('zh') ? '时间未知' : 'Unknown time';
   try {
-    return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(timestamp * 1_000));
+    return formatZeusDateTime(timestamp * 1_000, locale, { dateStyle: 'medium', timeStyle: 'short' });
   } catch {
     return new Date(timestamp * 1_000).toISOString();
   }

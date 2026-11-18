@@ -1,5 +1,6 @@
 import type { CodexUsageEstimate, CodexUsageRateSnapshot, TokenUsageBreakdown } from './codexUsage.js';
 import { estimateCodexUsageWithRateSnapshot } from './codexUsage.js';
+import { matchMeteredPrice, meteredChargeAmounts, type MeteredPrice, type MeteredUsage } from './meteredPricing.js';
 
 /** 金额保留原始币种，不把人民币写入美元字段。 */
 export interface EstimatedMoney {
@@ -35,6 +36,8 @@ export interface ModelPrice {
   perMillion: { input: number; output: number; cachedInput: number | null; cacheWrite: number | null } | null;
   /** 每次请求单价；Token 项目为空。 */
   perRequest: number | null;
+  /** 声明式费率与旧的 Token／按次字段互斥。 */
+  metered?: MeteredPrice;
   /** 公开价、分组或其他已确认适用范围。 */
   basis: string;
   /** 原始页面依据，不含密钥。 */
@@ -45,17 +48,21 @@ export interface ModelPrice {
 export interface ModelPricingCatalog {
   /** 用户提供或内置的价格页面。 */
   url: string;
+  /** 不含密钥的来源配置与凭据身份摘要。 */
+  sourceRevision?: string;
   /** 成功读取的时间，不冒充价格生效日期。 */
   retrievedAt: string | null;
+  /** 当前目录内容首次确认时间，用于限制缺少生效日期的历史补算。 */
+  observedAt?: string;
   /** 最近尝试读取的时间。 */
   checkedAt: string;
-  /** 原文摘要用于避免无变化时重复调用模型。 */
+  /** 来源内容摘要用于识别目录变更。 */
   documentHash: string;
   /** 校验通过的动态模型价格。 */
   prices: ModelPrice[];
   /** 被识别但缺少计价依据的模型。 */
   unavailableModels: string[];
-  /** 失败或部分识别说明。 */
+  /** 最近一次同步失败的原因。部分缺价由 unavailableModels 表达。 */
   error: string | null;
 }
 
@@ -69,6 +76,12 @@ export interface UsageRequestPriceSnapshot {
   observationId?: string;
   /** 请求记录的时间。 */
   occurredAt: string;
+  /** 可证明的请求开始时间，分时费率不能从完成时间推算。 */
+  startedAt?: string;
+  /** 独立价格账号的不透明标识，防止同一 URL 换账号后交叉补价。 */
+  pricingAccountScope?: string;
+  /** 可选的独立计量回执，历史 Token 用量继续按旧快照读取。 */
+  meteredUsage?: MeteredUsage;
   /** 供应商报告的用量。 */
   usage: TokenUsageBreakdown;
   /** 当次计算结果与费率，不引用可变的最新价格。 */
@@ -81,20 +94,21 @@ export function unavailableRateSnapshot(model: string, serviceTier: string | nul
 }
 
 /** 根据一条已校验的公开价格计算，缺少正在使用的缓存费率时保留未知。 */
-export function estimateModelPrice(model: string, usage: TokenUsageBreakdown, catalog: ModelPricingCatalog | null, occurredAt = new Date().toISOString()): CodexUsageEstimate {
+export function estimateModelPrice(model: string, usage: TokenUsageBreakdown, catalog: ModelPricingCatalog | null, occurredAt = new Date().toISOString(), meteredUsage?: MeteredUsage, historical = false): CodexUsageEstimate {
   /** 精确身份在连接内部匹配，其他供应商同名模型不能借价。 */
   const instant = new Date(occurredAt);
   /** 所有适用条件均由程序判断，多个冲突费率同时命中时拒绝猜测。 */
-  const matches =
-    catalog?.prices.filter(
-      (entry) =>
-        entry.model === model &&
+  const matches = catalog?.prices.filter((entry) => entry.model === model).map((entry) => ({
+    entry,
+    match: entry.metered
+      ? matchMeteredPrice(entry.metered, meteredUsage, occurredAt, catalog?.observedAt ?? catalog?.retrievedAt ?? '', historical)
+      : Number.isFinite(instant.getTime()) &&
         (!entry.inputRange || (usage.inputTokens > entry.inputRange.minExclusive && usage.inputTokens <= entry.inputRange.maxInclusive)) &&
         !entry.excludedUtcWindows?.some(
           (window) => window.weekdays.includes(instant.getUTCDay()) && instant.getUTCHours() * 60 + instant.getUTCMinutes() >= window.startMinute && instant.getUTCHours() * 60 + instant.getUTCMinutes() < window.endMinute,
-        ),
-    ) ?? [];
-  const price = matches.length === 1 ? matches[0] : undefined;
+        ) && (!historical || instant.getTime() >= Date.parse(catalog?.observedAt ?? catalog?.retrievedAt ?? '')),
+  })).filter(({ match }) => match !== false) ?? [];
+  const price = matches.length === 1 && matches[0]?.match === true ? matches[0].entry : undefined;
   /** 使用通用空费率建立账本形状，不套用任何模型默认价格。 */
   const snapshot = unavailableRateSnapshot(model);
   if (catalog?.url) snapshot.sourceUrls = [catalog.url];
@@ -104,16 +118,22 @@ export function estimateModelPrice(model: string, usage: TokenUsageBreakdown, ca
   snapshot.normalizedModel = model;
   snapshot.sourceUrls = [catalog.url];
   snapshot.price = price;
-  return estimateModelUsageWithSnapshot(usage, snapshot);
+  return estimateModelUsageWithSnapshot(usage, snapshot, meteredUsage);
 }
 
 /** 固化费率的确定性计算；页面与模型只提供数据，不执行生成的公式。 */
-export function estimateModelUsageWithSnapshot(usage: TokenUsageBreakdown, snapshot: CodexUsageRateSnapshot): CodexUsageEstimate {
+export function estimateModelUsageWithSnapshot(usage: TokenUsageBreakdown, snapshot: CodexUsageRateSnapshot, meteredUsage?: MeteredUsage): CodexUsageEstimate {
   /** 兼容历史美元记录，原计算口径保持可复算。 */
   const result = estimateCodexUsageWithRateSnapshot(usage, snapshot);
   /** 自定义单价独立保存，未提供时继续使用历史字段。 */
   const price = snapshot.price;
   if (!price) return result;
+  if (price.metered) {
+    const amounts = meteredChargeAmounts(price.metered, meteredUsage);
+    const amount = amounts?.reduce((total, item) => total + item.amount, 0);
+    if (amount === undefined || !Number.isFinite(amount)) return result;
+    return { ...result, costs: [{ currency: price.currency, amount }], apiEquivalentUsd: price.currency === 'USD' ? amount : null, pricedTokens: result.billableTokens, coverage: result.billableTokens ? 1 : null };
+  }
   /** 供应商返回互相冲突的用量时保留缺价，不能靠截零低估费用。 */
   if (Object.values(usage).some((value) => !Number.isFinite(value) || value < 0) || usage.cachedInputTokens + usage.cacheWriteInputTokens > usage.inputTokens) return result;
   /** 缓存类别从输入总量扣除后分别计费。 */
@@ -146,6 +166,16 @@ export function splitEstimatedUsageCosts(usage: TokenUsageBreakdown, estimate: C
   for (const request of requests) {
     /** 总量计价已选定档位，拆分时保留原档位，不重新匹配输入量区间。 */
     const snapshot = request.estimate.rateSnapshot;
+    if (snapshot?.price?.metered) {
+      const parts = splitMeteredRequestCosts(request);
+      if (parts) {
+        inputEstimates.push({ ...request.estimate, costs: parts.input });
+        outputEstimates.push({ ...request.estimate, costs: parts.output });
+      }
+      inputCostComplete &&= Boolean(parts && !parts.perRequest.length);
+      outputCostComplete &&= Boolean(parts && !parts.perRequest.length);
+      continue;
+    }
     if (
       !snapshot ||
       snapshot.price?.perRequest != null ||
@@ -167,6 +197,17 @@ export function splitEstimatedUsageCosts(usage: TokenUsageBreakdown, estimate: C
     outputCostComplete &&= sumEstimatedCosts([output]).length > 0;
   }
   return { inputCosts: sumEstimatedCosts(inputEstimates), outputCosts: sumEstimatedCosts(outputEstimates), inputCostComplete, outputCostComplete };
+}
+
+/** 展示已记账费率的输入、输出与整次费用；无实际金额时保持空结果。 */
+export function splitMeteredRequestCosts(request: Pick<UsageRequestPriceSnapshot, 'estimate' | 'meteredUsage'>): Record<MeteredPrice['charges'][number]['category'], EstimatedMoney[]> | null {
+  const price = request.estimate.rateSnapshot.price;
+  if (!price?.metered || !request.estimate.costs?.length) return null;
+  const charges = meteredChargeAmounts(price.metered, request.meteredUsage);
+  if (!charges) return null;
+  const totals = { input: [], output: [], perRequest: [] } as Record<MeteredPrice['charges'][number]['category'], EstimatedMoney[]>;
+  for (const charge of charges) totals[charge.category].push({ currency: price.currency, amount: charge.amount });
+  return totals;
 }
 
 /** 按币种分别汇总；历史美元记录只补入一次。 */

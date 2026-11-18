@@ -13,6 +13,7 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import { MessageCheckIcon, MessageCopyIcon, MessageCostIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon, MessageTokenIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import {
+  formatZeusDateTime,
   type ConversationContextDraft,
   type ConversationFileLocation,
   type ConversationOpenTarget,
@@ -1420,12 +1421,11 @@ function formatMessageTimestamp(source: string | undefined, language: SessionUiL
   if (Number.isNaN(date.getTime())) return null;
   const now = new Date();
   const isToday = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
-  return new Intl.DateTimeFormat(language, {
+  return formatZeusDateTime(date, language, {
     ...(isToday ? {} : { year: 'numeric', month: '2-digit', day: '2-digit' }),
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
-  }).format(date);
+  });
 }
 
 function commandText(value: unknown): string | null {

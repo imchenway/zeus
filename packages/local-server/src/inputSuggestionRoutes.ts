@@ -7,7 +7,7 @@ import {
   normalizeInputSuggestionSettings,
   normalizePerformanceTraceIdentity,
   userFacingErrorCause,
-  type CodexAcceleratedServiceTier,
+  type CodexServiceTierId,
   type InputSuggestionRequest,
   type InputSuggestionResult,
   type InputSuggestionModelOption,
@@ -72,7 +72,7 @@ async function generateSuggestionText(options: {
   /** 档位来自输入建议自己的设置，空值才自动选择最低。 */
   effort: string | null;
   /** 专用速度设置与主会话独立，调用前已核对当前模型目录。 */
-  serviceTier: CodexAcceleratedServiceTier | null;
+  serviceTier: CodexServiceTierId | null;
   /** 已保存并捕获的专用模型身份。 */
   selectedModelRef: string;
   /** API 连接使用现有鉴权和协议映射。 */

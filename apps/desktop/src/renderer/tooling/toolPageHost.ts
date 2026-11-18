@@ -3,7 +3,7 @@ export { MotionPresence } from '../ui/MotionPresence.js';
 /** 工具页通过宿主识别内部临时工作区，沿用共享标识而不直接依赖系统包。 */
 export { temporaryWorkspaceId } from '@zeus/shared';
 /** 自动化工具页通过宿主复用按规则时区转换一次性执行时间的共享函数。 */
-export { formatAutomationOnceInput, parseAutomationOnceInput } from '@zeus/shared';
+export { formatAutomationOnceInput, formatZeusDateTime, parseAutomationOnceInput } from '@zeus/shared';
 /** 自动化工具页的动作和员工目录类型统一由宿主暴露。 */
 export { type AutomationActionKind } from '@zeus/shared';
 export { type DigitalEmployeeTemplateRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
@@ -12,6 +12,7 @@ export { type CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 export { type DashboardClient, type ProjectRecord } from '../apiClient.js';
 export { Button } from '../ui/Button.js';
 export { FormDialog } from '../ui/FormDialog.js';
+export { ClockTimeInput } from '../ui/ClockTimeInput.js';
 export { ZeusSelect } from '../ZeusSelect.js';
 export {
   type PluginApprovalMode,

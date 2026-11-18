@@ -99,11 +99,11 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         }
         const connection = connectionsById.get(providerId.replace(/^api:/u, ''));
         const source = providerId === 'codex' ? codexPricingUrl : connection ? options.modelConnections.pricing.source(connection) : null;
-        const error = providerId === 'codex' ? pricingStatus.error : connection ? options.modelConnections.pricing.read(connection)?.error : null;
+        const syncFailed = providerId === 'codex' ? pricingStatus.failed : Boolean(connection && options.modelConnections.pricing.read(connection)?.error);
         for (const range of Object.values(provider.overviewRanges))
           for (const entry of range.costBreakdown) {
             if (!entry.sourceUrls?.length && source) entry.sourceUrls = [source];
-            if (!entry.rate || !entry.estimatedCosts.length) entry.missingPriceReason = error ? 'sync_failed' : 'unconfirmed';
+            if (!entry.rate || !entry.estimatedCosts.length) entry.missingPriceReason = entry.rate?.charges?.length ? 'missing_usage' : syncFailed ? 'sync_failed' : 'unconfirmed';
           }
         return provider;
       })
@@ -193,7 +193,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
             note: isCodex
               ? (pricingStatus.error ? `价格同步未完整完成：${pricingStatus.error}。` : '') +
                 'Credits 与 API 等价美元均为估算，不是实际账单；缺价会自动获取官方价格。' +
-                (filteredRows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录按补价时价格估算。' : '')
+                (filteredRows.some((row) => row.estimate.rateSnapshot.backfilledAt) ? '历史缺价记录使用已确认的公开费率补算。' : '')
               : '费用为供应商费率估算；未知模型或未返回费率的轮次不会计入估算。',
           },
         };
@@ -431,7 +431,12 @@ function usagePriceIdentity(providerId: string, model: string, snapshot: CodexUs
   /** 时段与星期的顺序不改变价格适用条件。 */
   const windows = conditions?.excludedUtcWindows?.map((window) => JSON.stringify([[...new Set(window.weekdays)].sort((left, right) => left - right), window.startMinute, window.endMinute])).sort() ?? [];
   /** 一条周期链只比较完全相同的计费条件。 */
-  const seriesKey = JSON.stringify([provider, model, serviceTier, longContext, conditions?.inputRange ? [conditions.inputRange.minExclusive, conditions.inputRange.maxInclusive] : null, [...new Set(windows)]]);
+  const metered = conditions?.metered;
+  const seriesKey = JSON.stringify([
+    provider, model, serviceTier, longContext,
+    conditions?.inputRange ? [conditions.inputRange.minExclusive, conditions.inputRange.maxInclusive] : null, [...new Set(windows)],
+    metered ? [Object.entries(metered.attributes ?? {}).sort(), metered.windows ?? [], metered.charges.map((charge) => [charge.meter, charge.unit, charge.quantityPerPrice, charge.category])] : null,
+  ]);
   return {
     rate,
     serviceTier,
@@ -504,8 +509,13 @@ function previousIsoDate(value: string): string {
 function usageModelRate(snapshot: CodexUsageRateSnapshot): UsageModelRate | null {
   if (snapshot.price) {
     /** 条件价格的对象字段顺序可能不同，先投影为固定顺序再比较完整单价。 */
-    const { currency, perMillion, perRequest } = snapshot.price;
-    return { currency, perMillion: perMillion ? { input: perMillion.input, output: perMillion.output, cachedInput: perMillion.cachedInput, cacheWrite: perMillion.cacheWrite } : null, perRequest };
+    const { currency, perMillion, perRequest, metered } = snapshot.price;
+    return {
+      currency,
+      perMillion: perMillion ? { input: perMillion.input, output: perMillion.output, cachedInput: perMillion.cachedInput, cacheWrite: perMillion.cacheWrite } : null,
+      perRequest,
+      ...(metered ? { charges: metered.charges } : {}),
+    };
   }
   if (snapshot.usdPerMillion) {
     return {

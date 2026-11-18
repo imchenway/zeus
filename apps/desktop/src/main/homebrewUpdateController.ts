@@ -1,4 +1,4 @@
-import { describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
+import { formatZeusDateTime, describeUserFacingError, redactUserFacingErrorDetails } from '@zeus/shared';
 import type { DesktopReleaseUpdateStatus, ReleaseUpdateService } from './releaseUpdateService.js';
 import { type HomebrewInstalledUpdate, type HomebrewPreparedUpdate, type HomebrewUpdateProgress, type HomebrewUpdateService } from './homebrewUpdateService.js';
 import { createNativeUpdateProgressHost, type NativeUpdateProgressHost, type NativeUpdateProgressState } from './nativeUpdateProgress.js';
@@ -780,7 +780,7 @@ function formatRateNumber(value: number): string {
 }
 
 function formatLocalTime(value: string, language: 'zh-CN' | 'en-US'): string {
-  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+  return formatZeusDateTime(value, language, { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Release 检查只读取外部事实；临时失败允许两次短间隔重试。 */

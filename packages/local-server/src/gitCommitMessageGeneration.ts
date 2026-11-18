@@ -1,4 +1,4 @@
-import type { CodexAcceleratedServiceTier } from '@zeus/shared';
+import type { CodexServiceTierId } from '@zeus/shared';
 import { generateConfiguredModelText, modelRef } from '@zeus/ai-runtime';
 import type { ModelConnectionService } from './modelConnectionService.js';
 
@@ -29,7 +29,7 @@ export interface GitCommitMessageInput {
   /** 模型目录中的推理档位，生成前再次核对支持范围。 */
   effort?: string;
   /** 标准速度为 null，加速档位仅用于支持该档位的 Codex 模型。 */
-  serviceTier?: CodexAcceleratedServiceTier | null;
+  serviceTier?: CodexServiceTierId | null;
   recentCommits?: string[];
   diffStat?: string;
   truncated?: boolean;

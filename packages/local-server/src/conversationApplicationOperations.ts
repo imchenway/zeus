@@ -1818,7 +1818,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       connectionId: prepared.route.connectionId,
       credentialSlotId: prepared.route.credentialSlotId,
       endpointIdentity: prepared.route.endpointIdentity,
-      protocolFamily: prepared.route.protocolFamily as 'codex_app_server' | 'openai_responses' | 'openai_completions' | 'anthropic_messages',
+      protocolFamily: prepared.route.protocolFamily as 'codex_app_server' | 'openai_responses' | 'openai_completions' | 'openai_images' | 'anthropic_messages',
       modelId: prepared.route.modelId,
       effort: prepared.route.effort,
       serviceTier: prepared.route.serviceTier,

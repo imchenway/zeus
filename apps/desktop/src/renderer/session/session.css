@@ -11625,8 +11625,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: var(--zeus-brand-text);
 }
 
-/* 两个加速档位共用闪电强调色，标准速度沿用输入栏图标色。 */
-.session-codex-parity-v1 .session-service-tier-dropdown:is([data-value='priority'], [data-value='ultrafast']) {
+/* 目录档位共用闪电强调色，标准速度沿用输入栏图标色。 */
+.session-codex-parity-v1 .session-service-tier-dropdown[data-value]:not([data-value='__zeus_standard__']) {
   --session-composer-trigger-color: var(--zeus-brand-text);
 }
 

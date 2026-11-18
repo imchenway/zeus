@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
@@ -758,7 +759,7 @@ function formatCountdown(seconds: number): string {
 /** 用本地日期格式显示检查时间与日志时间。 */
 function formatDateTime(value: string): string {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return Number.isNaN(parsed.getTime()) ? value : formatZeusDateTime(parsed, undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */

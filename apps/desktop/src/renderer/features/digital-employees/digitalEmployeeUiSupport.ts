@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import type { DigitalEmployeeAvatarId, EmployeeWorkSettings } from '@zeus/shared';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type {
@@ -87,7 +88,7 @@ export function formatDateTime(value: string | null | undefined, language: Digit
   if (!value) return language === 'zh-CN' ? '未记录' : 'Not recorded';
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
-  return new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp);
+  return formatZeusDateTime(timestamp, language, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export function executionStatusLabel(status: DigitalEmployeeExecutionStatus, language: DigitalEmployeeLanguage): string {

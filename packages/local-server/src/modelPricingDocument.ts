@@ -33,8 +33,9 @@ export function normalizePricingUrl(value: string): string {
 }
 
 /** 每次解析与重定向都校验，并固定本次实际连接地址以防 DNS 重绑定。 */
-export async function readPricingDocument(value: string, signal?: AbortSignal, redirects = 0): Promise<string> {
+export async function readPricingDocument(value: string, signal?: AbortSignal, redirects = 0, pricingToken?: string): Promise<string> {
   const url = new URL(normalizePricingUrl(value));
+  if (pricingToken && url.protocol !== 'https:') throw new Error('认证价目必须使用 HTTPS。');
   const hostname = url.hostname.replace(/^\[|\]$/gu, '');
   const addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname, { all: true });
   if (!addresses.length || addresses.some(({ address, family }) => (family === 4 ? excluded.check(address) : !/^[23][0-9a-f]{3}:/iu.test(address) || excluded.check(address, 'ipv6')))) throw new Error('价格页面只能访问公网地址。');
@@ -46,7 +47,7 @@ export async function readPricingDocument(value: string, signal?: AbortSignal, r
       url,
       {
         family: address.family,
-        headers: { Accept: 'application/json,text/html,text/plain', 'Accept-Encoding': 'identity' },
+        headers: { Accept: 'application/json,text/html,text/plain', 'Accept-Encoding': 'identity', ...(pricingToken ? { Authorization: 'Bearer ' + pricingToken } : {}) },
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
         lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),
       },
@@ -63,7 +64,7 @@ export async function readPricingDocument(value: string, signal?: AbortSignal, r
     request.on('error', reject);
     request.end();
   });
-  if (response.status >= 300 && response.status < 400 && response.location && redirects < 3) return readPricingDocument(new URL(response.location, url).href, signal, redirects + 1);
+  if (!pricingToken && response.status >= 300 && response.status < 400 && response.location && redirects < 3) return readPricingDocument(new URL(response.location, url).href, signal, redirects + 1);
   if (response.status !== 200) throw new Error(`价格页面读取失败（HTTP ${response.status}）。`);
   return response.text;
 }

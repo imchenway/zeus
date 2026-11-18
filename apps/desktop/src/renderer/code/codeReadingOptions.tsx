@@ -1,3 +1,4 @@
+import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect, useMemo, useState, useSyncExternalStore, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Prec } from '@codemirror/state';
@@ -47,7 +48,7 @@ class AuthorMarker extends GutterMarker {
     /** 侧栏文字保持单行，避免长作者名改变代码行高。 */
     const element = document.createElement('span');
     element.textContent = formatBlameAuthor(this.blame);
-    element.dataset.iconTooltip = [element.textContent, new Date(this.blame.authorTime * 1000).toLocaleString(this.zh ? 'zh-CN' : 'en-US'), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
+    element.dataset.iconTooltip = [element.textContent, formatZeusDateTime(this.blame.authorTime * 1000, this.zh ? 'zh-CN' : 'en-US'), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
     return element;
   }
 }

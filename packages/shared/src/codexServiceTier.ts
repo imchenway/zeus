@@ -1,10 +1,13 @@
-/** Codex 的加速档位按速度从低到高排列。标准速度使用 null。 */
-export const codexAcceleratedServiceTiers = ['priority', 'ultrafast'] as const;
+/** Codex 模型目录声明的档位 ID，标准速度通常在请求中使用 null。 */
+export type CodexServiceTierId = string;
 
-/** 可以由 Zeus 速度选择器请求的 Codex 加速档位。 */
-export type CodexAcceleratedServiceTier = (typeof codexAcceleratedServiceTiers)[number];
+/** 校验档位标识的格式。可用性由当前模型目录校验。 */
+export function isCodexServiceTierId(value: unknown): value is CodexServiceTierId {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{0,127}$/iu.test(value);
+}
 
-/** 识别可保存并提交给 Codex 的加速档位。 */
-export function isCodexAcceleratedServiceTier(value: unknown): value is CodexAcceleratedServiceTier {
-  return codexAcceleratedServiceTiers.some((tier) => tier === value);
+/** 统一官方费率表和账本中已明确的档位别名。 */
+export function normalizeCodexPricingServiceTier(value: string | null | undefined): string {
+  if (value == null || value === 'standard') return 'default';
+  return value === 'fast' ? 'priority' : value;
 }
