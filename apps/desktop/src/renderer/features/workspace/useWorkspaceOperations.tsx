@@ -1946,7 +1946,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           selectedNativeConversation && selectedNativeConversation.transportKind !== 'codex_native'
             ? nativeLegacyMessageLoadState
             : props.nativeConversationClient
-              ? nativeSessionChoiceTaskState?.status === 'ready'
+              ? nativeSessionChoiceTaskState?.status === 'ready' || nativeSessionChoiceTaskState?.offline
                 ? 'empty'
                 : (nativeSessionChoiceTaskState?.status ?? 'loading')
               : 'empty'

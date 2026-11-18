@@ -2,6 +2,7 @@ import { transitionConversation } from '../../session/conversationTransition.js'
 import { beginConversationNavigationTrace } from '../../performanceTraceContext.js';
 import { markSideQuestionConversationArchived, restoreSideQuestionWorkspace } from '../../session/useSessionContextWorkspace.js';
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
+import { isLocalNetworkOffline } from '../../session/conversationSystemMessages.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
 import { modelCatalogGeneration } from '../integrations/modelCatalogEvents.js';
@@ -27,7 +28,7 @@ import {
   type ZeusRealtimeEvent,
 } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, temporaryWorkspaceId, type ThirdPartyTaskExtract } from '@zeus/shared';
+import { describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, temporaryWorkspaceId, type ThirdPartyTaskExtract, userFacingErrorCause } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import { focusTaskPushWindow } from '../../ui/windowDocument.js';
 import {
@@ -1619,7 +1620,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     } catch (error) {
       if (nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)) {
         const message = errorToLocalUiMessage(error, appShellSettings.appLanguage);
-        setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: failNativeConversationChoiceTaskLoad(current[taskId], message) }));
+        /** 分类发生在错误本地化前，草稿后续打开也能识别此结果。 */
+        const offline = isLocalNetworkOffline(error);
+        setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: failNativeConversationChoiceTaskLoad(current[taskId], message, offline) }));
       }
       throw error;
     }
@@ -1640,7 +1643,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return merged;
     } catch (error) {
       if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, requestVersion)) {
-        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error, appShellSettings.appLanguage)) }));
+        /** 分类发生在读取失败时，联网后不重新解释旧错误。 */
+        const offline = isLocalNetworkOffline(error);
+        setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], errorToLocalUiMessage(error, appShellSettings.appLanguage), offline) }));
       }
       throw error;
     }
@@ -2117,9 +2122,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         ...current,
         [input.task.id]: completeNativeConversationChoiceTaskLoad(current[input.task.id]),
       }));
-      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
+      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined, cause: userFacingErrorCause(error) };
     }
-    if (refreshError) {
+    if (refreshError && !isLocalNetworkOffline(refreshError)) {
       setNativeConversationChoiceTaskStates((current) => ({
         ...current,
         [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], 'Conversation started. History refresh will retry later.'),
@@ -2183,9 +2188,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         ...current,
         [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]),
       }));
-      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined };
+      return { state: 'failed', message, code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined, cause: userFacingErrorCause(error) };
     }
-    if (refreshError) {
+    if (refreshError && !isLocalNetworkOffline(refreshError)) {
       setNativeConversationChoiceProjectStates((current) => ({
         ...current,
         [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], 'Conversation started. History refresh will retry later.'),
@@ -2245,7 +2250,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         window.history.replaceState(null, '', '#project-sessions');
       }
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    }).catch((error: unknown) => recordLocalError('temporary-conversation-start', error));
+    }).catch((error: unknown) => {
+      if (!isLocalNetworkOffline(error)) recordLocalError('temporary-conversation-start', error);
+    });
   };
 
   const selectNewConversationProject = async (projectId: string): Promise<void> => {
@@ -2254,7 +2261,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       try {
         project = await ensureTemporaryWorkspace();
       } catch (error) {
-        recordLocalError('temporary-conversation-start', error);
+        if (!isLocalNetworkOffline(error)) recordLocalError('temporary-conversation-start', error);
         return;
       }
     }

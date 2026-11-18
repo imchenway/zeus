@@ -12,6 +12,7 @@ import { conversationStartClientCommandTypes, forgetConversationStartCommandRequ
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
 import { useConversationPreload } from '../../session/useConversationPreload.js';
+import { isLocalNetworkOffline } from '../../session/conversationSystemMessages.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
@@ -1382,14 +1383,18 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         },
         (error) => {
           if (cancelled) return;
+          /** 同次后台请求失败时，项目和任务草稿共享离线判断。 */
+          const offline = isLocalNetworkOffline(error);
           const message = errorToLocalUiMessage(error, errorLanguageRef.current);
           if (nativeProjectConversationChoiceLoadCoordinator.isCurrent(projectId, projectRequestVersion)) {
-            setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message) }));
+            setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], message, offline) }));
           }
           setNativeConversationChoiceTaskStates((current) => ({
             ...current,
             ...Object.fromEntries(
-              taskLoads.filter(({ taskId, requestVersion }) => nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion)).map(({ taskId }) => [taskId, failNativeConversationChoiceTaskLoad(current[taskId], message)]),
+              taskLoads
+                .filter(({ taskId, requestVersion }) => nativeConversationChoiceLoadCoordinator.isCurrent(taskId, requestVersion))
+                .map(({ taskId }) => [taskId, failNativeConversationChoiceTaskLoad(current[taskId], message, offline)]),
             ),
           }));
         },
