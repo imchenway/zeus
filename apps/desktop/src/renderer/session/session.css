@@ -13280,6 +13280,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   outline-offset: 1px;
 }
 
+/* 系统播放仅驱动静置的刻度。悬停、焦点和摘录继续使用对应的导航反馈。 */
+@media (prefers-reduced-motion: no-preference) {
+  .session-codex-parity-v1 .session-navigation-rail[data-audio-playing]:not(:hover, :has(:focus-visible, [data-preview])) .session-navigation-tick > span {
+    transform: scaleX(calc((6 + 20 * var(--conversation-audio-level, 0)) / 26));
+    transition: opacity 160ms ease-out;
+  }
+}
+
 /* 门户继承主题；固定宽度与淡入位移避免内容切换缩放或闪烁。 */
 .session-codex-parity-v1.session-navigation-portal {
   position: fixed;

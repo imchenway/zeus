@@ -58,6 +58,7 @@ import { defaultMainWindowSize, findSavedWindowDisplay, minimumMainWindowSize, t
 import { waitForSavedWindowDisplay } from './windowRestoration.js';
 import { createPersistentWindow } from './persistentWindow.js';
 import { activeSystemWindow, registerSystemWindowIpc, systemWindowOpenHandler } from './systemWindows.js';
+import { registerConversationAudio } from './conversationAudio.js';
 import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
   buildTaskAttachmentPreviewDataUrl,
@@ -1796,6 +1797,11 @@ function sanitizeRendererRuntimeLogDetail(message: unknown): string {
 
 function setupIpc(): void {
   registerSystemWindowIpc();
+  registerConversationAudio(nativeDesktopHelperPath('ZeusConversationAudio'), (event) => {
+    /** Only the main frame of a conversation-capable Zeus window may request the tap. */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(window && windows.has(window) && event.senderFrame === event.sender.mainFrame && !readOnlyValidationDescriptor);
+  });
   /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
   nativeTheme.on('updated', () => {
     for (const window of projectGitDiffWindows) {

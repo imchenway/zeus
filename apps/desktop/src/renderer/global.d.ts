@@ -82,6 +82,12 @@ declare global {
     __zeusPerformanceSnapshot?: () => import('./rendererPerformanceObservability.js').RendererPerformanceSnapshot;
     zeus?: {
       appName: 'Zeus';
+      /** 设置当前可见窗口的频谱订阅。 */
+      subscribeConversationAudio?: (active: boolean) => Promise<void>;
+      /** 频谱能量以 base64 编码的 Float32 数据传递。 */
+      onConversationAudioFrame?: (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => () => void;
+      /** 通知桌面权限或原生输入不可用。 */
+      onConversationAudioUnavailable?: (listener: () => void) => () => void;
       getConversationStoreMigrationStatus: () => Promise<{
         phase: 'not_required' | 'preflight' | 'candidate_build' | 'candidate_validation' | 'promotion' | 'promoted_but_validation_failed' | 'completed' | 'failed';
         migrationId: string;
