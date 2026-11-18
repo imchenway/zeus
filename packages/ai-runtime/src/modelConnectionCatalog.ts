@@ -36,6 +36,8 @@ export type ReasoningProfileBasis =
   | 'catalog_default'
   /** 已核对的厂商文档档位表，适用于该厂商的同族模型（第三方渠道）。 */
   | 'vendor_docs'
+  /** 从 Codex 目录匹配到的 GPT 型号，实际渠道支持范围待验证。 */
+  | 'codex_catalog'
   /** 按模型名推断出所属家族（第三方中转场景），未验证。 */
   | 'model_name'
   /** 用户在模型配置里手工指定。 */
@@ -57,6 +59,12 @@ export interface ConfiguredReasoningOption {
   piLevel: PiThinkingLevel;
   /** 真正写进请求的取值；null 表示这个档位不发送任何取值字段。 */
   wire: string | null;
+}
+
+/** Codex 逐模型公布的可选档位及默认值。 */
+export interface CodexReasoningCatalogEntry {
+  efforts: readonly string[];
+  defaultEffort: string | null;
 }
 
 /**
@@ -177,7 +185,7 @@ const thinkingLevels = new Set<PiThinkingLevel>(['off', 'minimal', 'low', 'mediu
 const thinkingFormats = new Set<OpenAiThinkingFormat>(['openai', 'openrouter', 'deepseek', 'together', 'zai', 'qwen', 'qwen-chat-template', 'string-thinking', 'ant-ling']);
 const capabilityStates = new Set<ModelCapabilityState>(['supported', 'unsupported', 'unverified']);
 /** 档位清单来源的合法取值，非法值一律当未识别处理。 */
-const reasoningProfileBases = new Set<ReasoningProfileBasis>(['official_endpoint', 'vendor_docs', 'catalog', 'catalog_default', 'model_name', 'user', 'unidentified']);
+const reasoningProfileBases = new Set<ReasoningProfileBasis>(['official_endpoint', 'vendor_docs', 'codex_catalog', 'catalog', 'catalog_default', 'model_name', 'user', 'unidentified']);
 const speedLabels = new Set<ConfiguredModelDefinition['speedLabel']>(['standard', 'high_speed', 'flash', 'turbo']);
 const automaticModelCatalogs: Record<ModelConnectionTemplateId, Readonly<Record<string, Model<Api>>>> = {
   custom: normalizeModelCatalog(OPENCODE_MODELS),
@@ -238,13 +246,19 @@ export function parseModelRef(value: string): { sourceId: string; modelId: strin
   }
 }
 
-export function normalizeModelConnection(input: SaveModelConnectionInput, options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string }): ModelConnectionRecord {
+export function normalizeModelConnection(
+  input: SaveModelConnectionInput,
+  options: { id: string; apiKeyConfigured: boolean; createdAt: string; updatedAt: string },
+  codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>,
+): ModelConnectionRecord {
   const templateId = normalizeTemplateId(input.templateId);
   const template = templateId === 'custom' ? null : modelConnectionTemplates[templateId];
   const name = normalizeSingleLine(input.name || template?.name || '', '供应商名称', 80);
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
-  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }));
+  const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) =>
+    applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }, codexCatalog),
+  );
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
@@ -260,7 +274,7 @@ export function normalizeModelConnection(input: SaveModelConnectionInput, option
   };
 }
 
-export function normalizeStoredModelConnections(value: unknown): ModelConnectionRecord[] {
+export function normalizeStoredModelConnections(value: unknown, codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>): ModelConnectionRecord[] {
   if (!Array.isArray(value)) return [];
   const records: ModelConnectionRecord[] = [];
   const ids = new Set<string>();
@@ -272,12 +286,7 @@ export function normalizeStoredModelConnections(value: unknown): ModelConnection
       const createdAt = normalizeIsoDate(candidate.createdAt) ?? new Date(0).toISOString();
       const updatedAt = normalizeIsoDate(candidate.updatedAt) ?? createdAt;
       records.push(
-        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, {
-          id,
-          apiKeyConfigured: candidate.apiKeyConfigured === true,
-          createdAt,
-          updatedAt,
-        }),
+        normalizeModelConnection(candidate as unknown as SaveModelConnectionInput, { id, apiKeyConfigured: candidate.apiKeyConfigured === true, createdAt, updatedAt }, codexCatalog),
       );
       ids.add(id);
     } catch {
@@ -520,7 +529,6 @@ const reasoningPresets: readonly ReasoningPreset[] = [
   { keywords: ['kimi', 'moonshot'], levels: ['low', 'high', 'max'], defaultLevel: 'high' },
   { keywords: ['qwen', 'tongyi'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
   { keywords: ['glm', 'zhipu', 'zai'], levels: ['high', 'max'], defaultLevel: 'high' },
-  { keywords: ['gpt-', 'codex'], levels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
   { keywords: ['claude', 'fable'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
   { keywords: ['gemini', 'gemma'], levels: ['minimal', 'low', 'medium', 'high'], defaultLevel: 'medium' },
   { keywords: ['grok'], levels: ['low', 'medium', 'high'], defaultLevel: 'medium' },
@@ -532,6 +540,37 @@ const reasoningPresets: readonly ReasoningPreset[] = [
  */
 const nonChatModelKeywords = ['image', 'imagine', 'video', 'veo', 'seedance', 'vidu', 'hailuo', 'kling', 'sora', 'tts', 'asr', 'whisper', 'audio', 'embedding', 'embed', 'rerank', 'ocr', 'flux', 'nano_banana'];
 
+/** 识别 GPT/Codex 对话模型家族，模型名本身不证明渠道支持任何档位。 */
+export function isGptReasoningModelId(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return (normalizeCodexModelKey(id).includes('gpt-') || id.includes('codex')) && !nonChatModelKeywords.some((keyword) => id.includes(keyword));
+}
+
+/** 统一模型 ID 的大小写和分隔符，保留型号和版本标记。 */
+function normalizeCodexModelKey(modelId: string): string {
+  return modelId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/\bgpt(?=[0-9])/gu, 'gpt-')
+    .replace(/^-|-$/gu, '');
+}
+
+/** 优先取精确命中，再从模型别名里查找边界完整、最具体的目录型号。 */
+function findCodexReasoningCatalogEntry(modelId: string, catalog: ReadonlyMap<string, CodexReasoningCatalogEntry>): CodexReasoningCatalogEntry | undefined {
+  const exact = catalog.get(modelId);
+  if (exact) return exact;
+  const key = `-${normalizeCodexModelKey(modelId)}-`;
+  let bestMatch: CodexReasoningCatalogEntry | undefined;
+  let bestLength = 0;
+  for (const [candidateId, entry] of catalog) {
+    const candidateKey = normalizeCodexModelKey(candidateId);
+    if (candidateKey.length <= bestLength || !key.includes(`-${candidateKey}-`)) continue;
+    bestMatch = entry;
+    bestLength = candidateKey.length;
+  }
+  return bestMatch;
+}
+
 /** 把一组 Pi 档位词变成「同名直传」的档位清单：用户词、Pi 中转词、线上取值三者相同。 */
 function sameNameReasoningOptions(levels: readonly PiThinkingLevel[]): ConfiguredReasoningOption[] {
   return levels.map((level) => ({ id: level, label: null, piLevel: level, wire: level }));
@@ -542,9 +581,10 @@ const officialDeepSeekReasoningOptions = sameNameReasoningOptions(['low', 'high'
 
 /**
  * 判定一个模型该用哪份推理档位清单，命中即止：
- * 用户手工指定 → 官方端点档案 → 内置目录 → 家族预设 → 未识别。
+ * 用户手工指定 → 官方端点档案 → 厂商档位表 → 内置目录 → 家族预设。
+ * 第三方 GPT 从 Codex 目录匹配具体型号，查不到时由供应商决定默认值。
  */
-function resolveReasoningProfile(model: ConfiguredModelDefinition, route: ReasoningRoute): ConfiguredReasoningProfile {
+function resolveReasoningProfile(model: ConfiguredModelDefinition, route: ReasoningRoute, codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>): ConfiguredReasoningProfile {
   const stored = model.capability.reasoning;
   // 真机观测时间不参与档位判定，只跟着走：档位清单可以重算，观测事实不能被抹掉。
   const observedAt = stored.checkedAt;
@@ -573,6 +613,26 @@ function resolveReasoningProfile(model: ConfiguredModelDefinition, route: Reason
       basis: 'vendor_docs',
       checkedAt: observedAt,
     };
+  }
+  if (isGptReasoningModelId(normalizedId)) {
+    const codexEntry = codexCatalog && findCodexReasoningCatalogEntry(route.modelId, codexCatalog);
+    if (codexEntry && route.protocolFamily !== 'anthropic_messages') {
+      /** Pi 的非关闭档位按强度排序，中转时保留可选顺序，发送值沿用 Codex 的档位名。 */
+      const activePiLevels: readonly PiThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+      /** none 和 off 占用同一个关闭档位，重复条目不占用中转档位。 */
+      const efforts = [...new Set(codexEntry.efforts)];
+      const activeEfforts = efforts.filter((effort) => effort !== 'none' && effort !== 'off');
+      if (efforts.length > 0 && activeEfforts.length <= activePiLevels.length && efforts.length - activeEfforts.length <= 1) {
+        const options: ConfiguredReasoningOption[] = efforts.map((id) => ({
+          id,
+          piLevel: id === 'none' || id === 'off' ? 'off' : activePiLevels[activeEfforts.indexOf(id)]!,
+          wire: id,
+        }));
+        const defaultId = options.find((option) => option.id === codexEntry.defaultEffort)?.id ?? options[0]!.id;
+        return { state: 'supported', options, defaultId, thinkingFormat: route.thinkingFormat, basis: 'codex_catalog', checkedAt: observedAt };
+      }
+    }
+    return { state: 'unverified', options: [], defaultId: null, thinkingFormat: route.thinkingFormat, basis: 'unidentified', checkedAt: observedAt };
   }
   const catalogProfile = catalogReasoningProfile(automaticModelCatalogs[route.templateId][normalizedId], normalizedId, route, observedAt);
   if (catalogProfile) return catalogProfile;
@@ -672,9 +732,13 @@ export function resolvePiThinkingLevel(profile: ConfiguredReasoningProfile, requ
 }
 
 /** 按连接身份和模型重新判定档位清单，同时保留目录给出的窗口等非档位信息。 */
-function applyAutomaticCapabilityProfile(model: ConfiguredModelDefinition, route: Pick<ReasoningRoute, 'templateId' | 'baseUrl' | 'protocolFamily'>): ConfiguredModelDefinition {
+function applyAutomaticCapabilityProfile(
+  model: ConfiguredModelDefinition,
+  route: Pick<ReasoningRoute, 'templateId' | 'baseUrl' | 'protocolFamily'>,
+  codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>,
+): ConfiguredModelDefinition {
   const baseModel = discardManualCapabilityClaims(model);
-  const reasoning = resolveReasoningProfile(baseModel, { ...route, modelId: baseModel.id, thinkingFormat: baseModel.capability.reasoning.thinkingFormat });
+  const reasoning = resolveReasoningProfile(baseModel, { ...route, modelId: baseModel.id, thinkingFormat: baseModel.capability.reasoning.thinkingFormat }, codexCatalog);
   const catalogModel = automaticModelCatalogs[route.templateId][baseModel.id.toLowerCase()];
   if (!catalogModel) return { ...baseModel, capability: { ...baseModel.capability, reasoning } };
   const catalogEvidence = (state: ModelCapabilityState, reason: string): ModelCapabilityEvidence => ({ source: 'catalog', state, checkedAt: null, reason });

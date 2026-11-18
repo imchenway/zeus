@@ -27,6 +27,7 @@ import {
   modelRef,
   piRuntimeWorkerProtocolVersion,
   readCodexProviderRuntimeHealth,
+  readCodexModelCatalogCache,
   readCodexTurnItems,
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
@@ -1257,6 +1258,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       })
     : undefined;
   const modelConnections = createModelConnectionService({
+    readCodexReasoningCatalog() {
+      const state = codexAppServerManager.getState();
+      if (state.type !== 'ready') return readCodexModelCatalogCache(codexHome ?? null)?.visibleReasoningEfforts;
+      return new Map(state.capabilities.models.map((model) => [model.model, { efforts: model.supportedReasoningEfforts, defaultEffort: model.defaultReasoningEffort ?? null }] as const));
+    },
     async onPricingUpdated(connection, catalog) {
       if (readOnlyValidation) return;
       const affected = backfillConnectionPrices(connection, catalog, { ledger: codexUsageLedger, conversations, now: now().toISOString() });
@@ -4151,6 +4157,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (readOnlyValidation || (event.method !== 'zeus/models/updated' && event.method !== 'zeus/models/sync_failed')) return;
     const state = codexAppServerManager.getState();
     if (state.type !== 'ready' || state.generationId !== event.generationId) return;
+    if (event.method === 'zeus/models/updated') {
+      void piNativeCoordinator.refreshModelRuntime().catch((error: unknown) => server.log.warn({ err: error }, 'Pi model catalog invalidation failed'));
+    }
     // 目录事件仅传递刷新状态，不转发账号或供应商的任意回包。
     publishRealtimeEvent('codex.models.changed', { generationId: event.generationId, succeeded: event.method === 'zeus/models/updated' });
   });

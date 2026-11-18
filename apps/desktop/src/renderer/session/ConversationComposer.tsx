@@ -923,5 +923,5 @@ function resolveComposerEffort(capabilities: CodexConversationCapabilities | nul
   const capability = resolveModelCapability(capabilities?.models, model);
   const normalized = providerEffort?.trim();
   if (normalized && capability?.supportedReasoningEfforts.includes(normalized)) return normalized;
-  return capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? normalized ?? '';
+  return capability ? (capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? '') : (normalized ?? '');
 }

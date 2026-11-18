@@ -17,6 +17,7 @@ import {
   generateConfiguredModelText,
   syncDiscoveredModels,
   isPiThinkingLevel,
+  type CodexReasoningCatalogEntry,
   type ConfiguredModelDefinition,
   type ModelConnectionRecord,
   type ModelConnectionTemplateId,
@@ -122,6 +123,8 @@ export function createModelConnectionService(options: {
   save: () => Promise<void>;
   now?: () => string;
   fetch?: typeof fetch;
+  /** 复用 Codex 的逐模型档位目录，供设置和运行共用。 */
+  readCodexReasoningCatalog?: () => ReadonlyMap<string, CodexReasoningCatalogEntry> | undefined;
   readPricingPage?: (input: { url: string }) => Promise<string>;
   /** 共用目录刷新后的补价入口。 */
   onPricingUpdated?: (connection: ModelConnectionRecord, catalog: import('@zeus/shared').ModelPricingCatalog) => Promise<void>;
@@ -130,7 +133,7 @@ export function createModelConnectionService(options: {
   const fetcher = options.fetch ?? fetch;
 
   function readStored(): ModelConnectionRecord[] {
-    return normalizeStoredModelConnections(options.settings.getJson<unknown>(modelConnectionsSettingKey));
+    return normalizeStoredModelConnections(options.settings.getJson<unknown>(modelConnectionsSettingKey), options.readCodexReasoningCatalog?.());
   }
 
   /** 在读取 Keychain 前按稳定模型身份过滤，避免无关连接增加延迟。 */
@@ -214,6 +217,7 @@ export function createModelConnectionService(options: {
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
       },
+      options.readCodexReasoningCatalog?.(),
     );
     const requiresInsecureHttpConfirmation = record.baseUrl.startsWith('http://') && record.baseUrl !== existing?.baseUrl;
     if (requiresInsecureHttpConfirmation && input.allowInsecureHttp !== true) {
