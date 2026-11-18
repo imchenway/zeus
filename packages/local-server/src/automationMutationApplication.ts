@@ -14,8 +14,9 @@ export class AutomationMutationApplication {
     this.requests = new IdempotencyRequestRepository(db);
   }
 
+  /** 使用原始幂等键回放写入回执，键可以包含点分命令类型。 */
   execute(input: { method: string; url: string; body: unknown; key: unknown }, mutate: () => AutomationMutationResult): AutomationMutationResult {
-    if (typeof input.key !== 'string' || !/^[a-zA-Z0-9:_-]{8,160}$/u.test(input.key)) {
+    if (typeof input.key !== 'string' || !/^[a-zA-Z0-9:_.-]{8,160}$/u.test(input.key)) {
       throw new Error('ZEUS_AUTOMATION_OPERATION_ID_REQUIRED: 自动化写操作需要有效的幂等标识。');
     }
     const key = input.key;
