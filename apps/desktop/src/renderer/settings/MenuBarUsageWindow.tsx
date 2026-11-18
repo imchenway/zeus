@@ -496,11 +496,14 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
     );
   }
   /** 今日合计与活跃供应商数共用当前列表的本机记录，缺失用量时按下限展示。 */
-  const total = providers.reduce((summary, { overviewRanges: { today } }) => ({
-    tokens: summary.tokens + today.local.totalTokens,
-    activeProviders: summary.activeProviders + (today.local.totalTokens > 0 ? 1 : 0),
-    complete: summary.complete && today.complete,
-  }), { tokens: 0, activeProviders: 0, complete: props.fullCoverage });
+  const total = providers.reduce(
+    (summary, { overviewRanges: { today } }) => ({
+      tokens: summary.tokens + today.local.totalTokens,
+      activeProviders: summary.activeProviders + (today.local.totalTokens > 0 ? 1 : 0),
+      complete: summary.complete && today.complete,
+    }),
+    { tokens: 0, activeProviders: 0, complete: props.fullCoverage },
+  );
   return (
     <section className="menu-bar-usage-provider-list" data-reorderable={providers.length > 1} aria-label={text.allProviders}>
       <div className="menu-bar-usage-provider-total">
@@ -533,9 +536,10 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
         const slots = buildDailySlots(provider, 'tokens', 'local');
         const peak = Math.max(...slots.map((slot) => slot.value ?? 0));
         /** 主额度摘要只取当前可用的官方五小时窗口。 */
-        const quota = !provider.stale && provider.officialState === 'available' && isCodexSubscriptionUsage(provider)
-          ? provider.rateLimitWindows.find((entry) => entry.windowDurationMins === 300 && (isCodexQuotaWindow(entry) || (entry.limitId === 'default' && !entry.limitName)))
-          : undefined;
+        const quota =
+          !provider.stale && provider.officialState === 'available' && isCodexSubscriptionUsage(provider)
+            ? provider.rateLimitWindows.find((entry) => entry.windowDurationMins === 300 && (isCodexQuotaWindow(entry) || (entry.limitId === 'default' && !entry.limitName)))
+            : undefined;
         const quotaLabel = quota ? text.fiveHourQuota(formatPercent(quota.remainingPercent / 100, language)) : '';
         const providerDetail = provider.deleted
           ? text.deleted
@@ -607,7 +611,7 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
               className="menu-bar-usage-provider-open"
               type="button"
               aria-label={[fullName, `${text.todayToken} ${todayValue}`, todayCost && `${costLabel} ${todayCost}`, quotaLabel].filter(Boolean).join(' · ')}
-              aria-description={peak > 0 ? `${text.overviewRanges['7d']} · ${slots.map(({ value }) => value === null ? text.missingDay : formatTokens(value, language)).join(', ')}` : undefined}
+              aria-description={peak > 0 ? `${text.overviewRanges['7d']} · ${slots.map(({ value }) => (value === null ? text.missingDay : formatTokens(value, language))).join(', ')}` : undefined}
               data-icon-tooltip={[fullName, providerDetail, todayCost && `${costLabel} ${todayCost}`].filter(Boolean).join(' · ')}
               onClick={() => props.onSelect(provider.providerId)}
             >
@@ -616,9 +620,7 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
                 {provider.deleted ? <small>{text.removedStatus}</small> : quotaLabel && <small>{quotaLabel}</small>}
               </span>
               <span className="menu-bar-usage-provider-trend" aria-hidden="true">
-                {peak > 0 && slots.map(({ date, value }) => (
-                  <i key={date} style={{ blockSize: value === null ? 0 : `max(1px, ${value / peak * 100}%)` }} />
-                ))}
+                {peak > 0 && slots.map(({ date, value }) => <i key={date} style={{ blockSize: value === null ? 0 : `max(1px, ${(value / peak) * 100}%)` }} />)}
               </span>
               <span className="menu-bar-usage-provider-value">
                 <small>{todayValue}</small>
