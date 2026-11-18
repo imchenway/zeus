@@ -1,3 +1,4 @@
+import { isCodexAcceleratedServiceTier, type CodexAcceleratedServiceTier } from '@zeus/shared';
 import type { GitApiClient, GitCommitModelOption } from '../features/git/gitApiClient.js';
 import { compareModelOptions } from '../modelOptionPresentation.js';
 
@@ -13,8 +14,8 @@ export interface GitCommitGenerationSettings {
   modelRef: string;
   /** 空值表示模型没有可选推理档位。 */
   effort: string;
-  /** 仅启用模型支持的 Fast，空值明确使用标准速率。 */
-  serviceTier: 'priority' | null;
+  /** 仅启用模型支持的加速档位，空值表示标准速度。 */
+  serviceTier: CodexAcceleratedServiceTier | null;
 }
 
 /** 本机存储不可用时，设置仍对当前运行中的生成入口有效。 */
@@ -58,7 +59,9 @@ function normalizeSettings(model: GitCommitModelOption, saved: Partial<GitCommit
     model.defaultReasoningEffort ??
     model.supportedReasoningEfforts[0] ??
     '';
-  return { modelRef: model.id, effort, serviceTier: saved?.serviceTier === 'priority' && model.serviceTiers.some((tier) => tier.id === 'priority') ? 'priority' : null };
+  /** 恢复该模型仍支持的已保存速度。 */
+  const savedTier = saved?.serviceTier;
+  return { modelRef: model.id, effort, serviceTier: isCodexAcceleratedServiceTier(savedTier) && model.serviceTiers.some((tier) => tier.id === savedTier) ? savedTier : null };
 }
 
 /** 项目按模型保留档位；全局只应用其中保存的模型组合。 */

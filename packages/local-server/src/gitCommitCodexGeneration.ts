@@ -1,3 +1,4 @@
+import type { CodexAcceleratedServiceTier } from '@zeus/shared';
 import { createCodexAppServerManager, type CodexAppServerManager } from '@zeus/ai-runtime';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -143,8 +144,8 @@ export interface CodexTextGenerationInput {
   preserveWhitespace?: boolean;
   /** 可选的目录推理档位；调用前再次核对支持范围。 */
   effort?: string;
-  /** 不传时使用标准速度，调用方可按模型目录明确选择 Fast。 */
-  serviceTier?: 'priority' | null;
+  /** 不传时使用标准速度，调用方可按模型目录选择加速档位。 */
+  serviceTier?: CodexAcceleratedServiceTier | null;
 }
 
 /** 调用方控制独立进程身份、取消和反馈，不改变 Provider 配置。 */

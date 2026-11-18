@@ -7,6 +7,7 @@ import {
   normalizeInputSuggestionSettings,
   normalizePerformanceTraceIdentity,
   userFacingErrorCause,
+  type CodexAcceleratedServiceTier,
   type InputSuggestionRequest,
   type InputSuggestionResult,
   type InputSuggestionModelOption,
@@ -71,7 +72,7 @@ async function generateSuggestionText(options: {
   /** 档位来自输入建议自己的设置，空值才自动选择最低。 */
   effort: string | null;
   /** 专用速度设置与主会话独立，调用前已核对当前模型目录。 */
-  serviceTier: 'priority' | null;
+  serviceTier: CodexAcceleratedServiceTier | null;
   /** 已保存并捕获的专用模型身份。 */
   selectedModelRef: string;
   /** API 连接使用现有鉴权和协议映射。 */
@@ -399,7 +400,7 @@ export function registerInputSuggestionRoutes(options: {
         /** 显式档位失效必须说明原因，不能悄悄换成更深或更浅的档位。 */
         if (!selected) return { ...result, reason: 'model_unavailable' };
         if (settings.effort && !selected.supportedReasoningEfforts?.includes(settings.effort)) return { ...result, reason: 'effort_unavailable' };
-        // 能力失效时保留明确错误，不把已选 Fast 静默改成标准速度。
+        // 能力失效时保留明确错误，不把已选档位 静默改成标准速度。
         if (settings.serviceTier && !selected.serviceTiers?.some((tier) => tier.id === settings.serviceTier)) return { ...result, reason: 'service_tier_unavailable' };
         /** 纯文本生成不注册执行工具，也不进入任务或提交队列。 */
         const text = await generateSuggestionText({

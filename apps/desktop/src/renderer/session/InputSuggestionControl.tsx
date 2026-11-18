@@ -26,7 +26,7 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
   /** 显式档位失效需要用户重新选择。 */
   effort_unavailable: { 'zh-CN': '该模型不支持已选推理深度，请在通用设置中重新选择。', 'en-US': 'The selected reasoning effort is unavailable. Choose another in General settings.' },
   /** Fast 能力变化时说明实际限制，不静默降级并产生不同用量。 */
-  service_tier_unavailable: { 'zh-CN': '该模型不支持已选 Fast 模式，请在通用设置中选择标准速度或更换模型。', 'en-US': 'Fast mode is unavailable for this model. Choose Standard speed or another model in General settings.' },
+  service_tier_unavailable: { 'zh-CN': '该模型不支持所选速度，请在通用设置中更改速度或模型。', 'en-US': 'This model does not support the selected speed. Change the speed or model in General settings.' },
   /** 原文可直接使用，不创建没有差异的候选。 */
   no_change: { 'zh-CN': '当前表达已清楚，可以直接使用。', 'en-US': 'Your draft is already clear and ready to use.' },
   /** 准备与模型响应分别限时，失败不修改原文。 */

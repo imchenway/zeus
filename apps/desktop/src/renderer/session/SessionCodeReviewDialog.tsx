@@ -1,7 +1,7 @@
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { CodexConversationCapabilities, CodexTaskPushModelCapability, NativeConversationChoice, NativePermissionMode, NativeServiceTierSelection, NativeSessionState, TaskWorkspaceSnapshot } from './sessionTypes.js';
-import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from './serviceTierSelection.js';
+import { normalizeServiceTierSelection, serviceTierOptions, selectionFromEffectiveServiceTier, serviceTierPickerValue } from './serviceTierSelection.js';
 import { resolveModelCapability } from './modelSelection.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { Button } from '../ui/Button.js';
@@ -275,10 +275,10 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
               <ZeusSelect
                 size="regular"
                 ariaLabel={zh ? '代码审查速度' : 'Code review speed'}
-                value={serviceTierSelectionValue(form?.serviceTierSelection ?? { type: 'standard' })}
+                value={serviceTierPickerValue(form?.serviceTierSelection ?? { type: 'standard' }, selectedModel)}
                 options={serviceTierOptions(selectedModel, props.language)}
                 onChange={(value) => {
-                  const selection = serviceTierSelectionFromValue(value);
+                  const selection = selectionFromEffectiveServiceTier(value);
                   setForm((current) => (current ? { ...current, serviceTierSelection: selection, serviceTierDowngraded: false } : current));
                 }}
                 disabled={!form || !selectedModel || busy}
@@ -287,7 +287,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             </label>
             {form?.serviceTierDowngraded ? (
               <p className="session-code-review-message" role="status">
-                {zh ? '已记住 Fast，但当前模型不再支持；本次将按 Standard 继续。' : 'Fast is remembered, but this model no longer supports it. This run will continue on Standard.'}
+                {zh ? '当前模型不支持所选档位，本次将使用标准速度。' : 'This model does not support the selected speed. This run will use Standard.'}
               </p>
             ) : null}
           </section>

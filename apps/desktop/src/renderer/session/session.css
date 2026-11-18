@@ -11574,6 +11574,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   }
 }
 
+/* 只有标准和快速时，输入栏仍使用原来的单击速度按钮。 */
 .session-codex-parity-v1 .session-service-tier-toggle {
   align-items: center;
   background: transparent !important;
@@ -11592,6 +11593,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-service-tier-toggle:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover) !important;
   color: var(--zeus-brand-text);
+}
+
+/* 两个加速档位共用闪电强调色，标准速度沿用输入栏图标色。 */
+.session-codex-parity-v1 .session-service-tier-dropdown:is([data-value='priority'], [data-value='ultrafast']) {
+  --session-composer-trigger-color: var(--zeus-brand-text);
 }
 
 /* 完全访问沿用确认弹窗的警示色，由通用触发器读取，避免悬停或展开时被中性色覆盖。 */

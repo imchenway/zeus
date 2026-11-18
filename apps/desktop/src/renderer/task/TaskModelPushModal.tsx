@@ -28,7 +28,7 @@ import type {
 } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { ConversationPendingAttachmentImages } from '../session/ConversationResources.js';
-import { normalizeServiceTierSelection, serviceTierOptions, serviceTierSelectionFromValue, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
+import { normalizeServiceTierSelection, serviceTierOptions, selectionFromEffectiveServiceTier, serviceTierPickerValue } from '../session/serviceTierSelection.js';
 import { hasAvailableConversationModel, resolveModelCapability } from '../session/modelSelection.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -982,15 +982,15 @@ export function TaskModelPushModal(props: {
                 <ZeusSelect
                   size="regular"
                   ariaLabel={zh ? '速度' : 'Speed'}
-                  value={serviceTierSelectionValue(props.form.serviceTier)}
+                  value={serviceTierPickerValue(props.form.serviceTier, selectedModel)}
                   options={serviceTierOptions(selectedModel, props.language)}
                   onChange={(value) => {
                     if (!selectedModel) return;
-                    const selection = serviceTierSelectionFromValue(value);
+                    const selection = selectionFromEffectiveServiceTier(value);
                     return props.onChange({
                       ...props.form,
                       serviceTier: selection,
-                      serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
+                      serviceTierDowngraded: normalizeServiceTierSelection(selection, selectedModel).downgraded,
                     });
                   }}
                   disabled={!selectedModel || busy || Boolean(props.form.stageId)}
@@ -1044,7 +1044,7 @@ export function TaskModelPushModal(props: {
             </div>
             {props.form.serviceTierDowngraded ? (
               <p className="task-model-push-warning" role="status">
-                {zh ? '当前模型不支持 Fast，本次将使用标准速度。' : 'The current model does not support Fast. This request will use standard speed.'}
+                {zh ? '当前模型不支持所选档位，本次将使用标准速度。' : 'This model does not support the selected speed. This request will use standard speed.'}
               </p>
             ) : null}
             {props.form.stageId ? (
