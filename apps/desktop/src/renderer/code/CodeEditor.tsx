@@ -80,7 +80,8 @@ export interface CodeEditorProps {
 
 /** 普通源码与 MergeView 初次创建时共用字体、行高和选择样式。 */
 export const codeEditorTheme = EditorView.theme({
-  '&': { height: '100%', minHeight: '0', backgroundColor: 'var(--zeus-code-editor-bg, var(--zeus-product-panel))' },
+  /** 外置查找栏也带有主题类，只有编辑器容器需要占满正文区域。 */
+  '&.cm-editor': { height: '100%', minHeight: '0', backgroundColor: 'var(--zeus-code-editor-bg, var(--zeus-product-panel))' },
   '.cm-scroller': { overflow: 'auto', fontFamily: "'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace", fontSize: '12px', lineHeight: '20px' },
   '.cm-content': { caretColor: 'var(--zeus-control-accent)', paddingBlock: '10px 32px' },
   '.cm-gutters': { backgroundColor: 'var(--zeus-code-editor-gutter, var(--zeus-product-panel-muted))', border: '0', color: 'var(--zeus-product-muted)' },

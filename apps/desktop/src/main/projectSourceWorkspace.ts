@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
-import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
+import { access, lstat, mkdir, open, opendir, readFile, readdir, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
 import { assertWindowsPortablePath, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { detectSourceLanguage } from '@zeus/shared';
@@ -22,6 +22,8 @@ import type {
 const maximumEditableBytes = filePreviewLimits.text;
 const maximumSearchResults = 200;
 const maximumSearchVisits = 50_000;
+/** 每次目录读取最多同时检查这么多条目，限制并行文件系统操作。 */
+const directoryMetadataBatchSize = 16;
 /** 标题栏只读取少量源码摘要。 */
 const maximumContentSearchResults = 60;
 /** 项目搜索展示有界命中列表，达到上限时明确提示结果不完整。 */
@@ -49,12 +51,11 @@ export class ProjectSourceWorkspaceService {
   async listDirectory(projectId: string, relativePath = ''): Promise<ProjectSourceDirectorySnapshot> {
     const root = await this.#projectRoot(projectId);
     const directory = await resolveExistingPath(root, relativePath, 'directory');
-    const names = await opendir(directory.absolutePath);
+    const names = (await readdir(directory.absolutePath)).filter((name) => name !== '.git');
     const entries: ProjectSourceEntry[] = [];
-    for await (const item of names) {
-      if (item.name === '.git') continue;
-      const entryRelativePath = joinRelative(directory.relativePath, item.name);
-      entries.push(await describeEntry(root, entryRelativePath));
+    for (let offset = 0; offset < names.length; offset += directoryMetadataBatchSize) {
+      const batch = names.slice(offset, offset + directoryMetadataBatchSize);
+      entries.push(...(await Promise.all(batch.map((name) => describeEntry(root, joinRelative(directory.relativePath, name))))));
     }
     entries.sort(compareEntries);
     return { relativePath: directory.relativePath, entries };

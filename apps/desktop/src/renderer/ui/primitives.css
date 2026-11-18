@@ -308,6 +308,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition-timing-function: var(--zeus-motion-ease-out), var(--zeus-motion-ease-out), linear, step-end;
 }
 
+/* 文件树展开只排版一次，避免大目录在高度过渡期间反复布局。 */
+.macos-ai-app .task-git-delivery-file-browser details::details-content {
+  transition: none;
+}
+
 /* 连续高度由原生动画接管；自然内容保持可测量，退出期间继续禁止交互。 */
 .macos-ai-app [data-zeus-primitive='collapsible'][data-animate-height='true'] {
   content-visibility: visible;

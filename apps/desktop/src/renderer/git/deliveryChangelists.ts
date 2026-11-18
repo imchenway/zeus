@@ -43,6 +43,8 @@ export function useDeliveryChangelists(projectId: string) {
   );
   const raw = useSyncExternalStore(store.subscribe, store.read, () => null);
   const assignments = useMemo(() => parseAssignments(raw), [raw]);
+  /** 文件树只在归属记录变化时重新分组。 */
+  const name = useCallback((root: string, path: string) => assignments[JSON.stringify([root, path])] ?? '', [assignments]);
   /** 完整 Git 快照移除已处理文件的归属，文件再次修改时回到默认列表。 */
   const prune = useCallback(
     (repositories: Array<{ root: string; paths: string[] }>) => {
@@ -71,9 +73,7 @@ export function useDeliveryChangelists(projectId: string) {
     prune,
     /** 名称跨本项目仓库复用，空名称代表默认列表。 */
     names: [...new Set(Object.values(assignments))].sort((a, b) => a.localeCompare(b)),
-    name(root: string, path: string) {
-      return assignments[JSON.stringify([root, path])] ?? '';
-    },
+    name,
     move(root: string, paths: string[], name: string) {
       const next = parseAssignments(localStorage.getItem(key));
       for (const path of paths) {
