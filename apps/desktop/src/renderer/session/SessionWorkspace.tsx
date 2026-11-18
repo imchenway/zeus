@@ -4583,7 +4583,13 @@ export function NewConversationComposer(props: {
         ) : (
           <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
             {props.onGenerateInputSuggestion ? (
-              <InputSuggestionButton suggestion={suggestion} draft={composerState.draft} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} />
+              <InputSuggestionButton
+                suggestion={suggestion}
+                draft={composerState.draft}
+                inputRef={textareaRef}
+                language={props.language}
+                configured={Boolean(props.inputSuggestionSettings?.followConversationModel || props.inputSuggestionSettings?.modelRef)}
+              />
             ) : null}
             {/* 发送中的空编辑器独立挂载，避免清掉失败恢复所需的结构化引用。 */}
             <StructuredComposerInput

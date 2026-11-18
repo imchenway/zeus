@@ -467,7 +467,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
           />
         ) : (
           <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
-            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={editorValue} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            {props.onGenerateInputSuggestion ? (
+              <InputSuggestionButton
+                suggestion={suggestion}
+                draft={editorValue}
+                inputRef={textareaRef}
+                language={props.language}
+                configured={Boolean(props.inputSuggestionSettings?.followConversationModel || props.inputSuggestionSettings?.modelRef)}
+              />
+            ) : null}
             <StructuredComposerInput
               value={editorValue}
               onValueChange={(nextValue) => {

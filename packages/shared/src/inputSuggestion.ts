@@ -171,8 +171,8 @@ export function normalizeInputSuggestionUiDiagnostic(value: unknown): InputSugge
   };
 }
 
-/** 偏好尚未加载或存量资料缺少配置时，自动建议保持关闭。 */
-export const defaultInputSuggestionSettings: InputSuggestionSettings = { enabled: false, modelRef: null, effort: null, serviceTier: null };
+/** 新安装和沿用旧默认的资料开启自动建议，使用当前会话的模型。 */
+export const defaultInputSuggestionSettings: InputSuggestionSettings = { enabled: true, modelRef: null, followConversationModel: true, effort: null, serviceTier: null };
 
 /** 在设置读取和写入边界核对类型；缺少有效模型时不能启用。 */
 export function normalizeInputSuggestionSettings(value: unknown): InputSuggestionSettings {
