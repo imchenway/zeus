@@ -472,6 +472,12 @@ function ensureMermaidRuntime(): NonNullable<typeof mermaidRuntimeProbe> {
   return mermaidRuntimeProbe;
 }
 
+/** 预载首屏闭合图表的运行库与语法模块，绘制沿用主题感知的共享图表组件。 */
+export async function preloadConversationDiagram(text: string): Promise<void> {
+  const source = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)^ {0,3}\1[ \t]*\r?$/imu.exec(text)?.[2];
+  if (source) await (await ensureMermaidRuntime())?.parse(source, { suppressErrors: true });
+}
+
 /** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
   /** 语言和正文阶段来自所有 Markdown 展示入口共用的上下文。 */

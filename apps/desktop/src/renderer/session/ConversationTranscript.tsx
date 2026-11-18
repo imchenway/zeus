@@ -2572,12 +2572,8 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
   // 切回会话需要重新订阅和读取权威状态，只有明确的重连状态才说明连接中断。
   if (state.transportState === 'reconnecting') return 'reconnecting';
   if (state.transportState !== 'ready') {
-    // 切回时先展示同轮已缓存的摘要，不等待联网；静态文字不代表模型仍在运行。
-    return ['disconnected', 'connecting', 'hydrating'].includes(state.transportState) &&
-      state.snapshot?.id === state.conversationId &&
-      (state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer') &&
-      state.currentReasoningItem?.turnId === state.activeTurnId &&
-      latestReasoningSummaryText(state.currentReasoningItem)
+    // 活动快照先显示同轮摘要或执行状态，实时事件就绪后再开启扫光。
+    return ['disconnected', 'connecting', 'hydrating'].includes(state.transportState) && state.snapshot?.id === state.conversationId && (state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer')
       ? 'cached_summary'
       : null;
   }
@@ -2601,14 +2597,15 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
     const timer = window.setTimeout(() => setReconnectStatusVisible(true), 10_000);
     return () => window.clearTimeout(timer);
   }, [props.kind]);
-  if (props.kind === 'reconnecting' && !reconnectStatusVisible) return null;
+  /** 短暂恢复时保留最近有效摘要，持续断开后由连接提示接管同一行。 */
+  const reconnectPending = props.kind === 'reconnecting' && !reconnectStatusVisible;
+  if (reconnectPending && !props.summaryText) return null;
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
     starting: ['正在准备', 'Preparing'],
     checking_plugin: ['正在等待 Plugin Hook 检查', 'Waiting for Plugin Hook checks'],
     executing: ['正在执行', 'Executing'],
-    // 缓存态只展示已有摘要，缺少摘要时不会进入此状态。
-    cached_summary: ['', ''],
+    cached_summary: ['正在执行', 'Executing'],
     compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
     waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
@@ -2621,10 +2618,12 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
         ? `正在连接... (${props.reconnectAttempt}/${props.reconnectAttempts})`
         : `Connecting... (${props.reconnectAttempt}/${props.reconnectAttempts})`
       : labels[props.kind][props.language === 'zh-CN' ? 0 : 1];
+  /** 静态摘要保持原来的位置，扫光只跟随已确认的实时状态。 */
+  const summaryText = props.kind === 'executing' || props.kind === 'cached_summary' || reconnectPending ? props.summaryText : undefined;
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
-      {props.kind === 'reconnecting' ? sessionConnectionSymbol : null}
-      <SessionSweepText className="session-current-status-text" text={(props.kind === 'executing' || props.kind === 'cached_summary') && props.summaryText ? props.summaryText : retryLabel} active={props.kind !== 'cached_summary'} />
+      {props.kind === 'reconnecting' && !reconnectPending ? sessionConnectionSymbol : null}
+      <SessionSweepText className="session-current-status-text" text={summaryText || retryLabel} active={props.kind !== 'cached_summary' && !reconnectPending} />
     </p>
   );
 }

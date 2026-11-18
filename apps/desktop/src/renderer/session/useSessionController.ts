@@ -319,7 +319,7 @@ export interface SessionControllerClient {
   loadNativeConversationResourcesV2?(
     projectId: string,
     conversationId: string,
-    options?: { cursor?: string; limit?: number; byteLimit?: number; signal?: AbortSignal },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; signal?: AbortSignal },
   ): Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2?(projectId: string, conversationId: string, turnId: string): Promise<NativeConversationChangeSetV2Summary>;
   loadNativeConversationChangeFilesV2?(
@@ -416,6 +416,8 @@ export interface CreateSessionControllerOptions {
 
 export interface SessionController {
   start(): Promise<void>;
+  /** 恢复可见页面的读取，复用仍在工作的实时订阅。 */
+  refreshAfterReveal(readLive: boolean): void;
   reconnect(): Promise<void>;
   dispose(): void;
   subscribe(listener: () => void): () => void;
@@ -3590,7 +3592,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
               if (disposed || state.snapshot || state.itemOrder.length > 0 || state.transportState === 'ready') return;
               const cached = restoreSessionViewCache(value, options);
               if (!cached?.snapshot) return;
-              state = { ...state, snapshot: cached.snapshot, items: cached.items, itemOrder: cached.itemOrder, transcriptRevision: state.transcriptRevision + 1 };
+              /** 首帧同时恢复只读运行摘要，不恢复缓存中的队列或交互权限。 */
+              state = {
+                ...state,
+                snapshot: cached.snapshot,
+                items: cached.items,
+                itemOrder: cached.itemOrder,
+                transcriptRevision: state.transcriptRevision + 1,
+                conversationState: cached.conversationState,
+                activeTurnId: cached.activeTurnId,
+                startedTurnId: cached.startedTurnId,
+                currentReasoningItem: cached.currentReasoningItem,
+                terminalTurnIds: cached.terminalTurnIds,
+              };
               for (const listener of listeners) listener();
             })
             .catch(() => undefined);
@@ -3602,6 +3616,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
         startPromise = tracked;
       }
       return startPromise;
+    },
+    /** 历史页可刷新已读事实；活动会话优先保留已有事件水位。 */
+    refreshAfterReveal(readLive) {
+      if (disposed || hydrationPromise || reconnectLoopPromise || realtimeSubscribed) return;
+      if (state.transportState !== 'ready') {
+        restoreConnection();
+        return;
+      }
+      void hydrate(false, readLive && options.realtimePolicy === 'lazy' ? 'required' : 'auto').catch(() => undefined);
     },
     reconnect() {
       for (const request of resourceRequests) request.abort();
@@ -4194,6 +4217,7 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
         initialCachedState: cached?.snapshot && cached.snapshot.throughEventSeq >= (retained.snapshot?.throughEventSeq ?? 0) ? cached : retained,
       });
       lifecycle.disposed = false;
+      lifecycle.shown = false;
       refreshController((revision) => revision + 1);
     }
     /** 清理始终释放本次实际启动的实例，不会误关恢复后的连接。 */
@@ -4207,7 +4231,7 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
       retainedOwner.controllers.add(controller);
       lifecycle.registered = true;
     }
-    void controller.start().catch(() => undefined);
+    if (!lifecycle.shown) void controller.start().catch(() => undefined);
     return () => {
       if (!retainedOwner) {
         lifecycle.disposed = true;
@@ -4223,10 +4247,10 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
       lifecycle.shown = true;
       return;
     }
-    /** 先显示已保留界面，跨过一次绘制后再核对断线期间的权威状态。 */
+    /** 先显示已保留界面，再按当前查看方式补齐缺失的实时或历史事实。 */
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
-        void controller.reconnect().catch(() => undefined);
+        controller.refreshAfterReveal(latest.current.realtimePolicy !== 'lazy');
       });
     });
     return () => cancelAnimationFrame(frame);

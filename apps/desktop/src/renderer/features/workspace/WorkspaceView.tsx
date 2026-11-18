@@ -1126,6 +1126,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onCreateProject={openProjectCreateDialog}
           onCreateConversation={() => prepareNewConversationDraft()}
           onSelectConversation={(conversation) => selectNativeConversation(conversation)}
+          onPrepareConversation={state.prioritizeConversation}
           onArchiveConversation={archiveConversation}
           onRenameConversation={props.nativeConversationClient ? renameConversation : undefined}
           onNavigate={handleMainNavigate}

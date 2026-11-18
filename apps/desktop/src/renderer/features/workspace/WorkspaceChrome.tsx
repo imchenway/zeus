@@ -646,6 +646,8 @@ export function SidebarNav(props: {
   onCreateProject: () => void;
   onCreateConversation: () => void;
   onSelectConversation: (conversation: NativeConversationChoice) => void;
+  /** 经过会话行时优先在后台准备其可读首屏。 */
+  onPrepareConversation?: (conversationId: string) => void;
   onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
   /** 只在真实会话客户端就绪时提供重命名能力。 */
   onRenameConversation?: (conversation: NativeConversationChoice, title: string) => Promise<void>;
@@ -1237,6 +1239,7 @@ export function SidebarNav(props: {
                             selectedConversationId={props.selectedConversationId}
                             conversationStates={props.conversationStates}
                             onSelectConversation={props.onSelectConversation}
+                            onPrepareConversation={props.onPrepareConversation}
                             onArchiveConversation={props.onArchiveConversation}
                             onRenameConversation={props.onRenameConversation}
                             language={props.appLanguage}

@@ -87,6 +87,25 @@ function decodedConversationImage(key: string, preview: CachedConversationImage,
   return rememberConversationImage(key, { ...preview, width: image.naturalWidth, height: image.naturalHeight, decoded: true });
 }
 
+/** 预取和缩略图按同一个修订身份共用读取和解码结果。 */
+function conversationResourceImageKey(resource: ConversationResource): string {
+  return JSON.stringify(['resource', resource.projectId, resource.conversationId, resource.id, resource.updatedAt]);
+}
+
+/** 预先解码受控缩略图，正式组件挂载时可直接取得图片与固有尺寸。 */
+export async function preloadConversationImage(resource: ConversationResource, load: () => Promise<ConversationResourcePreview>, signal: AbortSignal): Promise<void> {
+  const key = conversationResourceImageKey(resource);
+  const preview = await loadCachedConversationImage(key, async () => {
+    const result = await load();
+    return result.kind === 'image' ? result.dataUrl : null;
+  });
+  if (!preview || preview.decoded || signal.aborted) return;
+  const image = new Image();
+  image.src = preview.dataUrl;
+  await image.decode();
+  if (!signal.aborted) decodedConversationImage(key, preview, image);
+}
+
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -347,7 +366,7 @@ function ConversationImagePreview(
 ) {
   const rootRef = useRef<HTMLButtonElement | null>(null);
   /** 资源更新后重新读取，不能沿用旧修订的像素和尺寸。 */
-  const previewKey = JSON.stringify(['resource', props.resource.projectId, props.resource.conversationId, props.resource.id, props.resource.updatedAt]);
+  const previewKey = conversationResourceImageKey(props.resource);
   const [visible, setVisible] = useState(false);
   const [preview, setPreview] = useState<CachedConversationImage | null>(() => cachedConversationImage(previewKey));
   const [loading, setLoading] = useState(false);
