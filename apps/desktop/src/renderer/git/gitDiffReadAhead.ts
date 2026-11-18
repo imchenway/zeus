@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import type { FilePreviewRequest } from '@zeus/shared';
 import type { GitDiffSummary } from '../apiClient.js';
 import { prepareFilePreview, type PreparedFilePreview } from '../code/preparedFilePreview.js';
@@ -42,13 +42,13 @@ function prepareCachedPreview(cache: Map<string, GitDiffRead>, entry: GitDiffRea
   );
 }
 
-/** 三十二项预读之外保留十六项回看空间；失败结果允许点击重试。 */
-export function readCachedGitDiff(cache: Map<string, GitDiffRead>, target: GitDiffReadTarget): GitDiffRead {
+/** 预读只缓存补丁；当前文件额外准备授权全文，失败结果允许重试。 */
+export function readCachedGitDiff(cache: Map<string, GitDiffRead>, target: GitDiffReadTarget, selected = false): GitDiffRead {
   const cached = cache.get(target.key);
   if (cached) {
     cache.delete(target.key);
     cache.set(target.key, cached);
-    if (target.previewRequest) prepareCachedPreview(cache, cached, target.previewRequest);
+    if (selected && target.previewRequest) prepareCachedPreview(cache, cached, target.previewRequest);
     return cached;
   }
   const entry: GitDiffRead = {
@@ -65,7 +65,7 @@ export function readCachedGitDiff(cache: Map<string, GitDiffRead>, target: GitDi
       }),
   };
   cache.set(target.key, entry);
-  if (target.previewRequest) prepareCachedPreview(cache, entry, target.previewRequest);
+  if (selected && target.previewRequest) prepareCachedPreview(cache, entry, target.previewRequest);
   if (cache.size > 48) {
     const oldest = cache.keys().next().value!;
     cache.get(oldest)?.preview?.dispose();
@@ -74,7 +74,7 @@ export function readCachedGitDiff(cache: Map<string, GitDiffRead>, target: GitDi
   return entry;
 }
 
-/** 空闲时逐个准备当前仓库附近三十二项；切范围后停止后续读取。 */
+/** 空闲时预读附近文件的补丁；全文授权只在实际选中文件时发起。 */
 export function useGitDiffReadAhead(cache: Map<string, GitDiffRead>, targets: GitDiffReadTarget[], enabled: boolean): void {
   useEffect(
     () => () => {
@@ -92,7 +92,7 @@ export function useGitDiffReadAhead(cache: Map<string, GitDiffRead>, targets: Gi
           for (const target of targets.slice(0, 32)) {
             if (cancelled) return;
             const entry = readCachedGitDiff(cache, target);
-            await Promise.allSettled([entry.read, entry.preview?.read]);
+            await entry.read.catch(() => undefined);
           }
         })();
       },
@@ -105,36 +105,41 @@ export function useGitDiffReadAhead(cache: Map<string, GitDiffRead>, targets: Gi
   }, [cache, targets, enabled]);
 }
 
-/** 旧文件保持可读，最新一次选择的补丁和全文就绪后一起切换。 */
-export function usePreparedGitDiffSelection(
-  cache: Map<string, GitDiffRead>,
-  targetFor: (id: string, path: string) => GitDiffReadTarget | null,
-  select: (id: string, path: string) => void,
-  onError: (error: unknown) => void,
-  enabled: boolean,
-) {
-  /** 快速点击、换范围和卸载后，旧结果不能改变当前选择。 */
-  const sequence = useRef(0);
-  useLayoutEffect(
-    () => () => {
-      sequence.current += 1;
+/** 选中状态由文件树立即提交，补丁结果只更新与其对应的审阅文件。 */
+export function useGitDeliveryFileDiff(cache: Map<string, GitDiffRead>, target: GitDiffReadTarget | null, identity: string) {
+  /** 刷新时保留同一个文件的补丁，失败则允许重读该文件。 */
+  const [settled, setSettled] = useState<{ target: GitDiffReadTarget; identity: string; diff: GitDiffSummary | null; error?: unknown }>();
+  /** 失败已移出缓存，重试只触发当前文件。 */
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!target) return;
+    /** 切换文件、范围或关闭后忽略迟到结果。 */
+    let active = true;
+    void readCachedGitDiff(cache, target, true).read.then(
+      (diff) => {
+        if (active) setSettled({ target, identity, diff });
+      },
+      (error: unknown) => {
+        if (active) setSettled((current) => ({ target, identity, diff: current?.identity === identity ? current.diff : null, error }));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [cache, target, identity, attempt]);
+  /** 已预读的补丁可直接显示，仍在读取的全文交给共享预览处理。 */
+  const entry = target ? cache.get(target.key) : undefined;
+  /** 当前工作区及比较范围相同才允许保留上一次差异。 */
+  const diff = entry?.result ?? (settled?.identity === identity ? settled.diff : null);
+  return {
+    diff,
+    diffLoading: Boolean(target && !diff && settled?.target !== target),
+    diffError: settled?.target === target ? settled?.error : undefined,
+    preparedPreview: entry?.preview,
+    /** 重新请求失败的补丁，审阅焦点和其他仓库状态不动。 */
+    onRetryDiff: () => {
+      setSettled(undefined);
+      setAttempt((current) => current + 1);
     },
-    [cache, targetFor, enabled],
-  );
-  return useCallback(
-    async (id: string, path: string) => {
-      if (!enabled) return;
-      const request = ++sequence.current;
-      const target = targetFor(id, path);
-      if (!target) return;
-      const entry = readCachedGitDiff(cache, target);
-      try {
-        await Promise.all([entry.read, entry.preview?.read]);
-        if (request === sequence.current) select(id, path);
-      } catch (error: unknown) {
-        if (request === sequence.current) onError(error);
-      }
-    },
-    [cache, targetFor, select, onError, enabled],
-  );
+  };
 }

@@ -221,8 +221,6 @@ export function FilePreview(props: {
   waitForContent?: boolean;
   /** 独立窗口的文本差异还在准备，媒体可直接显示。 */
   pendingDiff?: boolean;
-  /** 文本补丁失败时仍可查看已读取的正文。 */
-  diffError?: unknown;
   /** 文件保存成功后由所属页面刷新文件列表与统计。 */
   onSaved?: () => void | Promise<void>;
   /** 会话评论使用的稳定文件路径，附件缺省使用预览名称。 */
@@ -243,7 +241,6 @@ export function FilePreview(props: {
         preparedPreview={props.preparedPreview}
         waitForContent={props.waitForContent}
         pendingDiff={props.pendingDiff}
-        diffError={props.diffError}
         location={props.location}
         zh={props.zh}
         renderHeader={props.renderHeader}
@@ -272,8 +269,6 @@ function FilePreviewBody(props: {
   waitForContent?: boolean;
   /** 文本差异需要补丁，媒体无需等它。 */
   pendingDiff?: boolean;
-  /** 正文成功时才单独显示补丁错误，读取失败时使用正文的错误。 */
-  diffError?: unknown;
   zh: boolean;
   /** 文件标签与正文使用同一份已授权预览。 */
   renderHeader?: (item: FilePreviewItem | null) => ReactNode;
@@ -318,8 +313,8 @@ function FilePreviewBody(props: {
   const ownedIds = useRef(new Set<string>());
   /** 可见版本持有独立引用，后台淘汰不会撤销正在使用的授权。 */
   const ownedPreparedReads = useRef(new Map<FilePreviewItem[], () => void>());
-  /** 已能显示补丁时推迟后台全文；等待补丁的独立窗口立即开始读文件。 */
-  const deferRead = Boolean(props.children) && !props.waitForContent;
+  /** 只按打开文件时是否已有补丁决定读取时机，迟到的补丁不会重启全文读取。 */
+  const [deferRead] = useState(() => Boolean(props.children) && !props.waitForContent);
   useEffect(() => {
     const revision = ++readRevision.current;
     /** 卸载后拒绝迟到结果。 */
@@ -537,11 +532,6 @@ function FilePreviewBody(props: {
         ) : null}
         {showDiff && items?.some((item) => item.truncated || (item.kind === 'unavailable' && !item.missing)) ? (
           <p role="status">{props.zh ? '部分版本不可用或已截断，无法显示两侧全文。' : 'A version is unavailable or truncated. Full-file comparison is unavailable.'}</p>
-        ) : null}
-        {!error && textOnly && props.diffError ? (
-          <p role="alert">
-            <VisibleApplicationError error={props.diffError} language={props.zh ? 'zh-CN' : 'en'} />
-          </p>
         ) : null}
         {(!simpleImage || error) && !(showDiff && typeof props.children === 'function') && (showDiff || images || !current || error) ? (
           <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>

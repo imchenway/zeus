@@ -1111,12 +1111,16 @@ async function openProjectGitDiffWindow(
     appCloseLayerActivityByWindow.delete(window.id);
   });
   configureWindowSecurity(window, rendererUrl);
-  window.once('ready-to-show', () => {
+  /** 首帧或页面加载完成即可显示差异窗口，文件读取由窗口自身负责。 */
+  const revealDiffWindow = () => {
+    if (window.isDestroyed() || window.isVisible()) return;
     reveal();
     window.focus();
-  });
+  };
+  window.once('ready-to-show', revealDiffWindow);
   try {
     await window.loadURL(rendererUrl);
+    revealDiffWindow();
   } catch (error) {
     if (!window.isDestroyed()) window.destroy();
     throw error;

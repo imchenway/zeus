@@ -15,7 +15,7 @@ import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/Ap
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
 import { notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import { useGitDeliveryRefresh } from './useGitDeliveryRefresh.js';
-import { readCachedGitDiff, useGitDiffReadAhead, usePreparedGitDiffSelection, type GitDiffRead, type GitDiffReadTarget } from './gitDiffReadAhead.js';
+import { useGitDiffReadAhead, useGitDeliveryFileDiff, type GitDiffRead, type GitDiffReadTarget } from './gitDiffReadAhead.js';
 import {
   DeliveryFeedbackNotice,
   DeliveryRepositoryFileTree,
@@ -287,14 +287,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
 
   /** 单文件补丁独立读取，文件树不等待全部正文。 */
   const focusedRepository = snapshot?.repositories.find((repository) => repository.id === focus.repositoryId);
-  /** 键随文件、范围及刷新变化，旧请求不能展示到新选择。 */
-  const diffKey = JSON.stringify([props.project.id, focus.repositoryId, focus.path, scope, snapshot?.refreshedAt]);
   /** 已提交文件使用固定起点，工作区比较包括暂存与未暂存变化。 */
   const diffBase = scope === 'working' ? 'HEAD' : committedBase(focusedRepository);
   /** 刷新保留同一文件的可读内容，文件切换时不能显示上一文件。 */
   const diffIdentity = JSON.stringify([props.project.id, focus.repositoryId, focus.path, scope, diffBase]);
-  /** 结果绑定请求身份，切换文件的首帧即显示局部加载。 */
-  const [fileDiff, setFileDiff] = useState<{ key: string; identity: string; diff: GitDiffSummary | null } | null>(null);
   /** 同一快照复用最多四十八个单文件结果和在途读取；刷新或换范围时释放。 */
   const fileDiffReads = useMemo(() => new Map<string, GitDiffRead>(), [props.client, props.project.id, snapshot?.refreshedAt]);
   /** 点击、悬停与空闲预读共用同一文件身份及比较基线。 */
@@ -326,35 +322,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       return target ? [target] : [];
     });
   }, [groups, focus.repositoryId, focus.path, fileDiffTarget]);
-  useGitDiffReadAhead(fileDiffReads, readAheadTargets, open && busyAction === null);
-  /** 文件树的高亮与实际差异同时提交，后台准备期间保留当前文件。 */
-  const selectPreparedFile = usePreparedGitDiffSelection(fileDiffReads, fileDiffTarget, (repositoryId, path) => setFocus({ repositoryId, path }), setError, open && busyAction === null);
-  useEffect(() => {
-    if (!open || !focus.repositoryId || !focus.path || !diffBase) return;
-    /** 清理后忽略旧文件和旧快照的结果。 */
-    let cancelled = false;
-    /** 切回已读文件立即显示同一快照，快速往返也不重复启动 Git。 */
-    const target = fileDiffTarget(focus.repositoryId, focus.path);
-    if (!target) return;
-    /** 回执只写入它所属的快照和文件。 */
-    const requested = readCachedGitDiff(fileDiffReads, target);
-    void requested.read
-      .then((diff) => {
-        if (!cancelled) setFileDiff({ key: diffKey, identity: diffIdentity, diff });
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) return;
-        setFileDiff((current) => (current?.identity === diffIdentity ? current : { key: diffKey, identity: diffIdentity, diff: null }));
-        setError(reason);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, props.client, props.project.id, focus.repositoryId, focus.path, scope, diffBase, diffKey, diffIdentity, fileDiffReads, fileDiffTarget]);
-  /** 只有当前请求的结果可进入差异组件。 */
-  const diff = fileDiffReads.get(diffKey)?.result ?? (fileDiff?.identity === diffIdentity ? fileDiff.diff : null);
-  /** 读取失败结束局部加载，并使用页面现有错误和重试入口。 */
-  const diffLoading = Boolean(focus.path && diffBase && !diff && fileDiff?.key !== diffKey);
+  /** 读取跟随审阅焦点，文件选择本身不等待 Git。 */
+  const diffTarget = useMemo(() => (open && focus.repositoryId ? fileDiffTarget(focus.repositoryId, focus.path) : null), [open, focus.repositoryId, focus.path, fileDiffTarget]);
+  const fileReview = useGitDeliveryFileDiff(fileDiffReads, diffTarget, diffIdentity);
+  useGitDiffReadAhead(fileDiffReads, readAheadTargets, open && busyAction === null && !fileReview.diffLoading);
   /** 合入与推送仅使用勾选仓库。 */
   const selected = snapshot?.repositories.filter((repository) => selectedIds.includes(repository.id)) ?? [];
   /** 冲突仓库不能提交，其余仓库仍可交付。 */
@@ -601,10 +572,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
             selectedFile={focus.path}
             diffTitle={focusedRepository ? `${focusedRepository.name} / ${focus.path}` : zh ? '差异对比' : 'Diff'}
-            diffLoading={diffLoading}
-            diff={diff}
+            {...fileReview}
             revision={snapshot.refreshedAt}
-            preparedPreview={fileDiffReads.get(diffKey)?.preview}
             onFileSaved={() => refresh()}
             previewRequest={
               focusedRepository
@@ -650,17 +619,14 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 zh={zh}
                 disabled={Boolean(busyAction)}
                 onScopeChange={setScope}
-                onSelectFile={selectPreparedFile}
-                onPreloadFile={(repositoryId, path) => {
-                  const target = fileDiffTarget(repositoryId, path);
-                  if (target) return readCachedGitDiff(fileDiffReads, target).read.catch(() => undefined);
-                }}
+                onSelectFile={(repositoryId, path) => setFocus((current) => (current.repositoryId === repositoryId && current.path === path ? current : { repositoryId, path }))}
                 onToggleWorkspace={(id, checked) => toggleRepositories([id], checked)}
                 onToggleBranch={toggleRepositories}
                 onToggleFiles={toggleFiles}
-                onOpenFile={(repositoryId, path) => {
-                  return window.zeus
-                    ?.openProjectGitDiffWindow?.({
+                onOpenFile={async (repositoryId, path) => {
+                  try {
+                    if (!window.zeus?.openProjectGitDiffWindow) throw new Error(zh ? '独立差异窗口需要桌面应用。' : 'A separate diff window requires the desktop app.');
+                    await window.zeus.openProjectGitDiffWindow({
                       conversationId: props.conversationWorkspaceMode !== 'direct' ? props.conversation?.id : undefined,
                       projectId: props.project.id,
                       repositoryId,
@@ -672,8 +638,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                             comparisonMode: 'current',
                           }
                         : {}),
-                    })
-                    .catch((reason) => setError(reason));
+                    });
+                  } catch (reason) {
+                    setError(reason);
+                  }
                 }}
                 onCopyBranch={copyBranchName}
               />
