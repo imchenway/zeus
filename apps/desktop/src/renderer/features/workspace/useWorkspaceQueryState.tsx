@@ -693,13 +693,16 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   >('idle');
   useEffect(() => {
     let active = true;
+    /** 更新广播优先于初次读取，避免延迟返回的旧状态恢复失效入口。 */
+    let receivedIndicatorUpdate = false;
     const bridge = globalThis.window.zeus;
     void loadAutomaticUpdateIndicatorFromMain({ zeus: bridge })
       .then((state) => {
-        if (active) setAutomaticUpdateIndicator(state);
+        if (active && !receivedIndicatorUpdate) setAutomaticUpdateIndicator(state);
       })
       .catch(() => undefined);
     const unsubscribe = bridge?.onAutomaticUpdateIndicatorChanged?.((state) => {
+      receivedIndicatorUpdate = true;
       if (active) setAutomaticUpdateIndicator(state);
     });
     return () => {

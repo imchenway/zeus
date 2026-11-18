@@ -602,6 +602,14 @@ function copyFor(language: 'zh-CN' | 'en-US', state: 'checking' | 'available' | 
       detail: zh ? `Zeus ${latestVersion} 已下载并通过校验。点击“立即重启”后才会安装并切换到新版。` : `Zeus ${latestVersion} has been downloaded and verified. It will only be installed after you choose Restart Now.`,
     };
   }
+  // Windows 安装器在旧进程退出以后才会替换文件。
+  if (process.platform === 'win32') {
+    return {
+      state,
+      title: zh ? '正在准备安装' : 'Preparing to Install',
+      detail: zh ? 'Zeus 退出后会自动安装，完成后会重新打开。' : 'The update will install after Zeus closes. Zeus will reopen when installation is complete.',
+    };
+  }
   return {
     state,
     title: zh ? '正在安装更新' : 'Installing Update',

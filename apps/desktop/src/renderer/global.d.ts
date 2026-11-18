@@ -376,7 +376,8 @@ declare global {
       checkReleaseUpdate: () => Promise<ReleaseUpdateStatusSnapshot>;
       openAutomaticUpdateIndicator: () => Promise<{ opened: boolean }>;
       recordManualUpdateCheck: () => Promise<{ recorded: boolean }>;
-      onAutomaticUpdateIndicatorChanged: (listener: (state: AutomaticUpdateIndicatorState) => void) => () => void;
+      /** 空值表示当前进程的更新入口已停用。 */
+      onAutomaticUpdateIndicatorChanged: (listener: (state: AutomaticUpdateIndicatorState | null) => void) => () => void;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;

@@ -35,7 +35,7 @@ import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
-import { withCloseTimeout } from './executionHostClosePlan.js';
+import { desktopExecutionHostCloseTimeoutMs, withCloseTimeout } from './executionHostClosePlan.js';
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
@@ -514,11 +514,13 @@ function desktopDisplayName(): string {
   return isTestDistribution() ? testDistributionName : app.isPackaged ? 'Zeus' : developmentDistributionName;
 }
 
-function broadcastAutomaticUpdateIndicator(state: HomebrewUpdateIndicatorState): void {
-  automaticUpdateIndicatorState = { ...state };
+/** 退出清理时撤下侧栏入口，并忽略在途检查的后续更新。 */
+function broadcastAutomaticUpdateIndicator(state: HomebrewUpdateIndicatorState | null): void {
+  if (state && desktopShutdown.signal.aborted) return;
+  automaticUpdateIndicatorState = state ? { ...state } : undefined;
   for (const window of windows) {
     if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
-    window.webContents.send('zeus:automatic-update-indicator:changed', automaticUpdateIndicatorState);
+    window.webContents.send('zeus:automatic-update-indicator:changed', automaticUpdateIndicatorState ?? null);
   }
 }
 
@@ -1451,9 +1453,7 @@ function setupMenu(): void {
         openSettings: () => {
           void openSettingsFromMenu();
         },
-        checkForUpdates: () => {
-          void checkForUpdatesFromMenu().catch(showUpdateOpenFailure);
-        },
+        checkForUpdates: desktopShutdown.signal.aborted ? undefined : () => void checkForUpdatesFromMenu().catch(showUpdateOpenFailure),
         recoverUpdate:
           process.platform === 'win32'
             ? () => {
@@ -1529,6 +1529,7 @@ async function openSettingsFromMenuBarUsage(category: 'usage' | 'runtime'): Prom
 
 /** 菜单与工作区共用系统错误提示，更新窗口未能打开时仍能看到失败原因。 */
 function showUpdateOpenFailure(error: unknown): { opened: false } {
+  if (desktopShutdown.signal.aborted) return { opened: false };
   /** 共用错误说明负责脱敏，并保留结果未知时不得自动重试的语义。 */
   const failure = describeUserFacingError(error, appShellSettings.appLanguage);
   console.warn('Zeus 无法打开更新窗口。', failure.details);
@@ -1539,16 +1540,24 @@ function showUpdateOpenFailure(error: unknown): { opened: false } {
 
 /** 两端原生菜单共用真实更新检查；结果、预取和重启决策留在原生窗口。 */
 async function checkForUpdatesFromMenu(): Promise<void> {
+  if (desktopShutdown.signal.aborted) return;
   await requestMainWindow();
   if (fatalStartup) throw new Error('Zeus 启动失败，无法检查更新。');
-  await auxiliaryServicesReady;
+  await openAutomaticUpdateWindow('desktop.automatic_update.menu_check', { envelope: createSystemMainCommandEnvelope('desktop.automatic_update.menu_check', 'desktop-update'), body: null });
+}
+
+/** 菜单与侧栏共用更新窗口，并在退出开始后停止接收打开和检查请求。 */
+async function openAutomaticUpdateWindow(commandType: 'desktop.automatic_update.menu_check' | 'desktop.automatic_update.open', request: MainCommandRequest): Promise<{ opened: boolean }> {
+  if (!desktopShutdown.signal.aborted) await auxiliaryServicesReady;
+  if (desktopShutdown.signal.aborted) return { opened: false };
   /** 窗口反馈先于账本写入，版本检查仍在命令门禁通过后执行。 */
   const controller = homebrewUpdateController;
-  if (!controller) throw new Error('Zeus 更新控制器尚未就绪。');
+  if (!controller) throw new Error(nativeText('Zeus 更新控制器尚未就绪。', 'The Zeus update controller is unavailable.'));
   await controller.show();
-  const envelope = createSystemMainCommandEnvelope('desktop.automatic_update.menu_check', 'desktop-update');
-  await activeMainCommandLedger().execute({ envelope, body: null }, 'desktop.automatic_update.menu_check', async (_body, command) => {
+  if (desktopShutdown.signal.aborted) return { opened: false };
+  return activeMainCommandLedger().execute(request, commandType, async (_body, command) => {
     await command.markWriteStarted();
+    if (desktopShutdown.signal.aborted) return { opened: false };
     await controller.showOrCheck({ present: false });
     return { opened: true, externalOperationId: command.externalOperationId };
   });
@@ -2802,26 +2811,14 @@ function setupIpc(): void {
   ipcMain.handle('zeus:automatic-update-indicator:get', async (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update status request came from an untrusted window.');
-    await auxiliaryServicesReady;
+    if (!desktopShutdown.signal.aborted) await auxiliaryServicesReady;
+    if (desktopShutdown.signal.aborted) return null;
     return automaticUpdateIndicatorState ?? homebrewUpdateController?.getIndicatorState() ?? null;
   });
   ipcMain.handle('zeus:automatic-update-indicator:open', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
-    try {
-      await auxiliaryServicesReady;
-      /** 与菜单共用先显示、后检查的顺序，不让命令持久化阻塞点击反馈。 */
-      const controller = homebrewUpdateController;
-      if (!controller) throw new Error('Automatic update controller is unavailable.');
-      await controller.show();
-      return await activeMainCommandLedger().execute(request, 'desktop.automatic_update.open', async (_body, command) => {
-        await command.markWriteStarted();
-        await controller.showOrCheck({ present: false });
-        return { opened: true, externalOperationId: command.externalOperationId };
-      });
-    } catch (error) {
-      return showUpdateOpenFailure(error);
-    }
+    return openAutomaticUpdateWindow('desktop.automatic_update.open', request).catch(showUpdateOpenFailure);
   });
   ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -4546,7 +4543,7 @@ async function initializeApplication(): Promise<void> {
             updateCodexAutomatically,
             onIndicatorChange: broadcastAutomaticUpdateIndicator,
             notifyReady: (latestVersion, showProgress, manualInstall) => {
-              if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
+              if (desktopShutdown.signal.aborted || isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
               const notification = new Notification({
                 title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
                 body:
@@ -4558,7 +4555,9 @@ async function initializeApplication(): Promise<void> {
                       ? `Zeus ${latestVersion} is downloaded. Open the installer to install the update.`
                       : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
               });
-              notification.on('click', () => void showProgress().catch(showUpdateOpenFailure));
+              notification.on('click', () => {
+                if (!desktopShutdown.signal.aborted) void showProgress().catch(showUpdateOpenFailure);
+              });
               notification.show();
               return true;
             },
@@ -4848,14 +4847,14 @@ async function confirmRequestedRestart(detail: string): Promise<boolean> {
   return result.response === 0;
 }
 
-/** 重启未完成时明确告知用户，并保留当前窗口处理失败原因。 */
-async function showRestartCancelled(detail: string): Promise<void> {
+/** 对话框正文显示结果与下一步，标题栏使用应用名。 */
+async function showRestartCancelled(detail: string, message = nativeText('重启已取消', 'Restart cancelled')): Promise<void> {
   const options = {
     type: 'warning' as const,
-    title: nativeText('重启已取消', 'Restart cancelled'),
-    message: nativeText('Zeus 将保持打开。', 'Zeus will remain open.'),
+    title: desktopDisplayName(),
+    message,
     detail,
-    buttons: [nativeText('知道了', 'OK')],
+    buttons: [nativeText('关闭', 'Close')],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -4891,6 +4890,8 @@ app.on(
     resolveQuitMode: resolveDesktopQuitMode,
     /** 在关闭 Core 前通知所有桌面窗口暂停重连。 */
     onQuitStateChanged: (quitting) => {
+      // 清理失败会保留窗口，但当前进程已经不能检查更新。
+      if (!quitting && desktopShutdown.signal.aborted) setupMenu();
       desktopFaultMonitor?.quitting(quitting);
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:quit-state-changed', quitting);
@@ -4898,6 +4899,7 @@ app.on(
     },
     closeLocalServer: async (mode) => {
       desktopShutdown.abort();
+      broadcastAutomaticUpdateIndicator(null);
       /** 每个清理阶段都保留失败原因，辅助资源超时不能阻止关闭 Core。 */
       const cleanupErrors: unknown[] = [];
       /** 默认等待五秒；Core 和原生助手使用各自的退出时限，单位为毫秒。 */
@@ -4908,6 +4910,19 @@ app.on(
           cleanupErrors.push(Object.assign(new Error(`Zeus 退出清理失败：${label}`), { cause: error }));
         }
       };
+      /** Windows 安装器等待旧 Zeus 退出，准备窗口覆盖这段等待。 */
+      const keepUpdateProgress = process.platform === 'win32' && mode === 'upgrade_shutdown';
+      /** 安装器替换文件前必须确认原生进度助手已退出。 */
+      const closeUpdateController = () =>
+        attemptCleanup(
+          '更新控制器',
+          async () => {
+            if (process.platform !== 'win32' && (mode === 'upgrade_handoff' || mode === 'upgrade_shutdown')) return;
+            await homebrewUpdateController?.closeAndWait();
+            homebrewUpdateController = undefined;
+          },
+          15_000,
+        );
       await attemptCleanup(
         '后台宿主初始化',
         async () => {
@@ -4927,16 +4942,7 @@ app.on(
       await attemptCleanup('电源监听器', () => {
         powerMonitor.removeListener('resume', handleAutomaticUpdateResume);
       });
-      await attemptCleanup(
-        '更新控制器',
-        async () => {
-          if (process.platform !== 'win32' && (mode === 'upgrade_handoff' || mode === 'upgrade_shutdown')) return;
-          // 普通退出在两端都等待原生进度程序实际结束。
-          await homebrewUpdateController?.closeAndWait();
-          homebrewUpdateController = undefined;
-        },
-        15_000,
-      );
+      if (!keepUpdateProgress) await closeUpdateController();
       await attemptCleanup('内置浏览器宿主', async () => {
         await browserHost?.close();
         browserHost = undefined;
@@ -4957,7 +4963,7 @@ app.on(
           await localServerRuntime?.close(mode);
           localServerRuntime = undefined;
         },
-        45_000,
+        desktopExecutionHostCloseTimeoutMs,
       );
       await attemptCleanup('Main 网络代理连接', closeNetworkProxyRuntime);
       if (process.platform === 'darwin' && !readOnlyValidationDescriptor && (mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
@@ -4969,15 +4975,14 @@ app.on(
         await attemptCleanup('只读验收副本销毁助手', () => scheduleReadOnlyValidationCleanup(readOnlyValidationDescriptor!));
       }
       if (cleanupErrors.length === 0) await attemptCleanup('独立故障监控', () => desktopFaultMonitor?.closeAndWait(), 30_000);
+      if (keepUpdateProgress) await closeUpdateController();
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },
     onCleanupError: async (error, quitMode): Promise<BeforeQuitCleanupFailureAction> => {
       if (quitMode === 'upgrade_shutdown' || (process.platform === 'win32' && pendingUpgradeHandoff)) {
         console.error('跨协议升级未能完整关闭旧 Zeus Core；保留当前应用，禁止启动新版本。', error);
         await cancelRequestedRestart();
-        await showRestartCancelled(
-          nativeText('后台资源未能完整关闭，更新安装已取消。请保留当前窗口并检查运行日志。', 'Background resources could not be fully closed. Update installation was cancelled. Keep this window open and check the runtime logs.'),
-        );
+        await showRestartCancelled(nativeText('请退出 Zeus，重新打开后再试。', 'Quit and reopen Zeus, then try again.'), nativeText('更新未完成', 'Update incomplete'));
         return 'keep_open';
       }
       // 正常 close 的等待超时后，强制关闭必须绕开原有 Promise，回收同一身份的 Core 进程树。

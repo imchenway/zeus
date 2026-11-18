@@ -45,7 +45,7 @@ import {
   writeExecutionHostBootstrap,
 } from './executionHostProtocol.js';
 import type { DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
-import { withCloseTimeout } from './executionHostClosePlan.js';
+import { executionHostForcedExitTimeoutMs, executionHostGracefulExitTimeoutMs, executionHostStopBeforeShutdownTimeoutMs, withCloseTimeout } from './executionHostClosePlan.js';
 import { sameZeusDataRootHostIdentity, verifyZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 const readOnlyValidationVerifiedBeforeOwnedCoreLock = new WeakSet<ReadOnlyValidationDescriptor>();
@@ -475,7 +475,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
     };
 
     const replaceMismatchedHost = async (): Promise<void> => {
-      if (connection.appVersion === currentAppVersion || handoffPromise) return;
+      if (shutdownSignal.aborted || connection.appVersion === currentAppVersion || handoffPromise) return;
 
       const previousInstanceId = connection.instanceId;
       const previousPid = connection.pid;
@@ -499,7 +499,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
 
     const recover = (discoverCurrent: boolean): Promise<void> => {
       if (recoveryPromise) return recoveryPromise;
-      if (closing) return Promise.reject(new Error('Zeus execution-host connection is closing.'));
+      if (shutdownSignal.aborted) return Promise.reject(shutdownSignal.reason);
       const recovering = (async () => {
         if (!discoverCurrent) {
           try {
@@ -584,7 +584,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
       }
-      await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity, 5_000);
+      await waitForExecutionHostExit(options.userDataPath, connection.instanceId, connection.pid, options.dataRootIdentity, executionHostForcedExitTimeoutMs);
     };
 
     const maintainLease = async (): Promise<void> => {
@@ -679,43 +679,16 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
         if (closePromise) return closePromise;
         closePromise = (async () => {
           const errors: unknown[] = [];
-          const pendingHeartbeat = heartbeatCyclePromise;
-          if (pendingHeartbeat) {
-            try {
-              await pendingHeartbeat;
-            } catch (error) {
-              errors.push(error);
-            }
-          }
-          const pendingRecovery = recoveryPromise;
-          if (pendingRecovery) {
-            try {
-              await pendingRecovery;
-            } catch (error) {
-              errors.push(error);
-            }
-          }
-          const pendingHandoffProbe = handoffProbePromise;
-          if (pendingHandoffProbe) {
-            try {
-              await pendingHandoffProbe;
-            } catch (error) {
-              errors.push(error);
-            }
-          }
-          const pendingHandoff = handoffPromise;
-          if (pendingHandoff) {
-            try {
-              await pendingHandoff;
-            } catch (error) {
-              errors.push(error);
-            }
+          /** 等待停止前已发出的操作。只有本次退出信号导致的取消可以从失败结果中排除。 */
+          const pending = await Promise.allSettled([heartbeatCyclePromise, recoveryPromise, handoffProbePromise, handoffPromise]);
+          for (const result of pending) {
+            if (result.status === 'rejected' && result.reason !== shutdownSignal.reason) errors.push(result.reason);
           }
           try {
             if (mode === 'final_quit' || mode === 'upgrade_shutdown') {
               try {
                 // 先把中断意图交给持久化命令；失败仍继续关闭，不能把明确退出改成后台驻留。
-                await withCloseTimeout(client.stopActiveWork(createExecutionHostStopActiveCommandRequest()), 10_000, 'Zeus 停止后台工作超过十秒。').catch((error: unknown) => {
+                await withCloseTimeout(client.stopActiveWork(createExecutionHostStopActiveCommandRequest()), executionHostStopBeforeShutdownTimeoutMs, 'Zeus 停止后台工作超过十秒。').catch((error: unknown) => {
                   console.error('Zeus 停止后台工作未完成，继续关闭 Core。', error);
                 });
                 await client.shutdown();
@@ -1540,7 +1513,7 @@ function cloneRendererLocalServerConfig(config: RendererLocalServerConfig): Rend
 }
 
 /** 等待 Core 和内核租约实际释放；正常关闭最多四十五秒，强制结束最多五秒。 */
-async function waitForExecutionHostExit(userDataPath: string, instanceId: string, pid: number, dataRootIdentity: ZeusDataRootHostIdentity, timeoutMs = 45_000): Promise<void> {
+async function waitForExecutionHostExit(userDataPath: string, instanceId: string, pid: number, dataRootIdentity: ZeusDataRootHostIdentity, timeoutMs = executionHostGracefulExitTimeoutMs): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     // Main 永不清理 lock/rendezvous 路径；旧宿主在仍持有内核租约时清理自己的身份，随后才退出。

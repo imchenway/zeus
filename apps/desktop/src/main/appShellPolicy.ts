@@ -14,7 +14,8 @@ export interface AppShellMenuActions {
   createNewConversation: () => void | Promise<void>;
   showMainWindow: () => void;
   openSettings: () => void | Promise<void>;
-  checkForUpdates: () => void | Promise<void>;
+  /** 退出清理后没有可用的更新窗口，菜单项以禁用状态显示。 */
+  checkForUpdates?: () => void | Promise<void>;
   /** Windows 更新失败后由用户显式选择旧安装器恢复。 */
   recoverUpdate?: () => void | Promise<void>;
   /** Windows 隔离设置由用户查看、初始化和清理。 */
@@ -64,6 +65,7 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
         {
           label: zh ? '检查更新…' : 'Check for Updates...',
           accelerator: 'CommandOrControl+U',
+          enabled: actions.checkForUpdates !== undefined,
           click: actions.checkForUpdates,
         },
         ...(actions.recoverUpdate ? [{ label: zh ? '恢复上次安装…' : 'Recover Previous Installation...', click: actions.recoverUpdate }] : []),
