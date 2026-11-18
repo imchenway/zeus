@@ -1576,6 +1576,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    /** 首屏沿用变更集的只读摘要视图。 */
+    readTurnChangeSummary: (conversationId, turnId) => turnChangeSetService.getByTurn(conversationId, turnId, 'summary'),
     readSubmissionReceipt: (conversationId, submissionId) => {
       const submission = conversationSubmissions.getById(submissionId);
       if (!submission || submission.conversationId !== conversationId) return null;
@@ -2074,11 +2076,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         requireNativeQueueConversation(params);
         return conversationQueueCoreMutations.delete({ conversationId: params.conversationId, submissionId: params.submissionId });
       },
-      queueSendNow: async ({ params, operationIdentity, providerWriteLifecycle }) => {
+      /** 从同一入口把指定轮次交给当前会话的 Provider。 */
+      queueSendNow: async ({ params, expectedTurnId, operationIdentity, providerWriteLifecycle }) => {
         const conversation = requireNativeQueueConversation(params);
         const operation = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({
           conversationId: conversation.id,
           submissionId: params.submissionId,
+          expectedTurnId,
           providerWriteLifecycle,
         });
         const updatedConversation = conversations.getById(conversation.id);

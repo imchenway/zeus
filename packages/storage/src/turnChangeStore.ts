@@ -57,6 +57,17 @@ export interface ZeusTurnChangeFileRecord {
 export const turnChangeDiffArtifactGeneration = '2026-08-21-turn-change-diff-artifact-v1';
 export const turnChangeInlineDiffMaximumBytes = 64 * 1024;
 
+/** 首屏只读取变更集元数据，跳过内联 Diff 与外置正文引用。 */
+const turnChangeSetSummaryColumns = `id, project_id, conversation_id, turn_id, provider_turn_id, state,
+  '' AS unified_diff, NULL AS unified_diff_artifact_ref_json, unified_diff_byte_length, unified_diff_character_length,
+  pre_image_digest, post_image_digest, conflict_json, unavailable_reason, journal_ref, created_at, updated_at`;
+
+/** 首屏保留文件聚合、排序和恢复判定所需字段，省略 Diff 正文。 */
+const turnChangeFileSummaryColumns = `id, change_set_id, source_item_id, source_index, old_path, new_path, change_type,
+  added_lines, deleted_lines, pre_hash, post_hash, pre_exists, post_exists, pre_mode, post_mode,
+  '' AS unified_diff, NULL AS unified_diff_artifact_ref_json, unified_diff_byte_length, unified_diff_character_length,
+  pre_blob_ref, post_blob_ref, reversible, unavailable_reason, created_at, updated_at`;
+
 export class TurnChangeSetRepository {
   constructor(
     private readonly db: ZeusDatabasePort,
@@ -127,9 +138,11 @@ export class TurnChangeSetRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
-  getByTurn(conversationId: string, turnId: string): ZeusTurnChangeSetRecord | undefined {
-    const row = this.db.get<DbTurnChangeSetRow>(`SELECT * FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ?`, [conversationId, turnId]);
-    return row ? this.mapRow(row) : undefined;
+  /** 按会话与轮次读取；摘要模式无需读取或解压 Diff。 */
+  getByTurn(conversationId: string, turnId: string, includeDiff = true): ZeusTurnChangeSetRecord | undefined {
+    const row = this.db.get<DbTurnChangeSetRow>(`SELECT ${includeDiff ? '*' : turnChangeSetSummaryColumns} FROM turn_change_sets WHERE conversation_id = ? AND turn_id = ?`, [conversationId, turnId]);
+    if (!row) return undefined;
+    return includeDiff ? this.mapRow(row) : mapTurnChangeSetRow(row);
   }
 
   getByProviderTurn(conversationId: string, providerTurnId: string): ZeusTurnChangeSetRecord | undefined {
@@ -244,9 +257,10 @@ export class TurnChangeFileRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
-  /** 按事件首次捕获顺序读取；随机文件身份与各事件内部序号不能代表连续修改顺序。 */
-  listByChangeSet(changeSetId: string): ZeusTurnChangeFileRecord[] {
-    return this.db.select<DbTurnChangeFileRow>(`SELECT * FROM turn_change_files WHERE change_set_id = ? ORDER BY created_at, rowid`, [changeSetId]).map((row) => this.mapRow(row));
+  /** 按首次捕获顺序读取；摘要模式保留合并同路径变更所需的顺序和数据。 */
+  listByChangeSet(changeSetId: string, includeDiff = true): ZeusTurnChangeFileRecord[] {
+    const rows = this.db.select<DbTurnChangeFileRow>(`SELECT ${includeDiff ? '*' : turnChangeFileSummaryColumns} FROM turn_change_files WHERE change_set_id = ? ORDER BY created_at, rowid`, [changeSetId]);
+    return rows.map((row) => (includeDiff ? this.mapRow(row) : mapTurnChangeFileRow(row)));
   }
 
   private mapRow(row: DbTurnChangeFileRow): ZeusTurnChangeFileRecord {

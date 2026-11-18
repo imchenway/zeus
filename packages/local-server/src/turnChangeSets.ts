@@ -48,7 +48,8 @@ export interface TurnChangeSetService {
   updateUnifiedDiff(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; diff: string; timestamp: string }): TurnChangeSet;
   seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null;
   getById(changeSetId: string): TurnChangeSet | null;
-  getByTurn(conversationId: string, turnId: string): TurnChangeSet | null;
+  /** 摘要与审阅共用聚合口径，只有审阅读取 Diff 正文。 */
+  getByTurn(conversationId: string, turnId: string, contentProjection?: 'summary' | 'full'): TurnChangeSet | null;
   listByConversation(conversationId: string): TurnChangeSet[];
   operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult>;
   recoverInterruptedOperations(): Promise<void>;
@@ -343,9 +344,15 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     return record ? toPublicChangeSet(normalizeChangeSetScope(record), aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
   }
 
-  function getByTurn(conversationId: string, turnId: string): TurnChangeSet | null {
-    const record = options.changeSets.getByTurn(conversationId, turnId);
-    return record ? toPublicChangeSet(normalizeChangeSetScope(record), aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
+  /** 同一轮次的摘要保留审阅所见的文件身份、顺序与汇总。 */
+  function getByTurn(conversationId: string, turnId: string, contentProjection: 'summary' | 'full' = 'full'): TurnChangeSet | null {
+    /** 摘要省略 Diff，文件链条与恢复资格仍按原数据计算。 */
+    const includeDiff = contentProjection === 'full';
+    const record = options.changeSets.getByTurn(conversationId, turnId, includeDiff);
+    if (!record) return null;
+    /** 路径诊断与卡片共用本次聚合。 */
+    const files = aggregateChangeFiles(options.files.listByChangeSet(record.id, includeDiff));
+    return { ...toPublicChangeSet(normalizeChangeSetScope(record, files), files), contentProjection };
   }
 
   function listByConversation(conversationId: string): TurnChangeSet[] {
@@ -353,7 +360,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   }
 
   /** 已保存的路径拒绝也按当前代码范围判断；不修改历史快照或把共享目标纳入恢复。 */
-  function normalizeChangeSetScope(record: ZeusTurnChangeSetRecord): ZeusTurnChangeSetRecord {
+  function normalizeChangeSetScope(record: ZeusTurnChangeSetRecord, files?: AggregatedChangeFile[]): ZeusTurnChangeSetRecord {
     /** 只消除共享链接引起的路径误报，其余冲突保留原状态。 */
     const conflict = parseConflict(record.conflictJson);
     if (!isRejectedFileChangePathError(conflict) || !conflict) return record;
@@ -377,7 +384,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       }
     });
     /** 恢复资格仍取决于真实保存的文件快照，不推造缺失数据。 */
-    const incompleteFile = aggregateChangeFiles(options.files.listByChangeSet(record.id)).find((file) => !file.reversible);
+    const incompleteFile = (files ?? aggregateChangeFiles(options.files.listByChangeSet(record.id))).find((file) => !file.reversible);
     /** 全部拒绝均来自共享链接时，只保留实际代码文件的数据缺口。 */
     const unavailableReason = paths.length ? (record.unavailableReason ?? conflict.message) : incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null;
     return {

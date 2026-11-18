@@ -510,9 +510,12 @@ export interface ReorderNativeQueueInput {
   orderedSubmissionIds: string[];
 }
 
+/** 将现有队首提交引导到活动的 Provider 轮次。 */
 export interface SendQueuedNowInput {
   conversationId: string;
   submissionId: string;
+  /** 指定值为点击时的 Provider 轮次 ID，省略表示以服务端当前轮次为目标。 */
+  expectedTurnId?: string;
   providerWriteLifecycle?: NativeProviderWriteLifecycle;
 }
 

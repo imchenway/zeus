@@ -87,7 +87,7 @@ import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent
 import { searchPiWorkspace } from './piWorkspaceSearch.js';
 import { resolveConversationToolPath } from './conversationToolPolicy.js';
 import type { ConversationToolProcesses } from './conversationToolProcesses.js';
-import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput } from './codexNativeConversationContracts.js';
+import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput, SendQueuedNowInput } from './codexNativeConversationContracts.js';
 import type { createConversationApplicationOperations } from './conversationApplicationOperations.js';
 import type { createPiGoalApplication } from './piGoalApplication.js';
 import { parseJsonRecord } from './codexNativeConversationPolicy.js';
@@ -3102,16 +3102,21 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** Pi 的队首引导沿用原提交身份，不误发到 Codex。 */
-  async function sendQueuedNow(input: { conversationId: string; submissionId: string; providerWriteLifecycle?: { markPrepared(submissionId: string): Promise<void>; markRpcStarted(submissionId: string): void } }) {
+  async function sendQueuedNow(input: SendQueuedNowInput) {
     /** 同一队首、同一活动轮次和同一模型配置才允许引导。 */
     const conversation = requirePiConversation(input.conversationId);
     /** 统一队列保存的原提交。 */
     const submission = options.submissions.getById(input.submissionId);
     if (!submission || submission.conversationId !== conversation.id || submission.status !== 'queued') throw piError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '这条消息已不在队列中。');
-    if (options.submissions.listQueueByConversation(conversation.id)[0]?.id !== submission.id) throw piError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。');
+    if (options.submissions.listQueueByConversation(conversation.id)[0]?.id !== submission.id) {
+      // 队列顺序冲突发生在写入前，直接返回原卡片可显示的原因。
+      throw Object.assign(piError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。'), { statusCode: 409 });
+    }
     /** 当前正在运行的 Pi 轮次。 */
     const run = [...runs.values()].find((entry) => entry.conversationId === conversation.id);
-    if (!run) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '当前没有可以引导的 Pi 轮次。');
+    if (!run || (input.expectedTurnId && run.providerTurnId !== input.expectedTurnId)) {
+      throw Object.assign(piError('ZEUS_PI_RUN_NOT_ACTIVE', '原轮次已结束，消息仍按队列处理。'), { statusCode: 409 });
+    }
     /** 带资源输入保持原记录，任务推送布局由独立轮次处理。 */
     const persisted = asRecord(JSON.parse(submission.inputJson));
     if (persisted.taskPushLayout) throw piError('ZEUS_PI_STEER_RESOURCES_UNSUPPORTED', '任务推送需要独立执行轮次，已保留在队列中。');

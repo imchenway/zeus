@@ -4,6 +4,7 @@ import type {
   NativeConversationChoice,
   NativeConversationModelHistoryV2Item,
   NativeConversationProcessV2Item,
+  NativeConversationReadableSnapshot,
   NativeConversationSnapshot,
   NativeConversationSnapshotV2,
   NativeConversationSnapshotV2Page,
@@ -20,11 +21,8 @@ import { reconcileTranscriptItems } from './transcriptReconciliation.js';
 
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
 
-export interface ConversationSnapshotV2BootstrapInput {
-  /** 首屏系统消息独立于模型历史。 */
-  systemMessages?: import('@zeus/shared').ConversationSystemMessagePage;
-  snapshot: NativeConversationSnapshotV2;
-  history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
+/** 后台和前台使用同一可读快照，再附上各自的交互状态。 */
+export interface ConversationSnapshotV2BootstrapInput extends NativeConversationReadableSnapshot {
   queue: NativeQueueSnapshot;
   requests: NativePendingRequest[];
   planImplementationRequests: NativePlanImplementationRequest[];
@@ -132,7 +130,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     messages: [],
     turns,
     items: bootstrapItems,
-    changeSets: [],
+    changeSets: input.changeSets ?? [],
     submissions: input.queue.submissions,
     queue: input.queue,
     requests: input.requests,

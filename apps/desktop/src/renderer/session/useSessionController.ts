@@ -369,7 +369,8 @@ export interface SessionControllerClient {
   rerouteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
   reorderNativeQueue(projectId: string, conversationId: string, orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
-  sendNativeQueuedNow(projectId: string, conversationId: string, submissionId: string): Promise<NativeOperationAcceptance>;
+  /** 原提交与点击时的轮次一起交由服务端核对。 */
+  sendNativeQueuedNow(projectId: string, conversationId: string, submissionId: string, expectedTurnId: string): Promise<NativeOperationAcceptance>;
   resumeNativeQueue(projectId: string, conversationId: string): Promise<NativeQueueSnapshot>;
   recoverNativeQueue(projectId: string, conversationId: string, intent: 'check' | 'continue'): Promise<NativeQueueSnapshot>;
   interruptNativeTurn(projectId: string, conversationId: string, turnId: string): Promise<NativeOperationAcceptance>;
@@ -457,7 +458,8 @@ export interface SessionController {
   rerouteQueuedSubmission(submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
-  sendQueuedNow(submissionId: string): Promise<NativeOperationAcceptance>;
+  /** 接纳本地队列身份后，将原提交引导到指定轮次。 */
+  sendQueuedNow(submissionId: string, expectedTurnId: string): Promise<NativeOperationAcceptance>;
   resumeQueue(): Promise<NativeQueueSnapshot>;
   recoverQueue(intent: 'check' | 'continue'): Promise<NativeQueueSnapshot>;
 
@@ -4070,14 +4072,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return queue;
       });
     },
-    sendQueuedNow(id) {
-      /** 用户引导的是点击时正在执行的轮次。 */
-      const turnId = state.activeTurnId;
+    /** 实时订阅恢复期间仍可通过命令接口引导，目标轮次由服务端核对。 */
+    sendQueuedNow(id, expectedTurnId) {
       return enqueueQueueMutation([id], async ([submissionId]) => {
-        if (!turnId || state.activeTurnId !== turnId || state.terminalTurnIds[turnId]) throw new Error('原回复已结束，消息仍按队列状态处理。');
-        const acceptance = await options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId!);
+        /** 先用原消息身份完成入队交接，再发起一次引导。 */
+        const acceptance = await options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId!, expectedTurnId);
         // 引导回执交接队列，正文由 Provider 接纳事件生成。
         if (acceptance.queue) await applyAuthoritativeQueue(acceptance.queue);
+        if (acceptance.submission?.status === 'queued') throw new Error('原轮次已结束或已交付，消息仍按队列处理。');
         return acceptance;
       });
     },

@@ -1849,11 +1849,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       throw coordinatorError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot steer an active turn.');
     }
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if (state.type !== 'active' && state.type !== 'waiting') throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'send-now requires a current active Codex native turn.');
+    // 等待入队期间轮次可能结束或切换，原消息继续留在队列。
+    if ((state.type !== 'active' && state.type !== 'waiting') || (input.expectedTurnId && state.turnId !== input.expectedTurnId)) {
+      throw Object.assign(coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', '原轮次已结束，消息仍按队列处理。'), { statusCode: 409 });
+    }
     if (submission.status !== 'queued') throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', 'Submission is not queued.');
     const queueHead = options.submissions.listQueueByConversation(input.conversationId)[0];
     if (!queueHead || queueHead.id !== submission.id) {
-      throw coordinatorError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。');
+      // 队列顺序冲突发生在写入前，直接返回原卡片可显示的原因。
+      throw Object.assign(coordinatorError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能立即发送当前队首，不能绕过更早的提交。'), { statusCode: 409 });
     }
     const turnId = state.turnId;
     if (turnHasCompletedOutput(conversation.id, turnId)) {

@@ -155,7 +155,8 @@ export interface ConversationApiClient {
   retryNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
   rerouteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings) => Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
-  sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeOperationAcceptance>;
+  /** 提交编号和指定轮次共同限定本次引导。 */
+  sendNativeQueuedNow: (projectId: string, conversationId: string, submissionId: string, expectedTurnId: string) => Promise<NativeOperationAcceptance>;
   interruptNativeTurn: (projectId: string, conversationId: string, turnId: string) => Promise<NativeOperationAcceptance>;
   respondToNativeRequest: (projectId: string, conversationId: string, requestId: string, response: Record<string, unknown>) => Promise<{ operation: Record<string, unknown>; request: NativePendingRequest }>;
   snoozeNativeRequest: (
@@ -384,8 +385,9 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueDelete, scopeKind: 'submission', scopeId: submissionId, value: {} });
       return transport.request<NativeQueueSnapshot>(queueSubmissionPath(projectId, conversationId, submissionId), jsonRequest('DELETE', body));
     },
-    sendNativeQueuedNow: async (projectId, conversationId, submissionId) => {
-      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueSendNow, scopeKind: 'submission', scopeId: submissionId, value: {} });
+    /** 引导目标参与命令身份计算，重试保持同一条消息和轮次。 */
+    sendNativeQueuedNow: async (projectId, conversationId, submissionId, expectedTurnId) => {
+      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueSendNow, scopeKind: 'submission', scopeId: submissionId, value: { expectedTurnId } });
       return transport.request<NativeOperationAcceptance>(`${queueSubmissionPath(projectId, conversationId, submissionId)}/send-now`, jsonRequest('POST', body));
     },
     interruptNativeTurn: async (projectId, conversationId, turnId) => {

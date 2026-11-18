@@ -18,8 +18,8 @@ interface OrderProjection {
 export function useQueuedMessageReorder(input: {
   /** 服务端队列与本地待接纳消息来自同一个投影。 */
   state: NativeSessionState;
-  /** 已退出交互的消息不能作为相邻目标。 */
-  isDismissing(submission: NativeQueuedSubmission): boolean;
+  /** 正在退出的卡片不占用可见调序位置，仍保留提交顺序供服务端处理。 */
+  isExiting(submission: NativeQueuedSubmission): boolean;
   /** 调序写入沿用已有入口。 */
   onReorder?: ReorderQueuedMessages;
   /** 失败继续显示在原消息旁。 */
@@ -65,18 +65,20 @@ export function useQueuedMessageReorder(input: {
   function moveTarget(submissionId: string, direction: -1 | 1) {
     const current = latest.current !== projection && latest.current?.scope === scope ? projectOrder(sourceQueue, latest.current.ids) : fullQueue;
     const index = current.findIndex((entry) => queuedSubmissionIdentity(entry) === submissionId);
-    const target = current[index + direction];
+    /** 跳过退出中的行，只交换两条可见消息。 */
+    let targetIndex = index + direction;
+    while (current[targetIndex] && input.isExiting(current[targetIndex]!)) targetIndex += direction;
+    const target = current[targetIndex];
     if (
       !input.onReorder ||
       input.state.conversationState === 'legacy_readonly' ||
       index < 0 ||
       current[index]?.status !== 'queued' ||
       target?.status !== 'queued' ||
-      input.isDismissing(target) ||
       !visibleQueue.some((entry) => entry.id === target.id)
     )
       return null;
-    return { current, index };
+    return { current, index, targetIndex };
   }
 
   /** 同步更新位置和焦点，后续点击可在保存期间继续换位。 */
@@ -84,9 +86,9 @@ export function useQueuedMessageReorder(input: {
     const move = moveTarget(submissionId, direction);
     const save = input.onReorder;
     if (!move || !save) return false;
-    const { index } = move;
+    const { index, targetIndex } = move;
     const current = [...move.current];
-    [current[index], current[index + direction]] = [current[index + direction]!, current[index]!];
+    [current[index], current[targetIndex]] = [current[targetIndex]!, current[index]!];
     const next: OrderProjection = { scope, ids: current.map(queuedSubmissionIdentity), baseline: input.state.queue };
     latest.current = next;
     setProjection(next);

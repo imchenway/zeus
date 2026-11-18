@@ -736,6 +736,8 @@ export interface NativeConversationReadableSnapshot {
   snapshot: NativeConversationSnapshotV2;
   /** 与结构具有相同事件进度的消息尾页。 */
   history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
+  /** 与正文同帧显示的文件变更卡片，Diff 正文另行读取。 */
+  changeSets?: TurnChangeSet[];
 }
 
 export interface NativeConversationModelHistoryV2Item {

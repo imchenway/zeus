@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 
 /** 列表项沿自然位置重排；连续更新接续当前位移，首屏及减少动态效果时直接显示结果。 */
-export function useListReorderMotion<T extends HTMLElement>(layoutKey: string) {
+export function useListReorderMotion<T extends HTMLElement>(layoutKey: string, observeRowSize = false) {
   /** 测量限于调用方的列表容器。 */
   const ref = useRef<T>(null);
   /** 自然位置不包含动画位移，侧栏滚动也不会改变它。 */
@@ -44,6 +44,16 @@ export function useListReorderMotion<T extends HTMLElement>(layoutKey: string) {
       };
     }
   }, [layoutKey]);
+  useLayoutEffect(() => {
+    if (!observeRowSize || !ref.current || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    /** 逐行高度过渡会自然移动后续行，更新位置基线以免第二次播放补位。 */
+    const rows = ref.current.querySelectorAll<HTMLElement>('[data-list-motion-id]');
+    const observer = new ResizeObserver(() => {
+      for (const row of rows) positionsRef.current.set(row.dataset.listMotionId!, row.offsetTop);
+    });
+    for (const row of rows) observer.observe(row, { box: 'border-box' });
+    return () => observer.disconnect();
+  }, [layoutKey, observeRowSize]);
   useEffect(
     () => () => {
       for (const animation of animationsRef.current.values()) animation.cancel();
