@@ -1,7 +1,17 @@
 import type { ConversationFeatureCatalog, ConversationFeatureAvailability } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { readPiBuiltinToolCatalog, buildAiRuntimePrompt, modelRef, parseModelRef, type CodexAccountSnapshot, type CodexCapabilitiesSnapshot, type CodexTransportState, type CopilotModelInfo, type SelectableConnectionModel } from '@zeus/ai-runtime';
+import {
+  readPiBuiltinToolCatalog,
+  buildAiRuntimePrompt,
+  modelRef,
+  parseModelRef,
+  type CodexAccountSnapshot,
+  type CodexCapabilitiesSnapshot,
+  type CodexTransportState,
+  type CopilotModelInfo,
+  type SelectableConnectionModel,
+} from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
