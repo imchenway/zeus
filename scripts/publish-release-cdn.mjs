@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
@@ -33,6 +34,8 @@ const ossConnectTimeoutSeconds = 10;
 const ossReadWriteTimeoutSeconds = 60;
 /** 单次 OSS 请求失败后最多重试两次，全部重试仍受命令总时限约束。 */
 const ossRequestRetryTimes = 2;
+/** 安装包上传允许连续四分钟无进展，给单次请求的三次尝试和退避留出时间。 */
+const releaseUploadStallTimeoutMs = 4 * 60_000;
 
 /** CI 的非密钥配置必须指向官方域名和有效的 OSS 空间，不允许临时镜像替代官方来源。 */
 export function releaseCdnConfiguration(env = process.env) {
@@ -53,7 +56,9 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
   requiredVersion(version);
   if (!/^[a-f0-9]{40}$/u.test(sourceCommit)) throw new Error('OSS 发布缺少固定候选提交。');
   if (artifactFileName !== undefined && (activate || requireStagedInstallers || typeof artifactFileName !== 'string' || !artifactFileName)) throw new Error('单制品上传只允许 stage 指定候选安装包。');
-  console.log(`OSS 超时设置：connect_timeout_seconds=${ossConnectTimeoutSeconds}，read_write_timeout_seconds=${ossReadWriteTimeoutSeconds}，retry_times=${ossRequestRetryTimes}，command_timeout_ms=${releaseCommandTimeoutMs}`);
+  console.log(
+    `OSS 超时设置：connect_timeout_seconds=${ossConnectTimeoutSeconds}，read_write_timeout_seconds=${ossReadWriteTimeoutSeconds}，retry_times=${ossRequestRetryTimes}，command_timeout_ms=${releaseCommandTimeoutMs}，upload_stall_timeout_ms=${releaseUploadStallTimeoutMs}`,
+  );
   /** 单包上传只下载对应构建附件；完整发布仍要求三个正式安装包。 */
   let targets = Object.entries(manifestNames).map(([platform, fileName]) => ({ platform, fileName, architectures: platform === 'win32' ? ['x64', 'arm64'] : ['arm64'] }));
   if (artifactFileName !== undefined) {
@@ -214,10 +219,10 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
   }
 
   /** 复制命令独立记录信息级日志；机器读取的摘要和元数据输出不混入日志。 */
-  function runOssutil(args) {
+  function runOssutil(args, watchUploadProgress = false) {
     /** 日志位于本次私有临时目录，避免并发命令混写或遗留原始请求信息。 */
     const logPath = args[0] === 'cp' ? join(temporary, `ossutil-${randomUUID()}.log`) : null;
-    return execute('ossutil', [
+    const commandArgs = [
       ...args,
       '--region',
       configuration.region,
@@ -235,7 +240,8 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       logPath ? 'info' : 'off',
       ...(logPath ? ['--log-file', logPath] : []),
       '--quiet',
-    ]);
+    ];
+    return execute('ossutil', commandArgs, watchUploadProgress);
   }
 
   /** 所有操作只能落在已授权的 zeus 对象前缀内。 */
@@ -260,7 +266,7 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
 
   /** 版本目录不可变；可变入口使用一分钟缓存，并保留实际版本文件名供下载保存。 */
   function copyObject(file, key, immutable, source = file.path) {
-    return runOssutil([
+    const args = [
       'cp',
       source,
       objectUrl(key),
@@ -274,7 +280,8 @@ export async function publishReleaseCdn({ directory, configuration, version, sou
       file.contentType,
       '--cache-control',
       immutable ? 'public,max-age=2592000,immutable,no-transform' : releaseCdnStableCacheControl,
-    ]);
+    ];
+    return runOssutil(args, immutable && !file.platform && source === file.path);
   }
 
   /** 候选摘要、提交、字节数与服务端 CRC64 共同决定对象能否复用。 */
@@ -318,8 +325,8 @@ function redactReleaseCommandOutput(value) {
     .replace(/((?:x-oss-security-token|security[-_]?token|ossaccesskeyid|x-oss-credential|x-oss-signature|signature)["']?\s*[:=]\s*["']?)[^\s"',;&]+/giu, '$1[REDACTED]');
 }
 
-/** 记录命令耗时和等待心跳；失败时保留退出状态及脱敏后的原生诊断。 */
-async function executeReleaseCommand(command, args) {
+/** 记录命令耗时，终止无进展的安装包上传，并保留脱敏后的失败诊断。 */
+async function executeReleaseCommand(command, args, watchUploadProgress) {
   /** 只记录操作和复制路径，不展开可能携带认证信息的完整命令参数。 */
   const operation = redactReleaseCommandOutput(`${command} ${args.slice(0, args[0] === 'cp' ? 3 : 2).join(' ')}`);
   /** 单调时钟提供不受系统校时影响的实际执行耗时。 */
@@ -327,15 +334,38 @@ async function executeReleaseCommand(command, args) {
   console.log(`发布命令开始：${operation}，timeout_ms=${releaseCommandTimeoutMs}`);
   /** 原生命令没有输出时，仍每分钟报告当前操作和实际等待时长。 */
   const heartbeat = setInterval(() => console.log(`发布命令仍在执行：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}`), 60_000);
+  /** 只有安装包上传才订阅进度并启用无进展计时。 */
+  let progressLines;
+  let uploadStallTimer;
+  let uploadStallDetail;
   try {
     /** stdout 原样返回给摘要和 JSON 解析，不将诊断日志写入机器输出。 */
-    const { stdout, stderr } = await executeFile(command, args, {
+    const execution = executeFile(command, args, {
       encoding: 'utf8',
       timeout: releaseCommandTimeoutMs,
       // 总时限到达后强制终止，避免子进程忽略终止请求而继续等待。
       killSignal: 'SIGKILL',
       maxBuffer: 1024 * 1024,
     });
+    if (watchUploadProgress) {
+      /** 单个安装包的最高上传百分比，重复输出和重试回退不重置计时。 */
+      let highestProgressPercent = 0;
+      uploadStallTimer = setTimeout(() => {
+        if (!execution.child.killed && execution.child.kill('SIGKILL')) {
+          uploadStallDetail = `OSS 安装包上传无进度超时，idle_timeout_ms=${releaseUploadStallTimeoutMs}，highest_progress_percent=${highestProgressPercent}`;
+        }
+      }, releaseUploadStallTimeoutMs);
+      progressLines = createInterface({ input: execution.child.stdout, terminal: false });
+      progressLines.on('line', (line) => {
+        /** ossutil 的实时进度使用回车分隔，读取每条记录中的上传百分比。 */
+        const percent = Number(line.match(/\bUpload\.\.\. done:\(\d+ objects\),\s*(\d+(?:\.\d+)?)%/u)?.[1]);
+        if (percent > highestProgressPercent && percent <= 100) {
+          highestProgressPercent = percent;
+          uploadStallTimer.refresh();
+        }
+      });
+    }
+    const { stdout, stderr } = await execution;
     if (stderr.trim()) console.warn(`发布命令 stderr：${operation}\n${redactReleaseCommandOutput(stderr).slice(-32768)}`);
     console.log(`发布命令完成：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}`);
     return stdout;
@@ -343,6 +373,7 @@ async function executeReleaseCommand(command, args) {
     /** 退出码、信号和 killed 分开记录，不把包装脚本退出码当作 OSS 错误码。 */
     const details = [
       `发布命令失败：${operation}，elapsed_ms=${Math.round(performance.now() - startedAt)}，timeout_ms=${releaseCommandTimeoutMs}，code=${error.code ?? 'unknown'}，signal=${error.signal ?? 'none'}，killed=${error.killed ?? false}`,
+      ...(uploadStallDetail ? [uploadStallDetail] : []),
       redactReleaseCommandOutput(error.message).slice(-32768),
     ];
     for (const stream of ['stdout', 'stderr']) {
@@ -360,6 +391,8 @@ async function executeReleaseCommand(command, args) {
     throw new Error(redactReleaseCommandOutput(details.join('\n')), { cause: error });
   } finally {
     clearInterval(heartbeat);
+    clearTimeout(uploadStallTimer);
+    progressLines?.close();
   }
 }
 
