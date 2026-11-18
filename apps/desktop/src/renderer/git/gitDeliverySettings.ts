@@ -1,8 +1,10 @@
 import { createContext, type Dispatch, type SetStateAction } from 'react';
 import { defaultGitDeliverySettings, type GitDeliverySettings } from '@zeus/shared';
 
-/** 本机项目偏好只保存操作选择，不保存文件或分支。 */
-export function readGitDeliverySettings(projectId: string): GitDeliverySettings {
+/** 已保存的项目组合优先，当前目录首次交付默认生成说明、提交并推送。 */
+export function readGitDeliverySettings(projectId: string, currentDirectory = false): GitDeliverySettings {
+  /** 当前目录直接推送工作分支，任务和工作树沿用通用默认值。 */
+  const defaults = currentDirectory ? { ...defaultGitDeliverySettings, generateCommitMessage: true, merge: false } : { ...defaultGitDeliverySettings };
   try {
     const value = JSON.parse(localStorage.getItem(`zeus.git-delivery.settings:${projectId}`) ?? 'null') as Partial<GitDeliverySettings> | null;
     if (
@@ -19,10 +21,10 @@ export function readGitDeliverySettings(projectId: string): GitDeliverySettings 
       (value.skillId !== null && typeof value.skillId !== 'string') ||
       (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')
     )
-      return { ...defaultGitDeliverySettings };
+      return defaults;
     return { ...defaultGitDeliverySettings, ...value };
   } catch {
-    return { ...defaultGitDeliverySettings };
+    return defaults;
   }
 }
 
@@ -38,6 +40,8 @@ export interface GitDeliveryCombinationState {
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   /** 接纳请求或后台运行期间锁定组合选择。 */
   setRunning: Dispatch<SetStateAction<boolean>>;
+  /** 组合执行按钮留在滚动区外的操作栏底部。 */
+  footerHost: HTMLElement | null;
 }
 
 /** 任务和普通会话复用同一操作栏状态，不依赖跨组件 DOM 定位。 */
