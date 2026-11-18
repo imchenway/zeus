@@ -38,8 +38,11 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
+  faultReportContext,
   isConversationSourcePreviewable,
   mergeBrowserSubmissions,
+  readCommandDeliveryDiagnostic,
+  type CommandDeliveryDiagnostic,
   type FilePreviewRequest,
   type ConversationContextDraft,
   type ConversationResponseAnnotation,
@@ -321,6 +324,10 @@ export interface NativeConversationStartFailure {
   code?: string;
   /** 发送结果和网络原因在本地化前保留，供输入区判断是否需要故障记录。 */
   cause?: UserFacingErrorCause;
+  /** 首发失败后保留原请求身份，供系统消息上报时关联。 */
+  traceId?: string;
+  /** 首发错误携带已冻结的命令投递证据。 */
+  commandDelivery?: CommandDeliveryDiagnostic;
   state: 'failed';
   message: string;
 }
@@ -3969,17 +3976,17 @@ export function NewConversationComposer(props: {
   /** 空值只清理调用方的临时状态，不能删除已发生的系统消息。 */
   const setLocalError = useCallback(
     (error: string | NativeConversationStartFailure | null): void => {
-      if (error) recordSystemMessage(systemScope, typeof error === 'string' ? error : error.message, 'conversation_start', '会话操作失败。');
+      if (error) recordSystemMessage(systemScope, error, 'conversation_start', '会话操作失败。');
     },
     [systemScope],
   );
   /** 主动发送失败先判断原始原因，离线反馈只留在输入区。 */
-  function showSubmissionFailure(error: unknown, message: string): void {
+  function showSubmissionFailure(failure: NativeConversationStartFailure, error: unknown = failure.cause ?? failure): void {
     if (isLocalNetworkOffline(error)) {
       setOfflineSubmission(userFacingErrorCause(error).code === 'ZEUS_LOCAL_API_WRITE_OUTCOME_UNKNOWN' ? 'unconfirmed' : 'blocked');
       return;
     }
-    setLocalError(message);
+    setLocalError(failure);
   }
   /** 用户修改即保存，切换项目和重新打开创建入口时恢复。 */
   function changeCreationPreferences(change: Partial<ProjectConversationCreationPreferences>): void {
@@ -4404,7 +4411,7 @@ export function NewConversationComposer(props: {
       }
       if (accepted === false) return;
       if (accepted && typeof accepted === 'object' && accepted.state === 'failed') {
-        showSubmissionFailure(accepted.cause ?? accepted, accepted.message);
+        showSubmissionFailure(accepted);
         return;
       }
       restoreAfterSend = Boolean(accepted && typeof accepted === 'object' && accepted.state === 'preparing');
@@ -4439,7 +4446,18 @@ export function NewConversationComposer(props: {
       }
       await props.onAccepted?.();
     } catch (error) {
-      showSubmissionFailure(error, formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+      const cause = userFacingErrorCause(error);
+      showSubmissionFailure(
+        {
+          state: 'failed',
+          message: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'),
+          code: cause.code,
+          cause,
+          traceId: faultReportContext(error).traceId,
+          commandDelivery: readCommandDeliveryDiagnostic(error),
+        },
+        error,
+      );
     } finally {
       if (restoreAfterSend && submittedDraft) props.drafts?.failed.set(submittedDraft, failureKey);
       if (composerMounted.current) {

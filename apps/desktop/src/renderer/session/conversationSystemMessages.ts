@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { parseConversationSystemMessage, redactUserFacingErrorDetails, userFacingErrorCause, type ConversationSystemMessage, type ConversationSystemMessageInput, type UserFacingErrorCause } from '@zeus/shared';
+import {
+  faultReportContext,
+  normalizePerformanceTraceIdentity,
+  parseConversationSystemMessage,
+  readCommandDeliveryDiagnostic,
+  redactUserFacingErrorDetails,
+  userFacingErrorCause,
+  type ConversationSystemMessage,
+  type ConversationSystemMessageInput,
+  type UserFacingErrorCause,
+} from '@zeus/shared';
 
 /** 原消息已承载的发送错误不再生成第二条系统消息；弱引用不延长错误对象寿命。 */
 export const handledMessageDeliveryErrors = new WeakSet<object>();
@@ -95,15 +105,21 @@ export function setSystemMessageAnchor(scope: string, entryId: string | null): v
 
 /** 同一未恢复故障合并；恢复后再次发生可生成新的系统消息。 */
 export function recordSystemMessage(scope: string, error: unknown, operation: ConversationSystemMessageInput['operation'], summary: string, target?: { entryId?: string | null; turnId?: string | null }): string {
-  /** 空值只表示清理临时状态，不能冒充已经恢复。 */
-  const detail = redactUserFacingErrorDetails(error instanceof Error ? error.message : typeof error === 'string' ? error : (JSON.stringify(error) ?? '未知错误')).slice(0, 8000);
+  /** 保留脱敏原文和上报所需的请求身份，支持仍在本机草稿中的故障。 */
+  const cause = userFacingErrorCause(error);
+  const detail = (cause.message || redactUserFacingErrorDetails(JSON.stringify(error) ?? '未知错误')).slice(0, 8000);
+  const errorCode = cause.code && /^[A-Z][A-Z0-9_]{1,159}$/u.test(cause.code) ? cause.code : undefined;
+  const traceId = normalizePerformanceTraceIdentity(faultReportContext(error).traceId);
+  const commandDelivery = readCommandDeliveryDiagnostic(cause);
   /** 关联身份首次确定，后续更新不跟随新消息。 */
   const relatedEntryId = target?.entryId === undefined ? (anchors.get(scope) ?? null) : target.entryId;
   /** 待确认恢复覆盖同身份旧状态，已恢复后的新故障仍有独立身份。 */
   const known = new Map<string, ConversationSystemMessageInput>((acceptedByScope.get(scope) ?? []).map((message) => [message.id, message]));
   for (const message of read(scope)) known.set(message.id, { ...message, recoveredAt: known.get(message.id)?.recoveredAt ?? message.recoveredAt });
   /** 同一请求在 React 重渲染时不新增消息。 */
-  const previous = [...known.values()].find((message) => !message.recoveredAt && message.operation === operation && message.detail === detail && message.targetTurnId === (target?.turnId ?? null));
+  const previous = [...known.values()].find(
+    (message) => !message.recoveredAt && message.operation === operation && message.detail === detail && message.targetTurnId === (target?.turnId ?? null) && message.commandDelivery?.outboxId === commandDelivery?.outboxId,
+  );
   if (previous) return previous.id;
   /** 客户端身份在草稿迁移、断连和命令重放期间保持不变。 */
   const message: ConversationSystemMessageInput = {
@@ -111,6 +127,9 @@ export function recordSystemMessage(scope: string, error: unknown, operation: Co
     operation,
     summary,
     detail: detail || '未知错误',
+    ...(errorCode ? { errorCode } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(commandDelivery ? { commandDelivery } : {}),
     occurredAt: new Date().toISOString(),
     recoveredAt: null,
     relatedEntryId,
@@ -129,6 +148,9 @@ export function recoverSystemMessage(scope: string, message: ConversationSystemM
     operation: message.operation,
     summary: message.summary,
     detail: message.detail,
+    ...(message.errorCode ? { errorCode: message.errorCode } : {}),
+    ...(message.traceId ? { traceId: message.traceId } : {}),
+    ...(message.commandDelivery ? { commandDelivery: message.commandDelivery } : {}),
     occurredAt: message.occurredAt,
     recoveredAt: new Date().toISOString(),
     relatedEntryId: message.relatedEntryId,

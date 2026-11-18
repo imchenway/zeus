@@ -12,6 +12,7 @@ import {
   normalizeCommandRunParameters,
   defaultCommandRiskFlags,
   isCommandShell,
+  userFacingErrorCause,
   validateCommandDefinitionInput,
   type CommandConfirmation,
   type CommandDefinition,
@@ -979,6 +980,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       return reply.code(statusCode).send({
         error: error.code,
         message: error.message,
+        ...(error.code === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED' ? { cause: userFacingErrorCause(error).cause } : {}),
         ...('details' in error ? { details: error.details } : {}),
       });
     }

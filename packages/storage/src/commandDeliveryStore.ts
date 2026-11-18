@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { assertDomainStateTransition, defineDomainStateMachine, parseCommandEnvelope, type CommandEnvelope } from '@zeus/shared';
+import { assertDomainStateTransition, defineDomainStateMachine, normalizeCommandDeliveryDiagnostic, parseCommandEnvelope, type CommandEnvelope, type UserFacingErrorCause } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const commandDeliverySchemaMigrationId = '20260821_031_transactional_command_delivery_v4';
@@ -43,8 +43,9 @@ export class CommandDeliveryStoreError extends Error {
     readonly code: CommandDeliveryStoreErrorCode,
     message: string,
     readonly details: Readonly<Record<string, string | number | boolean | null>> = {},
+    cause?: UserFacingErrorCause,
   ) {
-    super(message);
+    super(message, cause ? { cause } : undefined);
   }
 }
 
@@ -499,11 +500,7 @@ export class CommandDeliveryRepository {
     }
     const latest = this.latestOutbox(envelope.commandId);
     if (latest?.state === 'provider_write_started') {
-      throw commandDeliveryError('ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Provider 写出已经开始但尚无回执，禁止自动重放该命令。', {
-        commandId: envelope.commandId,
-        outboxId: latest.id,
-        outcome: 'outcome_unknown_after_write',
-      });
+      throw this.replayBlocked(latest, 'Provider 写出已经开始但尚无回执，禁止自动重放该命令。');
     }
     if (latest?.state === 'prepared') {
       assertSameDeliveryIdentity(latest, destinationKind, destinationId, resourceId, externalOperationId);
@@ -511,11 +508,7 @@ export class CommandDeliveryRepository {
       return { inbox: this.requireInbox(envelope.commandId), outbox: latest, created: false };
     }
     if (latest?.outcome === 'outcome_unknown_after_write' || latest?.outcome === 'accepted') {
-      throw commandDeliveryError('ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Provider 写出后结果未知或已接纳，禁止自动创建新的派发尝试。', {
-        commandId: envelope.commandId,
-        outboxId: latest.id,
-        outcome: latest.outcome,
-      });
+      throw this.replayBlocked(latest, 'Provider 写出后结果未知或已接纳，禁止自动创建新的派发尝试。');
     }
     if (latest && latest.outcome !== 'failed_before_write' && latest.outcome !== 'explicitly_rejected') {
       throw commandDeliveryError('ZEUS_COMMAND_DELIVERY_STATE_CONFLICT', '命令最新派发尝试没有可证明安全的重试结论。', {
@@ -554,11 +547,9 @@ export class CommandDeliveryRepository {
     }
     if (outbox.state === 'provider_write_started') return outbox;
     if (outbox.state === 'resolved') {
-      throw commandDeliveryError(
-        outbox.outcome === 'outcome_unknown_after_write' || outbox.outcome === 'accepted' ? 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED' : 'ZEUS_COMMAND_DELIVERY_STATE_CONFLICT',
-        '已收口的派发尝试不能重新标记为 Provider 写出。',
-        { outboxId: outbox.id, outcome: outbox.outcome },
-      );
+      const message = '已收口的派发尝试不能重新标记为 Provider 写出。';
+      if (outbox.outcome === 'outcome_unknown_after_write' || outbox.outcome === 'accepted') throw this.replayBlocked(outbox, message, { outboxId: outbox.id, outcome: outbox.outcome });
+      throw commandDeliveryError('ZEUS_COMMAND_DELIVERY_STATE_CONFLICT', message, { outboxId: outbox.id, outcome: outbox.outcome });
     }
     assertDomainStateTransition(commandDeliveryAttemptStateMachine, 'prepared', 'provider_write_started');
     this.db.execute(
@@ -834,6 +825,27 @@ export class CommandDeliveryRepository {
   private latestOutbox(commandId: string): CommandOutboxRecord | undefined {
     const row = this.db.get<CommandOutboxRow>(`SELECT * FROM command_outbox WHERE command_id = ? ORDER BY attempt DESC LIMIT 1`, [commandId]);
     return row ? mapOutbox(row) : undefined;
+  }
+
+  /** 冻结这次拦截看到的派发和真实回执，禁止读取或上传回执正文。 */
+  private replayBlocked(
+    outbox: CommandOutboxRecord,
+    message: string,
+    details: CommandDeliveryStoreError['details'] = { commandId: outbox.commandId, outboxId: outbox.id, outcome: outbox.outcome ?? 'outcome_unknown_after_write' },
+  ): CommandDeliveryStoreError {
+    const receipt =
+      outbox.state === 'resolved'
+        ? this.db.get<{ id: string; outcome: CommandDeliveryOutcome; occurredAt: string }>('SELECT id, outcome, occurred_at AS occurredAt FROM command_delivery_receipts WHERE outbox_id = ? ORDER BY sequence DESC LIMIT 1', [outbox.id])
+        : undefined;
+    const commandDelivery = normalizeCommandDeliveryDiagnostic({
+      commandIdSha256: sha256(outbox.commandId),
+      outboxId: outbox.id,
+      attempt: outbox.attempt,
+      state: outbox.state,
+      outcome: outbox.outcome,
+      receipt: receipt ?? null,
+    });
+    return new CommandDeliveryStoreError('ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', message, details, commandDelivery ? { message: '', commandDelivery } : undefined);
   }
 
   private receiptByOutbox(outboxId: string): CommandDeliveryReceiptRecord | undefined {

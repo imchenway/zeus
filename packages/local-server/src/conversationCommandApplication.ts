@@ -391,6 +391,7 @@ export function conversationCommandHttpError(error: unknown): { statusCode: numb
     payload: {
       error: error.code,
       message: error.message,
+      cause: userFacingErrorCause(error).cause,
       ...(recoveryRequired ? { recoveryRequired: true as const } : {}),
     },
   };

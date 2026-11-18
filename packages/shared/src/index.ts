@@ -879,6 +879,7 @@ export type DigitalEmployeeAvatarId = (typeof digitalEmployeeAvatarIds)[number];
 
 export * from './conversationCapabilities.js';
 export * from './faultReport.js';
+export * from './commandDeliveryDiagnostic.js';
 export * from './employeeWorkPlanning.js';
 export * from './employeeIdentity.js';
 export * from './automationActions.js';

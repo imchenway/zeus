@@ -1,3 +1,5 @@
+import { normalizeCommandDeliveryDiagnostic, type CommandDeliveryDiagnostic } from './commandDeliveryDiagnostic.js';
+
 /** 产品提示使用现有语言设置；英文地区变体采用同一份英文文案。 */
 export type UserFacingErrorLanguage = 'zh-CN' | 'en' | 'en-US';
 
@@ -11,6 +13,8 @@ export interface UserFacingErrorCause {
   details?: string;
   /** 包装错误保留的底层原因。 */
   cause?: UserFacingErrorCause;
+  /** 命令重放拦截发生时冻结的脱敏投递状态。 */
+  commandDelivery?: CommandDeliveryDiagnostic;
 }
 
 /** 仅提供解决方向；调用方仍须检查业务状态和可用处理函数，不能据此自动重发。 */
@@ -1098,6 +1102,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_COMPUTER_SENSITIVE_ACTION_DECLINED', 'ZEUS_BROWSER_SENSITIVE_ACTION_DECLINED'],
     ['你已拒绝这次操作，AI 不会继续执行它。', 'You declined this action, so the AI will not perform it.'],
   ],
+  [['ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE'], ['会话工作目录不可用。请确认目录仍存在且属于当前项目。', 'The conversation working folder is unavailable. Check that it still exists and belongs to this project.', 'check']],
   [
     ['ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE'],
     ['任务工作目录恢复失败，暂时无法继续对话。请检查任务目录和分支后再继续。', 'The task working folder could not be restored, so the conversation cannot continue yet. Check the task folder and branch before continuing.', 'check'],
@@ -1143,6 +1148,8 @@ function unwrapZeusErrorMessage(message: string): string {
 /** 只返回允许跨界面传递的诊断字段；限制深度避免循环对象和无界错误链。 */
 export function userFacingErrorCause(error: unknown, depth = 0): UserFacingErrorCause {
   const value = error !== null && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  /** 跨 HTTP 和界面边界只投影明确允许的投递字段。 */
+  const commandDelivery = normalizeCommandDeliveryDiagnostic(value.commandDelivery);
   // 字符串形式的历史错误只识别开头的完整错误码，不猜测正文关键词。
   const errorField = typeof value.error === 'string' ? value.error : '';
   const message =
@@ -1170,6 +1177,7 @@ export function userFacingErrorCause(error: unknown, depth = 0): UserFacingError
           .slice(0, 16)
       : [];
   return {
+    ...(commandDelivery ? { commandDelivery } : {}),
     ...(code && /^[A-Za-z0-9_.:-]{1,128}$/u.test(code) ? { code } : {}),
     message: redactUserFacingErrorDetails(message),
     ...(typeof value.details === 'string'

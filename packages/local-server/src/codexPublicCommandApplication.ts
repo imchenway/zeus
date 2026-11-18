@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type CommandScopeKind } from '@zeus/shared';
+import { canonicalCommandInputJson, CommandEnvelopeError, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type CommandScopeKind, type UserFacingErrorCause } from '@zeus/shared';
 import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, type ArtifactRef, type CommandDeliveryOutcome, type CommandDeliveryReceiptRecord, type ZeusDatabase } from '@zeus/storage';
 import { createCommandValidation } from './commandApplicationPrimitives.js';
 
@@ -268,7 +268,7 @@ function invalidCommand(message: string): CodexPublicCommandApplicationError {
   return new CodexPublicCommandApplicationError('ZEUS_CODEX_PUBLIC_COMMAND_INVALID', message, 400);
 }
 
-export function codexPublicCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true } } | null {
+export function codexPublicCommandHttpError(error: unknown): { statusCode: number; payload: { error: string; message: string; recoveryRequired?: true; cause?: UserFacingErrorCause } } | null {
   if (error instanceof CodexPublicCommandApplicationError) return { statusCode: error.statusCode, payload: { error: error.code, message: error.message } };
   if (error instanceof CommandEnvelopeError) return { statusCode: 400, payload: { error: error.code, message: error.message } };
   if (!isCommandDeliveryError(error)) return null;
@@ -279,6 +279,7 @@ export function codexPublicCommandHttpError(error: unknown): { statusCode: numbe
     payload: {
       error: error.code,
       message: error.message,
+      cause: userFacingErrorCause(error).cause,
       ...(recoveryRequired ? { recoveryRequired: true as const } : {}),
     },
   };

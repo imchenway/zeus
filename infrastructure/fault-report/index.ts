@@ -219,7 +219,7 @@ async function createIssue(context: FunctionContext, key: string, stored: Report
     '### 维护者诊断',
     `[读取私有诊断包（需要阿里云维护者权限）](${diagnosticUrl})`,
     `- 对象：\`${key}\`；下载后先核对报告 ID。`,
-    `- 采集：${packet.events.length} 条宿主事件、${packet.diagnostics?.logs.length ?? 0} 条运行诊断日志、${Object.keys(packet.diagnostics?.snapshots ?? {}).length} 组状态快照。`,
+    `- 采集：${packet.events.length} 条宿主事件、${packet.diagnostics?.logs.length ?? 0} 条运行诊断日志、${Object.keys(packet.diagnostics?.snapshots ?? {}).length + (packet.commandDelivery ? 1 : 0)} 组状态快照。`,
     packet.diagnostics ? `- 采集限制与失败说明：${packet.diagnostics.notes.length} 项，详见包内 \`diagnostics.notes\`。` : '- 此报告来自旧采集器，缺少状态快照和采集完整性说明。',
     ...(packet.diagnostics?.scene?.attachments ?? []).map(
       (attachment) =>
