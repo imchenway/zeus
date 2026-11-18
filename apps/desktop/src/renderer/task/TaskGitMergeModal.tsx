@@ -425,7 +425,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         appliedConversationWorkspaceIdRef.current = initialConversationWorkspaceIdRef.current;
         void loadWorkspaceDetailCollection(client, taskId, workspaceSnapshot.items, (id, detail) => {
           if (cancelled || revision !== reloadRevision.current) return;
-          if (detail) setWorkspaceDetails((current) => ({ ...current, [id]: detail }));
+          if (detail) {
+            setWorkspaceDetails((current) => ({ ...current, [id]: detail }));
+            /** 文件首次显示时同步默认勾选。用户开始手动选择后，提交范围以其选择为准。 */
+            if (!selectionInitializedRef.current && isDeliverableWorkspace(detail) && deliveryWorkspacesForConversationBranch(workspaceSnapshot.items, initialConversationWorkspaceIdRef.current).some((workspace) => workspace.id === id)) {
+              /** 默认勾选覆盖该仓库的暂存、未暂存和未跟踪文件。 */
+              const paths = collectWorkingFiles(detail).map((file) => file.path);
+              setSelectedWorkspaceIds((current) => (current.includes(id) ? current : [...current, id]));
+              setSelectedPathsByWorkspace((current) => ({ ...current, [id]: paths }));
+            }
+          }
           setDetailStates((current) => {
             const next = { ...current };
             if (detail) delete next[id];
