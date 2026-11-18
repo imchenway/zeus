@@ -179,6 +179,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   /** 请求控制器同时防重复点击，并在关闭或选择变化时取消旧生成。 */
   const commitGenerationController = useRef<AbortController | null>(null);
   const [mode, setMode] = useState<'merge' | 'squash'>('merge');
+  /** 标题栏承载当前任务交付的设置入口。 */
+  const [deliverySettingsHost, setDeliverySettingsHost] = useState<HTMLDivElement | null>(null);
   const [integration, setIntegration] = useState<TaskIntegrationRecord | null>(null);
   const [conflictWorkspaceOpen, setConflictWorkspaceOpen] = useState(false);
   const [conflictPath, setConflictPath] = useState('');
@@ -1070,6 +1072,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             </small>
           </span>
           {headerFeedback && feedback ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} compactResults /> : null}
+          <div className="git-delivery-settings-host" ref={setDeliverySettingsHost} />
           {!standaloneWindow ? (
             <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
               ×
@@ -1147,6 +1150,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   busyAction={busyAction}
                   generationClient={props.client}
                   projectId={props.task.projectId}
+                  hasTask
+                  settingsHost={deliverySettingsHost}
                   canGenerate={Boolean(commitGenerationSelection.length)}
                   onGenerate={() => {
                     if (busyAction === 'commit-message') commitGenerationController.current?.abort();
@@ -1217,7 +1222,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   onCopyBranch={copyBranchName}
                   mergeDisabled={directoryUnavailable}
                   mode={mode}
-                  onModeChange={setMode}
                   mergeCount={directoryUnavailable ? 0 : directoryWorkspaceIds.length}
                   mergeAll
                   onMerge={(settings) => mergeSelected(settings)}
@@ -1266,7 +1270,19 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       ) : null}
                     </>
                   }
-                  combination={props.client ? <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} onAccepted={props.onClose} input={directoryInput} /> : null}
+                  combination={
+                    props.client ? (
+                      <GitDeliveryRunControl
+                        client={props.client}
+                        projectId={props.task.projectId}
+                        zh={zh}
+                        disabled={busy || directoryUnavailable}
+                        input={directoryInput}
+                        onModeChange={setMode}
+                        onAccepted={props.onClose}
+                      />
+                    ) : null
+                  }
                   pushCount={selectedPushCandidateCount}
                   onPush={() => openPush()}
                 />

@@ -3,6 +3,7 @@ import type { FilePreviewRequest, GitDeliverySettings } from '@zeus/shared';
 import { groupRepositoriesByBranch } from './repositoryBranchGroups.js';
 import { GitDeliveryCombinationContext, readGitDeliverySettings } from './gitDeliverySettings.js';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
+import { createPortal } from 'react-dom';
 import type { TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -22,6 +23,7 @@ import { fileStatusLabel, type FileStatus } from '../code/fileStatus.js';
 import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
 import type { GitCommitModelsClient } from './gitCommitModels.js';
+import { gitDeliveryActionLabel } from './GitDeliveryProgress.js';
 
 /** 两种交付入口共用文件范围。 */
 export type DiffScope = 'committed' | 'working';
@@ -743,6 +745,10 @@ export function GitDeliveryActions(props: {
   projectId: string;
   /** 使用项目原目录的会话采用直接提交和推送的初始组合。 */
   currentDirectory?: boolean;
+  /** 只有关联任务的交付能够修改任务状态。 */
+  hasTask: boolean;
+  /** 交付设置入口放在当前窗口的标题栏。 */
+  settingsHost: HTMLElement | null;
   canGenerate: boolean;
   onGenerate: () => void;
   message: string;
@@ -760,7 +766,6 @@ export function GitDeliveryActions(props: {
   onCopyBranch?: (branchName: string) => boolean | Promise<boolean>;
   mergeDisabled: boolean;
   mode: 'merge' | 'squash';
-  onModeChange?: (value: 'merge' | 'squash') => void;
   mergeCount: number;
   /** 任务交付明确覆盖工作目录全部仓库，独立仓库操作仍使用所选范围。 */
   mergeAll?: boolean;
@@ -776,24 +781,43 @@ export function GitDeliveryActions(props: {
 }) {
   /** 每个项目恢复最近一次被后台接纳的组合，临时勾选仅属于当前操作栏。 */
   const [preferences, setSettings] = useState(() => readGitDeliverySettings(props.projectId, props.currentDirectory));
+  /** 已保存的命令和任务状态默认勾选，本次关闭开关时保留选择值。 */
+  const [followUps, setFollowUps] = useState(() => ({
+    commands: Boolean(preferences.postPushCommandIds?.length),
+    taskStatus: Boolean(preferences.finalTaskStatus),
+  }));
   /** 每个仓库都选择有效本地目标后才允许整次合入。 */
   const canMerge = props.mergeTargets.length > 0 && props.mergeTargets.every((target) => target.value && target.branches.includes(target.value)) && !props.mergeDisabled;
-  /** 勾选、组合按钮及后台提交读取同一个可执行设置。 */
+  /** 表单显示当前选择，并限制无法执行的合入。 */
   const settings = { ...preferences, merge: preferences.merge && canMerge };
+  /** 单步合入和组合交付只携带本入口允许且已勾选的收尾选项。 */
+  const executionSettings: GitDeliverySettings = {
+    ...settings,
+    postPushCommandIds: followUps.commands ? (settings.postPushCommandIds ?? []) : [],
+    finalTaskStatus: props.hasTask && followUps.taskStatus ? settings.finalTaskStatus : null,
+    archiveConversation: !props.hasTask && settings.archiveConversation === true,
+  };
   /** 复制成功才显示确认图标，目标变化后旧回执不再匹配。 */
   const [copiedTargetBranch, setCopiedTargetBranch] = useState<string | null>(null);
-  /** 组合区的设置入口编辑冲突处理权限与技能。 */
+  /** 标题栏的交付设置编辑合入方式与冲突处理选项。 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 后台运行与单步操作共用组合选择锁。 */
   const [combinationRunning, setCombinationRunning] = useState(false);
   /** 提供右侧操作栏中独立于表单滚动的按钮位置。 */
   const [footerHost, setFooterHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    setSettings(readGitDeliverySettings(props.projectId, props.currentDirectory));
+    /** 同时恢复当前项目最近接纳的收尾选项和对应勾选。 */
+    const restored = readGitDeliverySettings(props.projectId, props.currentDirectory);
+    setSettings(restored);
+    setFollowUps({ commands: Boolean(restored.postPushCommandIds?.length), taskStatus: Boolean(restored.finalTaskStatus) });
     setSettingsOpen(false);
   }, [props.projectId, props.currentDirectory]);
   /** 两种入口都在操作期间锁定文件选择。 */
   const busy = props.busyAction !== null || combinationRunning;
+  /** 单步入口明确提示当前合入方式及其仓库范围。 */
+  const mergeLabel = gitDeliveryActionLabel('merge', props.zh, props.mode);
+  /** 任务交付的单步合入覆盖整个工作目录。 */
+  const mergeButtonLabel = props.mergeAll ? (props.zh ? `全部${mergeLabel}` : `${mergeLabel} all`) : mergeLabel;
   /** 组合选择集中在执行区，不改变上方独立动作的可用性。 */
   function combinationOption(action: 'commit' | 'merge' | 'push', label: string): ReactNode {
     return (
@@ -810,7 +834,15 @@ export function GitDeliveryActions(props: {
     );
   }
   return (
-    <GitDeliveryCombinationContext.Provider value={{ settings, setSettings, settingsOpen, setSettingsOpen, setRunning: setCombinationRunning, footerHost }}>
+    <GitDeliveryCombinationContext.Provider value={{ settings, setSettings, executionSettings, followUps, setFollowUps, canMerge, settingsOpen, setSettingsOpen, setRunning: setCombinationRunning, footerHost }}>
+      {props.combination && props.settingsHost
+        ? createPortal(
+            <Button size="compact" disabled={busy} aria-haspopup="dialog" aria-label={props.zh ? '交付设置' : 'Delivery settings'} data-icon-tooltip={props.zh ? '交付设置' : 'Delivery settings'} onClick={() => setSettingsOpen(true)}>
+              <GearSixIcon aria-hidden="true" />
+            </Button>,
+            props.settingsHost,
+          )
+        : null}
       <aside className="task-git-review-options task-git-delivery-actions">
         <div className="task-git-delivery-actions-scroll">
           <section className="task-git-delivery-action-step">
@@ -861,42 +893,25 @@ export function GitDeliveryActions(props: {
           <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
             <div className="task-git-delivery-step-heading">
               <strong>{props.zh ? '合入分支' : 'Merge branches'}</strong>
-              <div className="task-git-delivery-merge-controls">
-                {props.onModeChange ? (
-                  <ZeusSelect
-                    size="compact"
-                    ariaLabel={props.zh ? '合入方式' : 'Merge method'}
-                    triggerLabel={props.mode === 'merge' ? 'Merge' : 'Squash'}
-                    value={props.mode}
-                    options={[
-                      { value: 'merge', label: props.zh ? 'Merge · 保留历史' : 'Merge · preserve commits' },
-                      { value: 'squash', label: props.zh ? 'Squash · 合成一个提交' : 'Squash · one commit' },
-                    ]}
-                    onChange={props.onModeChange}
-                    disabled={busy || !canMerge}
-                    searchable={false}
-                  />
-                ) : null}
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  aria-label={
-                    props.mergeAll
-                      ? props.zh
-                        ? `全部合入所选目标分支（${props.mergeCount} 个仓库）`
-                        : `Merge all ${props.mergeCount} repositories into their selected target branches`
-                      : props.zh
-                        ? `合入所选仓库（${props.mergeCount}）`
-                        : `Merge selected repositories (${props.mergeCount})`
-                  }
-                  busy={props.busyAction === 'merge'}
-                  onClick={() => props.onMerge?.(settings)}
-                  disabled={busy || !canMerge || props.mergeCount === 0}
-                >
-                  {props.zh ? (props.mergeAll ? '全部合入' : '合入') : props.mergeAll ? 'Merge all' : 'Merge'}
-                  {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
-                </Button>
-              </div>
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={
+                  props.mergeAll
+                    ? props.zh
+                      ? `${mergeButtonLabel}所选目标分支（${props.mergeCount} 个仓库）`
+                      : `${mergeButtonLabel} ${props.mergeCount} repositories into their selected target branches`
+                    : props.zh
+                      ? `${mergeButtonLabel}所选仓库（${props.mergeCount}）`
+                      : `${mergeButtonLabel} selected repositories (${props.mergeCount})`
+                }
+                busy={props.busyAction === 'merge'}
+                onClick={() => props.onMerge?.(executionSettings)}
+                disabled={busy || !canMerge || props.mergeCount === 0}
+              >
+                {mergeButtonLabel}
+                {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
+              </Button>
             </div>
             <div className="task-git-delivery-field-row">
               <span>{props.zh ? '目标分支' : 'Target'}</span>
@@ -951,12 +966,7 @@ export function GitDeliveryActions(props: {
           </section>
           {props.combination ? (
             <section className="task-git-delivery-action-step git-delivery-workflow" aria-label={props.zh ? '组合交付' : 'Combined delivery'}>
-              <div className="task-git-delivery-step-heading">
-                <strong>{props.zh ? '组合交付' : 'Combined delivery'}</strong>
-                <Button size="compact" disabled={busy} aria-label={props.zh ? '交付设置' : 'Delivery settings'} data-icon-tooltip={props.zh ? '交付设置' : 'Delivery settings'} onClick={() => setSettingsOpen(true)}>
-                  <GearSixIcon aria-hidden="true" />
-                </Button>
-              </div>
+              <strong>{props.zh ? '组合交付' : 'Combined delivery'}</strong>
               <div className="git-delivery-workflow-steps">
                 {combinationOption('commit', props.zh ? '提交' : 'Commit')}
                 {combinationOption('merge', props.zh ? '合入' : 'Merge')}
