@@ -478,6 +478,72 @@ export async function preloadConversationDiagram(text: string): Promise<void> {
   if (source) await (await ensureMermaidRuntime())?.parse(source, { suppressErrors: true });
 }
 
+/** 将 SVG 的实色填充读取为 sRGB 像素，渐变和图案没有单一对比度。 */
+function readMermaidFill(context: CanvasRenderingContext2D, element: SVGElement): Uint8ClampedArray | null {
+  /** 使用浏览器实际计算的填充，包含主题、style 和 classDef 的结果。 */
+  const style = getComputedStyle(element);
+  /** currentColor 取 SVG 元素自己的文字色，而非画布的默认色。 */
+  const fill = style.fill === 'currentcolor' ? style.color : style.fill;
+  if (style.opacity !== '1' || style.fillOpacity !== '1' || !CSS.supports('color', fill)) return null;
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = fill;
+  context.fillRect(0, 0, 1, 1);
+  return context.getImageData(0, 0, 1, 1).data;
+}
+
+/** WCAG 相对亮度使用线性 sRGB，半透明文字先与节点底色混合。 */
+function mermaidFillLuminance(fill: Uint8ClampedArray, background = fill): number {
+  /** 像素的不透明度从字节转换为比例。 */
+  const alpha = fill[3] / 255;
+  /** 将一个混色后的 sRGB 通道转换为线性亮度。 */
+  const linear = (channel: number): number => {
+    /** 浏览器返回的像素通道值范围为 0 到 255。 */
+    const value = (fill[channel] * alpha + background[channel] * (1 - alpha)) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(0) + 0.7152 * linear(1) + 0.0722 * linear(2);
+}
+
+/** 只调整深色流程图的节点文字，并返回原有填充的恢复操作。 */
+function improveMermaidLabelContrast(diagram: SVGSVGElement): (() => void) | undefined {
+  /** 单像素画布复用浏览器的 CSS 颜色解析，不读取图表内容。 */
+  const canvas = diagram.ownerDocument.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  /** 软件画布用于连续读取单像素颜色。 */
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return undefined;
+  /** 先读取所有颜色，再应用修正，避免写样式后重复计算。 */
+  const corrections: { label: SVGTextContentElement; fill: string; priority: string; replacement: string }[] = [];
+  for (const node of diagram.querySelectorAll('g.node')) {
+    /** 与会话主题使用相同的 Mermaid 节点填充形状。 */
+    const shape = node.querySelector<SVGElement>(':is(rect, path, polygon, circle, ellipse).label-container, .label-container path');
+    if (!shape) continue;
+    /** 只根据不透明底色调整，透明节点的背景取决于所在分组。 */
+    const background = readMermaidFill(context, shape);
+    if (!background || background[3] !== 255) continue;
+    /** 加 0.05 后可直接计算 WCAG 对比度。 */
+    const backgroundLevel = mermaidFillLuminance(background) + 0.05;
+    for (const label of node.querySelectorAll<SVGTextContentElement>('text, tspan')) {
+      /** 完全透明的文字是主动隐藏的，不补色。 */
+      const foreground = readMermaidFill(context, label);
+      if (!foreground || foreground[3] === 0) continue;
+      /** 不足 4.5:1 时选择对比度较高的黑色或白色。 */
+      const foregroundLevel = mermaidFillLuminance(foreground, background) + 0.05;
+      if (Math.max(backgroundLevel, foregroundLevel) / Math.min(backgroundLevel, foregroundLevel) >= 4.5) continue;
+      corrections.push({
+        label,
+        fill: label.style.getPropertyValue('fill'),
+        priority: label.style.getPropertyPriority('fill'),
+        replacement: backgroundLevel / 0.05 >= 1.05 / backgroundLevel ? '#000' : '#fff',
+      });
+    }
+  }
+  for (const { label, replacement } of corrections) label.style.setProperty('fill', replacement, 'important');
+  return () => {
+    for (const { label, fill, priority } of corrections) label.style.setProperty('fill', fill, priority);
+  };
+}
+
 /** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
   /** 语言和正文阶段来自所有 Markdown 展示入口共用的上下文。 */
@@ -486,6 +552,8 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
   const languageLabels = labels[runtime?.language ?? 'en-US'];
   /** 图表外壳用于读取当前应用主题。 */
   const containerRef = useRef<HTMLDivElement | null>(null);
+  /** 对比度修正仅接触本图的预览，不读取源码视图。 */
+  const previewRef = useRef<HTMLDivElement | null>(null);
   /** 上游把"画不出来"处理成源码视图且不报错，这里补上用户能看懂的原因。 */
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   /** 源码视图保留原文，预览继续挂载以保留已有缩放状态。 */
@@ -518,6 +586,32 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
       media.removeEventListener('change', syncTheme);
     };
   }, []);
+  useLayoutEffect(() => {
+    /** 浅色主题不调整图表文字。 */
+    const preview = previewRef.current;
+    if (!preview || !isDark) return;
+    /** 上游异步替换 SVG，已有图形在主题规则变更时重新评估。 */
+    let diagram: SVGSVGElement | null = null;
+    /** 重新评估前恢复作者和主题的原始填充。 */
+    let restore: (() => void) | undefined;
+    /** 只处理新增的流程图 SVG，缩放和工具栏事件无需重算。 */
+    const applyContrast = () => {
+      /** Mermaid 用无障碍描述标识图表类型。 */
+      const next = preview.querySelector<SVGSVGElement>('svg[aria-roledescription^="flowchart"]');
+      if (next === diagram) return;
+      restore?.();
+      diagram = next;
+      restore = diagram ? improveMermaidLabelContrast(diagram) : undefined;
+    };
+    /** 只监听 SVG 插入和替换，不监听修正自身的样式变更。 */
+    const observer = new MutationObserver(applyContrast);
+    observer.observe(preview, { childList: true, subtree: true });
+    applyContrast();
+    return () => {
+      observer.disconnect();
+      restore?.();
+    };
+  }, [isDark, useDefaultTheme]);
   /** 返回 true 表示异常已由本组件说明，避免与上游错误界面重复提示。 */
   const onRenderError = useCallback(
     (error: unknown) => {
@@ -568,7 +662,7 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
         ) : null}
         <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
       </div>
-      <div className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={showSource || Boolean(diagnostic)}>
+      <div ref={previewRef} className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={showSource || Boolean(diagnostic)}>
         {/* 主题变化时重建图形状态，避免上游复用仅按源码缓存的旧 SVG。 */}
         <MermaidBlockNode key={isDark ? 'dark' : 'light'} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
       </div>

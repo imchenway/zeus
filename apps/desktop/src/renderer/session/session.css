@@ -3913,6 +3913,8 @@
   --session-canvas: var(--zeus-card-background, #fff);
   /* 问答面板沿用同色投影；消息气泡仅用极淡底色，不制造浮起效果。 */
   --session-message-background: color-mix(in srgb, var(--session-text) 3%, var(--session-canvas));
+  /* 深色用户消息用略亮的底色标出气泡范围。 */
+  --session-user-message-background: light-dark(var(--session-message-background), color-mix(in srgb, var(--session-text) 8%, var(--session-canvas)));
   --session-message-shadow: 0 2px 10px var(--session-shadow), 0 1px 3px var(--session-shadow-soft);
   --session-sidebar: var(--session-canvas);
   --session-text: rgb(34 37 41);
@@ -4809,7 +4811,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 /* 结构化回答沿用正文列宽和询问卡片；普通消息继续使用右侧气泡。 */
 .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) {
   align-self: flex-end;
-  background: var(--session-message-background);
+  background: var(--session-user-message-background);
   box-shadow: none;
   border-radius: 14px;
   inline-size: fit-content !important;
@@ -4842,7 +4844,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) > .session-user-message-bubble {
-  background: var(--session-message-background);
+  background: var(--session-user-message-background);
   box-shadow: none;
   border-radius: 14px;
   box-sizing: border-box;
@@ -6689,11 +6691,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger[aria-expanded='true'] {
-  /* 同色表面用细轮廓保留选中提示。 */
   background: var(--session-canvas);
-  outline: 1px solid var(--session-text-muted);
-  outline-offset: -1px;
   color: var(--session-text);
+}
+
+/* 展开状态用底色区分，只有键盘焦点需要描边。 */
+.session-codex-parity-v1 .session-composer-dropdown-trigger:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
 }
 
 .session-codex-parity-v1 .session-composer-dropdown-trigger:disabled {
@@ -11559,7 +11564,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-context-usage-tooltip > dl > div {
   display: grid;
   gap: 12px;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* 优先保证数值和单位的宽度，长标签可以向下换行。 */
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .session-codex-parity-v1 .session-context-usage-tooltip :where(dt, dd) {
@@ -11571,9 +11577,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: var(--session-text-muted);
 }
 
+.session-codex-parity-v1 .session-context-usage-tooltip dt {
+  overflow-wrap: anywhere;
+}
+
 .session-codex-parity-v1 .session-context-usage-tooltip dd {
   font-variant-numeric: tabular-nums;
   text-align: end;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-context-usage-tooltip > small {

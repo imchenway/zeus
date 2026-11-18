@@ -652,7 +652,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
           ? `Interrupted after ${value}`
           : terminalStatus === 'failed'
             ? `Failed after ${value}`
-            : `Took ${value}`;
+            : `Time taken: ${value}`;
   return (
     <time className="session-turn-duration" dateTime={`PT${Math.max(0, Math.round(duration / 1_000))}S`} data-active={active || undefined} data-status={active ? 'active' : terminalStatus}>
       {label}

@@ -121,7 +121,6 @@ export function ContextUsageIndicator(props: {
           </div>
         ) : null}
       </dl>
-      {pending ? <small>{props.language === 'zh-CN' ? '下一轮应用，等待引擎回报；Codex 切换容量可能需约一分钟。' : 'Applies next turn; awaiting engine usage. Codex may take about a minute.'}</small> : null}
       {available && props.contextCapacityTokens != null && capacity !== props.contextCapacityTokens ? (
         <small>{props.language === 'zh-CN' ? '引擎回报的可用空间已扣除引擎保留空间。' : 'The engine usable window excludes reserved space.'}</small>
       ) : null}
