@@ -262,7 +262,8 @@ export interface SessionWorkspaceActions {
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
+  /** 引导已排队的消息，并保留卡片显示的当前轮次。 */
+  onSendQueuedNow?: (submissionId: string, expectedTurnId: string) => void | Promise<void>;
   /** 异步问题答复与普通 Composer 消息分开取草稿，共用提交通道。 */
   onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
   /** 保留调序回执水位，让卡片即时顺序平稳交给权威快照。 */
@@ -1102,7 +1103,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onDraftChange: input.controller.setDraft,
     onSubmit: (delivery, settings) => {
       const currentState = input.controller.getState();
-      const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(currentState) ? 'steer_now' : 'queue';
+      /** 输入框直接引导新消息需要就绪订阅，排队卡片则复用既有提交。 */
+      const effectiveDelivery = delivery === 'steer_now' && currentState.transportState === 'ready' && canSteerActiveTurn(currentState) ? 'steer_now' : 'queue';
       // 发送失败交回组件记录系统消息；前置校验错误不一定经过控制器的运行操作状态。
       return input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined).then(() => undefined);
     },
@@ -1143,8 +1145,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       await input.controller.deleteQueuedSubmission(submissionId);
     },
     // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
-    onSendQueuedNow: async (submissionId) => {
-      await input.controller.sendQueuedNow(submissionId);
+    onSendQueuedNow: async (submissionId, expectedTurnId) => {
+      await input.controller.sendQueuedNow(submissionId, expectedTurnId);
     },
     onAnswerAsyncQuestion: async (item, answers, asNewMessage, answerAttachments) => {
       await input.controller.answerAsyncQuestion(item, answers, asNewMessage, answerAttachments);

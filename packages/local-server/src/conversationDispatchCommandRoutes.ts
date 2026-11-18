@@ -3,6 +3,8 @@ import type { NativeConversationAttachmentInput } from './codexNativeConversatio
 import { ConversationDispatchCommandApplication, conversationDispatchCommandHttpError, conversationDispatchCommandTypes, type ConversationDispatchMutationRequest } from './conversationDispatchCommandApplication.js';
 
 type EmptyInput = Record<string, never>;
+/** 桌面端用点击时的轮次限定引导目标。 */
+type QueueSendNowInput = { expectedTurnId?: unknown };
 /** 恢复意图参与请求摘要与幂等身份，缺省和未知值均拒绝。 */
 type RecoverInput = { intent?: unknown };
 type ConversationParams = { projectId: string; conversationId: string };
@@ -61,7 +63,13 @@ export interface ConversationDispatchCommandRouteOperations {
   queueReroute(input: { params: SubmissionParams; prepared: unknown }): unknown;
   queueDelete(input: { params: SubmissionParams }): unknown;
   /** 队首校验不代表外部写入，实际引导调用通过生命周期标记写出。 */
-  queueSendNow(input: { params: SubmissionParams; operationIdentity: string; providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void } }): Promise<unknown>;
+  queueSendNow(input: {
+    params: SubmissionParams;
+    /** 指定 Provider 轮次时，服务端仅允许引导到该轮次。 */
+    expectedTurnId?: string;
+    operationIdentity: string;
+    providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void };
+  }): Promise<unknown>;
   turnInterrupt(input: { params: TurnParams; operationIdentity: string }): Promise<unknown>;
   serverRequestRespond(input: { params: RequestParams; response: Record<string, unknown>; operationIdentity: string }): Promise<unknown>;
   /** 附件错误在占用外部操作身份前拒绝，允许用户修正附件后重新提交。 */
@@ -215,10 +223,12 @@ export function registerConversationDispatchCommandRoutes(options: {
     }
   });
 
-  server.post('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/send-now', async (request: FastifyRequest<{ Params: SubmissionParams; Body: ConversationDispatchMutationRequest<EmptyInput> }>, reply) => {
+  server.post('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId/send-now', async (request: FastifyRequest<{ Params: SubmissionParams; Body: ConversationDispatchMutationRequest<QueueSendNowInput> }>, reply) => {
     try {
       const parsed = parseSubmissionCommand(request, conversationDispatchCommandTypes.queueSendNow);
-      assertExactInputKeys(parsed.input, [], parsed.command.commandType);
+      assertOnlyInputKeys(parsed.input, ['expectedTurnId'], parsed.command.commandType);
+      /** 引导绑定同一轮次，省略时沿用命令对当前活动轮次的语义。 */
+      const expectedTurnId = parsed.input.expectedTurnId === undefined ? undefined : requiredString(parsed.input.expectedTurnId, 'expectedTurnId');
       const executed = await application.executeExternal({
         parsed,
         destinationId: 'conversation-provider-turn-steer',
@@ -229,6 +239,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         invoke: (markExternalWriteStarted) =>
           operations.queueSendNow({
             params: request.params,
+            expectedTurnId,
             operationIdentity: parsed.operationIdentity,
             providerWriteLifecycle: {
               markPrepared: async () => undefined,

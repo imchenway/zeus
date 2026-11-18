@@ -839,18 +839,35 @@
   cursor: default;
 }
 
-.session-codex-parity-v1 .session-queued-messages {
+.session-codex-parity-v1 .session-queued-messages[data-motion-surface='popover'] {
   /* 排队卡片按实际分栏宽度换行，不能让操作按钮挤掉消息正文。 */
   container-type: inline-size;
   background: var(--session-control);
   border: 1px solid var(--session-line-soft);
   border-radius: 12px;
   box-shadow: 0 4px 14px var(--session-shadow-soft);
+  display: grid;
   flex: 0 0 auto;
+  grid-template-rows: 1fr;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
   margin: 0 auto 8px;
   min-inline-size: 0;
   overflow: hidden;
+  transition:
+    grid-template-rows var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out),
+    opacity var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out),
+    translate var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out);
+}
+
+/* 最后一条触发退出时即收起队列，回退时从当前高度反向展开。 */
+.session-codex-parity-v1 .session-queued-messages[data-motion-state='closing'] {
+  grid-template-rows: 0fr;
+}
+
+@starting-style {
+  .session-codex-parity-v1 .session-queued-messages[data-queue-restoring='true'] {
+    grid-template-rows: 0fr;
+  }
 }
 
 .session-codex-parity-v1 .session-interaction-dock > .session-queued-messages {
@@ -890,13 +907,15 @@
   list-style: none;
   max-block-size: min(24vh, 220px);
   margin: 0;
+  min-block-size: 0;
   overflow-y: auto;
   padding: 0;
 }
 
+/* 收起实际行高，后续卡片在布局中连续补位。 */
 .session-codex-parity-v1 .session-queued-messages > ol > li {
-  border-block-end: 0;
   display: grid;
+  flex: none;
   grid-template-rows: 1fr;
   min-inline-size: 0;
   transition:
@@ -904,20 +923,15 @@
     opacity var(--zeus-motion-duration-layer-exit) var(--zeus-motion-ease-out);
 }
 
-/* 删除和引导立即退出交互，行高随既有离场节奏收起。 */
-.session-codex-parity-v1 .session-queued-messages > ol > li[data-dismissing] {
+.session-codex-parity-v1 .session-queued-messages > ol > li[data-queue-exiting='true'] {
   grid-template-rows: 0fr;
   opacity: 0;
 }
 
-.session-codex-parity-v1 .session-queued-messages > ol > li[data-dismissing] > article {
+/* 裁剪退出内容，同时留出按钮原有的内边距和焦点环。 */
+.session-codex-parity-v1 .session-queued-message-clip {
   min-block-size: 0;
   overflow: clip;
-  padding-block: 0;
-}
-
-.session-codex-parity-v1 .session-queued-messages > ol > li:last-child {
-  border-block-end: 0;
 }
 
 .session-codex-parity-v1 .session-queued-message {
@@ -1087,6 +1101,10 @@
   .session-codex-parity-v1 .session-queued-message-actions button:active > svg {
     scale: 0.9;
   }
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button[data-loading='true'] {
+  background: var(--session-working-soft, var(--session-control-hover));
 }
 
 .session-codex-parity-v1 .session-queued-message-actions .session-queued-message-steer {

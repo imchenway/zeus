@@ -162,6 +162,9 @@ function restorePersistedSessionViewCache(value: unknown, now: number): SessionH
       if (cachedAt === null || cachedAt > now + 60_000 || now - cachedAt > sessionViewCacheMaximumAgeMs) return [];
       const state = sanitizeSessionStateForPersistence(entry.state as unknown as NativeSessionState);
       if (!state || state.projectId !== entry.projectId || state.conversationId !== entry.conversationId || state.snapshot?.projectId !== entry.projectId || state.snapshot.id !== entry.conversationId) return [];
+      /** 旧显示副本只有变更标记时，交由可读快照一次重建正文与卡片。 */
+      const recentTurns = state.snapshot.snapshotV2?.recentClosedTurns;
+      if (Array.isArray(recentTurns) && recentTurns.some((turn) => turn?.changeSetAvailable && !state.changeSetsByProviderId?.[turn.providerTurnId ?? turn.id])) return [];
       return [{ conversationId: entry.conversationId, cachedAt, state }];
     })
     .sort((left, right) => left.cachedAt - right.cachedAt);
