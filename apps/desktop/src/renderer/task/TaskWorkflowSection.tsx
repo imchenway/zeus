@@ -1,4 +1,5 @@
 import { TextFilePreview } from '../code/TextFilePreview.js';
+import { FileFindButton, fileFindShortcut, openFileFindIn } from '../code/fileFind.js';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CachedQuery } from '../cachedQuery.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
@@ -61,6 +62,8 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
   const [manualContent, setManualContent] = useState('');
   /** 阅读独立于工作流写操作，关闭或切换后不能被迟到正文重新打开。 */
   const [openedDeliverable, setOpenedDeliverable] = useState<{ item: TaskStageDeliverableRecord; content?: string; error?: unknown } | null>(null);
+  /** 查找只作用于当前打开的交付物。 */
+  const deliverablePreview = useRef<HTMLElement>(null);
   const deliverableRequestRef = useRef(0);
   /** 只保留最近一份正文，按客户端、任务及内容指纹命中，不复制大文本。 */
   const deliverableCacheRef = useRef<{ client: TaskWorkflowClient; taskId: string; sha256: string; content: string } | null>(null);
@@ -263,9 +266,10 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
       </ol>
 
       {openedDeliverable ? (
-        <section className="task-workflow-deliverable-preview" aria-label={openedDeliverable.item.title} aria-busy={openedDeliverable.content === undefined && !openedDeliverable.error}>
+        <section ref={deliverablePreview} className="task-workflow-deliverable-preview" aria-label={openedDeliverable.item.title} aria-busy={openedDeliverable.content === undefined && !openedDeliverable.error} onKeyDown={fileFindShortcut}>
           <span className="task-detail-section-heading">
             <strong>{openedDeliverable.item.title}</strong>
+            {openedDeliverable.content !== undefined ? <FileFindButton zh={zh} onFind={() => openFileFindIn(deliverablePreview.current)} /> : null}
             <Button
               variant="secondary"
               size="compact"
@@ -287,7 +291,7 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
           ) : openedDeliverable.content === undefined ? (
             <ResourceLoading label={zh ? '正在读取正文…' : 'Loading content…'} />
           ) : (
-            <TextFilePreview id={openedDeliverable.item.id} title={openedDeliverable.item.title} content={openedDeliverable.content} />
+            <TextFilePreview id={openedDeliverable.item.id} title={openedDeliverable.item.title} content={openedDeliverable.content} zh={zh} />
           )}
         </section>
       ) : null}

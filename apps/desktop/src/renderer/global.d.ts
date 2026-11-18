@@ -5,6 +5,9 @@ import type {
   CreateProjectSourceEntryInput,
   FilePreviewItem,
   FilePreviewRequest,
+  PdfPreviewCommand,
+  PdfPreviewEvent,
+  FilePreviewWatch,
   MoveProjectSourceEntryInput,
   NetworkProxyCheckTarget,
   NetworkProxyConnectionResult,
@@ -232,8 +235,12 @@ declare global {
 
       /** 跨入口共用的受授权文件预览。 */
       loadFilePreview: (input: FilePreviewRequest) => Promise<FilePreviewItem[]>;
+      /** 布局与查找使用当前窗口的已授权 PDF。 */
+      updatePdfPreview: (id: string, command: PdfPreviewCommand) => Promise<void>;
+      /** 原生 PDF 匹配与按键反馈。 */
+      onPdfPreviewEvent: (listener: (event: PdfPreviewEvent) => void) => () => void;
       /** 按原授权监听当前文件；历史快照不会随工作区变化。 */
-      watchFilePreview: (input: FilePreviewRequest) => Promise<string | null>;
+      watchFilePreview: (input: FilePreviewRequest, previewIds?: string[], expectedRevision?: string) => Promise<FilePreviewWatch | null>;
       /** 当前窗口已授权文件的磁盘变更通知。 */
       onFilePreviewChanged: (listener: (id: string) => void) => () => void;
       /** 读取当前授权文件版本的 Git 审阅，不重新传入磁盘路径。 */

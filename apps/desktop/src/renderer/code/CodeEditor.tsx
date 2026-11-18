@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useReadingScroll, useReadingSnapshot } from '../ui/readingState.js';
 import { basicSetup } from 'codemirror';
+import { openFileFind, fileFindExtension, type FileFindGroup, type FileFindSide } from './fileFind.js';
 import { defaultKeymap, historyField, indentWithTab } from '@codemirror/commands';
 import { Compartment, EditorState, StateEffect, type Extension, type Text } from '@codemirror/state';
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view';
@@ -31,6 +32,12 @@ export interface CodeEditorProps {
   path: string;
   /** 双栏差异由 MergeView 持有视图，本组件复用源码键位、语言、归属和阅读设置。 */
   externalView?: EditorView;
+  /** 双栏在同一标题区显示查找栏。 */
+  findGroup?: FileFindGroup;
+  /** 双栏的旧版本和当前版本分别查找。 */
+  findSide?: FileFindSide;
+  /** 效果预览切到源码后打开查找。 */
+  searchRequest?: number;
   /** 相同真实正文切换差异布局时移交撤销记录和选区。 */
   historyState?: EditorState;
   /** 空值表示纯文本。 */
@@ -146,6 +153,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
       extensions: [
         // 只读栏同样显示控制字符，CRLF 原文中的 CR 不额外撑开代码行。
         callbacksRef.current.onChange || callbacksRef.current.onDocumentChange ? basicSetup : [lineNumbers(), drawSelection(), highlightSpecialChars(), keymap.of(defaultKeymap)],
+        fileFindExtension(callbacksRef.current.locale?.startsWith('zh') ?? document.documentElement.lang.startsWith('zh'), callbacksRef.current.findGroup, callbacksRef.current.findSide),
         restoreHistory && retained.field(historyField, false) ? historyField.init(() => retained.field(historyField)) : [],
         editorTooltips,
         languageSlot.of([callbacksRef.current.language === 'markdown' ? markdownListKeymap : [], readLoadedSourceLanguage(callbacksRef.current.language)?.extension ?? []]),
@@ -221,6 +229,10 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   useLayoutEffect(() => {
     viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
   }, [props.path, props.externalView, reading.extension, readingSlot]);
+
+  useEffect(() => {
+    if (props.searchRequest && viewRef.current) openFileFind(viewRef.current);
+  }, [props.searchRequest]);
 
   useLayoutEffect(() => {
     /** 文件切换后丢弃旧语言加载结果；失败保留可用的纯文本。 */

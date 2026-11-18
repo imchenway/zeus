@@ -4,6 +4,7 @@ import { ArrowDownIcon } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { DotsThreeIcon } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { Button } from '../ui/Button.js';
+import { FileFindButton } from './fileFind.js';
 
 /** 全部差异入口使用同一组范围、定位与次要操作。 */
 export function DiffReviewToolbar(props: {
@@ -25,6 +26,8 @@ export function DiffReviewToolbar(props: {
   /** 纯补丁快照不提供文件预览或重新读取。 */
   onPreview?: () => void;
   onRefresh?: () => void;
+  /** 在当前差异范围内打开查找栏。 */
+  onFind?: () => void;
 }) {
   /** 菜单定位只在用户打开时读取，滚动时由共享菜单关闭。 */
   const [menu, setMenu] = useState<{ left: number; top: number } | null>(null);
@@ -73,6 +76,7 @@ export function DiffReviewToolbar(props: {
           {props.current < 0 ? (props.zh ? `${props.count} 处差异` : `${props.count} changes`) : `${props.current + 1} / ${props.count}`}
         </span>
       </span>
+      {props.onFind ? <FileFindButton zh={props.zh} onFind={props.onFind} /> : null}
       {hasOptions ? (
         <Button
           unstyled

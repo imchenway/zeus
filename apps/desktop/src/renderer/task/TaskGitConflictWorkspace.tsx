@@ -11,6 +11,7 @@ import type { NativeConversationAppClient } from '../features/workspace/workspac
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import type { CodeTextChange } from '../code/CodeEditor.js';
+import { FileFindButton, fileFindShortcut, requestGroupedFileFind, useFileFindGroup, type FileFindGroup } from '../code/fileFind.js';
 
 /** 冲突文件打开时才加载代码编辑器。 */
 const ConflictCodeEditor = lazy(() => import('../code/ConflictCodeEditor.js').then((module) => ({ default: module.ConflictCodeEditor })));
@@ -56,6 +57,13 @@ export function TaskGitConflictWorkspace(props: {
   projectId: string;
 }) {
   const document = props.conflict;
+  /** 同一冲突文件三个版本只打开一条查找栏。 */
+  const findGroup = useFileFindGroup('result');
+  findGroup.labels = {
+    before: props.zh ? '来源分支' : 'Source branch',
+    result: props.zh ? '合并结果' : 'Merge result',
+    after: props.zh ? '任务分支' : 'Task branch',
+  };
   /** 同一输入事件内可能包含多个编辑事务，后一个必须使用刚产生的草稿。 */
   const editingDocumentRef = useRef(document);
   editingDocumentRef.current = document;
@@ -203,13 +211,14 @@ export function TaskGitConflictWorkspace(props: {
           </Button>
         ))}
       </aside>
-      <main className="task-git-conflict-editor">
+      <main className="task-git-conflict-editor" onKeyDown={(event) => fileFindShortcut(event, () => requestGroupedFileFind(findGroup))}>
         <div className="task-git-conflict-toolbar">
           <span>
             <strong>{props.conflictPath}</strong>
             <small>{props.zh ? `${props.taskBranch} → ${props.integration.targetBranch} · 本地合入` : `${props.taskBranch} → ${props.integration.targetBranch} · local merge`}</small>
           </span>
           <span>
+            <FileFindButton zh={props.zh} disabled={!document} onFind={() => requestGroupedFileFind(findGroup)} />
             <span className="task-git-conflict-navigation" aria-label={props.zh ? '冲突导航' : 'Conflict navigation'}>
               <Button
                 unstyled
@@ -350,8 +359,10 @@ export function TaskGitConflictWorkspace(props: {
           </p>
         ) : null}
 
+        <div className="file-find-slot" ref={findGroup.host} />
         {viewMode === 'full' || !activeBlock ? (
           <FullFileColumns
+            findGroup={findGroup}
             zh={props.zh}
             path={props.conflictPath}
             document={document}
@@ -365,6 +376,7 @@ export function TaskGitConflictWorkspace(props: {
           />
         ) : activeBlock && document ? (
           <FocusedConflictColumns
+            findGroup={findGroup}
             zh={props.zh}
             path={props.conflictPath}
             document={document}
@@ -396,6 +408,8 @@ function simpleConflictFailureText(reasons: Partial<Record<SimpleConflictFailure
 }
 
 function FocusedConflictColumns(props: {
+  /** 当前文件工作面的公共查找范围。 */
+  findGroup: FileFindGroup;
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
   path: string;
@@ -417,6 +431,7 @@ function FocusedConflictColumns(props: {
   return (
     <div className="task-git-conflict-columns is-focused">
       <FocusedSidePane
+        findGroup={props.findGroup}
         zh={props.zh}
         alignment={alignment}
         title={props.targetTitle}
@@ -429,6 +444,7 @@ function FocusedConflictColumns(props: {
         onSideAction={props.onSideAction}
       />
       <FocusedResultEditor
+        findGroup={props.findGroup}
         zh={props.zh}
         alignment={alignment}
         title={props.resultTitle}
@@ -445,6 +461,7 @@ function FocusedConflictColumns(props: {
         }
       />
       <FocusedSidePane
+        findGroup={props.findGroup}
         zh={props.zh}
         alignment={alignment}
         title={props.taskTitle}
@@ -462,6 +479,8 @@ function FocusedConflictColumns(props: {
 
 /** 聚焦视图的侧栏与完整文件共用行旁操作。 */
 function FocusedSidePane(props: {
+  /** 查找和结果栏使用同一面板。 */
+  findGroup: FileFindGroup;
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
   /** 三栏共用的布局身份。 */
@@ -487,6 +506,7 @@ function FocusedSidePane(props: {
       <small className="task-git-conflict-side-state">{sideStateLabel(props.state, props.zh)}</small>
       <Suspense fallback={null}>
         <ConflictCodeEditor
+          findGroup={props.findGroup}
           zh={props.zh}
           path={props.path}
           label={props.title}
@@ -508,6 +528,8 @@ function FocusedSidePane(props: {
 
 /** 聚焦结果保留真实文件偏移，并与两侧对齐。 */
 function FocusedResultEditor(props: {
+  /** 结果的查找范围由冲突工作面管理。 */
+  findGroup: FileFindGroup;
   /** 当前冲突块身份。 */
   block: ConflictBlock;
   /** 沿用当前界面的操作语言。 */
@@ -527,6 +549,7 @@ function FocusedResultEditor(props: {
       <strong>{props.title}</strong>
       <Suspense fallback={null}>
         <ConflictCodeEditor
+          findGroup={props.findGroup}
           zh={props.zh}
           path={props.path}
           label={props.title}
@@ -546,6 +569,8 @@ function FocusedResultEditor(props: {
 
 /** 完整文件在各侧冲突行提供选入与移除，中间结果始终保留可编辑区域。 */
 function FullFileColumns(props: {
+  /** 全文版本使用当前冲突文件的查找范围。 */
+  findGroup: FileFindGroup;
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
   zh: boolean;
   path: string;
@@ -567,6 +592,7 @@ function FullFileColumns(props: {
   return (
     <div className="task-git-conflict-columns is-full">
       <FullFilePane
+        findGroup={props.findGroup}
         revealLine={countLines(props.document.source, Math.max(0, props.initialBlock?.sourceStart ?? 0))}
         zh={props.zh}
         path={props.path}
@@ -580,6 +606,7 @@ function FullFileColumns(props: {
         onSideAction={props.onSideAction}
       />
       <FullFilePane
+        findGroup={props.findGroup}
         revealLine={initialLine}
         zh={props.zh}
         path={props.path}
@@ -591,6 +618,7 @@ function FullFileColumns(props: {
         blocks={props.document.blocks}
       />
       <FullFilePane
+        findGroup={props.findGroup}
         revealLine={countLines(props.document.task, Math.max(0, props.initialBlock?.taskStart ?? 0))}
         zh={props.zh}
         path={props.path}
@@ -609,6 +637,8 @@ function FullFileColumns(props: {
 
 /** 每个文件栏复用代码编辑器，参照内容和选择操作使用独立的禁用状态。 */
 function FullFilePane(props: {
+  /** 完整文件的各侧使用同一个查找面板。 */
+  findGroup: FileFindGroup;
   /** 当前冲突在完整文件中的一基行号。 */
   revealLine: number;
   /** 按父页面语言显示冲突操作与辅助阅读文本。 */
@@ -632,6 +662,7 @@ function FullFilePane(props: {
       <strong>{props.title}</strong>
       <Suspense fallback={null}>
         <ConflictCodeEditor
+          findGroup={props.findGroup}
           zh={props.zh}
           path={props.path}
           label={props.title}

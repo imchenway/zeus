@@ -5,9 +5,12 @@ import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, lineNumbers, 
 import type { ConflictBlock, ConflictSide, ConflictSideState } from '../task/taskConflictModel.js';
 import { CodeEditor, type CodeTextChange } from './CodeEditor.js';
 import { conflictAlignmentExtension } from './conflictAlignment.js';
+import type { FileFindGroup } from './fileFind.js';
 
 /** 聚焦冲突和完整文件共用一套编辑器，操作仍修改原有冲突模型。 */
 interface ConflictCodeEditorProps {
+  /** 同一冲突文件的多栏共用查找栏。 */
+  findGroup: FileFindGroup;
   /** 文件路径决定语言和编辑器身份。 */
   path: string;
   /** 标明来源、任务或结果栏。 */
@@ -103,6 +106,8 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
   );
   return (
     <CodeEditor
+      findGroup={props.findGroup}
+      findSide={props.side === 'source' ? 'before' : props.side === 'task' ? 'after' : 'result'}
       path={props.path}
       label={props.label}
       locale={props.zh ? 'zh-CN' : 'en-US'}

@@ -1998,6 +1998,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       <TaskDetailPaneContent
         key={taskDetailPaneTask.id}
         zentaoClient={props.commandClient}
+        deliverableClient={props.commandClient}
         onZentaoTaskUpdated={mergeTaskRecord}
         language={appShellSettings.appLanguage}
         task={taskDetailPaneTask}

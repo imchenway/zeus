@@ -1,7 +1,7 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview, type FileReview } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, filePreviewRevision, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview, type FileReview } from '@zeus/shared';
 import { getFileReview } from '@zeus/git-core';
 import { toConversationResourceOpenIntent } from './conversationResources.js';
 
@@ -19,8 +19,7 @@ const previewBytes = new Map<string, { revision: string; size: number; read: Pro
 const previewCacheByteLimit = 32 * 1024 * 1024;
 
 /** 复用同一磁盘版本的在途读取；授权和文件大小由调用方每次重新核对。 */
-function readPreviewBytes(path: string, identity: { size: number; mtimeMs: number; ctimeMs: number; ino: number }): Promise<Buffer> {
-  const revision = `${identity.ino}:${identity.size}:${identity.mtimeMs}:${identity.ctimeMs}`;
+function readPreviewBytes(path: string, size: number, revision: string): Promise<Buffer> {
   const cached = previewBytes.get(path);
   if (cached?.revision === revision) {
     previewBytes.delete(path);
@@ -30,11 +29,10 @@ function readPreviewBytes(path: string, identity: { size: number; mtimeMs: numbe
   previewBytes.delete(path);
   const entry = {
     revision,
-    size: identity.size,
+    size,
     read: readFile(path).then(async (bytes) => {
       const current = await stat(path);
-      if (bytes.byteLength !== identity.size || `${current.ino}:${current.size}:${current.mtimeMs}:${current.ctimeMs}` !== revision)
-        throw Object.assign(new Error('文件正在变化，请重新读取预览。'), { code: 'ZEUS_CONVERSATION_RESOURCE_CHANGED' });
+      if (bytes.byteLength !== size || filePreviewRevision(current) !== revision) throw Object.assign(new Error('文件正在变化，请重新读取预览。'), { code: 'ZEUS_CONVERSATION_RESOURCE_CHANGED' });
       return bytes;
     }),
   };
@@ -73,11 +71,14 @@ export async function readConversationResourcePreview(resource: Exclude<Conversa
   if (fileStat.size > maximumPreviewBytes) {
     throw Object.assign(new Error('Conversation resource is too large for the Zeus preview.'), { code: 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE' });
   }
-  const bytes = await readPreviewBytes(fileRealPath, fileStat);
+  /** 缓存和监听核对的是同一批字节所对应的文件属性。 */
+  const fileRevision = filePreviewRevision(fileStat);
+  const bytes = await readPreviewBytes(fileRealPath, fileStat.size, fileRevision);
   if (imageMimeType) {
     return {
       kind: 'image',
       fileIdentity,
+      fileRevision,
       resource,
       mimeType: imageMimeType,
       dataUrl: `data:${imageMimeType};base64,${bytes.toString('base64')}`,
@@ -91,6 +92,7 @@ export async function readConversationResourcePreview(resource: Exclude<Conversa
   return {
     kind: 'source',
     fileIdentity,
+    fileRevision,
     resource,
     language: sourceLanguageForPath(fileRealPath),
     content,

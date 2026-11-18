@@ -3,6 +3,7 @@ import { displayedFilePath } from '../ui/filePathActions.js';
 import { projectSourcePreviewKind, sourceLanguageOptions } from '@zeus/shared';
 import { isMacOSPlatform } from '../platform.js';
 import { FilePreview } from './FilePreview.js';
+import { FileFindButton, fileFindShortcut, openFileFindIn, requestGroupedFileFind, useFileFindGroup } from './fileFind.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
@@ -111,6 +112,9 @@ export interface ProjectSourceWorkspaceProps {
 export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, ProjectSourceWorkspaceProps>(function ProjectSourceWorkspace(props, ref) {
   const zh = props.language === 'zh-CN';
   const [conflictComparison, setConflictComparison] = useState<{ current: string; incoming: string } | null>(null);
+  /** 两栏冲突预览共用面板，首次查找当前磁盘版本。 */
+  const conflictFind = useFileFindGroup('before');
+  conflictFind.labels = { before: zh ? '当前更改' : 'Current changes', after: zh ? '传入更改' : 'Incoming changes' };
   const conflictExtensions = useMemo(() => sourceConflictExtensions(zh, (current, incoming) => setConflictComparison({ current, incoming })), [zh]);
   const bridge = typeof window === 'undefined' ? undefined : window.zeus;
   const initialPreference = normalizePreference(props.preference);
@@ -120,6 +124,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
   /** 每个文件记住本次会话中的查看方式，不影响已有源码偏好。 */
   const [viewModes, setViewModes] = useState<Record<string, SourceViewMode>>({});
+  /** 当前源码的查找入口也支持从效果预览切回编辑器。 */
+  const [findRequest, setFindRequest] = useState(0);
+  const workspaceRef = useRef<HTMLElement>(null);
   /** 文件状态跟随同一个 Git 工作台；项目切换时忽略其他项目的快照。 */
   const gitFileStatuses = useMemo(() => projectGitFileStatuses(props.gitSnapshot, props.project.id), [props.gitSnapshot, props.project.id]);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
@@ -154,6 +161,12 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const renderedPreviewKind = activeTab?.document.editable ? projectSourcePreviewKind(activeTab.document.relativePath) : null;
   /** 普通代码文件保持源码显示，预览文件首次打开也保留原编辑入口。 */
   const viewMode: SourceViewMode = renderedPreviewKind && activePath ? (viewModes[activePath] ?? 'source') : 'source';
+  /** 查找完整源码，保留标签与当前草稿。 */
+  function openSourceFind(): void {
+    if (!activePath || !activeTab?.document.editable) return;
+    setViewModes((current) => ({ ...current, [activePath]: 'source' }));
+    setFindRequest((request) => request + 1);
+  }
   const dirty = tabs.some((tab) => tab.dirty);
   dirtyRef.current = dirty;
 
@@ -739,7 +752,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     : null;
 
   return (
-    <section data-file-root={props.project.localPath} className="project-source-workspace" style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties} data-tree-open={treeDrawerOpen ? 'true' : 'false'}>
+    <section
+      ref={workspaceRef}
+      onKeyDown={(event) => fileFindShortcut(event, activeTab?.document.editable && viewMode === 'preview' ? openSourceFind : undefined)}
+      data-file-root={props.project.localPath}
+      className="project-source-workspace"
+      style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties}
+      data-tree-open={treeDrawerOpen ? 'true' : 'false'}
+    >
       {notice || activeTab?.externalChange ? (
         <div className="project-source-message success" role="status">
           <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
@@ -770,24 +790,26 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
       {conflictComparison ? (
         <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)} role="dialog" aria-label={zh ? '比较变更' : 'Compare changes'}>
-          <section className="project-source-conflict-comparison" data-modal-surface="dialog">
+          <section className="project-source-conflict-comparison" data-modal-surface="dialog" onKeyDown={fileFindShortcut}>
             <header>
               <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
+              <FileFindButton zh={zh} onFind={() => requestGroupedFileFind(conflictFind)} />
               <Button unstyled type="button" onClick={() => setConflictComparison(null)}>
                 {zh ? '关闭' : 'Close'}
               </Button>
             </header>
+            <div className="file-find-slot" ref={conflictFind.host} />
             <div className="project-source-conflict-columns">
               <section>
                 <h3>{zh ? '当前更改' : 'Current changes'}</h3>
                 <Suspense fallback={null}>
-                  <CodeEditor path="conflict-current" language={activeTab?.document.language ?? null} content={conflictComparison.current} readOnly />
+                  <CodeEditor path="conflict-current" language={activeTab?.document.language ?? null} content={conflictComparison.current} locale={zh ? 'zh-CN' : 'en-US'} findGroup={conflictFind} findSide="before" readOnly />
                 </Suspense>
               </section>
               <section>
                 <h3>{zh ? '传入更改' : 'Incoming changes'}</h3>
                 <Suspense fallback={null}>
-                  <CodeEditor path="conflict-incoming" language={activeTab?.document.language ?? null} content={conflictComparison.incoming} readOnly />
+                  <CodeEditor path="conflict-incoming" language={activeTab?.document.language ?? null} content={conflictComparison.incoming} locale={zh ? 'zh-CN' : 'en-US'} findGroup={conflictFind} findSide="after" readOnly />
                 </Suspense>
               </section>
             </div>
@@ -943,22 +965,30 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     <span key={`${part}-${index}`}>{part}</span>
                   ))}
                 </nav>
-                {renderedPreviewKind ? (
-                  <div className="project-source-view-modes" role="group" aria-label={zh ? '源码显示方式' : 'Source view mode'}>
-                    {sourceViewModes.map(({ id, zh: chinese, en, icon: Icon }) => (
-                      <Button
-                        unstyled
-                        key={id}
-                        type="button"
-                        data-source-view-mode={id}
-                        aria-label={zh ? chinese : en}
-                        data-icon-tooltip={zh ? chinese : en}
-                        aria-pressed={viewMode === id}
-                        onClick={() => setViewModes((current) => ({ ...current, [activeTab.document.relativePath]: id }))}
-                      >
-                        <Icon size={16} aria-hidden="true" />
-                      </Button>
-                    ))}
+                {activeTab.document.editable ? (
+                  <div className="project-source-view-modes" role="group" aria-label={zh ? '源码操作' : 'Source actions'}>
+                    {renderedPreviewKind
+                      ? sourceViewModes.map(({ id, zh: chinese, en, icon: Icon }) => (
+                          <Button
+                            unstyled
+                            key={id}
+                            type="button"
+                            data-source-view-mode={id}
+                            aria-label={zh ? chinese : en}
+                            data-icon-tooltip={zh ? chinese : en}
+                            aria-pressed={viewMode === id}
+                            onClick={() => setViewModes((current) => ({ ...current, [activeTab.document.relativePath]: id }))}
+                          >
+                            <Icon size={16} aria-hidden="true" />
+                          </Button>
+                        ))
+                      : null}
+                    <FileFindButton
+                      zh={zh}
+                      onFind={() => {
+                        if (!openFileFindIn(workspaceRef.current)) openSourceFind();
+                      }}
+                    />
                   </div>
                 ) : null}
               </div>
@@ -974,6 +1004,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <div className="project-source-document-editor" hidden={viewMode === 'preview'} inert={viewMode === 'preview'}>
                     <Suspense fallback={null}>
                       <ProjectSourceEditor
+                        searchRequest={findRequest}
                         projectId={props.project.id}
                         revision={activeTab.document.revision.sha256}
                         dirty={activeTab.dirty}

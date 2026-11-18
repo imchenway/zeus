@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, type RefObject } from 'react';
 import { useReadingScroll, useReadingSnapshot } from '../ui/readingState.js';
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
-import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Decoration, EditorView, GutterMarker, WidgetType, drawSelection, gutter, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
@@ -14,21 +13,7 @@ import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './blameGutter.css';
 import { useCodeReadingOptions } from './codeReadingOptions.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
-
-/** 文件查找采用编辑器原生文案表，界面与会话语言一致。 */
-const sourceSearchPhrases = {
-  Find: '查找',
-  Replace: '替换',
-  next: '下一处',
-  previous: '上一处',
-  all: '全部',
-  'match case': '区分大小写',
-  regexp: '正则表达式',
-  'by word': '全字匹配',
-  close: '关闭',
-  'current match': '当前匹配',
-  'on line': '所在行',
-};
+import { openFileFind, fileFindExtension } from './fileFind.js';
 
 /** 评论继续由 React 管理，代码视图只负责把容器放在对应行之后。 */
 interface SourceLineWidget {
@@ -135,9 +120,8 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
           drawSelection(),
           EditorView.editable.of(false),
           EditorView.contentAttributes.of({ tabindex: '0', 'aria-label': propsRef.current.label, 'aria-readonly': 'true' }),
-          search({ top: true }),
-          EditorState.phrases.of(propsRef.current.locale === 'zh-CN' ? sourceSearchPhrases : {}),
-          keymap.of([...searchKeymap, ...defaultKeymap]),
+          fileFindExtension(propsRef.current.locale === 'zh-CN'),
+          keymap.of(defaultKeymap),
           syntaxHighlighting(classHighlighter),
           languageSlot.of([]),
           widgetSlot.of([]),
@@ -170,7 +154,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   useEffect(() => {
     /** Markdown 搜索切到源码后也查找完整文档，不受可视行范围限制。 */
     const view = viewRef.current;
-    if (view && props.searchRequest) openSearchPanel(view);
+    if (view && props.searchRequest) openFileFind(view);
   }, [props.searchRequest, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {

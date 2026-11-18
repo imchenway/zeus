@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { Compartment, EditorState, StateEffect, StateField, RangeSet, Text, type Extension } from '@codemirror/state';
 import { historyField } from '@codemirror/commands';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, gutterLineClass, type DecorationSet } from '@codemirror/view';
-import { getChunks, MergeView, unifiedMergeView, uncollapseUnchanged, Chunk } from '@codemirror/merge';
+import { getChunks, MergeView, mergeViewSiblings, unifiedMergeView, uncollapseUnchanged, Chunk } from '@codemirror/merge';
 import { detectSourceLanguage } from '@zeus/shared';
 import { CodeEditor, codeEditorTheme } from './CodeEditor.js';
+import { fileFindShortcut, requestGroupedFileFind, useFileFindGroup } from './fileFind.js';
 import { readLoadedSourceLanguage } from './sourceLanguageRegistry.js';
 import { FilePreviewDataContext } from './FilePreview.js';
 import { DiffReviewToolbar } from './DiffReviewToolbar.js';
@@ -189,6 +190,29 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   const preview = useContext(FilePreviewDataContext)!;
   const editing = preview.editing!;
   const zh = preview.zh;
+  /** MergeView 两端的查找都挂在公共工具栏下方。 */
+  const findGroup = useFileFindGroup();
+  findGroup.reveal = (view) => {
+    /** 折叠装饰用区块起点定位，不使用区块内的命中偏移。 */
+    const position = view.state.selection.main.from;
+    const line = view.lineBlockAt(position);
+    const blocks = Array.isArray(line.type) ? line.type : [line];
+    const collapsed = blocks.find((block) => block.widget?.type === 'collapsed-unchanged-code' && block.from <= position && block.to >= position);
+    const siblings = collapsed && mergeViewSiblings(view);
+    if (siblings && collapsed) {
+      /** 两栏同一未改区块的起点只相差前一个变更累计的偏移。 */
+      const left = siblings.a === view;
+      const previous = (getChunks(view.state)?.chunks ?? []).findLast((chunk) => (left ? chunk.toA : chunk.toB) <= collapsed.from);
+      const offset = previous ? previous.toB - previous.toA : 0;
+      (left ? siblings.b : siblings.a).dispatch({ effects: uncollapseUnchanged.of(collapsed.from + (left ? offset : -offset)) });
+    }
+    view.dispatch({ effects: [...(collapsed ? [uncollapseUnchanged.of(collapsed.from)] : []), EditorView.scrollIntoView(position, { y: 'center' })] });
+    /** 宽度变化和折行会修正估算行高，待命中标记绘制后按真实位置对齐。 */
+    const selection = view.state.selection.main;
+    view.dom.ownerDocument.defaultView?.requestAnimationFrame(() => {
+      if (view.dom.isConnected && view.state.selection.main.eq(selection)) view.dom.querySelector('.cm-searchMatch-selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  };
   const single = props.singleSide === 'right' || props.file.changeType === 'added';
   const unified = preview.unified && !single;
   /** 容器只归 MergeView 所有，共享 CodeEditor 负责语言、键位及阅读设置。 */
@@ -521,6 +545,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   const toolbar = (
     <>
       <DiffReviewToolbar
+        onFind={props.hideFindButton ? undefined : () => requestGroupedFileFind(findGroup)}
         zh={zh}
         full={preview.full}
         fullAvailable
@@ -581,7 +606,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     </>
   );
   return (
-    <div className="code-diff-container">
+    <div className="code-diff-container" onKeyDown={(event) => fileFindShortcut(event, () => requestGroupedFileFind(findGroup))}>
       {discarding ? (
         <ModalPortal role="alertdialog" aria-label={zh ? '放弃未保存修改' : 'Discard unsaved changes'} onDismiss={() => setDiscarding(false)}>
           <section className="code-diff-revert-dialog" data-modal-surface="dialog">
@@ -611,6 +636,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         <p role="alert">{zh ? '文件已更新，未保存草稿已保留。可切换查看和复制，放弃草稿后可继续编辑。' : 'The file changed. Your unsaved draft is retained. Switch views to copy it, or discard it to resume editing.'}</p>
       ) : null}
       {editing.error ? <VisibleApplicationError error={editing.error} language={zh ? 'zh-CN' : 'en'} /> : null}
+      <div className="file-find-slot" ref={findGroup.host} />
       <div className={`code-diff-view code-diff-editable${single || unified ? ' is-single-side' : ''}${props.renderLineNumber ? ' has-line-actions' : ''}`} aria-label={props.label}>
         {!single && !unified ? <DiffConnectorLayer /> : null}
         {!single && !unified ? <div className="editable-diff-host" ref={host} /> : null}
@@ -618,6 +644,8 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           <CodeEditor
             key="before"
             externalView={views.left}
+            findGroup={findGroup}
+            findSide="before"
             path={`${props.file.oldPath}:editable-before`}
             content={before}
             language={detectSourceLanguage(props.file.oldPath)}
@@ -633,6 +661,8 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           <CodeEditor
             key={single || unified ? 'one-pane' : 'two-pane'}
             externalView={single || unified ? undefined : views.right}
+            findGroup={findGroup}
+            findSide="after"
             historyState={previousState.current ?? undefined}
             path={`${props.file.newPath}:editable-current`}
             content={editing.content}

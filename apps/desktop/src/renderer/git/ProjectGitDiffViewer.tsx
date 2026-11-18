@@ -28,6 +28,10 @@ interface SideBySideDiffProps {
   revision?: string | number;
   /** 文件树已准备好同一业务范围的授权全文。 */
   preparedPreview?: PreparedFilePreview;
+  /** 固定文件的正文已开始读取，文本差异等待同范围补丁。 */
+  pendingDiff?: boolean;
+  /** 单文件正文读取成功时保留可操作的补丁错误。 */
+  diffError?: unknown;
   /** 保存当前版本后刷新所属文件清单。 */
   onSaved?: () => void | Promise<void>;
   diff: GitDiffSummary | null;
@@ -80,24 +84,26 @@ export function ProjectGitDiffWindow(props: {
     setFileStatuses({});
     /** 捕获本轮来源；窗口永远按打开时的任务、文件及比较范围读取。 */
     const source = props.source;
+    if (source.kind === 'task-git') {
+      setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
+      if (source.scope === 'working') {
+        // 文件状态用于呈现状态色，补丁可以先交给正文。
+        void props.client
+          .loadTaskGitWorkspaceSnapshot(source.taskId, source.workspaceId)
+          .then((snapshot) => {
+            const review = snapshot.workspace.review;
+            if (!cancelled && review) setFileStatuses(Object.fromEntries([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => [file.path, file.category])));
+          })
+          .catch((cause: unknown) => {
+            if (!cancelled) console.warn('Git file status refresh failed', cause);
+          });
+      }
+    }
     const request =
       source.kind === 'snapshot'
         ? Promise.resolve(source.diff)
         : source.kind === 'task-git'
-          ? Promise.all([
-              props.client.loadTaskWorkspaceFileDiff(source.taskId, source.workspaceId, source.path, source.scope),
-              source.scope === 'working' ? props.client.loadTaskGitWorkspaceSnapshot(source.taskId, source.workspaceId) : Promise.resolve(null),
-            ]).then(([result, snapshot]) => {
-              if (!cancelled) {
-                setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
-                if (snapshot?.workspace.review) {
-                  /** 与任务交付使用同一工作区快照状态，补丁仍只负责正文差异。 */
-                  const review = snapshot.workspace.review;
-                  setFileStatuses(Object.fromEntries([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => [file.path, file.category])));
-                }
-              }
-              return result.diff;
-            })
+          ? props.client.loadTaskWorkspaceFileDiff(source.taskId, source.workspaceId, source.path, source.scope).then((result) => result.diff)
           : source.commitHash
             ? props.client.loadProjectGitCommit(source.projectId, source.repositoryId, source.commitHash).then((detail) => {
                 if (!cancelled) setTitle(detail.commit.subject);
@@ -144,23 +150,34 @@ export function ProjectGitDiffWindow(props: {
   }, [selectedPath, title]);
 
   const selectedDiff = useMemo(() => (diff && selectedPath ? selectFileDiff(diff, selectedPath) : diff), [diff, selectedPath]);
-  const viewer = selectedDiff ? (
-    <SideBySideDiff
-      fileStatus={fileStatuses[selectedPath]}
-      previewRequest={props.source.kind === 'snapshot' ? undefined : { ...props.source, path: selectedPath }}
-      diff={selectedDiff}
-      zh={zh}
-      title={selectedPath || title}
-      onSaved={() => setSavedRevision((value) => value + 1)}
-      fill
-    />
-  ) : null;
+  /** 固定路径的授权正文和 Git 补丁从同一首帧独立开始，保存回执已带新正文。 */
+  const previewRequest = props.source.kind !== 'snapshot' && selectedPath ? { ...props.source, path: selectedPath } : undefined;
+  const viewer =
+    selectedDiff || previewRequest ? (
+      <SideBySideDiff
+        fileStatus={fileStatuses[selectedPath]}
+        previewRequest={previewRequest}
+        diff={selectedDiff}
+        revision={selectedPath}
+        pendingDiff={!diff && !error}
+        diffError={error}
+        zh={zh}
+        title={selectedPath || title}
+        onSaved={() => setSavedRevision((value) => value + 1)}
+        fill
+      />
+    ) : null;
 
   return (
     <main className={`macos-ai-app zeus-shell theme-${appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
-      {diff ? (
-        diff.fileDiffs.length > 1 ? (
-          <div className="project-git-diff-window-layout">
+      {error && !previewRequest ? (
+        <div className="project-git-diff-window-error">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+        </div>
+      ) : null}
+      <div className={diff && diff.fileDiffs.length > 1 ? 'project-git-diff-window-layout' : undefined} style={!diff || diff.fileDiffs.length <= 1 ? { display: 'contents' } : undefined}>
+        {diff && diff.fileDiffs.length > 1 ? (
+          <>
             <aside className="project-git-diff-window-files" aria-label={zh ? '变更文件' : 'Changed files'}>
               <header>
                 <strong>{title}</strong>
@@ -191,14 +208,15 @@ export function ProjectGitDiffWindow(props: {
               </div>
             </aside>
             <GitPaneSeparator name="diff-files" label={zh ? '调整文件列表宽度' : 'Resize file list'} initial={24} min={15} max={50} />
-            {viewer}
-          </div>
-        ) : (
-          viewer
-        )
-      ) : (
-        <p className="project-git-diff-loading">{error ? <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} /> : zh ? '正在读取差异…' : 'Loading diff…'}</p>
-      )}
+          </>
+        ) : null}
+        {viewer ??
+          (!error ? (
+            <p className="project-git-diff-loading" role="status">
+              {zh ? '正在读取差异…' : 'Loading diff…'}
+            </p>
+          ) : null)}
+      </div>
     </main>
   );
 }
@@ -339,6 +357,8 @@ export function SideBySideDiff(props: SideBySideDiffProps) {
       revision={props.revision ?? props.diff?.diffText}
       preparedPreview={props.preparedPreview}
       waitForContent
+      pendingDiff={props.pendingDiff}
+      diffError={props.diffError}
       onSaved={props.onSaved}
       zh={props.zh}
       fileStatus={props.fileStatus ?? props.diff?.fileDiffs[0]?.changeType}
