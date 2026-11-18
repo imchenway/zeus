@@ -131,6 +131,8 @@ export interface FilePreviewItem {
   submodule?: FilePreviewSource['submodule'];
   /** 已解析文件的显示路径，仅供复制；打开和读写继续使用资源身份。 */
   path?: string;
+  /** 已校验文件在源码工作区内的相对路径，用于逐级目录定位。 */
+  workspaceRelativePath?: string;
   /** 当前文本可按同次预览的旧侧恢复区块；历史副本和只读编码不提供此能力。 */
   canRevert?: boolean;
   /** 当前预览就是可写工作区正文，历史快照不授予此能力。 */
@@ -194,6 +196,8 @@ export interface FilePreviewSourceWorkspace {
   project: { id: string; name: string; localPath: string };
   /** 需要打开的工作区相对文件路径；仅切换目录时为空字符串。 */
   relativePath: string;
+  /** 只定位文件树时提供工作区相对目录。 */
+  directoryPath?: string;
 }
 
 /** 页内正文按字节限制；工作簿需要整体解析，历史副本另设磁盘读取上限。 */

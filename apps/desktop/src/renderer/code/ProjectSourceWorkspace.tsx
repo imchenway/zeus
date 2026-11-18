@@ -3,6 +3,7 @@ import { displayedFilePath } from '../ui/filePathActions.js';
 import { projectSourcePreviewKind, sourceLanguageOptions } from '@zeus/shared';
 import { isMacOSPlatform } from '../platform.js';
 import { FilePreview } from './FilePreview.js';
+import { FilePathBreadcrumbs } from './FileWorkspaceToolbar.js';
 import { FileFindButton, fileFindShortcut, openFileFindIn, requestGroupedFileFind, useFileFindGroup } from './fileFind.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
@@ -95,6 +96,8 @@ export interface ProjectSourceWorkspaceHandle {
   discardAll(): void;
   /** 搜索命中可传入一基行列，普通目录打开仍只传路径。 */
   openFile(relativePath: string, line?: number, column?: number): Promise<void>;
+  /** 在当前工作树显示并聚焦项目相对目录。 */
+  revealDirectory(relativePath: string): void;
 }
 
 export interface ProjectSourceWorkspaceProps {
@@ -141,6 +144,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const gitFileStatuses = useMemo(() => projectGitFileStatuses(props.gitSnapshot, props.project.id), [props.gitSnapshot, props.project.id]);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
+  /** 每次点击生成新的定位请求，重复点击同一目录也会重新聚焦。 */
+  const [directoryToReveal, setDirectoryToReveal] = useState<{ path: string } | null>(null);
+  /** 文件树选中的目录与编辑器打开的文件独立。 */
+  const [selectedDirectory, setSelectedDirectory] = useState<{ path: string } | null>(null);
+  /** 定位范围只包括文件树的行。 */
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+  /** 窄窗口关闭抽屉后回到代码目录按钮。 */
+  const treeToggleRef = useRef<HTMLButtonElement>(null);
   /** 窄布局遮罩退出完成后再移除，关闭立即停止命中。 */
   const treeBackdrop = useMotionPresence<HTMLButtonElement>(treeDrawerOpen);
   const [searchQuery, setSearchQuery] = useState('');
@@ -199,18 +210,75 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     activeTabElementRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activePath, tabs.length]);
 
+  /** 读取并更新目录快照，同时向定位流程返回该级节点。 */
   const loadDirectory = useCallback(
     async (relativePath: string) => {
       if (!bridge?.listProjectSourceDirectory) return;
       const snapshot = await bridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath });
       setDirectories((current) => ({ ...current, [relativePath]: snapshot }));
+      return snapshot;
     },
     [bridge, props.project.id],
   );
 
+  /** 预览跨入口定位与当前面包屑共用同一个文件树请求。 */
+  const revealDirectory = useCallback((path: string) => setDirectoryToReveal({ path }), []);
+  useEffect(() => {
+    if (loadingTree || !directoryToReveal) return;
+    /** 点击新的面包屑后，旧请求的回执不再移动文件树焦点。 */
+    let active = true;
+    void (async () => {
+      /** 路径前缀按根到目标的顺序核对，每级都必须是可访问的目录行。 */
+      const paths = directoryToReveal.path.split('/').map((_, index, parts) => parts.slice(0, index + 1).join('/'));
+      for (const path of paths) {
+        /** 每个目录行属于其父目录的快照。 */
+        const parent = parentPath(path);
+        /** 缓存命中时直接沿用；缺项时重新读取父目录以处理磁盘更新。 */
+        const hasDirectory = (snapshot?: ProjectSourceDirectorySnapshot) => snapshot?.entries.some((entry) => entry.relativePath === path && entry.kind === 'directory' && entry.accessible);
+        if (!hasDirectory(directoriesRef.current[parent]) && !hasDirectory(await loadDirectory(parent))) {
+          throw new Error(zh ? '无法在文件树中定位该目录。' : 'This folder could not be located in the source tree.');
+        }
+        if (!active) return;
+      }
+      setSearchQuery('');
+      setExpandedDirectories((current) => new Set([...current, ...paths.slice(0, -1)]));
+      setSelectedDirectory(directoryToReveal);
+      setTreeDrawerOpen(true);
+      setDirectoryToReveal(null);
+    })().catch((cause: unknown) => {
+      if (!active) return;
+      setDirectoryToReveal(null);
+      setError(cause);
+    });
+    return () => {
+      active = false;
+    };
+  }, [directoryToReveal, loadDirectory, loadingTree, zh]);
+
+  /** 展开状态提交后把目标行滚入视野，并让键盘从该行继续。 */
+  useLayoutEffect(() => {
+    if (!selectedDirectory) return;
+    /** 只滚动树自身，避免窄窗口抽屉的滑入动画移动外层页面。 */
+    const tree = treeScrollRef.current;
+    const row = tree?.querySelector<HTMLButtonElement>(`button[data-file-path="${CSS.escape(selectedDirectory.path)}"]`);
+    if (!tree || !row) return;
+    const viewport = tree.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    tree.scrollTop += Math.min(bounds.top - viewport.top, 0) + Math.max(bounds.bottom - viewport.bottom, 0);
+    row.focus({ preventScroll: true });
+  }, [selectedDirectory]);
+
+  /** 显式关闭目录抽屉后恢复键盘入口。 */
+  function closeTreeDrawer(): void {
+    setTreeDrawerOpen(false);
+    treeToggleRef.current?.focus();
+  }
+
   const openFile = useCallback(
     async (relativePath: string, line?: number, column?: number) => {
       fileOpenRequestedRef.current = true;
+      setDirectoryToReveal(null);
+      setSelectedDirectory(null);
       if (pendingFileOpen.current?.path === relativePath && line === undefined) return;
       /** 保留每次定位的对象身份，重复查找同一位置也能重新定位。 */
       const revealLocation = line === undefined ? undefined : { line, column };
@@ -324,7 +392,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     setTabs((current) => current.map((tab) => ({ ...tab, draft: tab.document.content, dirty: false, externalChange: false })));
   }, []);
 
-  useImperativeHandle(ref, () => ({ hasDirtyFiles: () => dirtyRef.current, saveAll, discardAll, openFile }), [discardAll, openFile, saveAll]);
+  useImperativeHandle(ref, () => ({ hasDirtyFiles: () => dirtyRef.current, saveAll, discardAll, openFile, revealDirectory }), [discardAll, openFile, revealDirectory, saveAll]);
 
   useEffect(() => props.onDirtyChange?.(dirty), [dirty, props.onDirtyChange]);
 
@@ -492,6 +560,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }, [activePath, expandedDirectories, loadingTree, props.onPreferenceChange, tabs, treeWidth]);
 
   async function toggleDirectory(path: string): Promise<void> {
+    setDirectoryToReveal(null);
+    setSelectedDirectory(null);
     /** 收起保留目录快照，读取失败时也能再次点击重试。 */
     const collapse = () =>
       setExpandedDirectories((current) => {
@@ -762,8 +832,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
-  const breadcrumbs = activePath?.split('/') ?? [];
-
   /** 同一拖拽入口贯通顶部，继续复用原有指针与键盘调宽行为。 */
   const sourceTreeResizer = treeResizeSurface
     ? createPortal(
@@ -862,7 +930,16 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       ) : null}
       {sourceTreeResizer}
       <div className="project-source-main">
-        <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
+        <aside
+          className="project-source-tree"
+          aria-label={zh ? '代码目录' : 'Source tree'}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' || event.defaultPrevented || !treeDrawerOpen || !treeToggleRef.current?.getClientRects().length) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeTreeDrawer();
+          }}
+        >
           <div className="project-source-module">
             <div className="project-source-module-header">
               <span className="project-source-worktree-slot">{props.workspaceSelector ?? <span title={props.project.localPath}>{props.project.name}</span>}</span>
@@ -894,7 +971,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 </Button>
               </span>
             </div>
-            <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
+            <div ref={treeScrollRef} className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
               {searchQuery.trim() ? (
                 <SearchResults
                   entries={searchResults}
@@ -917,7 +994,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   directories={directories}
                   expandedDirectories={expandedDirectories}
                   loadingDirectories={loadingDirectories}
-                  activePath={openingPath ?? activePath}
+                  selectedPath={selectedDirectory?.path ?? openingPath ?? activePath}
                   gitFileStatuses={gitFileStatuses}
                   busyPath={busyPath}
                   onOpen={openFile}
@@ -936,6 +1013,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 unstyled
                 data-icon-tooltip={zh ? '显示代码目录' : 'Show source tree'}
                 type="button"
+                ref={treeToggleRef}
                 className="project-source-tree-toggle"
                 onClick={() => setTreeDrawerOpen((open) => !open)}
                 aria-label={zh ? '显示代码目录' : 'Show source tree'}
@@ -1010,11 +1088,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           ) : activeTab ? (
             <>
               <div className="project-source-file-toolbar">
-                <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
-                  {breadcrumbs.map((part, index) => (
-                    <span key={`${part}-${index}`}>{part}</span>
-                  ))}
-                </nav>
+                <FilePathBreadcrumbs compact path={activeTab.document.relativePath} zh={zh} onRevealDirectory={revealDirectory} />
                 {activeTab.document.editable ? (
                   <div className="project-source-view-modes" role="group" aria-label={zh ? '源码操作' : 'Source actions'}>
                     {renderedPreviewKind
@@ -1047,6 +1121,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }}
                   revision={activeTab.document.revision.sha256}
                   fileStatus={gitFileStatuses[activeTab.document.relativePath]}
+                  onRevealDirectory={revealDirectory}
                   zh={zh}
                 />
               ) : (
@@ -1147,7 +1222,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           className="project-source-tree-backdrop"
           data-zeus-primitive="backdrop"
           aria-label={zh ? '关闭代码目录' : 'Close source tree'}
-          onClick={() => setTreeDrawerOpen(false)}
+          onClick={closeTreeDrawer}
         />
       ) : null}
 
@@ -1344,7 +1419,8 @@ interface SourceTreeRowsProps {
   directories: Record<string, ProjectSourceDirectorySnapshot>;
   expandedDirectories: Set<string>;
   loadingDirectories: Set<string>;
-  activePath: string | null;
+  /** 当前高亮的文件或目录，与打开的编辑器标签独立。 */
+  selectedPath: string | null;
   gitFileStatuses: Record<string, string>;
   busyPath: string | null;
   zh: boolean;
@@ -1368,7 +1444,7 @@ const TreeRows = memo(function SourceDirectoryRows(props: SourceTreeRowsProps) {
           entry={entry}
           depth={props.depth}
           expanded={expanded}
-          selected={entry.relativePath === props.activePath}
+          selected={entry.relativePath === props.selectedPath}
           disabled={!entry.accessible || props.busyPath === entry.relativePath}
           fileStatus={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}
           onAction={directoryEntry ? props.onToggle : props.onOpen}
@@ -1382,7 +1458,7 @@ const TreeRows = memo(function SourceDirectoryRows(props: SourceTreeRowsProps) {
                 {props.zh ? '正在读取目录…' : 'Loading folder…'}
               </p>
             ) : null}
-            <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} activePath={props.activePath?.startsWith(`${entry.relativePath}/`) ? props.activePath : null} />
+            <TreeRows {...props} directoryPath={entry.relativePath} depth={props.depth + 1} selectedPath={props.selectedPath?.startsWith(`${entry.relativePath}/`) ? props.selectedPath : null} />
           </div>
         ) : null}
       </div>

@@ -211,6 +211,8 @@ export function FilePreview(props: {
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 调用方已有的关闭等操作并入预览工具栏。 */
   actions?: ReactNode;
+  /** 已在源码页时直接定位其文件树。 */
+  onRevealDirectory?: (path: string) => void;
   /** Git 比较已知的变更状态同时用于媒体文件名称。 */
   fileStatus?: string;
   /** 外部已知的修订用于显式刷新当前文件。 */
@@ -245,6 +247,7 @@ export function FilePreview(props: {
         zh={props.zh}
         renderHeader={props.renderHeader}
         actions={props.actions}
+        onRevealDirectory={props.onRevealDirectory}
         fileStatus={props.fileStatus}
         commentPath={props.commentPath}
         comments={props.comments}
@@ -274,6 +277,7 @@ function FilePreviewBody(props: {
   renderHeader?: (item: FilePreviewItem | null) => ReactNode;
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
+  /** 已在源码页时直接定位其文件树。 */ onRevealDirectory?: (path: string) => void;
   /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
   /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void;
   /** 会话评论使用的稳定文件路径。 */ commentPath?: string;
@@ -559,6 +563,7 @@ function FilePreviewBody(props: {
                   key={`${index}:${item.label}`}
                   item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
                   request={attachment}
+                  onRevealDirectory={props.onRevealDirectory}
                   zh={props.zh}
                   fileStatus={props.fileStatus}
                   commentPath={props.commentPath}
@@ -744,6 +749,8 @@ function FilePreviewContent(props: {
   onSaved: () => void;
   /** 会话资源的文件审阅继续使用原业务身份。 */
   request: FilePreviewRequest;
+  /** 已在源码页时直接定位其文件树。 */
+  onRevealDirectory?: (path: string) => void;
   zh: boolean;
   /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string;
   /** 当前用户选择的解码方式。 */ encoding: FilePreviewTextEncoding | '';
@@ -807,10 +814,10 @@ function FilePreviewContent(props: {
     setSearchRequest((request) => request + 1);
   }
   /** 用户动作只发送资源令牌，主进程再次检查所属窗口与文件身份。 */
-  async function action(value: 'quick-look' | 'open' | 'reveal' | 'export') {
+  async function action(value: 'quick-look' | 'open' | 'reveal' | 'export' | 'reveal-directory', directoryPath?: string) {
     setError('');
     try {
-      await window.zeus?.actOnFilePreview(item.id, value);
+      await window.zeus?.actOnFilePreview(item.id, value, directoryPath);
     } catch (cause) {
       setError(userFacingErrorCause(cause));
     }
@@ -824,7 +831,14 @@ function FilePreviewContent(props: {
         zh={props.zh}
         toolbar={(reviewActions) => (
           <>
-            <FileWorkspaceToolbar path={displayPath} name={item.name} status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType} zh={props.zh}>
+            <FileWorkspaceToolbar
+              path={props.onRevealDirectory ? displayPath : (item.workspaceRelativePath ?? displayPath)}
+              copyPath={displayPath}
+              name={item.name}
+              status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}
+              zh={props.zh}
+              onRevealDirectory={props.onRevealDirectory ?? (item.workspaceRelativePath ? (path) => action('reveal-directory', path) : undefined)}
+            >
               {reviewActions}
               {props.toolbar}
               {canFind ? (

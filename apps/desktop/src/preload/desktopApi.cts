@@ -454,8 +454,8 @@ export function createDesktopApi(transport: DesktopTransport) {
         input.requests[0]?.kind === 'task-git' ? input.requests[0].workspaceId : input.requests[0]?.kind === 'project-git' ? input.requests[0].repositoryId : 'delivery',
         input,
       ),
-    /** 转交文件预览中的用户操作。 */
-    actOnFilePreview: (id: string, action: string) => transport.invoke('zeus:file-preview:action', id, action),
+    /** 转交预览操作；定位时附上文件的相对父目录。 */
+    actOnFilePreview: (id: string, action: string, directoryPath?: string) => transport.invoke('zeus:file-preview:action', id, action, directoryPath),
     /** 将预览图片像素交给系统剪贴板或原生保存对话框。 */
     actOnImagePreview: (dataUrl: string, action: 'copy' | 'export', name: string) => transport.invoke('zeus:image-preview:action', dataUrl, action, name),
     /** 读取文件预览对应版本的来源。 */
