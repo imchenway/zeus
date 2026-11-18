@@ -17,7 +17,7 @@ const selectionStorageKey = 'zeus.menu-bar-usage.selection';
 const providerOrderStorageKey = 'zeus.menu-bar-usage.provider-order';
 const chartDimensionStorageKey = 'zeus.menu-bar-usage.chart-dimension';
 
-/** 快捷时间选项保持稳定顺序，默认选中近七日。 */
+/** 全部供应商和单个供应商共用的快捷时间选项顺序。 */
 const overviewRangeOrder: UsageOverviewRange[] = ['today', '7d', '30d', 'all'];
 
 /** 柱图统计维度；费用只能来自本地账本估算，官方账户历史没有模型维度。 */
@@ -51,10 +51,13 @@ const copy = {
     noProviders: '还没有可统计的用量',
     noProvidersDetail: '使用 AI 后，这里会显示各个服务的用量。',
     quota: '额度剩余',
-    todayToken: '今日 Token',
     /** 总览汇总可见供应商的本机用量，读屏文案与可见数据保持一致。 */
     todayLocalTokens: '今日本机 Token',
-    providersUsedToday: (count: number, complete: boolean) => `${complete ? '' : '至少 '}${count} 个供应商今日有用量`,
+    localTokens: '本机 Token',
+    /** 统计不完整时，供应商数只表示当前已记录的下限。 */
+    providersUsed: (count: number, complete: boolean, range: UsageOverviewRange) => `${complete ? '' : '至少 '}${count} 个供应商${range === 'today' ? '今日' : ''}有用量`,
+    usagePeriod: '统计周期',
+    sevenDayTrend: '近 7 天趋势',
     /** 只用于官方明确返回的 Codex 主额度的五小时窗口。 */
     fiveHourQuota: (remaining: string) => `5 小时额度 · 剩余 ${remaining}`,
     available: '可用',
@@ -130,10 +133,13 @@ const copy = {
     noProviders: 'No usage recorded yet',
     noProvidersDetail: 'Usage for each AI service appears here after you use it.',
     quota: 'Quota remaining',
-    todayToken: 'Today tokens',
     /** Summary counts usage recorded in Zeus across the visible providers. */
     todayLocalTokens: 'Today’s local tokens',
-    providersUsedToday: (count: number, complete: boolean) => `${complete ? '' : 'At least '}${count} ${count === 1 ? 'provider' : 'providers'} used today`,
+    localTokens: 'Local tokens',
+    /** 统计不完整时，供应商数只表示当前已记录的下限。 */
+    providersUsed: (count: number, complete: boolean, range: UsageOverviewRange) => `${complete ? '' : 'At least '}${count} ${count === 1 ? 'provider' : 'providers'} used${range === 'today' ? ' today' : ''}`,
+    usagePeriod: 'Usage period',
+    sevenDayTrend: '7-day trend',
     /** Shown for the official five-hour window in the main Codex quota. */
     fiveHourQuota: (remaining: string) => `5h quota · ${remaining} left`,
     available: 'Available',
@@ -479,6 +485,8 @@ function UsageLoadFailure(props: { error: unknown; language: Language; loading: 
 
 /** 本机用量总览，独立手柄排序，点击内容仍打开供应商详情。 */
 function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: boolean; language: Language; onSelect: (providerId: string) => void; onMove: (providerId: string, targetId: string) => void }) {
+  /** 新打开 All 时先展示今日，顶部和右列使用同一统计周期。 */
+  const [range, setRange] = useState<UsageOverviewRange>('today');
   const { language, providers } = props;
   const text = copy[language];
   /** 只接收从本列表手柄发起的拖拽，外部文本和文件不会修改顺序。 */
@@ -495,28 +503,37 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
       </div>
     );
   }
-  /** 今日合计与活跃供应商数共用当前列表的本机记录，缺失用量时按下限展示。 */
+  /** 合计与活跃供应商数共用各供应商的本机记录，缺失用量时按下限展示。 */
   const total = providers.reduce(
-    (summary, { overviewRanges: { today } }) => ({
-      tokens: summary.tokens + today.local.totalTokens,
-      activeProviders: summary.activeProviders + (today.local.totalTokens > 0 ? 1 : 0),
-      complete: summary.complete && today.complete,
-    }),
+    (summary, provider) => {
+      /** 当前周期的本机用量是顶部汇总和该供应商右列的数据来源。 */
+      const usage = provider.overviewRanges[range];
+      return {
+        tokens: summary.tokens + usage.local.totalTokens,
+        activeProviders: summary.activeProviders + (usage.local.totalTokens > 0 ? 1 : 0),
+        complete: summary.complete && usage.complete,
+      };
+    },
     { tokens: 0, activeProviders: 0, complete: props.fullCoverage },
   );
+  /** 表头与读屏共用当前所选周期文案。 */
+  const rangeLabel = text.overviewRanges[range];
   return (
     <section className="menu-bar-usage-provider-list" data-reorderable={providers.length > 1} aria-label={text.allProviders}>
+      <div className="menu-bar-usage-all-range">
+        <UsageRangeControl range={range} language={language} onChange={setRange} />
+      </div>
       <div className="menu-bar-usage-provider-total">
         <span>
-          <b>{text.todayLocalTokens}</b>
-          <small>{text.providersUsedToday(total.activeProviders, total.complete)}</small>
+          <b>{range === 'today' ? text.todayLocalTokens : text.localTokens}</b>
+          <small>{text.providersUsed(total.activeProviders, total.complete, range)}</small>
         </span>
         <strong>{formatIncompleteTokens(total.tokens, total.complete, language)}</strong>
       </div>
       <header className="menu-bar-usage-provider-heading" aria-hidden="true">
         <span>{text.providers}</span>
-        <span>{text.overviewRanges['7d']}</span>
-        <span>{text.overviewRanges.today}</span>
+        <span>{text.sevenDayTrend}</span>
+        <span>{rangeLabel}</span>
       </header>
       <span className="menu-bar-usage-sr-only" id="menu-bar-usage-reorder-help">
         {text.reorderHelp}
@@ -526,11 +543,12 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
       </span>
       {providers.map((provider, index) => {
         const fullName = providerDisplayName(provider);
-        /** 可见数值与读屏摘要共用格式，省略重复文案后仍能识别今日统计口径。 */
-        const today = provider.overviewRanges.today;
-        const todayValue = formatIncompleteTokens(today.local.totalTokens, today.complete, language);
-        /** 完整价格覆盖时才展示今日估算，部分金额仍可在详情查看。 */
-        const todayCost = today.complete && today.local.priceCoverage === 1 ? formatUsd(today.local.apiEquivalentUsd, today.local.priceCoverage, language, '') : '';
+        /** 右列的 Token 和费用与顶部汇总取同一周期。 */
+        const usage = provider.overviewRanges[range];
+        /** 可见数值与读屏摘要共用格式，数据不完整时显示已知下限。 */
+        const tokenValue = formatIncompleteTokens(usage.local.totalTokens, usage.complete, language);
+        /** 完整价格覆盖时才展示估算，部分金额仍可在详情查看。 */
+        const costValue = usage.complete && usage.local.priceCoverage === 1 ? formatUsd(usage.local.apiEquivalentUsd, usage.local.priceCoverage, language, '') : '';
         const costLabel = isCodexSubscriptionUsage(provider) ? text.equivalentCost : text.cost;
         /** 近七日柱高按当前供应商的本机用量峰值缩放，最后一格为当天。 */
         const slots = buildDailySlots(provider, 'tokens', 'local');
@@ -610,9 +628,9 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
               unstyled
               className="menu-bar-usage-provider-open"
               type="button"
-              aria-label={[fullName, `${text.todayToken} ${todayValue}`, todayCost && `${costLabel} ${todayCost}`, quotaLabel].filter(Boolean).join(' · ')}
-              aria-description={peak > 0 ? `${text.overviewRanges['7d']} · ${slots.map(({ value }) => (value === null ? text.missingDay : formatTokens(value, language))).join(', ')}` : undefined}
-              data-icon-tooltip={[fullName, providerDetail, todayCost && `${costLabel} ${todayCost}`].filter(Boolean).join(' · ')}
+              aria-label={[fullName, rangeLabel, `${text.tokens} ${tokenValue}`, costValue && `${costLabel} ${costValue}`, quotaLabel].filter(Boolean).join(' · ')}
+              aria-description={peak > 0 ? `${text.sevenDayTrend} · ${slots.map(({ value }) => (value === null ? text.missingDay : formatTokens(value, language))).join(', ')}` : undefined}
+              data-icon-tooltip={[fullName, providerDetail, costValue && `${costLabel} ${costValue}`].filter(Boolean).join(' · ')}
               onClick={() => props.onSelect(provider.providerId)}
             >
               <span className="menu-bar-usage-provider-copy">
@@ -623,8 +641,8 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
                 {peak > 0 && slots.map(({ date, value }) => <i key={date} style={{ blockSize: value === null ? 0 : `max(1px, ${(value / peak) * 100}%)` }} />)}
               </span>
               <span className="menu-bar-usage-provider-value">
-                <small>{todayValue}</small>
-                {todayCost && <strong>{todayCost}</strong>}
+                <small>{tokenValue}</small>
+                {costValue && <strong>{costValue}</strong>}
               </span>
               <Chevron />
             </Button>
@@ -648,6 +666,21 @@ function ProviderDetail(props: { provider: UsageProviderSummary; language: Langu
   );
 }
 
+/** All 与供应商详情共用周期选项、选中状态和键盘可操作的按钮。 */
+function UsageRangeControl({ range, language, onChange }: { range: UsageOverviewRange; language: Language; onChange: (range: UsageOverviewRange) => void }) {
+  /** 浮窗的当前语言决定按钮及其分组名称。 */
+  const text = copy[language];
+  return (
+    <span className="menu-bar-usage-range" role="group" aria-label={text.usagePeriod}>
+      {overviewRangeOrder.map((entry) => (
+        <Button unstyled key={entry} type="button" aria-pressed={range === entry} onClick={() => onChange(entry)}>
+          {text.overviewRanges[entry]}
+        </Button>
+      ))}
+    </span>
+  );
+}
+
 /** 用量概览：四项固定指标共用同一时间范围与服务端聚合结果。 */
 function UsageOverview(props: { provider: UsageProviderSummary; language: Language }) {
   const { provider, language } = props;
@@ -659,13 +692,7 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
     <section className="menu-bar-usage-overview">
       <header className="menu-bar-usage-overview-head">
         <h3>{text.overview}</h3>
-        <span className="menu-bar-usage-range" role="group" aria-label={text.overview}>
-          {overviewRangeOrder.map((entry) => (
-            <Button unstyled key={entry} type="button" aria-pressed={range === entry} onClick={() => setRange(entry)}>
-              {text.overviewRanges[entry]}
-            </Button>
-          ))}
-        </span>
+        <UsageRangeControl range={range} language={language} onChange={setRange} />
       </header>
 
       <dl className="menu-bar-usage-metrics">

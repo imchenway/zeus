@@ -80,6 +80,25 @@ export interface CodexReasoningCatalogEntry {
   defaultEffort: string | null;
 }
 
+/** Codex 目录中最高档为 max 的 GPT 档位顺序。 */
+const codexEffortsThroughMax = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Codex 目录中最高档为 ultra 的 GPT 档位顺序。 */
+const codexEffortsThroughUltra = [...codexEffortsThroughMax, 'ultra'] as const;
+
+/** Codex 0.170.0 在 2026-11-18 公布的可见 GPT 档位，供第三方首次接入时离线匹配。 */
+export const bundledCodexReasoningCatalog: ReadonlyMap<string, CodexReasoningCatalogEntry> = new Map<string, CodexReasoningCatalogEntry>([
+  ['gpt-6.2-sol', { efforts: codexEffortsThroughUltra, defaultEffort: 'low' }],
+  ['gpt-6.2-astra', { efforts: codexEffortsThroughUltra, defaultEffort: 'low' }],
+  ['gpt-6.1-terra', { efforts: codexEffortsThroughUltra, defaultEffort: 'low' }],
+  ['gpt-6.1-sol', { efforts: codexEffortsThroughUltra, defaultEffort: 'low' }],
+  ['gpt-6-astra', { efforts: codexEffortsThroughUltra, defaultEffort: 'medium' }],
+  ['gpt-6-sol', { efforts: codexEffortsThroughUltra, defaultEffort: 'medium' }],
+  ['gpt-6-luna', { efforts: codexEffortsThroughMax, defaultEffort: 'medium' }],
+  ['gpt-5.6-sol', { efforts: codexEffortsThroughUltra, defaultEffort: 'low' }],
+  ['gpt-5.6-terra', { efforts: codexEffortsThroughUltra, defaultEffort: 'medium' }],
+  ['gpt-5.6-luna', { efforts: codexEffortsThroughMax, defaultEffort: 'medium' }],
+]);
+
 /**
  * 一个模型的推理档位清单。
  * 喂给 Pi 的档位集合（levels）、默认档、线上取值映射全部由它派生，不再单独维护，避免两边漂移。
@@ -623,7 +642,7 @@ const officialDeepSeekReasoningOptions = sameNameReasoningOptions(['low', 'high'
 /**
  * 判定一个模型该用哪份推理档位清单，命中即止：
  * 用户手工指定 → 官方端点档案 → 厂商档位表 → 内置目录 → 家族预设。
- * 第三方 GPT 从 Codex 目录匹配具体型号，查不到时由供应商决定默认值。
+ * 第三方 GPT 匹配 Codex 的具体型号，目录缺项时可沿用之前匹配到的清单。
  */
 function resolveReasoningProfile(model: ConfiguredModelDefinition, route: ReasoningRoute, codexCatalog?: ReadonlyMap<string, CodexReasoningCatalogEntry>): ConfiguredReasoningProfile {
   const stored = model.capability.reasoning;
@@ -673,6 +692,7 @@ function resolveReasoningProfile(model: ConfiguredModelDefinition, route: Reason
         return { state: 'supported', options, defaultId, thinkingFormat: route.thinkingFormat, basis: 'codex_catalog', checkedAt: observedAt };
       }
     }
+    if (route.protocolFamily !== 'anthropic_messages' && stored.basis === 'codex_catalog' && stored.options.length > 0) return { ...stored, state: 'supported' };
     return { state: 'unverified', options: [], defaultId: null, thinkingFormat: route.thinkingFormat, basis: 'unidentified', checkedAt: observedAt };
   }
   const catalogProfile = catalogReasoningProfile(automaticModelCatalogs[route.templateId][normalizedId], normalizedId, route, observedAt);

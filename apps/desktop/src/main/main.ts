@@ -1147,8 +1147,13 @@ function normalizeTaskGitDeliveryContext(value: unknown): TaskGitDeliveryCurrent
 function broadcastTaskGitDeliveryCurrentContext(context: TaskGitDeliveryCurrentContext): void {
   currentTaskGitDeliveryContext = context;
   for (const window of taskGitDeliveryWindows.values()) {
-    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:task-git-delivery:current-context', context);
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:task-git-delivery:current-context', taskGitDeliveryWindowContext(window));
   }
+}
+
+/** 预热窗口只有收到正式打开请求后，才可以读取并初始化本次任务的提交范围。 */
+function taskGitDeliveryWindowContext(window: BrowserWindow): TaskGitDeliveryCurrentContext & { opened: boolean } {
+  return { ...currentTaskGitDeliveryContext, opened: preloadedTaskGitDeliveryWindow?.window !== window };
 }
 
 /** 无记录时在主窗口所在屏幕内居中打开交付窗口。 */
@@ -1172,6 +1177,7 @@ function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): Electron.Rec
 /** 显示交付窗口，并在后台打开模式下也请求实际绘制回执。 */
 function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
+  window.webContents.send('zeus:task-git-delivery:current-context', taskGitDeliveryWindowContext(window));
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
@@ -1308,7 +1314,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
   window.once('ready-to-show', () => {
     // 预热不显示、不抢焦点；用户已经点击时仍完成原生展示流程。
     if (!preload || preloadedTaskGitDeliveryWindow?.window !== window) reveal(() => revealTaskGitDeliveryWindow(window));
-    window.webContents.send('zeus:task-git-delivery:current-context', currentTaskGitDeliveryContext);
+    else window.webContents.send('zeus:task-git-delivery:current-context', taskGitDeliveryWindowContext(window));
   });
   configureWindowSecurity(window, rendererUrl);
   try {
@@ -2289,7 +2295,7 @@ function setupIpc(): void {
   ipcMain.handle('zeus:task-git-delivery:get-current-context', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !taskGitDeliveryTargetByWindowId.has(requestingWindow.id) || event.senderFrame !== event.sender.mainFrame) throw new Error('当前会话上下文请求来自不受信任的代码交付窗口。');
-    return currentTaskGitDeliveryContext;
+    return taskGitDeliveryWindowContext(requestingWindow);
   });
   ipcMain.on('zeus:task-git-delivery:current-context-changed', (event, value: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

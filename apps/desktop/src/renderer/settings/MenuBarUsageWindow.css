@@ -255,10 +255,25 @@ body:has(.menu-bar-usage-root),
   --usage-provider-columns: minmax(0, 1fr) clamp(38px, 17vw, 62px) clamp(69px, 21vw, 76px) 14px;
   --usage-provider-gap: 7px;
   display: grid;
-  overflow: hidden;
   border: 0;
   border-radius: var(--usage-radius-card, 12px);
   background: var(--usage-panel);
+}
+
+/* All 周期与摘要卡等宽，复用共享分段控件的高度和选中样式。 */
+.menu-bar-usage-all-range {
+  margin-block-end: var(--usage-space-2, 8px);
+}
+
+.menu-bar-usage-all-range .menu-bar-usage-range {
+  display: flex;
+  padding-inline: 2px;
+}
+
+.menu-bar-usage-all-range .menu-bar-usage-range button {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  white-space: normal;
 }
 
 /* 总量和使用供应商数共用一块摘要，色彩随现有浮窗主题变化。 */
@@ -290,7 +305,7 @@ body:has(.menu-bar-usage-root),
   white-space: nowrap;
 }
 
-/* 列表只在表头说明统计口径，避免每行重复今日文案。 */
+/* 列表只在表头说明所选统计周期，避免每行重复文案。 */
 .menu-bar-usage-provider-heading {
   display: grid;
   grid-template-columns: var(--usage-provider-columns);
