@@ -2210,7 +2210,12 @@ function spawnNodeCodexAppServer(command: string, args: string[], options?: Code
  */
 /** 将官方 daemon 的生命周期命令与后续 JSON-RPC 套接字分开等待。 */
 /** 将远程接管的控制套接字适配为当前运行实例的 RPC 传输。 */
-function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions, retryProxyHandoff: boolean, ensureDaemon?: CreateCodexAppServerManagerOptions['ensureRemoteControlDaemon']): {
+function spawnRemoteControlCodexAppServer(
+  command: string,
+  options: CodexAppServerSpawnOptions,
+  retryProxyHandoff: boolean,
+  ensureDaemon?: CreateCodexAppServerManagerOptions['ensureRemoteControlDaemon'],
+): {
   process: CodexAppServerProcess;
   bootstrap: Promise<void>;
 } {
@@ -2366,7 +2371,10 @@ const codexDaemonProxyBindings = new Map<string, CodexDaemonProxyBinding>();
 function enqueueCodexDaemonCommand<Result>(home: string, run: (binding: CodexDaemonProxyBinding) => Promise<Result>): Promise<Result> {
   const binding = codexDaemonProxyBindings.get(home) ?? { pending: Promise.resolve() };
   const pending = binding.pending.then(() => run(binding));
-  binding.pending = pending.then(() => undefined, () => undefined);
+  binding.pending = pending.then(
+    () => undefined,
+    () => undefined,
+  );
   codexDaemonProxyBindings.set(home, binding);
   return pending;
 }
@@ -2377,12 +2385,7 @@ export async function waitForCodexDaemonCommands(home: string): Promise<void> {
 }
 
 /** 通过官方生命周期命令，让受管 daemon 有序退出后用当前 Zeus 回环代理启动。 */
-export async function ensureCodexRemoteControlDaemon(
-  env: NodeJS.ProcessEnv,
-  spawn: (args: string[]) => ChildProcessWithoutNullStreams,
-  signal?: AbortSignal,
-  retryProxyHandoff = false,
-): Promise<{ socketPath: string }> {
+export async function ensureCodexRemoteControlDaemon(env: NodeJS.ProcessEnv, spawn: (args: string[]) => ChildProcessWithoutNullStreams, signal?: AbortSignal, retryProxyHandoff = false): Promise<{ socketPath: string }> {
   /** 官方 remote-control start 将生命周期回执放在 daemon 字段中。 */
   const start = async () => {
     signal?.throwIfAborted();
@@ -2444,11 +2447,7 @@ export function stopManagedCodexAppServer(home: string, spawn: (args: string[]) 
 }
 
 /** 生命周期命令完成后才接受回执，超时或输出异常保留结果未知。 */
-function runCodexDaemonCommand(
-  spawn: (args: string[]) => ChildProcessWithoutNullStreams,
-  args: string[],
-  timeoutMs: number,
-): Promise<Record<string, unknown>> {
+function runCodexDaemonCommand(spawn: (args: string[]) => ChildProcessWithoutNullStreams, args: string[], timeoutMs: number): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     /** Windows 由 Main 原生启动，其他平台使用 Core 的受管进程。 */
     const child = spawn(args);

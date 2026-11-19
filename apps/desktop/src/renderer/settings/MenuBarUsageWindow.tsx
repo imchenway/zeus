@@ -1477,9 +1477,7 @@ function readStoredSnapshot(): UsageOverviewSnapshot | null {
             Array.isArray(provider.overviewRanges[range].costBreakdown) &&
             provider.overviewRanges[range].costBreakdown.every((entry) => typeof entry.longContext === 'boolean' && (entry.serviceTier === null || typeof entry.serviceTier === 'string')) &&
             Array.isArray(provider.overviewRanges[range].outputRateBreakdown) &&
-            provider.overviewRanges[range].outputRateBreakdown.every(
-              (entry) => typeof entry.model === 'string' && (entry.serviceTier === null || typeof entry.serviceTier === 'string') && typeof entry.outputTokensPerSecond === 'number',
-            ),
+            provider.overviewRanges[range].outputRateBreakdown.every((entry) => typeof entry.model === 'string' && (entry.serviceTier === null || typeof entry.serviceTier === 'string') && typeof entry.outputTokensPerSecond === 'number'),
         ),
     );
     return value && Array.isArray(value.providers) && compatible && typeof value.updatedAt === 'string' ? value : null;

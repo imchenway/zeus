@@ -5,11 +5,5 @@ import { ZeusSelect, type ZeusSelectProps } from '../ZeusSelect.js';
 export function TaskManagementStatusSelect<T extends string>(props: Omit<ZeusSelectProps<T>, 'style'>) {
   /** 未选择状态或旧状态已从配置移除时，触发器使用中性色。 */
   const color = props.options.find((option) => option.value === props.value)?.color ?? '#6b7280';
-  return (
-    <ZeusSelect
-      {...props}
-      className={['task-status-select', 'task-status-custom', props.className].filter(Boolean).join(' ')}
-      style={{ '--task-status-tone': color } as CSSProperties}
-    />
-  );
+  return <ZeusSelect {...props} className={['task-status-select', 'task-status-custom', props.className].filter(Boolean).join(' ')} style={{ '--task-status-tone': color } as CSSProperties} />;
 }
