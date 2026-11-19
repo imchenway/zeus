@@ -2457,6 +2457,14 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
   });
+  /** 源码变更标记只读取当前窗口授权的文件基线。 */
+  ipcMain.handle('zeus:project-source:git-baseline', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error('源码基线请求来自不受信框架。');
+    /** 使用源码服务解析项目或窗口内的工作树身份。 */
+    const service = requireProjectSourceWorkspace(event);
+    if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码基线读取请求无效。');
+    return service.readGitBaseline(input.projectId, input.relativePath);
+  });
   ipcMain.handle('zeus:project-source:prepare-preview', async (event, input: import('@zeus/shared').ProjectSourcePreviewRequest) => {
     requireProjectSourceWorkspace(event);
     /** 预览能力只提供给受信主框架，iframe 不能申请项目授权。 */

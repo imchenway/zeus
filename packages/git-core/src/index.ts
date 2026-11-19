@@ -3854,6 +3854,61 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
   return { isRepository: true, files: fileDiffs.map((file) => file.newPath || file.oldPath), diffText: '', fileDiffs };
 }
 
+/** 读取已授权源码路径在所属工作树 HEAD 中的普通文件字节；已暂存的新文件使用空基线。 */
+export async function readGitHeadFile(absolutePath: string, maximumBytes: number): Promise<Buffer | null> {
+  /** 从文件所在目录解析 HEAD，嵌套仓库和独立 worktree 使用自己的提交。 */
+  const cwd = dirname(absolutePath);
+  /** 只读本地对象，部分克隆缺少对象时不触发取回。 */
+  const env = { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' };
+  /** 元数据调用只读取一个文件，超时单位为毫秒。 */
+  const options = { cwd, env, timeout: 5_000, maxBuffer: 16 * 1024 };
+  /** Git 路径参数相对于 cwd，并按字面量解释名称中的通配符。 */
+  const path = basename(absolutePath);
+  /** 固定提交对象；首次提交前的索引仍可提供跟踪状态。 */
+  const head = await execFileAsync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], options)
+    .then(({ stdout }) => stdout.trim())
+    .catch((error: { code?: number; stderr?: string }) => {
+      if (error.code === 1 && !error.stderr) return '';
+      throw error;
+    });
+  /** 提交树记录保留文件模式，防止把符号链接目标当成旧正文。 */
+  const entry = head ? (await execFileAsync('git', ['--literal-pathspecs', 'ls-tree', '-z', head, '--', path], options)).stdout : '';
+  if (!entry) {
+    /** 只有索引中的普通文件有空基线，未跟踪文件和冲突索引不生成标记。 */
+    const { stdout } = await execFileAsync('git', ['--literal-pathspecs', 'ls-files', '--stage', '-z', '--', path], options);
+    return /^100(?:644|755) [a-f0-9]{40,64} 0\t/u.test(stdout) ? Buffer.alloc(0) : null;
+  }
+  /** 对象 ID 取自当前提交树，传给 Git 时不再包含文件名。 */
+  const blob = /^100(?:644|755) blob ([a-f0-9]{40,64})\t/u.exec(entry)?.[1];
+  if (!blob) return null;
+
+  return new Promise((resolveResult, reject) => {
+    /** 保留原始字节，源码服务可使用相同的 UTF-8 校验。 */
+    const child = spawnManagedProcess('git', ['cat-file', 'blob', blob], { cwd, env });
+    /** 历史正文与当前源码采用相同的字节上限。 */
+    const chunks: Buffer[] = [];
+    /** 已收到的正文字节数。 */
+    let size = 0;
+    /** 限制单次本地对象读取时间，单位为毫秒。 */
+    const timer = setTimeout(() => child.kill('SIGKILL'), options.timeout);
+    child.stdin.end();
+    child.stderr.resume();
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maximumBytes) child.kill('SIGKILL');
+      else chunks.push(chunk);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolveResult(code === 0 && size <= maximumBytes ? Buffer.concat(chunks, size) : null);
+    });
+  });
+}
+
 /** 读取文件当前版本的逐行归属；只读命令不修改工作区、索引或引用。 */
 export async function getFileBlame(cwd: string, filePath: string, ref?: string, expectedSha256?: string): Promise<GitFileBlame> {
   const projectRoot = canonicalFilesystemPath(cwd);
