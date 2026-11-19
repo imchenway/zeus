@@ -100,7 +100,7 @@ export function createCodexRuntimeGenerationManager(
     toolRuntimeCodexHome?: string;
     runtimeEnvironment?: Record<string, string>;
     /** 固定 Main 能力负责 Windows daemon，普通 Provider 进程仍受 Core Job 管理。 */
-    ensureRemoteControlDaemon?: () => Promise<{ socketPath: string }>;
+    ensureRemoteControlDaemon?: (retryProxyHandoff: boolean) => Promise<{ socketPath: string }>;
     providerVersionProbe?: (commandPath: string) => Promise<string | null>;
     /** 目录检查间隔；官方组件仍自行决定是否需要联网。 */
     modelCatalogRefreshIntervalMs?: number;
@@ -432,7 +432,8 @@ export function createCodexRuntimeGenerationManager(
     if (input.remoteControl === true) remoteControlEnabled = true;
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
-    const normalizedInput = { ...input, remoteControl: requestedRemoteControl };
+    /** 显式重连和配置激活可以重试代理接管，后台恢复沿用确认规则。 */
+    const normalizedInput = { ...input, remoteControl: requestedRemoteControl, retryProxyHandoff: forceFreshGeneration };
     const runtimeIdentity = {
       commandPath: input.commandPath,
       externalAgentHome: requestedHome,

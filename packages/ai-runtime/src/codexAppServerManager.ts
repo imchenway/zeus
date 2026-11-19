@@ -1,4 +1,4 @@
-import { assertContextCapacity } from '@zeus/shared';
+import { assertContextCapacity, redactUserFacingErrorDetails } from '@zeus/shared';
 import { spawnManagedProcess } from './managedProcess.js';
 import { codexInstallationCommand } from './codexInstallation.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -474,6 +474,8 @@ export interface CodexRuntimeActivationInput {
   remoteControl?: boolean;
   /** 登录后的新连接须等到本次远端目录更新完成，不能接受启动时的旧缓存。 */
   requireFreshModels?: boolean;
+  /** 显式激活可在核对守护进程后重新尝试未确认的代理接管。 */
+  retryProxyHandoff?: boolean;
 }
 
 /** 维护窗口内唯一允许执行的运行世代切换入口。 */
@@ -623,7 +625,7 @@ type PendingRequest = {
 
 interface CreateCodexAppServerManagerOptions {
   /** Windows 守护进程由 Main 的固定受管安装入口启动，不允许普通命令脱离 Job。 */
-  ensureRemoteControlDaemon?: () => Promise<{ socketPath: string }>;
+  ensureRemoteControlDaemon?: (retryProxyHandoff: boolean) => Promise<{ socketPath: string }>;
   /** 提交说明专用进程不读取目标能力和上下文预算，不影响普通会话能力发现。 */
   lightweightGeneration?: boolean;
   spawn?: CodexAppServerSpawn;
@@ -785,7 +787,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   }
 
   /** 使用与版本检测一致的程序环境；直接创建的管理器也支持终端安装目录。 */
-  async function start(command: string, requireFreshModels = false): Promise<CodexCapabilitiesSnapshot> {
+  async function start(command: string, requireFreshModels = false, retryProxyHandoff = false): Promise<CodexCapabilitiesSnapshot> {
     /** 上层已解析时直接复用；独立调用只在启动时读取终端目录。 */
     const searchPath = runtimeEnvironment.PATH ?? (await resolveCliSearchPath());
     if (preparingForShutdown || state.type === 'closed') throw managerError('ZEUS_CODEX_CLOSED', 'Codex app-server manager is closing.');
@@ -812,7 +814,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
     // `-c/--config` 是 Codex 根命令参数，必须位于 app-server 子命令之前。
-    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }, options.ensureRemoteControlDaemon) : spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
+    const remote = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }, retryProxyHandoff, options.ensureRemoteControlDaemon) : null;
+    const spawned = remote?.process ?? spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -860,6 +863,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     });
 
     const handshake = (async () => {
+      /** 守护进程交接有自己的时限，initialize 从接入新控制端点开始计时。 */
+      if (remote) await remote.bootstrap;
       const initializeResponse = await rpc(generationId, 'initialize', {
         clientInfo: { name: 'zeus', title: 'Zeus', version: '0.1.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
@@ -1100,9 +1105,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (request.generationId === generationId) serverRequests.delete(key);
     }
     if (preparingForShutdown || state.type === 'closed') return;
-    /** Main 启动结果未确认时保留本次失败，不通过后台重连再次启动 daemon。 */
+    /** 启动错误交还本次调用，后续显式连接重新取结果；生命周期命令不在这里自动重放。 */
     if ('code' in error && error.code === 'ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED') {
       state = { type: 'idle' };
+      readyPromise = null;
       return;
     }
     scheduleRestart(generationId);
@@ -1541,7 +1547,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (remoteControlTransport) remoteControlEnabled = true;
       if (state.type === 'ready') return Promise.resolve(state.capabilities);
       if (readyPromise) return readyPromise;
-      readyPromise = start(input.commandPath, input.requireFreshModels === true);
+      readyPromise = start(input.commandPath, input.requireFreshModels === true, input.retryProxyHandoff === true);
       void readyPromise.catch(() => undefined);
       return readyPromise;
     },
@@ -2202,10 +2208,17 @@ function spawnNodeCodexAppServer(command: string, args: string[], options?: Code
  * 连接官方 Remote Control 守护进程，并把 WebSocket 文本帧适配为现有 JSONL 传输。
  * 守护进程由官方 CLI 管理；Zeus 退出只断开自己的控制连接，不擅自停止用户已启用的远程宿主。
  */
-function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions, ensureDaemon?: () => Promise<{ socketPath: string }>): CodexAppServerProcess {
+/** 将官方 daemon 的生命周期命令与后续 JSON-RPC 套接字分开等待。 */
+/** 将远程接管的控制套接字适配为当前运行实例的 RPC 传输。 */
+function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions, retryProxyHandoff: boolean, ensureDaemon?: CreateCodexAppServerManagerOptions['ensureRemoteControlDaemon']): {
+  process: CodexAppServerProcess;
+  bootstrap: Promise<void>;
+} {
   const stdout = new EventEmitter() as CodexAppServerReadable;
   const stderr = new EventEmitter() as CodexAppServerReadable;
   const lifecycle = new EventEmitter();
+  /** 关闭时取消本地接入和后续启动，已启动的 CLI 仍需完成 PID 登记。 */
+  const bootstrapCancellation = new AbortController();
   const pendingMessages: string[] = [];
   let inputBuffer = '';
   let socket: WebSocket | null = null;
@@ -2268,6 +2281,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
     kill(signal = 'SIGTERM') {
       if (stopping || exited) return false;
       stopping = true;
+      bootstrapCancellation.abort(managerError('ZEUS_CODEX_CLOSED', 'Codex 守护进程接入已取消。'));
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.close(1000, 'Zeus transport closed');
         const forceClose = setTimeout(() => socket?.terminate(), 500);
@@ -2280,16 +2294,16 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
     },
   };
 
-  void (async () => {
+  const bootstrap = (async () => {
     /** daemon 的生命周期独立于 Core；启动结果未知时不自动重放。 */
     const daemon =
       process.platform === 'win32'
-        ? await (ensureDaemon ? ensureDaemon() : Promise.reject(new Error('Windows Codex 守护进程宿主不可用，尚未启动远程接管。'))).catch((error: unknown) => {
+        ? await (ensureDaemon ? ensureDaemon(retryProxyHandoff) : Promise.reject(new Error('Windows Codex 守护进程宿主不可用，尚未启动远程接管。'))).catch((error: unknown) => {
             throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', asError(error).message);
           })
-        : await startRemoteControlDaemon(command, options.env, (chunk) => (stderr as EventEmitter).emit('data', chunk));
+        : await ensureCodexRemoteControlDaemon(options.env, (args) => spawnManagedProcess(command, args, { env: options.env }), bootstrapCancellation.signal, retryProxyHandoff);
     if (!isAbsolute(daemon.socketPath)) throw new Error('Codex 守护进程返回了无效套接字路径。');
-    if (stopping || exited) return;
+    if (stopping || exited) throw managerError('ZEUS_CODEX_CLOSED', 'Codex 守护进程接入已取消。');
     socket = new WebSocket('ws://localhost/rpc', {
       createConnection: () => {
         if (process.platform !== 'win32') return createConnection({ path: daemon.socketPath });
@@ -2314,48 +2328,175 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
     });
     socket.on('error', (error) => fail(error instanceof Error ? error : new Error('Codex Remote Control WebSocket failed.')));
     socket.on('close', () => finishExit(stopping ? null : 1, stopping ? 'SIGTERM' : null));
-  })().catch((error: unknown) => fail(asError(error)));
-
-  return processAdapter;
+  })().catch((error: unknown) => {
+    const failure = asError(error);
+    fail(failure);
+    throw failure;
+  });
+  /** 取消后立即结束本地传输握手，已提交的启动命令由宿主退出流程等待。 */
+  const cancelled = new Promise<never>((_, reject) => {
+    bootstrapCancellation.signal.addEventListener('abort', () => reject(bootstrapCancellation.signal.reason), { once: true });
+  });
+  return { process: processAdapter, bootstrap: Promise.race([bootstrap, cancelled]) };
 }
 
-async function startRemoteControlDaemon(command: string, env: NodeJS.ProcessEnv, onStderr: (chunk: Buffer | string) => void): Promise<{ socketPath: string }> {
+/** 普通启动最多等待 30 秒，单位毫秒。 */
+const codexDaemonStartTimeoutMs = 30_000;
+/** 官方 restart 最长允许 300 秒等待旧进程，另留退出确认和启动时间，单位毫秒。 */
+const codexDaemonRestartTimeoutMs = 330_000;
+/** Windows Main 读取当前 Core 代理与执行两条生命周期命令的总预算，单位毫秒。 */
+export const codexRemoteControlBootstrapTimeoutMs = 20_000 + codexDaemonStartTimeoutMs + codexDaemonRestartTimeoutMs;
+/** 官方命令 stdout 和 stderr 的合计上限，单位字节。 */
+const codexDaemonOutputMaximumBytes = 128 * 1024;
+
+/** 同一受管目录的生命周期命令与最近确认的代理身份。 */
+interface CodexDaemonProxyBinding {
+  /** 使用新代理启动过的摘要，仅存于当前宿主内存。 */
+  confirmedProxy?: string;
+  /** 替换未确认的代理身份及原诊断，后续只接受已确认的新实例。 */
+  unconfirmedRestart?: { proxyIdentity: string; error: Error };
+  /** 本次生命周期命令完成后，下一次命令才能读取启动状态。 */
+  pending: Promise<void>;
+}
+
+/** 按明确的 CODEX_HOME 串行接管，不影响其他 Codex 安装。 */
+const codexDaemonProxyBindings = new Map<string, CodexDaemonProxyBinding>();
+
+/** 同一目录的启动、接管和停止共享一条命令链。 */
+function enqueueCodexDaemonCommand<Result>(home: string, run: (binding: CodexDaemonProxyBinding) => Promise<Result>): Promise<Result> {
+  const binding = codexDaemonProxyBindings.get(home) ?? { pending: Promise.resolve() };
+  const pending = binding.pending.then(() => run(binding));
+  binding.pending = pending.then(() => undefined, () => undefined);
+  codexDaemonProxyBindings.set(home, binding);
+  return pending;
+}
+
+/** Core 关闭传输后，等待已提交的官方命令完成进程登记。 */
+export async function waitForCodexDaemonCommands(home: string): Promise<void> {
+  await codexDaemonProxyBindings.get(home)?.pending;
+}
+
+/** 通过官方生命周期命令，让受管 daemon 有序退出后用当前 Zeus 回环代理启动。 */
+export async function ensureCodexRemoteControlDaemon(
+  env: NodeJS.ProcessEnv,
+  spawn: (args: string[]) => ChildProcessWithoutNullStreams,
+  signal?: AbortSignal,
+  retryProxyHandoff = false,
+): Promise<{ socketPath: string }> {
+  /** 官方 remote-control start 将生命周期回执放在 daemon 字段中。 */
+  const start = async () => {
+    signal?.throwIfAborted();
+    return asRecord((await runCodexDaemonCommand(spawn, ['remote-control', 'start', '--json'], codexDaemonStartTimeoutMs)).daemon);
+  };
+  /** 只管理 Zeus 创建的认证回环代理，独立 CLI 和其他代理沿用原有启动方式。 */
+  const proxy = URL.parse(env.https_proxy ?? env.HTTPS_PROXY ?? '');
+  const home = env.CODEX_HOME;
+  if (!home || !isAbsolute(home)) return codexDaemonSocket(await start());
+
+  return enqueueCodexDaemonCommand(home, async (binding) => {
+    const started = await start();
+    const socket = codexDaemonSocket(started);
+    if (!proxy || proxy.protocol !== 'http:' || proxy.hostname !== '127.0.0.1' || proxy.username !== 'zeus' || !proxy.password || !proxy.port) return socket;
+    /** 即使系统重用了端口，每次创建桥的随机凭据也能区分两次代理绑定。 */
+    const proxyIdentity = createHash('sha256').update(proxy.href).digest('hex');
+    if (binding.confirmedProxy === proxyIdentity) return socket;
+
+    /** alreadyRunning 只证明本地 RPC 可用，旧进程不会继承这次启动传入的代理环境。 */
+    if (started.status === 'alreadyRunning' && started.backend === 'pid') {
+      signal?.throwIfAborted();
+      if (!retryProxyHandoff && binding.unconfirmedRestart?.proxyIdentity === proxyIdentity) throw binding.unconfirmedRestart.error;
+      try {
+        const restarted = await runCodexDaemonCommand(spawn, ['app-server', 'daemon', 'restart'], codexDaemonRestartTimeoutMs);
+        if (restarted.status !== 'restarted') throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', '无法确认 Codex 已切换到当前网络代理。');
+        const replacement = codexDaemonSocket(restarted);
+        binding.confirmedProxy = proxyIdentity;
+        binding.unconfirmedRestart = undefined;
+        return replacement;
+      } catch (error) {
+        binding.unconfirmedRestart = { proxyIdentity, error: asError(error) };
+        throw error;
+      }
+    }
+    if (started.status !== 'started' && started.status !== 'bootstrapped') throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', '无法确认 Codex 守护进程已使用当前网络代理。');
+    binding.confirmedProxy = proxyIdentity;
+    binding.unconfirmedRestart = undefined;
+    return socket;
+  });
+}
+
+/** 套接字必须是官方进程报告的绝对路径。 */
+function codexDaemonSocket(result: Record<string, unknown>): { socketPath: string } {
+  const socketPath = result.socketPath;
+  if (typeof socketPath !== 'string' || !isAbsolute(socketPath)) throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', 'Codex 守护进程未返回有效的控制套接字。');
+  return { socketPath };
+}
+
+/** 官方 stop 核对进程归属，并等到受管 App Server 停止后返回。 */
+export function stopManagedCodexAppServer(home: string, spawn: (args: string[]) => ChildProcessWithoutNullStreams): Promise<void> {
+  return enqueueCodexDaemonCommand(home, async (binding) => {
+    const result = await runCodexDaemonCommand(spawn, ['app-server', 'daemon', 'stop'], codexDaemonRestartTimeoutMs);
+    if (result.status !== 'stopped' && result.status !== 'notRunning') {
+      throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', '无法确认旧 Codex 守护进程已经退出。');
+    }
+    binding.confirmedProxy = undefined;
+    binding.unconfirmedRestart = undefined;
+  });
+}
+
+/** 生命周期命令完成后才接受回执，超时或输出异常保留结果未知。 */
+function runCodexDaemonCommand(
+  spawn: (args: string[]) => ChildProcessWithoutNullStreams,
+  args: string[],
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const child = spawnManagedProcess(command, ['remote-control', 'start', '--json'], { env });
+    /** Windows 由 Main 原生启动，其他平台使用 Core 的受管进程。 */
+    const child = spawn(args);
     child.stdin.end();
-    let stdout = '';
-    let stderr = '';
-    const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_TIMEOUT', 'Codex Remote Control 守护进程启动超时。'));
-    }, 30_000);
+    /** 以原始字节计数，避免截断中文诊断或接受不完整的 JSON。 */
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let bytes = 0;
+    let failure: Error | undefined;
+    /** CLI 超限或超时时，结束命令并等待子进程退出，守护进程结果仍未知。 */
+    function abort(message: string): void {
+      if (failure) return;
+      failure = managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', message);
+      child.kill('SIGKILL');
+    }
+    /** stdout 和 stderr 共用上限，避免子进程输出挤占宿主内存。 */
+    function collect(target: Buffer[], chunk: Buffer | string): void {
+      if (failure) return;
+      const data = toBuffer(chunk);
+      bytes += data.length;
+      if (bytes > codexDaemonOutputMaximumBytes) {
+        abort('Codex 守护进程命令输出超限，结果未知。');
+        return;
+      }
+      target.push(data);
+    }
+    const timeout = setTimeout(() => abort('Codex 守护进程命令超时，结果未知。'), timeoutMs);
     timeout.unref();
-    child.stdout.on('data', (chunk: Buffer | string) => {
-      stdout += toBuffer(chunk).toString('utf8');
+    child.stdout.on('data', (chunk: Buffer | string) => collect(stdout, chunk));
+    child.stderr.on('data', (chunk: Buffer | string) => collect(stderr, chunk));
+    child.on('error', (error) => {
+      failure ??= managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', redactUserFacingErrorDetails(error.message));
     });
-    child.stderr.on('data', (chunk: Buffer | string) => {
-      stderr += toBuffer(chunk).toString('utf8');
-      onStderr(chunk);
-    });
-    child.once('error', (error) => {
+    child.once('close', (code, signal) => {
       clearTimeout(timeout);
-      reject(error);
-    });
-    child.once('exit', (code, signal) => {
-      clearTimeout(timeout);
+      if (failure) {
+        reject(failure);
+        return;
+      }
       if (code !== 0) {
-        const diagnostic = summarizeStderr(stderr);
-        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_FAILED', `官方 Codex Remote Control 守护进程启动失败（${String(code ?? signal ?? 'unknown')}）：${diagnostic || '没有返回诊断信息'}。请确认 Zeus 使用官方独立安装版 Codex CLI。`));
+        const diagnostic = redactUserFacingErrorDetails(Buffer.concat(stderr).toString('utf8'), { maxLength: 4000 });
+        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', `Codex 守护进程命令失败（${String(code ?? signal ?? 'unknown')}）：${diagnostic || '没有返回诊断信息'}。`));
         return;
       }
       try {
-        const result = parseLastJsonObject(stdout);
-        const daemon = asRecord(result.daemon);
-        const socketPath = typeof daemon.socketPath === 'string' ? daemon.socketPath : null;
-        if (!socketPath || !isAbsolute(socketPath)) throw new Error('启动结果没有返回绝对控制套接字路径。');
-        resolve({ socketPath });
-      } catch (error) {
-        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_START_INVALID', `无法读取 Codex Remote Control 启动结果：${asError(error).message}`));
+        resolve(parseLastJsonObject(Buffer.concat(stdout).toString('utf8')));
+      } catch {
+        reject(managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', 'Codex 守护进程命令回执无法确认。'));
       }
     });
   });
@@ -2369,7 +2510,13 @@ function rawWebSocketText(data: RawData): string | null {
   return null;
 }
 
+/** 官方回执可能是完整 JSON，也可能出现在 CLI 提示之后的最后一行。 */
 function parseLastJsonObject(value: string): Record<string, unknown> {
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    // 保留带启动提示的单行回执。
+  }
   const lines = value
     .split('\n')
     .map((line) => line.trim())

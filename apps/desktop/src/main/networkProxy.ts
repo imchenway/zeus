@@ -57,13 +57,18 @@ export function createDesktopProxyRequest(options: Electron.ClientRequestConstru
   return request;
 }
 
-/** Main 与 Chromium 都连接 Core 的固定入口，后续配置切换由 Core 统一执行。 */
-export async function applyDesktopNetworkProxy(value: unknown, browserSession: Electron.Session): Promise<void> {
+/** 校验可交给 Main、Chromium 和 Codex 的 Core 代理地址。 */
+export function parseDesktopNetworkProxyAddress(value: unknown): URL {
   if (typeof value !== 'string') throw new Error('网络运行地址无效。');
   /** 内部端点只能是带随机认证的本机 HTTP 代理，不能由配置替换成外部地址。 */
   const address = URL.parse(value);
   if (!address || address.protocol !== 'http:' || address.hostname !== '127.0.0.1' || !address.port || !address.username || !address.password || address.pathname !== '/' || address.search || address.hash)
     throw new Error('网络运行地址无效。');
+  return address;
+}
+
+/** Main 与浏览器共用已校验的 Core 网络出口。 */
+export async function applyDesktopNetworkProxy(address: URL, browserSession: Electron.Session): Promise<void> {
   runtimeProxyAddress = address;
   applyNetworkProxyEnvironment(networkProxyEnvironment({ mode: 'manual', url: address.href, bypass: '' }));
   /** 用户绕过列表由 Core 处理，客户端只固定绕过本机 API。 */

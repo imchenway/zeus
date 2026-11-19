@@ -2126,9 +2126,9 @@ export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRo
   const knownTurns = [...new Map(Object.values(turns).map((turn) => [turn.id, turn])).values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   /** 已由后续轮次接管的旧续接错误不进入虚拟列表，避免空行留下估算高度。 */
   const latestTurn = knownTurns.at(-1);
-  /** 网络失败不生成正文胶囊或虚拟占位，原始失败仍保留在轮次记录中。 */
+  /** 重连进度由活动轮次显示，终态网络失败与其他失败共用原轮次的提示。 */
   const failures: Extract<TranscriptViewportRow, { kind: 'turn_failure' }>[] = knownTurns
-    .filter((turn) => turn.status === 'failed' && turn.error && turn.error.category !== 'network' && (turn.error.code !== 'ZEUS_MODEL_RESPONSE_RETRYING' || turn === latestTurn))
+    .filter((turn) => turn.status === 'failed' && turn.error && (turn.error.code !== 'ZEUS_MODEL_RESPONSE_RETRYING' || turn === latestTurn))
     .map<Extract<TranscriptViewportRow, { kind: 'turn_failure' }>>((turn) => ({
       kind: 'turn_failure',
       key: `turn-failure:${turn.id}`,

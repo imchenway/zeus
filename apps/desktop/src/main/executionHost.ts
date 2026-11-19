@@ -4,6 +4,7 @@ import { appendFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { waitForCodexDaemonCommands } from '@zeus/ai-runtime';
 import { readOnlyValidationIdentity, type ExecutionHostStopActiveCommandRequest } from '@zeus/shared';
 import { createReconnectableBrowserAutomationProxy } from './browserAutomationBridge.js';
 import {
@@ -206,6 +207,7 @@ async function runExecutionHost(): Promise<void> {
       await closeExecutionHostResources({
         recordClosing: () => record('execution_host.closing', { reason }),
         closeRuntime: () => runtime.close(mode),
+        ...(process.platform === 'win32' ? {} : { waitForCodexDaemonCommands: () => waitForCodexDaemonCommands(bootstrap.codexHome ?? dataLayout.codexHome) }),
         closeControlServer: () => closeLocalHttpServer(controlServer),
         removeRendezvous: () => removeExecutionHostRendezvous(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
         removeStartupStatus: () => removeExecutionHostStartupStatus(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
