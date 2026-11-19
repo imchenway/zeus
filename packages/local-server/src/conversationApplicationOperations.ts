@@ -789,6 +789,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const submissions = conversationSubmissions.listByConversation(relation.conversationId);
         const last = submissions.at(-1);
         const active = conversationTurns.getLatestActiveByConversation(relation.conversationId);
+        /** 启动检查暂停仍可处理，列表与详情共用已保存的原因。 */
+        const startupBlock = !active && last?.status === 'paused' && last.pausedReason === 'preflight_failed' && !last.providerTurnId ? { error: toNativeSubmissionError(last.errorJson) } : undefined;
         /** 提交完成只说明已收口；任务是否被停止以对应轮次为准。 */
         const latestTurn = last ? conversationTurns.listByConversation(relation.conversationId).find((turn) => turn.clientSubmissionId === last.id) : undefined;
         const status: ConversationSubagentSummary['status'] = active
@@ -805,10 +807,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
                   ? 'interrupted'
                   : last.status === 'failed'
                     ? 'failed'
-                    : 'pending';
+                    : startupBlock
+                      ? 'waiting'
+                      : 'pending';
         return {
           id: relation.conversationId,
           operation: readAutomationAgentContext(relation.conversationId)?.capability,
+          ...(startupBlock ? { startupBlock } : {}),
           parentThreadId: relation.parentId,
           title: child?.title ?? '子代理',
           nickname: null,

@@ -1,4 +1,11 @@
-import { type ConversationRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+import { type ConversationRepository, type ZeusConversationRecord, type ZeusConversationSubmissionRecord } from '@zeus/storage';
+
+/** 委派提交的可见正文是本次子任务，模型输入中的继承历史仅提供背景。 */
+export function readDelegatedTaskText(conversation: Pick<ZeusConversationRecord, 'originKind'> | undefined, submission: ZeusConversationSubmissionRecord): string | undefined {
+  if (conversation?.originKind !== 'subagent' || !submission.idempotencyKey.startsWith('subagent:')) return undefined;
+  const { displayText } = parseRecord(submission.inputJson);
+  return typeof displayText === 'string' && displayText.trim() ? displayText : undefined;
+}
 
 /** Provider 回显前先用 Zeus 已耐久接纳的 submission 投影用户消息。 */
 export function projectLocallyAcceptedUserMessage(input: {

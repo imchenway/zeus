@@ -2183,7 +2183,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 关闭全宽面板时立即恢复正文的交互。 */
   const contextCoversConversation = contextOpen && (contextFullWidth || browserLayoutWidth <= 840);
   /** 支持顶栏挂载的工作面在退出期间继续显示标签及标题。 */
-  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question'].includes(contextWorkspace.kind);
+  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question', 'subagents'].includes(contextWorkspace.kind);
   /** 阅读回执使用持久项目身份，不使用面板导航身份。 */
   const contentProjectId = props.conversation?.projectId;
   /** 正文会话身份在提醒字段刷新时保持稳定。 */
@@ -3561,8 +3561,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                             language={props.language}
                             conversationId={props.state.conversationId ?? props.conversation.id}
                             activityRevision={`${subagentActivity.revision}|${subagentSnapshotRevision}`}
-                            hintCount={subagentThreadIds.length}
                             initialSnapshot={props.subagentListSnapshot}
+                            toolbarHost={contextToolbarHost}
+                            canSplit={browserLayoutWidth > 840}
                             fullWidth={contextFullWidth}
                             onFullWidthChange={setContextFullWidth}
                             onClose={closeContextWorkspace}

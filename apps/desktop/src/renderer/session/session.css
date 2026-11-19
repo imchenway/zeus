@@ -9057,7 +9057,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   gap: 2px;
 }
 
-.session-codex-parity-v1 .session-context-workspace-header nav > button {
+.session-codex-parity-v1 .session-context-workspace-header :is(nav > button, .session-subagent-back) {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -9072,11 +9072,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 5px;
 }
 
-.session-codex-parity-v1 .session-context-workspace-header nav > button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-codex-parity-v1 .session-context-workspace-header :is(nav > button, .session-subagent-back):hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
 }
 
-.session-codex-parity-v1 .session-context-workspace-header nav svg {
+.session-codex-parity-v1 .session-context-workspace-header :is(nav, .session-subagent-back) svg {
   block-size: 17px;
   inline-size: 17px;
 }
@@ -12146,7 +12146,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 /* Ultra 智能体使用右侧原生线程面板，协调事件不再挤占主会话正文。 */
-.session-workspace-root .session-subagent-workspace button:focus-visible {
+.session-workspace-root :is(.session-subagent-workspace, .session-subagent-header) button:focus-visible {
   box-shadow: 0 0 0 3px var(--session-focus);
   outline: 1px solid var(--session-focus-outline);
   outline-offset: 1px;
@@ -12164,62 +12164,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   overflow: hidden;
 }
 
-/* 标题与详情复用主会话两行布局，仅保留侧栏自身的交互层级。 */
-.session-workspace-root .session-subagent-header {
-  pointer-events: auto;
-  z-index: auto;
-}
-
-.session-workspace-root .session-subagent-title,
-.session-workspace-root .session-subagent-header nav {
-  align-items: center;
-  display: flex;
-  min-inline-size: 0;
-}
-
-.session-workspace-root .session-subagent-title {
-  gap: 9px;
-}
-
-.session-workspace-root .session-subagent-title > svg {
-  block-size: 18px;
+/* 工具按钮使用共享顶栏的尺寸，窄栏仅压缩标题。 */
+.session-workspace-root .session-subagent-header :is(nav > button, .session-subagent-back) {
   color: var(--session-text-muted);
-  flex: 0 0 auto;
-  inline-size: 18px;
-}
-
-.session-workspace-root .session-subagent-title > span {
-  display: grid;
-  min-inline-size: 0;
-}
-
-.session-workspace-root .session-subagent-header nav {
-  flex: 0 0 auto;
-  gap: 1px;
-}
-
-.session-workspace-root .session-subagent-header button {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
-  color: var(--session-text-muted);
-  cursor: pointer;
-  display: inline-grid;
-  min-block-size: 30px;
-  min-inline-size: 30px;
-  padding: 6px;
-  place-items: center;
-}
-
-.session-workspace-root .session-subagent-header button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--session-control-hover);
-  color: var(--session-text);
-}
-
-.session-workspace-root .session-subagent-header button svg {
-  block-size: 16px;
-  inline-size: 16px;
+  flex-shrink: 0;
 }
 
 .session-workspace-root .session-subagent-list,
@@ -12377,49 +12325,37 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   min-inline-size: 0;
 }
 
-.session-workspace-root .session-subagent-loading,
-.session-workspace-root .session-subagent-error,
-.session-workspace-root .session-subagent-empty {
+/* 尚未生成轮次的任务仍可滚动阅读，错误行保留在可见区域。 */
+.session-workspace-root .session-subagent-task {
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 12px 16px 0;
+}
+
+.session-workspace-root .session-subagent-status,
+.session-workspace-root .session-subagent-error {
   box-sizing: border-box;
   color: var(--session-text-muted);
   margin: 0;
 }
 
-.session-workspace-root .session-subagent-loading {
+.session-workspace-root .session-subagent-status {
   align-items: center;
   display: flex;
   font-size: 12px;
   gap: 8px;
-  padding: 18px 10px;
-}
-
-.session-workspace-root .session-subagent-empty {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  justify-content: center;
-  min-block-size: 220px;
-  padding: 28px;
-  text-align: center;
-}
-
-.session-workspace-root .session-subagent-empty > svg {
-  block-size: 28px;
-  inline-size: 28px;
-}
-
-.session-workspace-root .session-subagent-empty strong {
-  color: var(--session-text);
-  font-size: 13px;
+  padding: 12px 16px;
 }
 
 .session-workspace-root .session-subagent-error {
   align-items: start;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
-  gap: 7px;
-  padding: 20px;
+  font-size: 12px;
+  gap: 4px;
+  overflow-wrap: anywhere;
+  padding: 12px 16px;
 }
 
 .session-workspace-root .session-subagent-error strong {
@@ -12427,14 +12363,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font-size: 13px;
 }
 
-.session-workspace-root .session-subagent-error p {
-  font-size: 11px;
-  line-height: 17px;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-workspace-root .session-subagent-error button {
+.session-workspace-root .session-subagent-error > button {
   background: var(--session-control);
   border: 1px solid var(--session-line);
   border-radius: 7px;

@@ -34,6 +34,7 @@ import { CodexProviderCommandApplicationService } from './codexProviderCommandAp
 import type { CodexProviderThreadAuthorityApplication } from './codexProviderThreadAuthority.js';
 import { conversationToolResultDynamicTools } from './conversationPortableContext.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
+import { readDelegatedTaskText } from './localUserSubmissionProjection.js';
 import { isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
 import { persistThreadProviderSettings } from './codexThreadMetadataProjection.js';
 import type { ZeusToolBroker } from './zeusToolRegistry.js';
@@ -341,7 +342,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
               cwd: context.projectLocalPath,
               model: context.model,
               source: providerThreadId ? 'resume' : 'startup',
-              ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
+              ...(providerThreadId ? {} : { prompt: readDelegatedTaskText(conversation, submission) ?? submissionText(submission) }),
             }),
           )
         : undefined;

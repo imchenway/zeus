@@ -364,6 +364,8 @@ export class CodexSubagentQueryApplication {
 export interface ConversationSubagentSummary {
   /** 宿主确认的操作代理能力，用于展示对应停止入口。 */
   operation?: 'browser' | 'computer';
+  /** 派发前暂停的状态及其已记录错误。 */
+  startupBlock?: { error: { code: string; message: string } | null };
   id: string;
   parentThreadId: string | null;
   title: string;

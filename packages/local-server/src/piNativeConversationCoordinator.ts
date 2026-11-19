@@ -82,7 +82,7 @@ import { isDurableConversationEventTooLarge } from './conversationSyncProtocol.j
 import { boundLiveProcessPayload } from './livePayloadBudget.js';
 import type { ContextDispatchEnvelope, ProviderDispatchContextCompiler } from './contextDispatchService.js';
 import { PiProviderCommandApplicationService, type PiProviderCommandAttempt } from './piProviderCommandDelivery.js';
-import { projectLocallyAcceptedUserMessage } from './localUserSubmissionProjection.js';
+import { projectLocallyAcceptedUserMessage, readDelegatedTaskText } from './localUserSubmissionProjection.js';
 import type { ZeusConversationPluginRuntime, ZeusPluginConversationPreparation } from './zeusConversationPluginRuntime.js';
 import { emitPluginCompactionHook } from './codexConversationDispatchContext.js';
 import { createZeusPluginMcpApprovalEvidence, type ZeusPluginDynamicTool, type ZeusPluginMcpApprovalSource } from './zeusPluginMcpBroker.js';
@@ -711,7 +711,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             cwd: input.cwd,
             model: piModelIdentity(input.model),
             source: 'startup',
-            prompt: providerPrompt,
+            prompt: readDelegatedTaskText(existingConversation, submission) ?? providerPrompt,
           });
           return {
             preparation,
