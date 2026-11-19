@@ -953,7 +953,8 @@ function assertWorkItemTransition(from: TaskWorkItemStatus, to: TaskWorkItemStat
 function assertRunTransition(from: TaskWorkRunStatus, to: TaskWorkRunStatus): void {
   if (from === to) return;
   const allowed: Record<TaskWorkRunStatus, readonly TaskWorkRunStatus[]> = {
-    prepared: ['dispatching', 'cancelled'],
+    // 派发前的交接校验失败时，运行可以直接结束并记录原因。
+    prepared: ['dispatching', 'failed', 'cancelled'],
     dispatching: ['active', 'waiting_input', 'failed', 'outcome_unknown', 'cancelled'],
     active: ['waiting_input', 'runtime_completed', 'succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     waiting_input: ['active', 'failed', 'outcome_unknown', 'cancelled'],
