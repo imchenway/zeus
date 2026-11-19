@@ -4242,6 +4242,7 @@ async function initializeApplication(): Promise<void> {
       executable: process.execPath,
       args: process.argv.slice(1),
       dataRoot: layout.root,
+      databasePath: layout.database,
       helperPath: process.platform === 'win32' ? nativeDesktopHelperPath('zeus-windows-security.exe') : nativeUpdateProgressHelperPath(),
       crashDirectory,
       reports: reports(),
@@ -4274,7 +4275,9 @@ async function initializeApplication(): Promise<void> {
           gpuCompositing: app.getGPUFeatureStatus().gpu_compositing ?? 'unknown',
           ...(localServerRuntime ? { hostAppVersion: localServerRuntime.config.executionHostTransition.hostAppVersion, hostProtocolVersion: localServerRuntime.executionHost.protocolVersion } : {}),
         },
-        ...(localServerRuntime?.executionHost.mode === 'detached' && localServerRuntime.executionHost.instanceId ? { core: { pid: localServerRuntime.executionHost.pid, instanceId: localServerRuntime.executionHost.instanceId } } : {}),
+        ...(localServerRuntime?.executionHost.mode === 'detached' && localServerRuntime.executionHost.instanceId
+          ? { core: { pid: localServerRuntime.executionHost.pid, instanceId: localServerRuntime.executionHost.instanceId, lastControlHeartbeatAt: localServerRuntime.executionHost.lastControlHeartbeatAt } }
+          : {}),
       }),
     });
     ipcMain.on('zeus:renderer-health', (event, nonce: unknown) => desktopFaultMonitor?.heartbeat(event, nonce));

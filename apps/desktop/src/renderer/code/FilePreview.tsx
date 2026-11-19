@@ -774,7 +774,7 @@ function FilePreviewContent(props: {
         if (active && review) setLoadedReview({ id: props.item.id, review });
       })
       .catch((cause: unknown) => {
-        if (active) reportApplicationError(cause, { language: props.zh ? 'zh-CN' : 'en' });
+        if (active) reportApplicationError(cause, { language: props.zh ? 'zh-CN' : 'en', background: true });
       });
     return () => {
       active = false;

@@ -1285,6 +1285,30 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   z-index: 12000;
 }
 
+/* 网络通知保留主界面操作，窄窗口中说明可换行。 */
+.application-network-notice.macos-ai-app {
+  position: fixed;
+  inset-block-start: 52px;
+  inset-inline-end: 16px;
+  z-index: 121;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  box-sizing: border-box;
+  inline-size: max-content;
+  max-inline-size: min(460px, calc(100% - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 12%);
+}
+
 .macos-ai-app .application-error-dialog {
   box-sizing: border-box;
   display: grid;
@@ -1733,6 +1757,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 网络提示保留完整文案，窄窗口中继续显示原操作按钮。 */
+.macos-ai-app .application-error-inline[data-network-issue] .application-error-inline-summary {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* 长报错不再绘制整块红色底，危险操作与表单字段仍使用原来的警示状态。 */

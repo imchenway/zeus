@@ -1243,6 +1243,42 @@ function describeUncataloguedError(chain: readonly UserFacingErrorCause[], langu
   return language === 'zh-CN' ? '发生了未知错误。' : 'An unknown error occurred.';
 }
 
+/** 仅收录已有明确来源的连接错误码，普通 API 超时或身份不明的拒绝连接由原场景处理。 */
+const externalConnectionErrorCodes = new Set([
+  'ERR_PROXY_CONNECTION_FAILED',
+  'ERR_TUNNEL_CONNECTION_FAILED',
+  'ZEUS_RELEASE_MANIFEST_NETWORK',
+  'ZEUS_RELEASE_MANIFEST_TIMEOUT',
+  'ZEUS_MODEL_CATALOG_CONNECT_TIMEOUT',
+  'ZEUS_MODEL_CATALOG_CONNECTION_REFUSED',
+  'ZEUS_MODEL_CATALOG_CONNECTION_RESET',
+  'ZEUS_MODEL_CATALOG_HOST_NOT_FOUND',
+  'ZEUS_MODEL_CATALOG_NETWORK_FAILED',
+  'ZEUS_MODEL_CATALOG_TIMEOUT',
+  'httpConnectionFailed',
+  'responseStreamConnectionFailed',
+  'responseStreamDisconnected',
+]);
+
+/** 按错误链识别本机离线或已知连接失败；未经确认的连接失败仍使用原操作说明。 */
+export function userFacingNetworkIssue(error: unknown, offline = false): 'offline' | 'connection' | null {
+  /** Provider 历史和实时失败都已经投影出结构化分类。 */
+  let connectionFailed = Boolean(error && typeof error === 'object' && 'category' in error && error.category === 'network');
+  for (let cause: UserFacingErrorCause | undefined = userFacingErrorCause(error); cause; cause = cause.cause) {
+    const message = unwrapZeusErrorMessage(cause.message);
+    if (cause.code === 'ERR_INTERNET_DISCONNECTED' || cause.code === 'ENETDOWN' || /^net::ERR_INTERNET_DISCONNECTED(?:\s|:|$)/u.test(message)) return 'offline';
+    if (offline && (cause.code === 'ENETUNREACH' || (!cause.code && message === 'Failed to fetch'))) return 'offline';
+    const identity = cause.code ?? /^net::([A-Z_]+)(?:\s|:|$)/u.exec(message)?.[1] ?? message;
+    if (externalConnectionErrorCodes.has(identity)) connectionFailed = true;
+  }
+  return connectionFailed ? 'connection' : null;
+}
+
+/** 在已确认本机网络异常并影响操作时使用的提示。 */
+export function offlineNetworkNotice(language: UserFacingErrorLanguage): string {
+  return language === 'zh-CN' ? '您的网络环境太差了，村里没通网就一边儿歇着吧～' : 'You’re offline. Retry when you’re back online.';
+}
+
 /** 优先解释已知原因；页面可提供未知错误简述，避免把原始诊断当作首屏摘要。 */
 export function describeUserFacingError(error: unknown, language: UserFacingErrorLanguage = 'zh-CN', fallbackMessage?: string): UserFacingErrorDescription {
   const root = userFacingErrorCause(error);
