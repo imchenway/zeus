@@ -214,6 +214,16 @@ const modelHistoryAssistantPhaseSql = `CASE
   WHEN json_extract(${modelHistoryAssistantMetadataSql}, '$.delivery') = 'async' THEN 'prework'
   ELSE json_extract(${modelHistoryAssistantMetadataSql}, '$.phase')
 END`;
+/** 轮次最终正文的筛选条件，与普通会话的完成输出共用。 */
+const modelHistoryCompletionOutputSql = `role = 'assistant' AND tool_pair_id IS NULL
+  AND (
+    ${modelHistoryAssistantPhaseSql} IN ('final_answer', 'finalAnswer', 'plan')
+    OR (${modelHistoryAssistantPhaseSql} IS NULL AND ${modelHistoryReasoningSummarySql} = 0)
+  )
+  AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')`;
+/** 命名使用已保存的非空正文，过程消息和可读思考摘要不消耗完整回复机会。 */
+const modelHistoryCompletedReplySql = `${modelHistoryCompletionOutputSql}
+  AND ${modelHistoryReasoningSummarySql} = 0 AND length(trim(${modelHistoryVisibleContentSql}, char(9, 10, 13, 32, 12288))) > 0`;
 // 答复关联复用提交账本，历史分页与重启无需另建答复队列。
 const modelHistoryQuestionAnswerSql = `(SELECT json_extract(submission.input_json, '$.questionAnswer')
   FROM conversation_submissions AS submission
@@ -1115,6 +1125,33 @@ export class ConversationSnapshotV2Repository {
     /** 所有正文及内容句柄仍绑定调用方指定的同一会话。 */
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
     return this.latestTurnsByStatus(conversationId, ['completed', 'interrupted', 'failed'], 3).map((turn) => this.toTurnSummary(conversationId, turn));
+  }
+
+  /** 实时读取指定的成功回合；恢复时读取最近一次保存了用户消息和完整回复的成功回合。 */
+  readCompletedReply(conversationId: string, turnIdentity?: string): { turnId: string; question: string; answer: string } | null {
+    /** 既接收本地轮次身份，也接收 Provider 事件携带的轮次身份。 */
+    const turnId = turnIdentity ? this.resolveTurnId(conversationId, turnIdentity) : null;
+    if (turnIdentity && !turnId) return null;
+    /** 仅在恢复时从多轮历史中选择最近一次可用答复。 */
+    const turn = this.db.get<{ id: string }>(
+      `SELECT turn.id FROM conversation_turns AS turn
+       WHERE turn.conversation_id = ? AND turn.status = 'completed'
+         ${turnId ? 'AND turn.id = ?' : ''}
+         AND EXISTS (
+           SELECT 1 FROM conversation_model_history
+           WHERE conversation_id = turn.conversation_id AND turn_id = turn.id AND role = 'user'
+         )
+         AND EXISTS (
+           SELECT 1 FROM conversation_model_history
+           WHERE conversation_id = turn.conversation_id AND turn_id = turn.id AND ${modelHistoryCompletedReplySql}
+         )
+       ORDER BY turn.created_at DESC, turn.id DESC LIMIT 1`,
+      turnId ? [conversationId, turnId] : [conversationId],
+    );
+    if (!turn) return null;
+    /** 复用界面采用的正文投影，保留同一回合中的用户问题与最终回复。 */
+    const answer = this.completionOutput(conversationId, turn.id, true)?.content.preview;
+    return answer?.trim() ? { turnId: turn.id, question: this.openingUserMessage(conversationId, turn.id)?.content.preview ?? '', answer } : null;
   }
 
   /** 自动预测只把真实用户轮次视为新回复，内部压缩不替换完成锚点。 */
@@ -2352,7 +2389,8 @@ export class ConversationSnapshotV2Repository {
     return row ? (this.mapModelHistoryRows(conversationId, [row])[0] ?? null) : null;
   }
 
-  private completionOutput(conversationId: string, turnId: string): ConversationModelHistoryPageItem | null {
+  /** 读取轮次的最后一条完成输出，命名可限定为非空正文。 */
+  private completionOutput(conversationId: string, turnId: string, requireReply = false): ConversationModelHistoryPageItem | null {
     const row = this.db.get<ModelHistoryProjectionRow>(
       `SELECT id, sequence, turn_id, submission_id,
               (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
@@ -2370,15 +2408,10 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND turn_id = ? AND role = 'assistant' AND tool_pair_id IS NULL
-          AND (
-            ${modelHistoryAssistantPhaseSql} IN ('final_answer', 'finalAnswer', 'plan')
-            OR (${modelHistoryAssistantPhaseSql} IS NULL AND ${modelHistoryReasoningSummarySql} = 0)
-          )
-          AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
+        WHERE conversation_id = ? AND turn_id = ? AND ${requireReply ? modelHistoryCompletedReplySql : modelHistoryCompletionOutputSql}
         ORDER BY sequence DESC
         LIMIT 1`,
-      [previewCharacterLimit, conversationId, turnId],
+      [requireReply ? 3_000 : previewCharacterLimit, conversationId, turnId],
     );
     return row ? (this.mapModelHistoryRows(conversationId, [row])[0] ?? null) : null;
   }
