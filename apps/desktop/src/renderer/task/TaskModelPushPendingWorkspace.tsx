@@ -309,6 +309,8 @@ function createPendingChoice(task: TaskRecord, navigationId: string, model: stri
     taskPushCreating: true,
     projectId: task.projectId,
     taskId: task.id,
+    /** 推送回执到达前，使用用户本次提交的工作区模式。 */
+    workspaceMode: form.workspaceMode,
     title: task.title,
     summary: null,
     status: 'creating',

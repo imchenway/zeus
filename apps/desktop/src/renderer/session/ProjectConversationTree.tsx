@@ -75,6 +75,8 @@ const labels = {
     newThread: '新建会话',
     selectTask: '选择任务',
     ready: '会话就绪',
+    /** 工作区图标的提示与读屏文案。 */
+    workspaceMode: { worktree: '工作树', direct: '项目目录' },
     connecting: '正在连接',
     reconnecting: '正在重连',
     paused: '处理已暂停',
@@ -95,6 +97,8 @@ const labels = {
     newThread: 'New conversation',
     selectTask: 'Choose task',
     ready: 'Thread ready',
+    /** 工作区图标的提示与读屏文案。 */
+    workspaceMode: { worktree: 'Worktree', direct: 'Project folder' },
     connecting: 'Connecting',
     reconnecting: 'Reconnecting',
     paused: 'Processing paused',
@@ -198,8 +202,9 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
-      const worktree = conversation.workspaceMode === 'worktree' || Boolean(conversation.workspaceId || conversation.environmentId);
-      const workspaceLabel = worktree ? (props.language === 'zh-CN' ? '工作树' : 'Worktree') : props.language === 'zh-CN' ? '项目目录' : 'Project folder';
+      /** 工作区类型未取得时先保留图标位置，避免把工作树暂时显示为目录。 */
+      const workspaceMode = conversation.workspaceId || conversation.environmentId ? 'worktree' : conversation.workspaceMode;
+      const workspaceLabel = workspaceMode ? copy.workspaceMode[workspaceMode] : undefined;
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
       /** 只给尚未打开的持久会话安排后台读取。 */
@@ -243,12 +248,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
           >
             <span
               className="session-conversation-workspace-icon"
-              data-workspace-mode={worktree ? 'worktree' : 'direct'}
-              role="img"
+              data-workspace-mode={workspaceMode ?? undefined}
+              role={workspaceLabel ? 'img' : undefined}
               aria-label={workspaceLabel}
-              data-icon-tooltip={[workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ')}
+              data-icon-tooltip={workspaceLabel ? [workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ') : undefined}
             >
-              {worktree ? <GitBranch aria-hidden="true" /> : <Folder aria-hidden="true" />}
+              {workspaceMode === 'worktree' ? <GitBranch aria-hidden="true" /> : workspaceMode === 'direct' ? <Folder aria-hidden="true" /> : null}
             </span>
             <span className="session-conversation-title" data-icon-tooltip={displayTitle}>
               {displayTitle}
