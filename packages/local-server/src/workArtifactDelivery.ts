@@ -112,31 +112,46 @@ export class WorkArtifactDelivery {
 
   /** 将既有正式正文和显式附件冻结为同一交接清单，重复调用不会替换它。 */
   freeze(deliverable: TaskWorkDeliverableRecord): ReturnType<WorkArtifactRepository['freeze']> {
+    return this.prepareFreeze(deliverable)();
+  }
+
+  /** 先验证正文和附件的字节与归属，再写入冻结清单所需的数据库记录。 */
+  prepareFreeze(deliverable: Pick<TaskWorkDeliverableRecord, 'id' | 'taskId' | 'projectId' | 'workItemId' | 'runId' | 'artifactSha256' | 'contentSha256'>): () => ReturnType<WorkArtifactRepository['freeze']> {
     const existing = this.options.publications.get(deliverable.id);
-    if (existing) return existing;
+    if (existing) return () => existing;
     /** 正式关系必须与准确工作运行完全一致。 */
     const run = this.options.runs.getById(deliverable.runId);
     if (!run || run.taskId !== deliverable.taskId || run.projectId !== deliverable.projectId || run.workItemId !== deliverable.workItemId) throw scopeError('成果与工作运行归属不一致。');
     /** 既有正文由 ArtifactStore 再核对 owner 和摘要，不能信任外部引用字段。 */
     const body = this.options.artifacts.readAuthorizedSync({ sha256: deliverable.artifactSha256, owner: { kind: 'task_work_deliverable', id: deliverable.id }, maximumContentBytes: maximumArtifactBytes });
     if (body.ref.contentSha256 !== deliverable.contentSha256) throw scopeError('正式成果正文摘要不一致。');
-    const files: WorkArtifactFile[] = [{ path: '交接.md', ref: body.ref }];
-    for (const file of this.options.publications.submissions(run.id)) {
-      /** 先核对原运行 owner，再附加正式成果 owner，避免跨工作引用扩大授权。 */
+    const attachments = this.options.publications.submissions(run.id).map((file) => {
       this.options.artifacts.readAuthorizedSync({ sha256: file.ref.sha256, owner: { kind: 'task_work_submission', id: run.id }, maximumContentBytes: maximumArtifactBytes });
-      const ref = this.options.artifacts.attachOwner({
-        sha256: file.ref.sha256,
-        owner: { kind: 'task_work_deliverable', id: deliverable.id, generationId: taskWorkDeliverableArtifactGeneration, projectId: run.projectId, conversationId: run.conversationId },
-      });
-      this.options.artifacts.hold({ sha256: ref.sha256, owner: { kind: 'task_work_deliverable', id: deliverable.id }, ownerClass: 'active_task', reason: `task-work-deliverable:${run.taskId}` });
-      files.push({ path: safeRelativePath(file.path), ref });
-    }
-    return this.options.publications.freeze({ deliverableId: deliverable.id, taskId: deliverable.taskId, runId: deliverable.runId, files });
+      return { path: safeRelativePath(file.path), ref: file.ref };
+    });
+    /** 成果归属与留存记录可随验收状态一起提交。 */
+    return () => {
+      const files: WorkArtifactFile[] = [{ path: '交接.md', ref: body.ref }];
+      for (const file of attachments) {
+        const ref = this.options.artifacts.attachOwner({
+          sha256: file.ref.sha256,
+          owner: { kind: 'task_work_deliverable', id: deliverable.id, generationId: taskWorkDeliverableArtifactGeneration, projectId: run.projectId, conversationId: run.conversationId },
+        });
+        this.options.artifacts.hold({ sha256: ref.sha256, owner: { kind: 'task_work_deliverable', id: deliverable.id }, ownerClass: 'active_task', reason: `task-work-deliverable:${run.taskId}` });
+        files.push({ path: file.path, ref });
+      }
+      return this.options.publications.freeze({ deliverableId: deliverable.id, taskId: deliverable.taskId, runId: deliverable.runId, files });
+    };
   }
 
   /** Core 导出失败只保存错误，冻结成果仍可以受控读取及重建。 */
   publish(deliverable: TaskWorkDeliverableRecord): { root: string | null; error: string | null } {
     this.freeze(deliverable);
+    return this.exportDocs(deliverable);
+  }
+
+  /** 根据已冻结清单导出阅读目录，保留失败原因供调度循环重试。 */
+  exportDocs(deliverable: TaskWorkDeliverableRecord): { root: string | null; error: string | null } {
     try {
       const root = this.rebuildTask(deliverable.taskId);
       return { root, error: null };

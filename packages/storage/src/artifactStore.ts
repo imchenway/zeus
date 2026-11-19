@@ -507,12 +507,13 @@ export class ArtifactStore {
     }
   }
 
+  /** 记录对象归属；在业务保存点内随调用方提交，独立调用时立即提交。 */
   attachOwner(input: { sha256: string; owner: ArtifactOwnerIdentity; createdAt?: string }): ArtifactRef {
     const owner = normalizeOwner(input.owner);
     const object = this.requireObject(normalizeSha256(input.sha256));
     if (object.state !== 'promoted') throw artifactError('ZEUS_ARTIFACT_TRANSITIONING', `Artifact 当前不可附加 owner：${object.state}`);
     const createdAt = normalizeTimestamp(input.createdAt ?? this.now());
-    this.db.durableTransactionSync(() => this.insertOwner(object.sha256, owner, createdAt));
+    this.db.commitCriticalFactSync(() => this.insertOwner(object.sha256, owner, createdAt));
     return mapArtifactRef(object, owner, createdAt);
   }
 
@@ -905,6 +906,7 @@ export class ArtifactStore {
     }
   }
 
+  /** 为已授权的对象记录留存期限，并与同一业务事务内的归属记录一并提交。 */
   hold(input: { sha256: string; owner: Pick<ArtifactOwnerIdentity, 'kind' | 'id'>; ownerClass: ArtifactRetentionOwnerClass; reason: string; retainUntil?: string | null; createdAt?: string }): {
     id: string;
     retainUntil: string | null;
@@ -920,7 +922,7 @@ export class ArtifactStore {
     const retainUntil = explicitRetainUntil && explicitRetainUntil > policyRetainUntil ? explicitRetainUntil : policyRetainUntil;
     const reason = normalizeReason(input.reason);
     const id = `artifact_hold_${createHash('sha256').update(`${sha}\0${owner.owner_kind}\0${owner.owner_id}\0${ownerClass}\0${reason}`).digest('hex').slice(0, 32)}`;
-    this.db.durableTransactionSync(() => {
+    this.db.commitCriticalFactSync(() => {
       this.db.execute(
         `INSERT INTO artifact_retention_holds
          (id, artifact_sha256, owner_kind, owner_id, owner_class, reason, state, retain_until, created_at, released_at)
