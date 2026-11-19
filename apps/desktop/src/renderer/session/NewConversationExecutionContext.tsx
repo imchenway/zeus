@@ -383,7 +383,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                 branchList ? undefined : references?.error ? (
                   <div className="session-new-branch-menu-status">
                     <span role="alert">
-                      <VisibleApplicationError error={references.error} language={props.language} />
+                      <VisibleApplicationError error={references.error} language={zh ? 'zh-CN' : 'en'} />
                     </span>
                     <Button variant="secondary" size="compact" onClick={() => readBranchList().catch(() => undefined)}>
                       {zh ? '重试' : 'Retry'}
