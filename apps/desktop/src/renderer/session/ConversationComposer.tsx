@@ -188,7 +188,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const inputWritable = writable && props.inputBlocked !== true;
-  const hasDraft = editorValue.trim().length > 0 || props.state.attachments.length > 0 || Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
+  /** 文件、图片和长文本附件可以单独发送。 */
+  const hasAttachments = props.state.attachments.length > 0;
+  /** 网页提交和批注为本轮提供明确上下文。 */
+  const hasContextDraft = Boolean(props.state.browserSubmission) || props.state.contextDraft.responseAnnotations.length > 0 || props.state.contextDraft.codeComments.length > 0;
+  /** 正文、附件或上下文均可组成待发送草稿。 */
+  const hasDraft = editorValue.trim().length > 0 || hasAttachments || hasContextDraft;
   const goalInputActive = goalInputOpen && !props.goal;
   const goalCount = [...goalDraft.trim()].length;
   const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
@@ -233,19 +238,19 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
   }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier, settingsLoading]);
 
-  /** 自动预测可以在输入期间生成，空输入且无待处理交互时才展示。 */
+  /** 正文为空且没有网页提交或批注时，普通附件可以与自动建议共存。 */
   const suggestion = useInputSuggestion({
     state: props.state,
     conversationModelRef: effectiveModel,
     draft: editorValue,
     // 待处理问题由后台读取权威状态；这里仅报告即时输入限制，避免落后的会话投影漏掉完成事件。
-    automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
+    automaticEligible: inputWritable && !hasContextDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     eligible: inputWritable && !busy && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
   });
-  /** 只有空输入中的可见灰字可直接发送；已有正文优先，附件和评论仍随消息提交。 */
-  const sendableSuggestion = editorValue.length === 0 ? suggestion.text : null;
+  /** 有附件时，发送按钮使用当前草稿，灰字由用户先采纳。 */
+  const sendableSuggestion = editorValue.length === 0 && !hasAttachments ? suggestion.text : null;
   /** 按钮启用与真正发送共用当前可提交的内容，生成中和空结果不计入。 */
   const hasSendableContent = hasDraft || Boolean(sendableSuggestion?.trim());
   /** 主会话运行中也允许把已生成的建议加入原有发送队列。 */
