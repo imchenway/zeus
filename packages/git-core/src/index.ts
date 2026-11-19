@@ -477,6 +477,24 @@ export interface ProjectGitRepositorySnapshot {
   unstagedDiff: GitDiffSummary;
 }
 
+/** 分支菜单只需要 HEAD 和引用；清单字段缺失表示尚未读取。 */
+export type ProjectGitBranchSnapshot = Pick<ProjectGitRepositorySnapshot, 'branch' | 'detached' | 'headSha' | 'submodules'> &
+  Partial<Pick<ProjectGitRepositorySnapshot, 'localBranches' | 'remoteBranches' | 'remotes' | 'checkedOutBranches' | 'headTags' | 'tags' | 'recentRefs'>>;
+
+/** 分支选择沿用项目工作台的仓库身份和相对位置。 */
+export interface ProjectGitBranchRepository {
+  id: string;
+  name: string;
+  relativePath: string;
+  snapshot: ProjectGitBranchSnapshot;
+}
+
+/** 当前分支与展开后的清单使用同一份仓库范围。 */
+export interface ProjectGitBranchSelection {
+  projectId: string;
+  repositories: ProjectGitBranchRepository[];
+}
+
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
   /** 回滚所选文件的暂存与未暂存修改；未跟踪文件不参与。 */
@@ -642,28 +660,46 @@ export interface GitPatchExport {
   createdAt: string;
 }
 
+/** HEAD 同时保留分支名和提交身份，允许首次提交前的本地分支。 */
+async function readGitRepositoryHead(cwd: string): Promise<Pick<GitRepositoryContext, 'branch' | 'detached' | 'headSha'>> {
+  const [branch, headSha] = await Promise.all([requireGitStdout(cwd, ['branch', '--show-current']), readGitStdout(cwd, ['rev-parse', '--verify', 'HEAD'])]);
+  return { branch: branch || 'detached', detached: !branch, headSha };
+}
+
+/** 按命名空间提取分支名。菜单传入严格读取，以便报告并重试失败。 */
+async function readGitRepositoryReferences(cwd: string, readReferences = readGitStdout): Promise<Pick<GitRepositoryContext, 'localBranches' | 'remoteBranches' | 'remotes' | 'worktrees'>> {
+  const [local, remote, remotes, worktrees] = await Promise.all([
+    readReferences(cwd, ['for-each-ref', '--format=%(refname)', 'refs/heads']),
+    readReferences(cwd, ['for-each-ref', '--format=%(refname)', 'refs/remotes']),
+    readReferences(cwd, ['remote']),
+    requireGitStdout(cwd, ['worktree', 'list', '--porcelain']),
+  ]);
+  return {
+    localBranches: splitLines(local).map((ref) => ref.slice('refs/heads/'.length)),
+    remoteBranches: splitLines(remote).filter((ref) => !ref.endsWith('/HEAD')).map((ref) => ref.slice('refs/remotes/'.length)),
+    remotes: splitLines(remotes),
+    worktrees: parseGitWorktreeList(worktrees),
+  };
+}
+
 /** 读取仓库、分支和 worktree 身份；该快照不修改 refs 或工作区。 */
 export async function getGitRepositoryContext(cwd: string): Promise<GitRepositoryContext> {
   try {
     const topLevel = await requireGitStdout(cwd, ['rev-parse', '--show-toplevel']);
-    const [rawBranch, headSha, rawLocalBranches, rawRemoteBranches, rawRemotes, rawWorktrees] = await Promise.all([
-      requireGitStdout(topLevel, ['branch', '--show-current']),
-      readGitStdout(topLevel, ['rev-parse', '--verify', 'HEAD']),
-      readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
-      readGitStdout(topLevel, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
-      readGitStdout(topLevel, ['remote']),
-      requireGitStdout(topLevel, ['worktree', 'list', '--porcelain']),
-    ]);
-    const detached = rawBranch.length === 0;
-    const branch = rawBranch || 'detached';
-    const localBranches = splitLines(rawLocalBranches);
-    const remoteBranches = splitLines(rawRemoteBranches).filter((ref) => !ref.endsWith('/HEAD'));
-    const remotes = splitLines(rawRemotes);
-    const worktrees = parseGitWorktreeList(rawWorktrees);
-    return { isRepository: true, topLevel, branch, detached, headSha, localBranches, remoteBranches, remotes, worktrees };
+    const [head, references] = await Promise.all([readGitRepositoryHead(topLevel), readGitRepositoryReferences(topLevel)]);
+    return { isRepository: true, topLevel, ...head, ...references };
   } catch {
     return { isRepository: false, topLevel: '', branch: '', detached: false, headSha: '', localBranches: [], remoteBranches: [], remotes: [], worktrees: [] };
   }
+}
+
+/** 新对话首读 HEAD；只有展开菜单才读取本机分支引用和检出约束。 */
+export async function getProjectGitBranchSnapshot(cwd: string, includeReferences: boolean): Promise<ProjectGitBranchSnapshot> {
+  const topLevel = await requireGitStdout(cwd, ['rev-parse', '--show-toplevel']);
+  if (canonicalFilesystemPath(topLevel) !== canonicalFilesystemPath(cwd)) throw new Error(`无法读取 Git 仓库 ${cwd}，请检查目录权限和仓库状态。`);
+  if (!includeReferences) return readGitRepositoryHead(topLevel);
+  const [head, { worktrees, ...references }, submodules] = await Promise.all([readGitRepositoryHead(topLevel), readGitRepositoryReferences(topLevel, requireGitStdout), readRegisteredSubmodules(topLevel)]);
+  return { ...head, ...references, submodules, checkedOutBranches: worktrees.flatMap((worktree) => (worktree.branch ? [worktree.branch] : [])) };
 }
 
 /** 解析全部 worktree 共用的 Git 目录；真实路径统一系统路径别名，读取失败不生成虚假身份。 */
@@ -672,11 +708,11 @@ export async function getGitCommonDirectory(cwd: string): Promise<string> {
 }
 
 /**
- * 在项目容器内完整发现独立 Git 仓库；同仓库优先保留较浅路径，只返回候选，不替用户登记仓库。
+ * 在项目容器内发现独立 Git 仓库目录；同仓库优先保留较浅路径，只返回候选，不替用户登记仓库。
  * 扫描跳过依赖、构建产物和 Zeus 自己的 worktree 根，避免把缓存仓库误纳入项目。
  * 目录或仓库不可读时抛出错误，禁止把不完整扫描伪装成空清单；退出可中止遍历。
  */
-export async function discoverGitRepositories(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<DiscoveredGitRepository[]> {
+export async function discoverGitRepositoryRoots(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<Array<Pick<DiscoveredGitRepository, 'name' | 'relativePath' | 'localPath'>>> {
   /** 拒绝把文件系统根目录作为项目递归发现范围。 */
   const containerRoot = canonicalFilesystemPath(containerPath);
   if (dirname(containerRoot) === containerRoot) throw new Error('请选择实际项目目录，不能在文件系统根目录发现仓库。');
@@ -736,25 +772,34 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
     commonDirectories.add(commonDirectory);
     return true;
   });
-  const discovered = await mapWithConcurrency(independentCandidates, 4, async ({ localPath }) => {
-    signal?.throwIfAborted();
-    const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
-    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限和仓库状态。`);
+  return independentCandidates.flatMap(({ localPath }) => {
     const repositoryRelativePath = relative(containerRoot, localPath);
-    if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
-    return {
+    if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return [];
+    return [{
       name: basename(localPath),
       relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
       localPath,
+    }];
+  }).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+/** 完整仓库发现为需要工作区状态的调用者补齐分支和未提交更改。 */
+export async function discoverGitRepositories(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<DiscoveredGitRepository[]> {
+  return mapWithConcurrency(await discoverGitRepositoryRoots(containerPath, maxDepth, signal), 4, async (repository) => {
+    signal?.throwIfAborted();
+    const { localPath } = repository;
+    const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
+    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限和仓库状态。`);
+    return {
+      ...repository,
       branch: context.branch,
       headSha: context.headSha,
       clean,
       localBranches: context.localBranches,
       remotes: context.remotes,
       context,
-    } satisfies DiscoveredGitRepository;
+    };
   });
-  return discovered.filter((candidate): candidate is DiscoveredGitRepository => candidate !== null).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 async function mapWithConcurrency<Input, Output>(items: Input[], concurrency: number, operation: (item: Input, index: number) => Promise<Output>): Promise<Output[]> {

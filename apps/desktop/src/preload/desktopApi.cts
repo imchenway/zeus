@@ -302,6 +302,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     loadProjectGitDiffSnapshot: () => transport.invoke('zeus:project-git-diff:load-snapshot'),
     /** 读取指定项目的 Git 工作台数据。 */
     loadProjectGitWorkbench: (projectId: string, includePatches = true) => transport.invoke('zeus:project-git:load-workbench', projectId, includePatches),
+    /** 读取本机当前分支，展开菜单时再带上候选引用。 */
+    loadProjectGitBranches: (projectId: string, includeReferences: boolean) => transport.invoke('zeus:project-git:load-branches', projectId, includeReferences),
     /** 读取项目 Git 历史记录。 */
     loadProjectGitHistory: (input: unknown) => transport.invoke('zeus:project-git:load-history', input),
     /** 分页读取桌面工作台已落盘的操作记录，不触发 Git 执行。 */

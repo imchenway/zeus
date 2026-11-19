@@ -180,6 +180,8 @@ declare global {
       /** 按调用窗口身份读取展示快照，不接受其他窗口或本机路径。 */
       loadProjectGitDiffSnapshot: () => Promise<{ filePath: string; diff: import('./apiClient.js').GitDiffSummary }>;
       loadProjectGitWorkbench: (projectId: string, includePatches?: boolean) => Promise<import('./apiClient.js').ProjectGitWorkbenchSnapshot>;
+      /** 读取项目当前分支或本机候选引用。 */
+      loadProjectGitBranches: (projectId: string, includeReferences: boolean) => Promise<import('@zeus/git-core').ProjectGitBranchSelection>;
       /** 只读获取当前项目的耐久 Git 操作历史页。 */
       loadProjectGitOperations: (input: { projectId: string; cursor?: string }) => Promise<import('./apiClient.js').ProjectGitOperationPage>;
       loadProjectGitHistory: (input: { projectId: string; repositoryId: string; offset: number; ref?: string }) => Promise<{ commits: import('./apiClient.js').ProjectGitRepositorySnapshot['recentCommits']; hasMore: boolean }>;

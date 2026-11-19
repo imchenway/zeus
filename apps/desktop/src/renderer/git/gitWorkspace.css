@@ -321,6 +321,19 @@
   border-radius: 9px;
   box-shadow: 0 8px 26px rgb(0 0 0 / 16%);
 }
+/* 窄工具栏先收缩分支名，保留本地或远程类型。 */
+.git-branch-kind {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--zeus-product-muted) 13%, transparent);
+  color: var(--zeus-product-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.git-branch-kind[data-kind='remote'] {
+  background: var(--zeus-source-list-selected);
+}
 .macos-ai-app .project-git-branch-context-menu {
   width: max-content;
   min-width: min(260px, calc(100vw - 16px));

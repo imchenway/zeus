@@ -77,6 +77,8 @@ export interface GitApiClient {
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
   loadProjectGitWorkbench: (projectId: string, includePatches?: boolean) => Promise<ProjectGitWorkbenchSnapshot>;
+  /** 普通项目的新对话分支选择使用桌面查询。 */
+  loadProjectGitBranches?: ProjectGitWorkbenchBridge['loadBranches'];
   loadConversationGitHistory: (projectId: string, repositoryId: string, offset: number, ref?: string) => Promise<{ commits: NonNullable<GitStatusSummary['recentCommits']>; hasMore: boolean }>;
   loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
   /** 按来源分支和目标远端读取本地推送预览。 */
@@ -103,6 +105,8 @@ export interface GitApiClient {
 }
 
 export function createGitApiClient(transport: LocalApiTransport, bridge: () => ProjectGitWorkbenchBridge | undefined, conversationId?: string): GitApiClient {
+  /** 会话工作树有独立仓库身份，不借用普通项目的来源读取。 */
+  const loadProjectGitBranches = conversationId ? undefined : bridge()?.loadBranches;
   const scopedRepositoryId = (repositoryId: string): string => {
     if (conversationId && repositoryId !== `conversation:${conversationId}` && !repositoryId.startsWith(`conversation:${conversationId}:`)) throw new Error('会话工作树身份不匹配，请重新打开代码交付。');
     return encodeURIComponent(repositoryId);
@@ -118,6 +122,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     return transport.request<ExecutedGitOperationResult>(`${projectGitPath(projectId)}/${operation}`, jsonRequest('POST', body));
   };
   return {
+    ...(loadProjectGitBranches ? { loadProjectGitBranches } : {}),
     loadGitEnvironmentStatus: (projectId, scope, signal) => {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(scope)) if (value) query.set(key, value);
