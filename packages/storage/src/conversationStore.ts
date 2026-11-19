@@ -55,6 +55,8 @@ export interface ZeusConversationRecord {
   title: string;
   /** 标题初始、待自动命名、自动完成或用户命名的持久状态。 */
   titleSource: ConversationTitleSource;
+  /** 已使用的最新命名机会，空值表示未记录。 */
+  titleGenerationAttempt: ConversationTitleGenerationAttempt | null;
   summary: string | null;
   status: string;
   stage: ConversationStage;
@@ -98,6 +100,8 @@ export interface ZeusConversationRecord {
 export type ConversationTransportKind = 'legacy_cli' | 'codex_native';
 /** 初始标题只有普通新会话接纳后才进入待命名状态。 */
 export type ConversationTitleSource = 'initial' | 'pending' | 'automatic' | 'manual';
+/** 摘要可提前命名一次，完整回复可使用最后一次机会。 */
+export type ConversationTitleGenerationAttempt = 'summary' | 'reply';
 export type ConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 export type ConversationAgentTransport = 'app_server' | 'rpc' | 'sdk';
 export type ConversationProviderState = 'unbound' | 'binding' | 'ready' | 'active' | 'waiting' | 'paused' | 'archived' | 'closed' | 'failed';
@@ -221,6 +225,8 @@ export interface CreateConversationInput {
   environmentId?: string;
   sessionId?: string;
   title: string;
+  /** 普通项目会话在创建时保存临时标题和待命名状态。 */
+  automaticTitle?: boolean;
   summary?: string;
   status?: string;
   transportKind?: ConversationTransportKind;
@@ -615,7 +621,7 @@ export class ProviderEventReceiptRepository {
 
 /** 设置仓储保存本机偏好与通知策略，不存储 token、密码等敏感明文。 */
 
-const selectConversationFields = `id, project_id, task_id, session_id, title, title_source, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
+const selectConversationFields = `id, project_id, task_id, session_id, title, title_source, title_generation_attempt, summary, status, stage, stage_updated_at, created_at, updated_at, archived,
   transport_kind, provider_id, provider_thread_id, provider_thread_path, provider_model, provider_state,
   provider_protocol_version, provider_binary_version, legacy_source_conversation_id, provider_settings_json, provider_token_usage_json, permission_mode, collaboration_mode, next_turn_settings_json, completion_unread, attention_kind, attention_revision, attention_turn_id, attention_updated_at, workspace_id, environment_id,
   agent_kind, agent_transport, model_source_id, model_id, native_session_id, native_session_path, capability_snapshot_id,
@@ -844,7 +850,8 @@ export class ConversationRepository {
       environmentId: input.environmentId ?? null,
       sessionId: input.sessionId ?? null,
       title: input.title,
-      titleSource: 'initial',
+      titleSource: input.automaticTitle ? 'pending' : 'initial',
+      titleGenerationAttempt: null,
       summary: input.summary ?? null,
       status: input.status ?? 'open',
       stage: 'created',
@@ -1653,26 +1660,50 @@ export class ConversationRepository {
     return restored;
   }
 
-  /** 按主键向后恢复自动创建任务的未完成命名，每页最多 25 条，不重复扫描页首。 */
-  listPendingAutomaticTitleIds(afterId: string): string[] {
+  /** 每页恢复最多 25 个已有成功轮次的待命名会话或旧版任务占位。 */
+  listPendingAutomaticTitleIds(afterId: string, legacyPlaceholder: string): string[] {
     return this.db
       .select<{ id: string }>(
         `SELECT conversation.id FROM conversations AS conversation
-       JOIN tasks AS task ON task.id = conversation.task_id AND task.project_id = conversation.project_id
-       WHERE conversation.id > ? AND conversation.title_source IN ('initial', 'pending')
+       LEFT JOIN tasks AS task ON task.id = conversation.task_id AND task.project_id = conversation.project_id
+       WHERE conversation.id > ? AND conversation.title_generation_attempt IS NOT 'reply'
          AND conversation.archived = 0 AND conversation.origin_kind = 'ordinary' AND conversation.listing_scope = 'ordinary'
-         AND task.created_from = 'conversation' AND task.archived = 0 AND task.deleted_at IS NULL
-         AND CASE WHEN json_valid(task.source_context_json) THEN json_extract(task.source_context_json, '$.conversationId') END = conversation.id
+         AND (conversation.title_source = 'pending' OR (task.id IS NOT NULL AND (
+           conversation.title_source = 'initial' OR (
+             conversation.title_source = 'automatic' AND conversation.title_generation_attempt IS NULL AND conversation.title = ? AND task.title = conversation.title
+           )
+         )))
+         AND (conversation.task_id IS NULL OR (
+           task.created_from = 'conversation' AND task.archived = 0 AND task.deleted_at IS NULL
+           AND CASE WHEN json_valid(task.source_context_json) THEN json_extract(task.source_context_json, '$.conversationId') END = conversation.id
+         ))
          AND EXISTS (SELECT 1 FROM conversation_submissions WHERE conversation_id = conversation.id)
+         AND EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = conversation.id AND status = 'completed')
        ORDER BY conversation.id LIMIT 25`,
-        [afterId],
+        [afterId, legacyPlaceholder],
       )
       .map((row) => row.id);
   }
 
-  /** 首发及启动恢复可以启用初始标题，手动或已完成命名不会被重新启用。 */
-  enableAutomaticTitle(conversationId: string): void {
-    this.db.execute(`UPDATE conversations SET title_source = 'pending' WHERE id = ? AND title_source = 'initial'`, [conversationId]);
+  /** 发出模型请求前持久记录机会；用完完整回复的机会后结束自动命名。 */
+  claimAutomaticTitleAttempt(conversation: ZeusConversationRecord, attempt: ConversationTitleGenerationAttempt): boolean {
+    return this.db.durableTransactionSync(() => {
+      /** 同一会话的手动名称或另一次已认领的机会不能被旧请求覆盖。 */
+      const current = this.getRecordById(conversation.id);
+      if (
+        !current ||
+        current.archived ||
+        current.titleSource === 'manual' ||
+        current.titleSource !== conversation.titleSource ||
+        current.title !== conversation.title ||
+        current.titleGenerationAttempt !== conversation.titleGenerationAttempt ||
+        current.titleGenerationAttempt === 'reply' ||
+        (attempt === 'summary' && (current.titleGenerationAttempt !== null || current.titleSource === 'automatic'))
+      )
+        return false;
+      this.db.execute(`UPDATE conversations SET title_generation_attempt = ?, title_source = ? WHERE id = ?`, [attempt, attempt === 'reply' ? 'automatic' : 'pending', conversation.id]);
+      return true;
+    });
   }
 
   /** 名称与来源一起保存，手动命名立即阻止后台覆盖。 */
@@ -3448,6 +3479,8 @@ interface DbConversationRow {
   title: string;
   /** 与标题同时保存的命名状态。 */
   title_source: ConversationTitleSource;
+  /** 已使用的最新命名机会。 */
+  title_generation_attempt: ConversationTitleGenerationAttempt | null;
   summary: string | null;
   status: string;
   stage: ConversationStage;
@@ -3682,6 +3715,7 @@ function mapConversationRow(row: DbConversationRow): ZeusConversationRecord {
     sessionId: row.session_id,
     title: row.title,
     titleSource: row.title_source,
+    titleGenerationAttempt: row.title_generation_attempt,
     summary: row.summary,
     status: row.status,
     stage: assertEnum(row.stage, ['created', 'connecting', 'queued', 'running', 'waiting_user', 'waiting_approval', 'completed', 'failed', 'paused', 'ready', 'archived'] as const, 'conversation stage'),

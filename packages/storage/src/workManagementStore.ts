@@ -1005,10 +1005,11 @@ export class TaskRepository {
     });
   }
 
-  getById(taskId: string): ZeusTaskRecord | undefined {
+  /** 按身份读取任务；后台操作可限定未归档的任务。 */
+  getById(taskId: string, { includeArchived = true }: { includeArchived?: boolean } = {}): ZeusTaskRecord | undefined {
     const row = this.db.get<DbTaskRow>(
       `SELECT ${selectTaskFields}
-       FROM tasks WHERE id = ? AND deleted_at IS NULL`,
+       FROM tasks WHERE id = ? AND deleted_at IS NULL${includeArchived ? '' : ' AND archived = 0'}`,
       [taskId],
     );
     return row ? this.withRelatedTaskIds(mapTaskRow(row)) : undefined;
@@ -2263,6 +2264,20 @@ export class TaskEventRepository {
 
   listByTask(taskId: string): ZeusTaskEventRecord[] {
     return this.db.select<DbTaskEventRow>(`SELECT id, task_id, event_type, title, payload_json, created_at FROM task_events WHERE task_id = ? ORDER BY rowid ASC`, [taskId]).map(mapTaskEventRow);
+  }
+
+  /** 任务标题曾由内容编辑修改时，不再用首次会话的标题覆盖。 */
+  hasTitleEdit(taskId: string): boolean {
+    return Boolean(
+      this.db.get(
+        `SELECT 1 FROM task_events AS event
+         WHERE event.task_id = ? AND event.event_type = 'task.updated' AND EXISTS (
+           SELECT 1 FROM json_each(CASE WHEN json_valid(event.payload_json) THEN event.payload_json END, '$.changedFields')
+           WHERE value = 'title'
+         ) LIMIT 1`,
+        [taskId],
+      ),
+    );
   }
 
   getProjectionCursor(eventId: string): { id: string; taskId: string; sequence: number } | null {

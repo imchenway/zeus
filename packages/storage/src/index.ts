@@ -1038,6 +1038,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateCodexUsageLedgerSchema(zeusDb);
     migrateConversationStageSchema(zeusDb);
     migrateConversationTitleSourceSchema(zeusDb);
+    migrateConversationTitleGenerationAttempt(zeusDb);
     migrateRemoteConversationTurnSchema(zeusDb);
     migrateTaskGitWorkspaceSchema(zeusDb);
     migrateMultiRepositoryTaskSchema(zeusDb);
@@ -2503,6 +2504,21 @@ function migrateConversationTitleSourceSchema(db: ZeusDatabase): void {
       migrationId,
       description: '保存会话标题命名状态，保护手动名称并停止重复自动命名',
       checksumSource: 'conversations:title_source:initial,pending,automatic,manual',
+    });
+  });
+}
+
+/** 记录已使用的命名机会，旧版已落库标题仍可识别。 */
+function migrateConversationTitleGenerationAttempt(db: ZeusDatabase): void {
+  /** 每个数据库只需追加命名字段一次。 */
+  const migrationId = '20261119_conversation_title_generation_attempt';
+  if (db.get(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) return;
+  db.transaction(() => {
+    db.execute(`ALTER TABLE conversations ADD COLUMN title_generation_attempt /* 已使用的最新命名机会：summary 摘要，reply 完整回复，NULL 表示未记录。 */ TEXT CHECK (title_generation_attempt IN ('summary', 'reply'))`);
+    recordSchemaMigration(db, {
+      migrationId,
+      description: '保存摘要和完整回复的命名机会，避免重启后重复请求',
+      checksumSource: 'conversations:title_generation_attempt:summary,reply',
     });
   });
 }
