@@ -20,6 +20,7 @@ import type {
   ZeusBrowserComment,
   ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
+import type { ConversationListingScope } from '@zeus/storage';
 
 export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, TurnChangeSetOperationResult } from '@zeus/shared';
 
@@ -946,6 +947,8 @@ export interface NativeConversationMessage {
 }
 
 export interface NativeConversationChoice {
+  /** 服务端保存的列表范围，本地创建回执可能尚未包含此字段。 */
+  listingScope?: ConversationListingScope;
   /** 侧栏所属主会话的稳定身份，由服务端从已核验的来源关系投影。 */
   sourceConversationId?: string | null;
   /** 自动冲突会话所属的原交付会话；普通会话为空。 */
