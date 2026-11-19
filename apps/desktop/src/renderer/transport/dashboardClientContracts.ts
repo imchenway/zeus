@@ -23,6 +23,8 @@ export interface ProjectGitWorkbenchBridge {
   /** 只通过当前桌面主进程读取操作账本。 */
   loadOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadWorkbench: (projectId: string, includePatches?: boolean) => Promise<ProjectGitWorkbenchSnapshot>;
+  /** 项目当前分支与候选引用由当前桌面进程读取。 */
+  loadBranches?: (projectId: string, includeReferences: boolean) => Promise<import('@zeus/git-core').ProjectGitBranchSelection>;
   loadCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
   /** 推送预览跟随当前桌面版本，不能交给另一宿主解析仓库身份。 */
   loadPushPreview: (projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput) => Promise<ProjectGitPushPreview>;

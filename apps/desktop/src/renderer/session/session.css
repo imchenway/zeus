@@ -11976,6 +11976,26 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font-size: 13px;
   font-weight: 400;
 }
+/* 读取提示只占用下拉列表区域，收起时保留已选来源。 */
+.session-new-branch-menu-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  color: var(--zeus-product-muted);
+  font-size: 13px;
+}
+.session-new-branch-menu-status > :is(svg, button) {
+  flex: 0 0 auto;
+}
+.session-new-branch-menu-status > svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+.session-new-branch-menu-status > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
 .session-new-conversation-context-note {
   min-inline-size: 0;
   overflow: hidden;
@@ -11992,6 +12012,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   }
   .session-codex-parity-v1 .session-new-conversation-context-branch {
     max-inline-size: none;
+  }
+  .session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger:has(.git-branch-kind) > svg:first-child {
+    display: none;
   }
   .session-codex-parity-v1 .session-new-conversation-create-task {
     gap: 4px;

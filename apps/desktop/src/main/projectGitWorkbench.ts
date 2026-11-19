@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import type { MainCommandHistoryCursor, MainCommandLedger, MainCommandOutcome } from './mainCommandLedger.js';
 import {
   discoverGitRepositories,
+  discoverGitRepositoryRoots,
   projectGitRepositoryId,
   executeProjectGitAction,
   withGitRepositoryOperation,
@@ -13,12 +14,14 @@ import {
   getGitFilePreviewSources,
   getProjectGitHistory,
   getProjectGitComparisonDiff,
+  getProjectGitBranchSnapshot,
   getProjectGitRepositorySnapshot,
   redactGitOutput,
   type DiscoveredGitRepository,
   type GitDiffSummary,
   type ProjectGitAction,
   type ProjectGitActionResult,
+  type ProjectGitBranchSelection,
   type ProjectGitCommitDetail,
   type ProjectGitRepositorySnapshot,
   type ProjectGitOperationPage,
@@ -88,6 +91,21 @@ export class ProjectGitWorkbenchService {
         const [navigation, snapshot] = await Promise.all([loadNavigationMetadata(repository.localPath), getProjectGitRepositorySnapshot(repository.localPath, includePatches, repository.context)]);
         return { ...navigation, id: projectGitRepositoryId(project.id, repository.relativePath), name: repository.name, relativePath: repository.relativePath, snapshot };
       }),
+    };
+  }
+
+  /** 会话只读取分支选择所需的元数据，仓库范围沿用工作台发现规则。 */
+  async loadBranches(projectId: string, includeReferences: boolean): Promise<ProjectGitBranchSelection> {
+    const project = await this.requireProject(projectId);
+    const repositories = await discoverGitRepositoryRoots(project.localPath);
+    return {
+      projectId: project.id,
+      repositories: await mapWithConcurrency(repositories, async (repository) => ({
+        id: projectGitRepositoryId(project.id, repository.relativePath),
+        name: repository.name,
+        relativePath: repository.relativePath,
+        snapshot: await getProjectGitBranchSnapshot(repository.localPath, includeReferences),
+      })),
     };
   }
 

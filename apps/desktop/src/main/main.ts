@@ -2130,6 +2130,11 @@ function setupIpc(): void {
     if (typeof projectId !== 'string' || typeof includePatches !== 'boolean') throw new TypeError('项目 Git 工作台请求缺少项目身份或读取范围无效。');
     return requireProjectGitWorkbench(event, false, projectId).loadWorkbench(projectId, includePatches);
   });
+  /** 分支查询沿用项目 Git 的可信窗口与项目归属校验。 */
+  ipcMain.handle('zeus:project-git:load-branches', (event, projectId: unknown, includeReferences: unknown) => {
+    if (typeof projectId !== 'string' || typeof includeReferences !== 'boolean') throw new TypeError('项目 Git 分支请求缺少项目身份或读取范围无效。');
+    return requireProjectGitWorkbench(event, false, projectId).loadBranches(projectId, includeReferences);
+  });
   ipcMain.handle('zeus:project-git:load-history', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('历史请求无效。');
     const candidate = input as Record<string, unknown>;

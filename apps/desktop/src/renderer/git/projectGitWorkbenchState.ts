@@ -1,4 +1,5 @@
 import type { GitFileStatusSummary, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
+import type { ProjectGitBranchSelection } from '@zeus/git-core';
 import { CachedQuery } from '../cachedQuery.js';
 
 /** 源码与搜索共用项目相对路径，拒绝将上一项目的快照套到当前项目。 */
@@ -13,15 +14,27 @@ export function projectGitFileStatuses(snapshot: ProjectGitWorkbenchSnapshot | n
 
 export interface ProjectGitQueryClient {
   loadProjectGitWorkbench(projectId: string, includePatches?: boolean): Promise<ProjectGitWorkbenchSnapshot>;
+  /** 会话读取 HEAD 和候选列表时使用同一项目身份。 */
+  loadProjectGitBranches?(projectId: string, includeReferences: boolean): Promise<ProjectGitBranchSelection>;
 }
 
 /** Git 快照与普通只读查询共用过期、在途去重和迟到回执规则。 */
 type ProjectGitWorkbenchCacheEntry = CachedQuery<ProjectGitWorkbenchSnapshot>;
 
-const projectGitWorkbenchCacheLimit = 3;
-const projectGitWorkbenchCache = new WeakMap<ProjectGitQueryClient, Map<string, ProjectGitWorkbenchCacheEntry>>();
+/** 分支首读与展开读取共用项目缓存边界，各自保留在途请求。 */
+interface ProjectGitQueryEntries {
+  workbench: ProjectGitWorkbenchCacheEntry;
+  heads: CachedQuery<ProjectGitBranchSelection> | null;
+  references: CachedQuery<ProjectGitBranchSelection> | null;
+}
 
-export function projectGitWorkbenchCacheEntry(client: ProjectGitQueryClient, projectId: string): ProjectGitWorkbenchCacheEntry {
+/** 保留最近读取的项目数量。 */
+const projectGitWorkbenchCacheLimit = 3;
+/** 不同客户端实例的项目快照互相隔离。 */
+const projectGitWorkbenchCache = new WeakMap<ProjectGitQueryClient, Map<string, ProjectGitQueryEntries>>();
+
+/** 为一个项目取得工作台、HEAD 和引用清单的缓存。 */
+export function projectGitQueryEntries(client: ProjectGitQueryClient, projectId: string): ProjectGitQueryEntries {
   let projectCache = projectGitWorkbenchCache.get(client);
   if (!projectCache) {
     projectCache = new Map();
@@ -33,12 +46,23 @@ export function projectGitWorkbenchCacheEntry(client: ProjectGitQueryClient, pro
     projectCache.set(projectId, current);
     return current;
   }
-  const created = new CachedQuery(() => client.loadProjectGitWorkbench(projectId, false), 2_000);
+  /** 当前桌面主进程提供只读分支查询；工作台入口可以独立工作。 */
+  const loadBranches = client.loadProjectGitBranches?.bind(client, projectId);
+  const created = {
+    workbench: new CachedQuery(() => client.loadProjectGitWorkbench(projectId, false), 2_000),
+    heads: loadBranches ? new CachedQuery(() => loadBranches(false), 2_000) : null,
+    references: loadBranches ? new CachedQuery(() => loadBranches(true), 2_000) : null,
+  };
   projectCache.set(projectId, created);
   // ponytail: 只保留最近 3 个项目；实测多项目往返仍冷加载时再改为按字节预算淘汰。
   const oldestProjectId = projectCache.keys().next().value;
   if (projectCache.size > projectGitWorkbenchCacheLimit && oldestProjectId) projectCache.delete(oldestProjectId);
   return created;
+}
+
+/** 工作台消费者仍订阅完整的文件与提交快照。 */
+export function projectGitWorkbenchCacheEntry(client: ProjectGitQueryClient, projectId: string): ProjectGitWorkbenchCacheEntry {
+  return projectGitQueryEntries(client, projectId).workbench;
 }
 
 export function readCachedProjectGitWorkbench(client: ProjectGitQueryClient, projectId: string): ProjectGitWorkbenchSnapshot | null {
