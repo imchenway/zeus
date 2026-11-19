@@ -58,7 +58,7 @@ import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, Proje
 import type { ProjectGitQueryClient } from '../git/projectGitWorkbenchState.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
-import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskManagementStatusSelect } from '../task/TaskManagementStatusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, BrowserSubmissionAttachment, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedRecoveredRequestUserInput, type SessionCreationStatus } from './ConversationTranscript.js';
 import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
@@ -3171,7 +3171,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 )}
                 {conversationInformation}
                 {displayedHeader.taskId && displayedHeader.taskManagementStatus && displayedHeader.taskManagementStatusOptions?.length && actions.onTaskManagementStatusChange ? (
-                  <ZeusSelect
+                  <TaskManagementStatusSelect
                     size="compact"
                     ariaLabel={props.language === 'zh-CN' ? `修改任务状态：${displayedHeader.title}` : `Change task status: ${displayedHeader.title}`}
                     value={displayedHeader.taskManagementStatus.id}
@@ -3184,8 +3184,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       if (!displayedHeader.taskId || status === displayedHeader.taskManagementStatus?.id) return;
                       return Promise.resolve(actions.onTaskManagementStatusChange?.(displayedHeader.taskId, status)).catch(() => undefined);
                     }}
-                    className="task-status-select task-status-custom session-thread-task-status"
-                    style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
+                    className="session-thread-task-status"
                     disabled={props.taskManagementStatusChangeBusy}
                     searchable={false}
                   />

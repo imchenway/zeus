@@ -10,7 +10,7 @@ import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
-import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
@@ -21,6 +21,7 @@ import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFi
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { TaskManagementStatusSelect } from './TaskManagementStatusSelect.js';
 import {
   mergeTaskAttachments,
   parseTaskAttachments,
@@ -619,6 +620,8 @@ function TaskImmediateSelect<T extends string>(props: {
 
   /** 加载动效与保存保护分开，静默保存时保留下拉箭头。 */
   const showSaveSpinner = saveState.kind === 'saving' && props.showSaveSpinner !== false;
+  /** 状态字段复用任务状态外观，行内类型和优先级共用通用下拉。 */
+  const Select = props.colorized ? TaskManagementStatusSelect<T> : ZeusSelect<T>;
 
   useEffect(() => {
     if (saveState.kind === 'saving' || saveState.kind === 'error' || saveState.kind === 'conflict') return;
@@ -668,15 +671,13 @@ function TaskImmediateSelect<T extends string>(props: {
       aria-busy={saveState.kind === 'saving' || undefined}
       aria-describedby={saveState.kind === 'error' || saveState.kind === 'conflict' ? statusId : undefined}
     >
-      <ZeusSelect
+      <Select
         size="compact"
         ariaLabel={props.ariaLabel}
         value={displayValue}
         options={props.options}
         triggerIcon={props.triggerIcon}
         triggerClassName={props.colorized ? undefined : 'task-detail-property-trigger'}
-        className={props.colorized ? 'task-status-select task-status-custom' : undefined}
-        style={props.colorized ? ({ '--task-status-tone': props.options.find((option) => option.value === displayValue)?.color ?? '#6b7280' } as CSSProperties) : undefined}
         onChange={(value) => {
           const expectedUpdatedAt = props.task.updatedAt ?? '';
           if (value === props.value) return;

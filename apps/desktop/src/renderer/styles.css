@@ -13209,7 +13209,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   --task-status-tone-line: color-mix(in srgb, var(--task-status-tone) 28%, var(--zeus-product-line-soft));
 }
 
-.macos-ai-app .task-status-select .zeus-select-trigger {
+/* 禁用时沿用下拉的禁用色，使交付开关关闭后的已选状态仍可辨认。 */
+.macos-ai-app .task-status-select .zeus-select-trigger:where(:not(:disabled)) {
   background: var(--task-status-tone-bg);
   border-color: var(--task-status-tone-line);
   color: var(--task-status-tone-text);
