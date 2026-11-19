@@ -83,6 +83,8 @@ export interface DesktopLocalServerRuntime {
     instanceId: string | null;
     pid: number;
     protocolVersion: number;
+    /** 最近一次成功连接当前 Core 控制通道的时间，单位为 Unix 毫秒。 */
+    lastControlHeartbeatAt?: number;
   };
   getStatus: () => Promise<ExecutionHostWorkStatus>;
   refreshConfig: () => Promise<RendererLocalServerConfig>;
@@ -362,6 +364,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       instanceId: connection.instanceId,
       pid: connection.pid,
       protocolVersion: connection.protocolVersion,
+      lastControlHeartbeatAt: Date.now(),
     };
     const executionHostLogPath = join((options.dataLayout ?? createZeusDataLayout(options.userDataPath)).executionHost, 'host.log');
     let controlEventWrite = Promise.resolve();
@@ -409,6 +412,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       const heartbeatHost = { instanceId: connection.instanceId, pid: connection.pid };
       try {
         await heartbeatClient.heartbeat(leaseId);
+        if (client === heartbeatClient) executionHost.lastControlHeartbeatAt = Date.now();
         if (heartbeatFailureStartedAt === undefined) return;
         const failureStartedAt = heartbeatFailureStartedAt;
         heartbeatFailureStartedAt = undefined;
@@ -468,6 +472,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       executionHost.instanceId = next.instanceId;
       executionHost.pid = next.pid;
       executionHost.protocolVersion = next.protocolVersion;
+      executionHost.lastControlHeartbeatAt = Date.now();
       if (changed && !closing) await options.onRestarted?.(config);
     };
 
@@ -479,6 +484,7 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
           try {
             lease = await client.registerBrowserBridge(registration);
             assertReportedDataRootIdentity(lease.capabilities, options.dataRootIdentity);
+            executionHost.lastControlHeartbeatAt = Date.now();
             config.executionHostTransition = buildExecutionHostTransition(currentAppVersion, connection.appVersion, lease.capabilities);
             return;
           } catch {

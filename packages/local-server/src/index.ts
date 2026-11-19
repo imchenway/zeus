@@ -35,7 +35,7 @@ import { resolveReleaseUpdateManifestUrl, type AutoUpdatePolicy, type ReleaseRea
 import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { initializeNetworkProxyRuntime, closeNetworkProxyRuntime, networkProxyRuntimeEnvironment, readActiveNetworkProxySettings, updateNetworkProxySettings } from './networkProxyRuntime.js';
-export { applyNetworkProxyEnvironment, closeNetworkProxyRuntime } from './networkProxyRuntime.js';
+export { applyNetworkProxyEnvironment, closeNetworkProxyRuntime, initializeNetworkProxyRuntime } from './networkProxyRuntime.js';
 export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import {
   cloneTaskManagementStatusConfig,

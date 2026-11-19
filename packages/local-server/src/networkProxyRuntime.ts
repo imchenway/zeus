@@ -15,6 +15,12 @@ let networkProxyBridge: Awaited<ReturnType<typeof startSystemProxyBridge>> | und
 /** 并发读取运行地址时只创建一个监听端口。 */
 let startingNetworkProxyBridge: ReturnType<typeof startSystemProxyBridge> | undefined;
 
+/** 控制新出口是否同时进入后续子进程的环境。 */
+interface NetworkProxyEnvironmentOptions {
+  /** 独立故障守护的临时地址只供本进程上报使用。 */
+  inheritToChildren?: boolean;
+}
+
 /** 匹配手动绕过规则及非桌面宿主原有的 NO_PROXY 主机、端口和 IPv4 范围。 */
 function bypassesProxy(target: URL, bypass: string): boolean {
   /** URL 的 IPv6 方括号不属于主机身份。 */
@@ -100,14 +106,14 @@ export async function networkProxyRuntimeEnvironment(): Promise<Record<string, s
   return networkProxyEnvironment({ mode: 'manual', url: bridge.url, bypass: '' });
 }
 
-/** Core 与 Main 使用同一个运行出口，覆盖 fetch、Node HTTP/HTTPS 和后续子进程。 */
-export function applyNetworkProxyEnvironment(environment: Record<string, string>): void {
+/** 将当前出口用于 fetch 和 Node HTTP/HTTPS，并按调用方需要传给后续子进程。 */
+export function applyNetworkProxyEnvironment(environment: Record<string, string>, options: NetworkProxyEnvironmentOptions = {}): void {
   /** 原生能力缺失时明确失败，不绕过用户代理配置。 */
   const setGlobalProxyFromEnv = (http as typeof http & { setGlobalProxyFromEnv?: (env: Record<string, string>) => () => void }).setGlobalProxyFromEnv;
   if (!setGlobalProxyFromEnv) throw new Error('当前 Node.js 不支持网络代理，请升级 Node.js 或使用 Zeus 测试应用。');
   restoreGlobalProxy?.();
   restoreGlobalProxy = setGlobalProxyFromEnv(environment);
-  Object.assign(process.env, environment);
+  if (options.inheritToChildren !== false) Object.assign(process.env, environment);
 }
 
 /** 宿主关闭时回收转发连接，保留其他进程独立持有的资源。 */
@@ -126,7 +132,7 @@ export async function closeNetworkProxyRuntime(): Promise<void> {
 }
 
 /** 在业务请求启动前建立固定出口，后续设置变更只切换出口规则。 */
-export async function initializeNetworkProxyRuntime(settings: NetworkProxySettings): Promise<void> {
+export async function initializeNetworkProxyRuntime(settings: NetworkProxySettings, options?: NetworkProxyEnvironmentOptions): Promise<void> {
   updateNetworkProxySettings(settings);
-  applyNetworkProxyEnvironment(await networkProxyRuntimeEnvironment());
+  applyNetworkProxyEnvironment(await networkProxyRuntimeEnvironment(), options);
 }

@@ -1,10 +1,12 @@
 import { spawn, execFile as execFileCallback, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { get, type IncomingMessage } from 'node:http';
 import { publishFile } from '@zeus/storage/platform-security';
 import { basename, dirname, join } from 'node:path';
 import { release } from 'node:os';
 import { createInterface } from 'node:readline';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
@@ -13,12 +15,14 @@ import {
   faultEvidenceMaxBytes,
   faultReportMaxBytes,
   faultReportContext,
+  normalizeNetworkProxySettings,
   normalizeFaultReportPacket,
   redactFaultReportText,
   type FaultReportAttachment,
   type FaultReportEvent,
   type FaultReportPacket,
   type FaultReportScene,
+  type NetworkProxySettings,
 } from '@zeus/shared';
 import { inspectWindowsRuntimeIdentity, stopWindowsRuntimeIdentity } from '@zeus/ai-runtime';
 import { prepareFaultSubmission, saveFaultReport, uploadSavedFaultReport, writeFrozenFaultPacket } from './faultReporting.js';
@@ -57,6 +61,50 @@ function alive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** 本机探针使用单次 HTTP 连接绕开全局代理，超时覆盖读取整个健康响应。 */
+async function probeCoreHealth(baseUrl: string, apiToken: string): Promise<void> {
+  /** Core 凭据只用于本机回环地址。 */
+  const target = new URL('/health', baseUrl);
+  if (target.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)) throw new Error('Invalid Core origin');
+  /** 单次连接使用默认 Agent 选项，避开进程的全局代理。 */
+  const response = await new Promise<IncomingMessage>((resolve, reject) => {
+    get(target, { agent: false, headers: { authorization: `Bearer ${apiToken}` }, signal: AbortSignal.timeout(3_000) }, resolve).once('error', reject);
+  });
+  /** 只有本机健康接口的成功响应可以清除故障计时。 */
+  const status = response.statusCode ?? 0;
+  if (status < 200 || status >= 300) {
+    response.destroy();
+    throw new Error(`Core health returned HTTP ${status}`);
+  }
+  response.setEncoding('utf8');
+  let body = '';
+  for await (const chunk of response) {
+    body += chunk;
+    if (body.length > 64 * 1024) throw new Error('Core health response is too large');
+  }
+  if ((JSON.parse(body) as { app?: string } | null)?.app !== 'Zeus') throw new Error('Invalid Core health response');
+}
+
+/** 只读当前数据根的持久代理规则，Core 停止时仍可解析上报出口。 */
+async function readSavedNetworkProxy(databasePath: string): Promise<NetworkProxySettings> {
+  /** 文件尚未建立时与 Core 首次启动一样使用默认规则。 */
+  const existing = await stat(databasePath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!existing) return normalizeNetworkProxySettings(undefined);
+  /** 无法读取或解析已有配置时保留错误，避免绕过用户配置。 */
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    if (!database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'settings'").get()) return normalizeNetworkProxySettings(undefined);
+    /** 仅提取代理字段，不把其他应用设置复制进守护进程。 */
+    const value = database.prepare("SELECT value_json -> '$.networkProxy' AS network_proxy FROM settings WHERE key = ?").get('app.shell.settings')?.network_proxy;
+    return normalizeNetworkProxySettings(typeof value === 'string' ? JSON.parse(value) : undefined);
+  } finally {
+    database.close();
   }
 }
 
@@ -152,6 +200,13 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   /** 守护内部错误只进入本机日志，不递归调用错误上报。 */
   function log(message: string): void {
     void appendFile(join(directory, 'watchdog.log'), `${new Date().toISOString()} ${redactFaultReportText(message, 1000)}\n`, { mode: 0o600 }).catch(() => undefined);
+  }
+
+  /** 连续失败时间从首次失败和最新控制回执中较晚的一个开始计算。 */
+  function coreFailureReachedDeadline(at: number): boolean {
+    /** 只比较当前 Core 世代的回执。 */
+    const core = pulse.core;
+    return core !== undefined && pulse.configuration.phase !== 'quitting' && coreFailureAt !== undefined && at - Math.max(coreFailureAt, core.lastControlHeartbeatAt ?? 0) >= unresponsiveMs;
   }
 
   /** 活动标记仅包含可公开到私有诊断中的字段，不序列化启动参数或认证对象。 */
@@ -494,11 +549,19 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   }
 
   /** 上传失败或旧报告待补报时，明确区分本机保存与完整接收。 */
-  function showPending(): void {
+  function showPending(uploadFailed = false): void {
     const zh = pulse.language !== 'en-US';
+    /** 主包或附件可能已被接收，重试仍使用同一报告身份。 */
+    const title = uploadFailed
+      ? zh
+        ? '未能确认完整上报，可重试'
+        : 'Full submission could not be confirmed. You can retry.'
+      : zh
+        ? '故障报告尚未完整上报'
+        : 'The fault report is not fully submitted';
     show(
       'fault-pending',
-      zh ? '故障报告尚未完整上报' : 'The fault report is not fully submitted',
+      title,
       zh ? '现场已保存在本机。补报将诊断与进程转储提交到私有存储，可能包含业务数据。' : 'Evidence remains on this device. Sending it uploads diagnostics and process dumps to private storage and may include business data.',
     );
   }
@@ -517,14 +580,26 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     const zh = pulse.language !== 'en-US';
     show('fault-uploading', zh ? '正在上报故障' : 'Sending the fault report', zh ? '最多等待 15 秒。关闭窗口会取消本次上传，本机现场仍保留。' : 'This takes at most 15 seconds. Closing cancels this upload and keeps the local evidence.');
     try {
-      await deadline(uploadSavedFaultReport(reportId, directory, 15_000, cancellation.signal, reproduction), 15_000);
+      await deadline(
+        (async () => {
+          /** 每次重试都重新读取已保存规则，沿用系统、手动代理和直连的正式语义。 */
+          const networkProxy = await readSavedNetworkProxy(bootstrap.databasePath);
+          // 守护启动与采集无需加载 Core 入口；只有用户点上报时才启用网络运行时。
+          const { initializeNetworkProxyRuntime } = await import('@zeus/local-server');
+          cancellation.signal.throwIfAborted();
+          await initializeNetworkProxyRuntime(networkProxy, { inheritToChildren: false });
+          cancellation.signal.throwIfAborted();
+          return uploadSavedFaultReport(reportId, directory, 15_000, cancellation.signal, reproduction);
+        })(),
+        15_000,
+      );
       if (!dismissed && !cancellation.signal.aborted && saved?.reportId === reportId)
         show('fault-reported', zh ? '故障报告已完整接收' : 'The complete report was received', zh ? '诊断与清单中的现场附件均已确认接收。' : 'Diagnostics and every declared evidence attachment were confirmed received.');
-    } catch {
+    } catch (error) {
       const cancelled = cancellation.signal.aborted;
       cancellation.abort();
-      void writePrivateJson(join(directory, `${reportId}.pending.json`), { reportId, attemptedAt: new Date().toISOString() }).catch(() => log('待补报标记无法保存，本机故障报告仍保留。'));
-      if (!recovering && !cancelled && !dismissed && saved?.reportId === reportId) showPending();
+      if (!cancelled) log(`故障报告未完整上报：${error instanceof Error ? error.message : String(error)}`);
+      if (!recovering && !cancelled && !dismissed && saved?.reportId === reportId) showPending(true);
     } finally {
       reporting = false;
     }
@@ -669,17 +744,20 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
         const connection = pulse.reports.core;
         void (async () => {
           try {
-            const origin = new URL(connection.baseUrl);
-            if (!['127.0.0.1', '[::1]', 'localhost'].includes(origin.hostname)) throw new Error('Invalid Core origin');
-            const response = await fetch(new URL('/health', connection.baseUrl), { headers: { authorization: `Bearer ${connection.apiToken}` }, signal: AbortSignal.timeout(3_000), redirect: 'error' });
-            const health = (await response.json()) as { app?: string };
-            if (!response.ok || health.app !== 'Zeus') throw new Error('Core health unavailable');
-            if (coreInstance === instance) {
+            await probeCoreHealth(connection.baseUrl, connection.apiToken);
+            if (pulse.core?.instanceId === instance && resumedAt <= now) {
               coreFailureAt = undefined;
               coreLastHealthyAt = new Date().toISOString();
             }
-          } catch {
-            if (coreInstance === instance) coreFailureAt ??= Date.now();
+          } catch (error) {
+            /** 探测结束时重新读取当前 Core，避免用旧宿主的失败打开窗口。 */
+            const core = pulse.core;
+            if (core?.instanceId === instance && resumedAt <= now) {
+              if (coreFailureAt === undefined) log(`本机 Core 健康探测失败：${error instanceof Error ? error.message : String(error)}`);
+              coreFailureAt ??= Date.now();
+              // 只有在失败期限结束后发出的探测也失败，才确认需要恢复。
+              if (coreFailureReachedDeadline(now)) void detect(alive(core.pid) ? 'core_unresponsive' : 'core_exited');
+            }
           } finally {
             coreProbePending = false;
           }
@@ -690,10 +768,9 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     const stalled = pulse.windows.find((window) =>
       window.ready ? now - Math.max(Date.parse(window.unresponsiveSince ?? window.lastHeartbeatAt), resumedAt) >= unresponsiveMs : now - Math.max(Date.parse(window.startedAt), resumedAt) >= startupMs,
     );
-    const coreStalled = pulse.core && pulse.configuration.phase !== 'quitting' && coreFailureAt !== undefined && now - coreFailureAt >= unresponsiveMs;
     if (fault) {
       // 关闭提示后等待真正恢复才重新布防，同一持续故障不能每两秒重新弹窗。
-      if (!dismissed || recovering || mainStalled || stalled || coreStalled) return;
+      if (!dismissed || recovering || mainStalled || stalled || coreFailureReachedDeadline(now)) return;
       fault = undefined;
     }
     if (mainStalled) {
@@ -702,10 +779,6 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     }
     if (stalled) {
       void detect(stalled.ready ? 'renderer_unresponsive' : 'startup_timeout', stalled.id);
-      return;
-    }
-    if (coreStalled && pulse.core) {
-      void detect(alive(pulse.core.pid) ? 'core_unresponsive' : 'core_exited');
       return;
     }
     if (!checkpointOperation) {
@@ -722,8 +795,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   if (parentGone && !fault && !cleanExit) void detect('main_exited');
   /** 非正常退出标记来自既有诊断目录；不恢复、执行或上传其中的任何业务命令。 */
   const previous = (await readdir(directory)).filter((name) => /^active-[a-f0-9-]{36}\.json$/u.test(name) && name !== `active-${bootstrap.runId}.json`).slice(0, 8);
-  /** 上次进程未能结束取证时，下一次启动可补报已持久保存的最小现场。 */
-  let recoveredPrevious = false;
+  /** 上次进程未能结束取证时，保留最小现场供用户从菜单补报。 */
   for (const name of previous) {
     try {
       const input = JSON.parse(await readFile(join(directory, name), 'utf8')) as Record<string, unknown>;
@@ -733,7 +805,6 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       if (Buffer.byteLength(content) > faultReportMaxBytes) throw new Error('旧现场超过大小上限。');
       const published = normalizeFaultReportPacket(JSON.parse(await writeFrozenFaultPacket(join(directory, `${packet.reportId}.json`), content)));
       if (published.reportId !== packet.reportId) throw new Error('Recovered report identity mismatch');
-      recoveredPrevious = true;
       await rm(join(directory, name), { force: true });
     } catch {
       log('上次运行的活动标记无法读取，原文件已保留。');
@@ -741,28 +812,6 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   }
   if (!fault && !cleanExit) await checkpoint();
   if (process.connected) process.send?.({ kind: 'ready' }, () => undefined);
-  /** 上传失败后的第一次重新启动显示待补报状态，后续由全局菜单主动打开。 */
-  const pendingMarkers = (await readdir(directory)).filter((name) => /^[a-f0-9-]{36}\.pending\.json$/u.test(name));
-  const unnotified = [];
-  for (const name of pendingMarkers.slice(0, 8)) {
-    try {
-      const marker = JSON.parse(await readFile(join(directory, name), 'utf8')) as { notifiedAt?: string };
-      if (!marker.notifiedAt) {
-        unnotified.push(name);
-        await writePrivateJson(join(directory, name), { ...marker, notifiedAt: new Date().toISOString() });
-      }
-    } catch {
-      log('待补报标记无法读取，原报告仍保留。');
-    }
-  }
-  if (!fault && !cleanExit && (recoveredPrevious || unnotified.length)) {
-    saved = await pendingReport();
-    if (saved) {
-      reproduction = saved.diagnostics?.reproduction ?? '';
-      reproductionLocked = true;
-      showPending();
-    }
-  }
 }
 
 /** 只有 Main 启动的私有 IPC 子进程可以进入守护循环。 */

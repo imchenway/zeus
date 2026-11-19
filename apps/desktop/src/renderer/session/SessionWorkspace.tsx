@@ -7,14 +7,14 @@ import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionSt
 import { createInitialSessionState, sessionReducer } from './sessionReducer.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
-import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors, isLocalNetworkOffline } from './conversationSystemMessages.js';
+import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { ReadingStateScope, useReadingScroll } from '../ui/readingState.js';
-import { temporaryWorkspaceId, isConversationWorktreeOptions, userFacingErrorCause, type ConversationWorktreeOptions, type AsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
+import { temporaryWorkspaceId, isConversationWorktreeOptions, offlineNetworkNotice, userFacingErrorCause, userFacingNetworkIssue, type ConversationWorktreeOptions, type AsyncQuestionAnswer, type UserFacingErrorCause } from '@zeus/shared';
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -3983,7 +3983,7 @@ export function NewConversationComposer(props: {
   );
   /** 主动发送失败先判断原始原因，离线反馈只留在输入区。 */
   function showSubmissionFailure(failure: NativeConversationStartFailure, error: unknown = failure.cause ?? failure): void {
-    if (isLocalNetworkOffline(error)) {
+    if (userFacingNetworkIssue(error, window.navigator.onLine === false) === 'offline') {
       setOfflineSubmission(userFacingErrorCause(error).code === 'ZEUS_LOCAL_API_WRITE_OUTCOME_UNKNOWN' ? 'unconfirmed' : 'blocked');
       return;
     }
@@ -4197,7 +4197,12 @@ export function NewConversationComposer(props: {
         }
       })
       .catch((error: unknown) => {
-        if (active && !isLocalNetworkOffline(error)) recordSystemMessage(systemScope, error, 'model_capabilities', '模型选项读取失败。');
+        if (!active) return;
+        if (userFacingNetworkIssue(error, window.navigator.onLine === false)) {
+          reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en', background: true });
+          return;
+        }
+        recordSystemMessage(systemScope, error, 'model_capabilities', '模型选项读取失败。');
       })
       .finally(() => {
         if (active) setCapabilitiesLoading(false);
@@ -4500,9 +4505,7 @@ export function NewConversationComposer(props: {
             ? props.language === 'zh-CN'
               ? '暂未确认发送结果，联网后可重试。'
               : 'Delivery is unconfirmed. Retry when you’re back online.'
-            : props.language === 'zh-CN'
-              ? '网络已断开，联网后可重试。'
-              : 'You’re offline. Retry when you’re back online.'}
+            : offlineNetworkNotice(props.language)}
         </p>
       ) : null}
       <ConversationComposerAttachments

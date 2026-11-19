@@ -14,6 +14,8 @@ export interface FaultMonitorBootstrap {
   executable: string;
   args: string[];
   dataRoot: string;
+  /** 活跃数据根的 SQLite 文件，只供守护读取已保存的代理规则。 */
+  databasePath: string;
   helperPath: string;
   crashDirectory: string;
   reports: FaultReportOptions;
@@ -29,7 +31,8 @@ export interface FaultMonitorPulse {
   processes: FaultProcessSnapshot[];
   windows: Array<{ id: number; pid: number; startedAt: string; lastHeartbeatAt: string; ready: boolean; unresponsiveSince?: string; context: Record<string, string> }>;
   configuration: Record<string, string | number | boolean | null>;
-  core?: { pid: number; instanceId: string };
+  /** 当前 Core 的控制通道回执时间以 Unix 毫秒计。 */
+  core?: { pid: number; instanceId: string; lastControlHeartbeatAt?: number };
   reports: FaultReportOptions;
   language: 'zh-CN' | 'en-US';
   appearance: 'dark' | 'light';
@@ -123,6 +126,7 @@ export function startFaultMonitor(
       executable: options.executable,
       args: options.args,
       dataRoot: options.dataRoot,
+      databasePath: options.databasePath,
       helperPath: options.helperPath,
       crashDirectory: options.crashDirectory,
       reports: options.reports,

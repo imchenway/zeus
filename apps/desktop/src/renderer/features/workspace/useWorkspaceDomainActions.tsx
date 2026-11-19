@@ -38,6 +38,7 @@ import {
   temporaryWorkspaceId,
   type ThirdPartyTaskExtract,
   userFacingErrorCause,
+  userFacingNetworkIssue,
 } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import { focusTaskPushWindow } from '../../ui/windowDocument.js';
@@ -100,7 +101,7 @@ import {
 } from '../../task/TaskModelPushPendingWorkspace.js';
 import { parseTaskAttachments, type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
-import { modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
+import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
 import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
@@ -806,7 +807,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           setTaskModelPushCapabilities((current) => (current?.taskId === taskModelPushTaskId && current.projectId === projectId ? { ...current, models: capabilities.models, preferredModel: capabilities.preferredModel } : current));
         })
         .catch((error: unknown) => {
-          if (!disposed && sequence === requestSequence) recordLocalError('task-model-catalog-refresh', error);
+          if (!disposed && sequence === requestSequence) recordLocalError('task-model-catalog-refresh', error, true);
         });
     };
     window.addEventListener(codexCapabilitiesChangedEvent, refresh);
@@ -837,10 +838,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setSelectedTaskIds((ids) => ids.filter((id) => visibleTaskIdSet.has(id)));
   }, [visibleTasks]);
 
-  function recordLocalError(action: string, error: unknown): void {
+  /** 网络分类保留原始错误链，后台刷新失败只记入诊断。 */
+  function recordLocalError(action: string, error: unknown, background = false): void {
+    /** 通知和原有错误摘要使用工作区语言。 */
+    const language = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
+    if (userFacingNetworkIssue(error, window.navigator.onLine === false)) {
+      reportApplicationError(error, { language, background });
+      if (!background) setActionState('failed');
+      return;
+    }
     // 只记录真实捕获到的前端操作失败，并在渲染前脱敏，避免把 token / API key 明文带到界面。
     // 由 localError 的统一出口弹窗，格式化阶段不再重复上报。
-    const explanation = describeUserFacingError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en');
+    const explanation = describeUserFacingError(error, language);
     setLocalError({
       action,
       code: error instanceof ZeusApiError ? (error.error ?? undefined) : undefined,
@@ -1033,7 +1042,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       refreshNativeConversationChoices(taskId)
         .then(() => undefined)
         .catch((error: unknown) => {
-          if (taskDetailTargetRef.current === taskId && activeProjectIdRef.current === projectId) recordLocalError('task-conversation-refresh', error);
+          if (taskDetailTargetRef.current === taskId && activeProjectIdRef.current === projectId) recordLocalError('task-conversation-refresh', error, true);
         }),
     );
     pending.push(refreshOpenTaskEvents(taskId));
@@ -1975,7 +1984,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   taskGitDeliveryChangedRef.current = (taskId) => {
     // 独立交付窗口、服务端通知和返回内嵌交付页共用同一快照失效入口。
     setTaskGitDeliveryRevision((current) => current + 1);
-    void Promise.all([refreshNativeConversationChoices(taskId), refreshOpenTaskEvents(taskId)]).catch((error: unknown) => recordLocalError('task-git-delivery-projection-refresh', error));
+    void Promise.all([refreshNativeConversationChoices(taskId), refreshOpenTaskEvents(taskId)]).catch((error: unknown) => recordLocalError('task-git-delivery-projection-refresh', error, true));
   };
   taskGitDeliveryConversationRef.current = ({ taskId, conversationId }) => {
     void openTaskConflictAiConversation(taskId, conversationId);
@@ -2150,7 +2159,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         ...current,
         [input.task.id]: failNativeConversationChoiceTaskLoad(current[input.task.id], 'Conversation started. History refresh will retry later.'),
       }));
-      recordLocalError('native-conversation-choice-refresh', refreshError);
+      recordLocalError('native-conversation-choice-refresh', refreshError, true);
     }
     return true;
   }
@@ -2215,7 +2224,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         ...current,
         [projectId]: failNativeConversationChoiceTaskLoad(current[projectId], 'Conversation started. History refresh will retry later.'),
       }));
-      recordLocalError('project-conversation-choice-refresh', refreshError);
+      recordLocalError('project-conversation-choice-refresh', refreshError, true);
     }
     return true;
   }
@@ -2932,12 +2941,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话已创建。` : `${pending.task.title}: Conversation created.`);
       // 真实会话只接管内部读写身份，绝不根据完成时的页面状态再次导航或滚动。
       await flushTaskModelPushDeferredMessages(attached);
-      void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
+      void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error, true));
       if (props.onLoadTask) {
         void props
           .onLoadTask(pending.task.id)
           .then(mergeTaskRecord)
-          .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error));
+          .catch((error: unknown) => recordLocalError('task-model-push-task-refresh', error, true));
       }
     } catch (error) {
       if (error instanceof ZeusApiError && error.error === 'ZEUS_CODEX_LOGIN_REQUIRED') {
