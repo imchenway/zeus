@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -27,6 +27,7 @@ import {
   type TaskWorkspaceViewModel,
 } from './taskWorkspaceModel.js';
 import { TaskRunStatusChip, taskBranchStatusTone, taskPriorityTone, taskTypeTone } from './TaskRunStatusChip.js';
+import { TaskManagementStatusSelect } from './TaskManagementStatusSelect.js';
 import type { TaskWorkspaceProps } from './TaskWorkspace.js';
 import './task-data-table.css';
 
@@ -219,7 +220,7 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
     return (
       <>
         <span className={`task-immediate-select task-data-table-status${pending ? ' is-saving' : ''}`} aria-busy={Boolean(pending) || undefined}>
-          <ZeusSelect
+          <TaskManagementStatusSelect
             size="compact"
             ariaLabel={workspace.copy.taskStatusSelectAria(task.title)}
             ariaDescribedBy={pending ? statusFeedbackId : undefined}
@@ -232,8 +233,6 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
                 : taskManagementStatuses.map((value) => ({ value, label: workspace.statusLabels[value] || formatTaskManagementStatus(value) }))
             }
             onChange={(status) => workspace.onTaskStatusChange?.(task.id, status)}
-            className="task-status-select task-status-custom"
-            style={{ '--task-status-tone': workspace.statusDefinitions.find((status) => status.id === value)?.color ?? '#6b7280' } as CSSProperties}
             disabled={!workspace.onTaskStatusChange}
             searchable={false}
           />

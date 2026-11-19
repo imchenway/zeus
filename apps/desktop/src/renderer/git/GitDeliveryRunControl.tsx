@@ -1,15 +1,15 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GitDeliveryCombinationContext } from './gitDeliverySettings.js';
-import { defaultTaskManagementStatusLabels, type CommandDefinition, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { formatTaskManagementStatusLabel, type CommandDefinition, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ZeusSelect } from '../ZeusSelect.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { ConflictAiPermissions, TaskGitConflictWorkspace } from '../task/TaskGitConflictWorkspace.js';
+import { TaskManagementStatusSelect } from '../task/TaskManagementStatusSelect.js';
 import { createConflictDocument, serializeConflictForGit, countUnresolvedConflictBlocks, type ConflictDocument } from '../task/taskConflictModel.js';
 import type { TaskIntegrationConflictFile } from '../session/sessionTypes.js';
 import { GitDeliveryProgress, gitDeliveryActionLabel as actionLabel } from './GitDeliveryProgress.js';
@@ -296,8 +296,12 @@ export function GitDeliveryRunControl(props: {
   const commandCount = executionSettings.push ? (executionSettings.postPushCommandIds?.length ?? 0) : 0;
   /** 任务状态提示使用本次实际提交的状态。 */
   const finalTaskStatus = executionSettings.finalTaskStatus;
-  /** 优先显示项目定义的状态名称。 */
-  const finalStatusLabel = statuses.find((status) => status.id === finalTaskStatus)?.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][finalTaskStatus ?? ''] ?? finalTaskStatus;
+  /** 内置状态跟随界面语言，自定义状态使用配置中的名称。 */
+  const language = props.zh ? 'zh-CN' : 'en-US';
+  /** 下拉菜单按配置顺序显示状态名称和颜色。 */
+  const statusOptions = statuses.map((status) => ({ value: status.id, label: formatTaskManagementStatusLabel(status, language), color: status.color }));
+  /** 提示与下拉共用名称，目录尚未加载时使用内置文案或状态标识。 */
+  const finalStatusLabel = statusOptions.find((status) => status.value === finalTaskStatus)?.label ?? (finalTaskStatus ? formatTaskManagementStatusLabel({ id: finalTaskStatus, label: null }, language) : null);
   /** 按钮名称直接表达实际执行顺序，不再重复渲染功能说明。 */
   const summary = (['commit', 'merge', 'push'] as const)
     .filter((action) => executionSettings[action])
@@ -326,12 +330,12 @@ export function GitDeliveryRunControl(props: {
               <input type="checkbox" checked={followUps.taskStatus} disabled={controlsDisabled} onChange={(event) => setFollowUps((current) => ({ ...current, taskStatus: event.target.checked }))} />
               {props.zh ? '修改任务状态' : 'Set task status'}
             </label>
-            <ZeusSelect
+            <TaskManagementStatusSelect
               size="compact"
               disabled={controlsDisabled || !followUps.taskStatus}
               value={settings.finalTaskStatus ?? ''}
               triggerLabel={settings.finalTaskStatus ? undefined : props.zh ? '选择状态' : 'Select status'}
-              options={statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][status.id] ?? status.id }))}
+              options={statusOptions}
               onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value }))}
               ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
             />
