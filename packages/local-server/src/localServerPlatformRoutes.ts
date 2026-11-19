@@ -3995,6 +3995,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     isTaskTerminal: taskManagementStatusIsTerminal,
     taskEvents,
     publishRealtimeEvent,
+    transaction: (operation) => db.transaction(operation),
     save: () => db.save(),
     now,
     readOnlyValidation: Boolean(readOnlyValidation),

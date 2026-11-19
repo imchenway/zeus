@@ -225,6 +225,8 @@ interface TaskWorkManagementOptions {
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   taskEvents: TaskEventRepository;
   publishRealtimeEvent(type: string, payload: Record<string, unknown>): unknown;
+  /** 成果清单、运行状态和验收待办共用同一个数据库事务。 */
+  transaction<T>(operation: () => T): T;
   save(): Promise<void>;
   now(): Date;
   readOnlyValidation?: boolean;
@@ -1876,8 +1878,7 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
     const explicitlyCleared = options.conversationGoals.listEvents(run.conversationId!).at(-1)?.kind === 'cleared';
     if ((!goal && !explicitlyCleared) || (goal && goal.status !== 'complete')) return;
   }
-  const existing = options.deliverables.listByTask(run.taskId).find((candidate) => candidate.runId === run.id);
-  if (!existing) await captureAgentDeliverable(options, run, conversation.messages);
+  await submitAgentDeliverable(options, run, conversation.messages);
 }
 
 /** 派发前解析当前 Skill 和 Plugin Skill，删除资源时明确失败。 */
@@ -2009,7 +2010,8 @@ function blockAgentRunForProviderFailure(options: TaskWorkManagementOptions, run
   publishChanged(options, run.taskId, run.workItemId, 'provider_blocked');
 }
 
-async function captureAgentDeliverable(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, messages: Array<{ id: string; role: string; content: string }>): Promise<void> {
+/** 持久化已有的会话输出字节，供正式交付事务引用。 */
+async function prepareAgentDeliverable(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, messages: Array<{ id: string; role: string; content: string }>) {
   const message = [...messages].reverse().find((candidate) => candidate.role === 'assistant' && candidate.content.trim());
   if (!message) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DELIVERABLE_EMPTY', 'Agent 会话已结束，但没有可沉淀的正式输出。');
   const deliverableId = stableIdentity('task_work_deliverable', run.id);
@@ -2027,45 +2029,64 @@ async function captureAgentDeliverable(options: TaskWorkManagementOptions, run: 
     mimeType: 'text/markdown',
     owner: { kind: 'task_work_deliverable', id: deliverableId, generationId: taskWorkDeliverableArtifactGeneration, projectId: run.projectId, conversationId: run.conversationId },
   });
-  options.artifacts.hold({ sha256: artifact.sha256, owner: { kind: 'task_work_deliverable', id: deliverableId }, ownerClass: 'active_task', reason: `task-work-deliverable:${run.taskId}` });
-  const item = options.items.getById(run.workItemId)!;
-  const deliverable = options.deliverables.create({
+  return {
     id: deliverableId,
     projectId: run.projectId,
     taskId: run.taskId,
     workItemId: run.workItemId,
     runId: run.id,
-    kind: 'agent_result',
+    kind: 'agent_result' as const,
     bundle: evidence.bundle,
-    title: `${item.title}·交付物`,
     summary: summarize(message.content),
     artifactSha256: artifact.sha256,
     contentSha256: artifact.contentSha256,
     sourceMessageId: message.id,
+  };
+}
+
+/** 首次提交和恢复现存成果共用正式冻结与待审提交。 */
+async function submitAgentDeliverable(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, messages: Array<{ id: string; role: string; content: string }>): Promise<void> {
+  const existing = options.deliverables.listByTask(run.taskId).find((candidate) => candidate.runId === run.id);
+  if (existing && (existing.kind !== 'agent_result' || existing.status !== 'submitted')) return;
+  const prepared = existing ?? (await prepareAgentDeliverable(options, run, messages));
+  /** 正文字节持久化期间工作可能已结束；只收口仍在执行的当前轮次。 */
+  const item = options.items.getById(run.workItemId);
+  if (item?.currentRunId !== run.id || item.status !== 'active' || item.arrangement?.cancellationRequested || options.runs.getById(run.id)?.status !== 'active' || options.isTaskTerminal(requireTaskOrThrow(options, run.taskId))) return;
+  const freeze = options.workArtifacts.prepareFreeze(prepared);
+  const deliverable = options.transaction(() => {
+    const record = existing ?? options.deliverables.create({ ...prepared, title: `${item.title}·交付物` });
+    if (!existing) options.artifacts.hold({ sha256: record.artifactSha256, owner: { kind: 'task_work_deliverable', id: record.id }, ownerClass: 'active_task', reason: `task-work-deliverable:${run.taskId}` });
+    freeze();
+    options.runs.update(run.id, { status: 'runtime_completed', runtimeCompletedAt: options.now().toISOString() });
+    options.items.update(item.id, { status: 'waiting_manager' });
+    options.decisions.create({
+      projectId: run.projectId,
+      taskId: run.taskId,
+      workItemId: run.workItemId,
+      runId: run.id,
+      deliverableId: record.id,
+      kind: 'deliverable_acceptance',
+      title: '验收数字员工交付物',
+      prompt: '请验收该正式交付物，或明确要求修改。',
+      requestPayload: { deliverableId: record.id, version: record.version, contentSha256: record.contentSha256 },
+      operationIdentity: `deliverable-acceptance:${record.id}`,
+      expiresAt: null,
+    });
+    options.taskEvents.create({
+      taskId: run.taskId,
+      eventType: 'task.work_deliverable.submitted',
+      title: '数字员工已提交正式交付物',
+      payload: { workItemId: run.workItemId, runId: run.id, deliverableId: record.id, version: record.version },
+    });
+    return record;
   });
-  /** 先冻结正式正文，再由 Core 发布阅读目录；导出失败不会重跑模型。 */
-  options.workArtifacts.publish(deliverable);
-  options.runs.update(run.id, { status: 'runtime_completed', runtimeCompletedAt: options.now().toISOString() });
-  options.items.update(item.id, { status: 'waiting_manager' });
-  options.decisions.create({
-    projectId: run.projectId,
-    taskId: run.taskId,
-    workItemId: run.workItemId,
-    runId: run.id,
-    deliverableId: deliverable.id,
-    kind: 'deliverable_acceptance',
-    title: '验收数字员工交付物',
-    prompt: '请验收该正式交付物，或明确要求修改。',
-    requestPayload: { deliverableId: deliverable.id, version: deliverable.version, contentSha256: deliverable.contentSha256 },
-    operationIdentity: `deliverable-acceptance:${deliverable.id}`,
-    expiresAt: null,
-  });
-  options.taskEvents.create({
-    taskId: run.taskId,
-    eventType: 'task.work_deliverable.submitted',
-    title: '数字员工已提交正式交付物',
-    payload: { workItemId: run.workItemId, runId: run.id, deliverableId: deliverable.id, version: deliverable.version },
-  });
+  /** 阅读目录由冻结清单派生，导出或登记导出结果失败时仍可独立重试。 */
+  await options.save();
+  try {
+    options.workArtifacts.exportDocs(deliverable);
+  } catch (error) {
+    console.error('Zeus 工作成果目录导出状态保存失败。', error);
+  }
   publishChanged(options, run.taskId, run.workItemId, 'deliverable_submitted');
 }
 
