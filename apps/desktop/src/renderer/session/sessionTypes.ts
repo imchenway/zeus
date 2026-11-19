@@ -167,6 +167,8 @@ export type NativeSubagentStatus = 'pending' | 'running' | 'waiting' | 'complete
 export interface NativeSubagentSummary {
   /** 服务端核实的操作代理，原生子线程不推断此字段。 */
   operation?: 'browser' | 'computer';
+  /** 派发前暂停的状态及其已记录错误。 */
+  startupBlock?: { error: { code: string; message: string } | null };
   id: string;
   parentThreadId: string | null;
   title: string;

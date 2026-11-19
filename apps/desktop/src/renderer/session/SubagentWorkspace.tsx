@@ -1,5 +1,6 @@
 import { conversationUsedResources } from '@zeus/shared';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -9,7 +10,8 @@ import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/Use
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { ConversationTranscript, isSubagentCoordinationItem } from './ConversationTranscript.js';
+import { ConversationMarkdown } from './ConversationMarkdown.js';
+import { ConversationTranscript, isSubagentCoordinationItem, isVisibleTranscriptItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
@@ -21,8 +23,11 @@ interface SubagentWorkspaceProps {
   language: SessionUiLanguage;
   conversationId: string;
   activityRevision: string;
-  hintCount: number;
   initialSnapshot?: NativeSubagentListSnapshot | null;
+  /** 会话顶栏中与侧栏正文同宽的挂载点。 */
+  toolbarHost: HTMLElement | null;
+  /** 窄窗口直接使用全宽工作面。 */
+  canSplit: boolean;
   fullWidth: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
   onClose: () => void;
@@ -42,6 +47,9 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const zh = props.language === 'zh-CN';
   const [snapshot, setSnapshot] = useState<NativeSubagentListSnapshot | null>(props.initialSnapshot ?? null);
   const [selectedThreadId, setSelectedThreadId] = useReadingState<string | null>(`subagent:${props.conversationId}`, null);
+  /** 打开详情或返回列表时，焦点落在新页面的标题上。 */
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const focusTitle = useRef(false);
   /** 只在重新挂载时补读已选择线程，点击入口仍负责自己的读取。 */
   const initialThreadId = useRef(selectedThreadId).current;
   const [thread, setThread] = useState<NativeSubagentThreadSnapshot | null>(null);
@@ -109,6 +117,12 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
     if (initialThreadId) void openThread(initialThreadId, true);
   }, [initialThreadId, openThread]);
 
+  useLayoutEffect(() => {
+    if (!focusTitle.current) return;
+    titleRef.current?.focus();
+    focusTitle.current = false;
+  }, [selectedThreadId]);
+
   // 活动通知仅刷新列表；只有切换会话或卸载才丢弃当前线程的在途读取。
   useEffect(() => {
     return () => {
@@ -175,74 +189,82 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
     );
   }, [props.conversationId, thread]);
   const transcriptState = useMemo(() => (thread ? projectSubagentTranscriptState(props.conversationId, thread, threadItems) : null), [props.conversationId, thread, threadItems]);
+  /** 没有可显示的轮次时，单独展示服务端已保存的子任务。 */
+  const hasVisibleItems = threadItems.some(isVisibleTranscriptItem);
+  const task = hasVisibleItems ? null : thread?.taskInstruction;
+  const startupBlock = thread?.agent.startupBlock;
 
+  /** 用户选择列表行后，把键盘导航交给详情工具栏。 */
+  function selectAgent(agent: NativeSubagentSummary) {
+    focusTitle.current = true;
+    return openThread(agent.id, true);
+  }
+
+  /** 标题只表达当前线程身份，进度和错误由正文承载。 */
+  const title = selectedAgent?.title ?? thread?.agent.title ?? (zh ? '智能体' : 'Agents');
   const toggleLabel = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width';
-  return (
-    <aside className="session-subagent-workspace" data-full-width={props.fullWidth || undefined} aria-label={zh ? '智能体' : 'Agents'}>
-      <header className="session-thread-header session-subagent-header">
-        <span className="session-subagent-title">
-          {selectedThreadId ? (
-            <Button
-              unstyled
-              data-icon-tooltip={zh ? '返回智能体列表' : 'Back to agent list'}
-              type="button"
-              aria-label={zh ? '返回智能体列表' : 'Back to agent list'}
-              onClick={() => {
-                threadRequestRef.current += 1;
-                setSelectedThreadId(null);
-                setThread(null);
-                setError(null);
-              }}
-            >
-              <ArrowLeft aria-hidden="true" />
-            </Button>
-          ) : (
-            <UsersThree aria-hidden="true" weight="regular" />
-          )}
-          <span className="session-thread-title-copy">
-            <span className="session-thread-title-row">
-              <strong>{selectedAgent?.title ?? (zh ? '智能体' : 'Agents')}</strong>
-              {thread ? <RuntimeDetails key={thread.agent.id} runtime={thread.runtime} language={props.language} scope="subagent" resources={conversationUsedResources(thread.turns.flatMap((turn) => turn.items))} /> : null}
-            </span>
-            <small>{selectedAgent ? statusLabel(selectedAgent.status, props.language) : zh ? `${snapshot?.items.length ?? props.hintCount} 个线程` : `${snapshot?.items.length ?? props.hintCount} threads`}</small>
-          </span>
-        </span>
-        <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
-          {selectedAgent?.operation && activeStatuses.has(selectedAgent.status) && props.onStopOperationAgent ? (
-            <Button
-              unstyled
-              type="button"
-              disabled={stopping}
-              aria-busy={stopping}
-              onClick={() => {
-                setStopping(true);
-                return props.onStopOperationAgent!(selectedAgent.id)
-                  .then(() => refreshList(false))
-                  .catch(setError)
-                  .finally(() => setStopping(false));
-              }}
-            >
-              {zh ? '停止' : 'Stop'}
-            </Button>
-          ) : null}
+  const header = (
+    <header className="session-context-workspace-header session-subagent-header">
+      <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
+        {selectedThreadId ? (
+          <Button
+            unstyled
+            className="session-subagent-back"
+            data-icon-tooltip={zh ? '返回智能体列表' : 'Back to agent list'}
+            type="button"
+            aria-label={zh ? '返回智能体列表' : 'Back to agent list'}
+            onClick={() => {
+              focusTitle.current = true;
+              threadRequestRef.current += 1;
+              setSelectedThreadId(null);
+              setThread(null);
+              setError(null);
+            }}
+          >
+            <ArrowLeft aria-hidden="true" />
+          </Button>
+        ) : (
+          <UsersThree aria-hidden="true" weight="regular" />
+        )}
+        <strong title={title}>{title}</strong>
+        {thread ? <RuntimeDetails key={thread.agent.id} runtime={thread.runtime} language={props.language} scope="subagent" resources={conversationUsedResources(thread.turns.flatMap((turn) => turn.items))} /> : null}
+      </span>
+      <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
+        {selectedAgent?.operation && activeStatuses.has(selectedAgent.status) && props.onStopOperationAgent ? (
           <Button
             unstyled
             type="button"
-            aria-label={zh ? '刷新智能体' : 'Refresh agents'}
-            data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'}
-            onClick={() => (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}
+            disabled={stopping}
+            aria-busy={stopping}
+            onClick={() => {
+              setStopping(true);
+              return props.onStopOperationAgent!(selectedAgent.id)
+                .then(() => refreshList(false))
+                .catch(setError)
+                .finally(() => setStopping(false));
+            }}
           >
-            <ArrowsClockwise aria-hidden="true" />
+            {zh ? '停止' : 'Stop'}
           </Button>
+        ) : null}
+        <Button unstyled type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'} onClick={() => (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
+          <ArrowsClockwise aria-hidden="true" />
+        </Button>
+        {props.canSplit ? (
           <Button unstyled type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </Button>
-          <Button unstyled type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <X aria-hidden="true" />
-          </Button>
-        </nav>
-      </header>
+        ) : null}
+        <Button unstyled type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <X aria-hidden="true" />
+        </Button>
+      </nav>
+    </header>
+  );
 
+  return (
+    <aside className="session-subagent-workspace" data-full-width={props.fullWidth || undefined} aria-label={zh ? '智能体' : 'Agents'}>
+      {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
       {error ? (
         <section className="session-subagent-error" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
@@ -253,7 +275,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
       ) : null}
       {selectedThreadId ? (
         <div className="session-subagent-detail">
-          {loadingThread && !thread ? <SubagentLoading label={zh ? '正在读取智能体会话…' : 'Loading agent conversation…'} /> : null}
+          {loadingThread && !thread ? <SubagentStatus busy label={zh ? '正在读取智能体会话…' : 'Loading agent conversation…'} /> : null}
           {thread?.historyBoundary.state === 'unavailable' ? (
             <aside className="session-subagent-boundary-notice" role="status">
               <strong>{zh ? '部分历史归属不可确认' : 'Some history could not be attributed'}</strong>
@@ -261,17 +283,36 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
               {thread.historyBoundary.reason ? <small>{thread.historyBoundary.reason}</small> : null}
             </aside>
           ) : null}
-          <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
-            {!loadingThread && thread && threadItems.length === 0 ? <SubagentEmpty title={zh ? '暂无可显示内容' : 'No visible content'} /> : null}
-            {transcriptState ? <ConversationTranscript state={transcriptState} language={props.language} historyOnly={!activeStatuses.has(thread!.agent.status)} transcriptHydrated /> : null}
-          </section>
+          {task?.state === 'available' && task.text ? (
+            <div className="session-subagent-task">
+              <article className="session-thread-item session-thread-item-user">
+                <ConversationMarkdown text={task.text} streamId={`subagent-task:${selectedThreadId}`} phase="final" language={props.language} />
+              </article>
+            </div>
+          ) : null}
+          {startupBlock && thread ? (
+            <section className="session-subagent-error" role="alert">
+              <strong>{statusLabel(thread.agent, props.language)}</strong>
+              {startupBlock.error ? <VisibleApplicationError error={startupBlock.error} language={zh ? 'zh-CN' : 'en'} /> : null}
+            </section>
+          ) : null}
+          {thread && transcriptState && hasVisibleItems ? (
+            <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
+              <ConversationTranscript state={transcriptState} language={props.language} historyOnly={Boolean(startupBlock) || !activeStatuses.has(thread.agent.status)} transcriptHydrated />
+            </section>
+          ) : thread && !startupBlock ? (
+            <SubagentStatus
+              busy={thread.agent.status === 'pending' || thread.agent.status === 'running'}
+              label={thread.agent.status === 'completed' ? (zh ? '已完成 · 暂无可显示消息' : 'Completed · No visible messages') : statusLabel(thread.agent, props.language)}
+            />
+          ) : null}
         </div>
       ) : (
         <section ref={listScroll} className="session-subagent-list" aria-live="polite">
-          {loadingList && !snapshot ? <SubagentLoading label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
-          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentEmpty title={zh ? '暂无智能体' : 'No agents'} /> : null}
-          {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={(agent) => openThread(agent.id, true)} /> : null}
-          {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已完成' : 'Done'} items={grouped.done} language={props.language} onOpen={(agent) => openThread(agent.id, true)} /> : null}
+          {loadingList && !snapshot ? <SubagentStatus busy label={zh ? '正在读取智能体…' : 'Loading agents…'} /> : null}
+          {!loadingList && snapshot && snapshot.items.length === 0 ? <SubagentStatus label={zh ? '暂无智能体' : 'No agents'} /> : null}
+          {grouped.active.length > 0 ? <SubagentGroup title={zh ? '进行中' : 'Active'} items={grouped.active} language={props.language} onOpen={selectAgent} /> : null}
+          {grouped.done.length > 0 ? <SubagentGroup title={zh ? '已结束' : 'Finished'} items={grouped.done} language={props.language} onOpen={selectAgent} /> : null}
         </section>
       )}
     </aside>
@@ -348,6 +389,7 @@ function terminalSubagentTurnStatus(status: string): 'completed' | 'interrupted'
   return null;
 }
 
+/** 列表每行只显示一次运行状态。 */
 function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; language: SessionUiLanguage; onOpen: (agent: NativeSubagentSummary) => void }) {
   return (
     <section className="session-subagent-group">
@@ -361,9 +403,9 @@ function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; l
             <span className="session-subagent-status-dot" data-status={agent.status} aria-hidden="true" />
             <span className="session-subagent-row-copy">
               <strong>{agent.title}</strong>
-              <small>{agent.role || subagentPathLabel(agent.path) || statusLabel(agent.status, props.language)}</small>
+              {agent.role ? <small>{agent.role}</small> : null}
             </span>
-            <span className="session-subagent-row-status">{statusLabel(agent.status, props.language)}</span>
+            <span className="session-subagent-row-status">{statusLabel(agent, props.language)}</span>
             <CaretRight aria-hidden="true" />
           </Button>
         ))}
@@ -372,36 +414,25 @@ function SubagentGroup(props: { title: string; items: NativeSubagentSummary[]; l
   );
 }
 
-function SubagentLoading(props: { label: string }) {
+/** 列表和详情共用紧凑状态行，只有正在读取或运行时显示进度。 */
+function SubagentStatus(props: { label: string; busy?: boolean }) {
   return (
-    <p className="session-subagent-loading" role="status">
-      <span className="session-command-spinner" aria-hidden="true" />
+    <p className="session-subagent-status" role="status">
+      {props.busy ? <span className="session-command-spinner" aria-hidden="true" /> : null}
       {props.label}
     </p>
   );
 }
 
-/** 智能体列表与会话空状态仅显示一条状态文字。 */
-function SubagentEmpty(props: { title: string }) {
-  return (
-    <div className="session-subagent-empty">
-      <UsersThree aria-hidden="true" weight="regular" />
-      <strong>{props.title}</strong>
-    </div>
-  );
-}
-
-function statusLabel(status: NativeSubagentStatus, language: SessionUiLanguage): string {
+/** 已暂停的提交在列表和无可见轮次的详情中使用同一个标签。 */
+function statusLabel({ status, startupBlock }: NativeSubagentSummary, language: SessionUiLanguage): string {
   const zh = language === 'zh-CN';
-  if (status === 'pending') return zh ? '准备中' : 'Starting';
+  if (startupBlock) return zh ? '启动受阻' : 'Startup blocked';
+  if (status === 'pending') return zh ? '准备中' : 'Preparing';
   if (status === 'running') return zh ? '运行中' : 'Running';
   if (status === 'waiting') return zh ? '等待中' : 'Waiting';
   if (status === 'completed') return zh ? '已完成' : 'Completed';
   if (status === 'interrupted') return zh ? '已中断' : 'Interrupted';
   if (status === 'failed') return zh ? '失败' : 'Failed';
   return zh ? '状态未知' : 'Unknown';
-}
-
-function subagentPathLabel(path: string | null): string | null {
-  return path?.split('/').filter(Boolean).pop() ?? null;
 }
