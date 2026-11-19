@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { ConversationAttachmentResource, ConversationFileIconKind, ConversationFileLocation, ConversationFileResource, ConversationResource, ConversationResourcePresentation, ConversationWebsiteResource } from '@zeus/shared';
 import type { ConversationResourceRepository, ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
 import { conversationImageAttachmentRef } from '@zeus/storage';
+import type { BrowserLocalFileScope } from './browserAutomation.js';
 
 interface ResourceCandidateBase {
   sourceIndex: number;
@@ -63,8 +64,10 @@ export interface NormalizeConversationResourcesInput {
   text: string;
   trustedAttachmentRoots: readonly string[];
   generatedImageRoot?: string;
-  /** 当前身份的产物目录，仅用于完成答复的图片归档，不扩大普通文件打开权限。 */
+  /** 当前资料的产物目录，用于完成答复的图片归档。 */
   artifactsDirectory?: string;
+  /** 分层资料布局中的独立产物目录，用于登记 HTML 预览。 */
+  htmlArtifactsDirectory?: string;
   assistantImageArchiveRoot?: string;
   now: string;
 }
@@ -125,6 +128,9 @@ export function normalizeConversationResources(input: NormalizeConversationResou
     .filter((root): root is string => Boolean(root))
     .map((root) => safeRealpath(root) ?? resolve(root));
   let sourceIndex = 0;
+  /** 只将完成答复中明确交付的 HTML 登记成产物预览。 */
+  const htmlArtifactsDirectory =
+    input.item.status === 'completed' && input.item.itemType === 'agentMessage' && classifyAssistantMessage(input.payload, input.item.phase) === 'final' ? input.htmlArtifactsDirectory : undefined;
 
   const generatedImages = normalizeGeneratedImageResources({
     sourceIndex,
@@ -188,6 +194,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
         presentation: 'inline',
         projectRoot: input.projectRoot,
         registeredProjectRoot: input.registeredProjectRoot,
+        htmlArtifactsDirectory,
       });
     if (candidate) {
       candidates.push(candidate);
@@ -798,7 +805,15 @@ export function createConversationFileOpenGrant(input: {
 }
 
 /** 正文文件链接沿用已登记项目的共享目录授权，网址仍使用原有协议校验。 */
-function normalizeLinkedResource(input: { sourceIndex: number; label: string; href: string; presentation: ConversationResourcePresentation; projectRoot: string; registeredProjectRoot?: string }): ResourceCandidate | null {
+function normalizeLinkedResource(input: {
+  sourceIndex: number;
+  label: string;
+  href: string;
+  presentation: ConversationResourcePresentation;
+  projectRoot: string;
+  registeredProjectRoot?: string;
+  htmlArtifactsDirectory?: string;
+}): ResourceCandidate | null {
   const website = normalizeWebsiteUrl(input.href);
   if (website) {
     return {
@@ -810,7 +825,7 @@ function normalizeLinkedResource(input: { sourceIndex: number; label: string; hr
       ...website,
     };
   }
-  const parsedFile = parseFileReference(input.href, input.projectRoot, input.registeredProjectRoot);
+  const parsedFile = parseFileReference(input.href, input.projectRoot, input.registeredProjectRoot) ?? parseHtmlArtifactReference(input.href, input.htmlArtifactsDirectory);
   if (!parsedFile) return null;
   return {
     kind: 'file',
@@ -824,6 +839,27 @@ function normalizeLinkedResource(input: { sourceIndex: number; label: string; hr
     location: parsedFile.location,
     iconKind: iconKindForPath(parsedFile.absolutePath),
   };
+}
+
+/** HTML 产物沿用普通文件的真实路径校验，并保留项目相对链接的原有含义。 */
+function parseHtmlArtifactReference(reference: string, artifactsDirectory?: string): ReturnType<typeof parseFileReference> {
+  if (!artifactsDirectory || (!isAbsolute(reference) && !/^file:/iu.test(reference))) return null;
+  /** 产物链接使用绝对路径，路径与片段由普通文件解析器处理。 */
+  const file = parseFileReference(reference, artifactsDirectory);
+  return file && iconKindForPath(file.absolutePath) === 'html' ? file : null;
+}
+
+/** 自动化使用同一套项目与 HTML 产物路径解析，验证目标存在且为普通文件。 */
+export function isConversationBrowserFileAllowed(url: URL, scope: BrowserLocalFileScope | undefined): boolean {
+  if (!scope || url.protocol !== 'file:') return false;
+  /** 工作区和共享路径优先；项目外的浏览入口仅接受已管理的 HTML 产物。 */
+  const file = (scope.projectRoot ? parseFileReference(url.href, scope.projectRoot, scope.registeredProjectRoot) : null) ?? parseHtmlArtifactReference(url.href, scope.artifactsDirectory);
+  if (!file) return false;
+  try {
+    return statSync(file.absolutePath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function localHtmlArtifactCard(candidate: ResourceCandidate, sourceIndex: number): FileResourceCandidate | null {

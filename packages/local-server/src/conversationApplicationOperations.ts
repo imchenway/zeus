@@ -110,6 +110,8 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 export type ConversationApplicationOperationDependencies = Record<string, any> & {
   /** 来源引用与模型读取共用服务端归属校验。 */
   conversationSources: ConversationSourceContextReader;
+  /** 当前资料布局登记的 HTML 产物目录。 */
+  htmlArtifactsDirectory?: string;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   copilotRuntimeManager: CopilotRuntimeManager;
   artifactStore: ArtifactStore;
@@ -1082,7 +1084,19 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ],
       };
     if (activeAutomationAgents(ownerId).some((agent) => agent.id !== input.conversationId)) throw new Error('该会话的操作控制权由其他智能体持有，请补充或停止现有任务。');
-    return host.invoke({ ...input, conversationId: ownerId });
+    /** 浏览器标签属于原会话，委派后仍沿用原会话的文件范围。 */
+    const owner = capability === 'browser' ? conversations.getRecordById(ownerId) : undefined;
+    return host.invoke({
+      ...input,
+      conversationId: ownerId,
+      localFileScope: owner
+        ? {
+            projectRoot: resolveNativeConversationExecutionRoot(owner),
+            registeredProjectRoot: projects.getById(owner.projectId)?.localPath,
+            artifactsDirectory: dependencies.htmlArtifactsDirectory,
+          }
+        : undefined,
+    });
   }
 
   /** 终态事件可能重复到达，同一结果只在接纳完成前共用一个本地请求。 */

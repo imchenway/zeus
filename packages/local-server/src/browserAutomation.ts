@@ -1,3 +1,13 @@
+/** 本机页面使用服务端登记的会话执行目录和产物目录。 */
+export interface BrowserLocalFileScope {
+  /** 当前会话实际执行的目录，任务会话使用独立工作区。 */
+  projectRoot: string | null;
+  /** 主项目真实目录用于核对工作区已映射的共享文件。 */
+  registeredProjectRoot?: string;
+  /** Zeus 产物目录只提供 HTML 预览。 */
+  artifactsDirectory?: string;
+}
+
 export interface BrowserAutomationToolCall {
   conversationId: string;
   threadId: string;
@@ -8,6 +18,8 @@ export interface BrowserAutomationToolCall {
   arguments: Record<string, unknown>;
   /** 调度端指定的调用截止时间，跨进程传递，不接受模型参数延长。 */
   deadlineUnixMs?: number;
+  /** 文件范围由会话宿主填写，与模型传入的工具参数分开。 */
+  localFileScope?: BrowserLocalFileScope;
 }
 
 export type BrowserAutomationContentItem = { type: 'inputText'; text: string } | { type: 'inputImage'; imageUrl: string };

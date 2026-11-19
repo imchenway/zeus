@@ -1218,28 +1218,34 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
             </tr>
           </thead>
           <tbody>
-            {props.entries.map((entry, index) => (
-              <tr key={`${entry.model}-${index}`}>
-                <th scope="row">
-                  {entry.model}
-                  {entry.serviceTier || entry.longContext ? <span className="menu-bar-usage-model-price-tier">{formatModelPriceTier(entry)}</span> : null}
-                </th>
-                <td>
-                  {formatModelRate(entry, props.language).map((line) => (
-                    <span key={line}>{line}</span>
-                  ))}
-                  {entry.pricePeriod ? (
-                    <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
-                      {formatPricePeriod(entry.pricePeriod, props.language)}
-                    </span>
-                  ) : null}
-                </td>
-                <td aria-label={`${text.consumedTokens} ${formatTokens(entry.usage.totalTokens, props.language)}；${costLabel} ${formatModelEstimatedCost(entry, props.language)}`}>
-                  <span>{formatTokens(entry.usage.totalTokens, props.language)}</span>
-                  <span className="menu-bar-usage-model-estimated-cost">{formatModelEstimatedCost(entry, props.language)}</span>
-                </td>
-              </tr>
-            ))}
+            {props.entries.map((entry, index) => {
+              /** 可见值与读屏标签共用同一格式的 Token 数量。 */
+              const tokens = formatTokens(entry.usage.totalTokens, props.language);
+              /** 金额为空时，结果列只保留 Token 数量。 */
+              const estimatedCost = formatModelEstimatedCost(entry, props.language);
+              return (
+                <tr key={`${entry.model}-${index}`}>
+                  <th scope="row">
+                    {entry.model}
+                    {entry.serviceTier || entry.longContext ? <span className="menu-bar-usage-model-price-tier">{formatModelPriceTier(entry)}</span> : null}
+                  </th>
+                  <td>
+                    {formatModelRate(entry, props.language).map((line) => (
+                      <span key={line}>{line}</span>
+                    ))}
+                    {entry.pricePeriod ? (
+                      <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
+                        {formatPricePeriod(entry.pricePeriod, props.language)}
+                      </span>
+                    ) : null}
+                  </td>
+                  <td aria-label={`${text.consumedTokens} ${tokens}${estimatedCost ? `；${costLabel} ${estimatedCost}` : ''}`}>
+                    <span>{tokens}</span>
+                    {estimatedCost ? <span className="menu-bar-usage-model-estimated-cost">{estimatedCost}</span> : null}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1252,17 +1258,14 @@ function formatModelPriceTier(entry: UsageModelCostBreakdown): string {
   return [entry.serviceTier ? entry.serviceTier.charAt(0).toUpperCase() + entry.serviceTier.slice(1) : null, entry.longContext ? 'Long context' : null].filter(Boolean).join(' · ');
 }
 
-/** 单价按普通输入输出、缓存读写压成两行，空费率明确显示暂无价格。 */
+/** 单价按普通输入输出、缓存读写压成两行，缺少费率时留空。 */
 function formatModelRate(entry: UsageModelCostBreakdown, language: Language): string[] {
   const text = copy[language];
   const rate = entry.rate;
-  if (!rate)
-    return [
-      entry.missingPriceReason === 'sync_failed' ? (language === 'zh-CN' ? '价格同步失败' : 'Price sync failed') : entry.missingPriceReason === 'unconfirmed' ? (language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed') : text.noPrice,
-    ];
+  if (!rate) return [];
   if (rate.charges?.length) return rate.charges.map((charge) => `${charge.meter} ${charge.amount === null ? '—' : formatRateAmount(charge.amount, rate.currency, language)} / ${charge.quantityPerPrice} ${charge.unit}`);
   if (rate.perRequest !== null) return [`${text.perRequestPrice} ${formatRateAmount(rate.perRequest, rate.currency, language)}`];
-  if (!rate.perMillion) return [text.noPrice];
+  if (!rate.perMillion) return [];
   /** 普通输入输出始终成对展示，便于横向比较。 */
   const lines = [`${text.inputPrice} ${formatRateAmount(rate.perMillion.input, rate.currency, language)} · ${text.outputPrice} ${formatRateAmount(rate.perMillion.output, rate.currency, language)}`];
   /** 缓存类别只在单价已知时显示，避免把未知误写成零。 */
@@ -1280,13 +1283,10 @@ function formatPricePeriod(period: NonNullable<UsageModelCostBreakdown['pricePer
   return `${formatDate(period.from)}～${period.to ? formatDate(period.to) : copy[language].untilNow}`;
 }
 
-/** 每行费用直接展示后台按请求价格快照汇总的原币金额。 */
-function formatModelEstimatedCost(entry: UsageModelCostBreakdown, language: Language): string {
-  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'missing_usage') return language === 'zh-CN' ? '缺量' : 'Usage unavailable';
-  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'sync_failed') return language === 'zh-CN' ? '价格同步失败' : 'Price sync failed';
-  if (!entry.estimatedCosts.length && entry.missingPriceReason === 'unconfirmed') return language === 'zh-CN' ? '价格条件未确认' : 'Price unconfirmed';
+/** 费用使用后台汇总的原币金额，缺少金额时返回空。 */
+function formatModelEstimatedCost(entry: UsageModelCostBreakdown, language: Language): string | null {
   const costs = entry.estimatedCosts;
-  if (!costs?.length) return copy[language].noPrice;
+  if (!costs?.length) return null;
   return costs.map(({ currency, amount }) => `~${formatCostAmount(amount, currency, language)}`).join(' + ');
 }
 

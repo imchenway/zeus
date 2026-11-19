@@ -83,6 +83,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   generatedImageRoot?: string;
   /** 当前身份的产物目录，供实时与历史答复共用图片归档。 */
   artifactsDirectory?: string;
+  /** 独立产物目录，用于登记完成答复里的 HTML 预览。 */
+  htmlArtifactsDirectory?: string;
   getProjectRoot: (projectId: string) => string | null;
   ensureExecutionContext: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{
     projectLocalPath: string;
