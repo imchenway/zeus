@@ -157,6 +157,11 @@ function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities,
   return preferred && preferred.model === requestedIdentity.trim() ? preferred : null;
 }
 
+/** 按会话列表范围识别仅在协作详情中读取的内部会话。 */
+function isInternalConversationChoice(conversation: NativeConversationChoice): boolean {
+  return conversation.listingScope === 'subagent_internal' || conversation.listingScope === 'expert_internal';
+}
+
 export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   /** 详情与事件只回填当前打开的任务，关闭或切换后不恢复旧选中态。 */
   const taskDetailTargetRef = state.taskDetailPaneTaskIdRef;
@@ -507,7 +512,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       void client
         .loadNativeConversationChoice(projectId, conversationId)
         .then((metadata) => {
-          if (metadata.id !== conversationId || metadata.projectId !== projectId) return;
+          if (metadata.id !== conversationId || metadata.projectId !== projectId || isInternalConversationChoice(metadata)) return;
           if (metadata.taskId) {
             const taskId = metadata.taskId;
             // 使更早发出的批量快照失效，避免旧状态覆盖实时轻量投影。
@@ -1808,8 +1813,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         (await props.nativeConversationClient?.loadNativeConversationChoice(conversation.projectId, conversation.sourceConversationId));
       if (selectionRevision !== nativeConversationSelectionRevision.current) return;
       if (!source || source.id === conversation.id || source.projectId !== conversation.projectId || source.taskId !== conversation.taskId) throw new Error('侧边栏会话的来源无法读取。');
-      /** 已归档的父会话不恢复交互侧栏，子会话仍可独立阅读。 */
-      if (!source.archived) {
+      /** 只有可进入普通会话页的未归档来源才恢复交互侧栏。 */
+      if (!source.archived && !isInternalConversationChoice(source)) {
         sideQuestion = conversation;
         conversation = source;
       }
@@ -1904,6 +1909,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive'): Promise<boolean> {
+    if (isInternalConversationChoice(conversation)) return false;
     if (navigation === 'preserve') {
       await applyNativeConversationSelection(conversation, navigation, presentation);
       return true;
@@ -1995,7 +2001,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     void client
       .loadNativeConversationChoice(projectId, conversationId)
       .then(async (conversation) => {
-        if (conversation.projectId !== projectId || conversation.id !== conversationId) return;
+        if (conversation.projectId !== projectId || conversation.id !== conversationId || isInternalConversationChoice(conversation)) return;
         const project = snapshot.projects.find((candidate) => candidate.id === projectId);
         if (!project) return;
         if (conversation.taskId) {

@@ -155,6 +155,8 @@ export class ConversationChoiceQueryApplication {
     const state = this.projectState(conversation, context);
     return {
       ...this.toSummary(conversation, context),
+      /** 单条会话刷新与完整目录共用持久化的列表范围。 */
+      listingScope: conversation.listingScope,
       listRuntimeState: state.runtimeState,
       taskRunStatus: state.taskRunStatus,
       // 正式数据库副本中的原生会话只允许历史投影；列表本身就必须显式禁用恢复。
