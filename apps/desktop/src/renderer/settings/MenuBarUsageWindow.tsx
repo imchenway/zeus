@@ -70,6 +70,8 @@ const copy = {
     cacheHit: '缓存命中率',
     outputRate: '请求输出速率',
     outputRateDetail: '模型请求输出速率',
+    /** 请求配置中的速度档位，与实测速率分列。 */
+    outputRateSpeed: '速度档位',
     cacheUnsupported: '供应源未提供',
     cost: '费用',
     /** 订阅用量按 API 费率换算的金额，不是实际账单。 */
@@ -82,7 +84,7 @@ const copy = {
     remainingCredits: '剩余点数',
     costDetail: '模型费用明细',
     showCostDetail: '查看模型、单价和 Token 明细',
-    showOutputRateDetail: '查看各模型请求输出速率',
+    showOutputRateDetail: '按模型和速度档位查看请求输出速率',
     model: '模型',
     unitPrice: '单价 / 每百万',
     consumedTokens: '消耗 Token',
@@ -152,6 +154,8 @@ const copy = {
     cacheHit: 'Cache hit rate',
     outputRate: 'Request output rate',
     outputRateDetail: 'Model request output rates',
+    /** 请求配置中的速度档位，与实测速率分列。 */
+    outputRateSpeed: 'Speed',
     cacheUnsupported: 'Not provided',
     cost: 'Cost',
     /** 英文订阅金额沿用等价费用口径。 */
@@ -164,7 +168,7 @@ const copy = {
     remainingCredits: 'Credits remaining',
     costDetail: 'Model cost details',
     showCostDetail: 'Show model, rate, and token details',
-    showOutputRateDetail: 'Show request output rate by model',
+    showOutputRateDetail: 'Show request output rates by model and speed',
     model: 'Model',
     unitPrice: 'Rate / million',
     consumedTokens: 'Tokens',
@@ -1150,8 +1154,9 @@ function MetricDetailPanel(props: { payload: NonNullable<MenuBarUsageCostDetailP
   );
 }
 
-/** 按模型展示同一时间范围内加权后的请求输出速率。 */
+/** 按模型和速度档位展示同一时间范围内加权后的请求输出速率。 */
 function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdown[]; label: string; language: Language }) {
+  /** 列名跟随菜单栏窗口的语言。 */
   const text = copy[props.language];
   return (
     <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
@@ -1161,13 +1166,15 @@ function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdow
           <thead>
             <tr>
               <th scope="col">{text.model}</th>
+              <th scope="col">{text.outputRateSpeed}</th>
               <th scope="col">{text.outputRate}</th>
             </tr>
           </thead>
           <tbody>
             {props.entries.map((entry) => (
-              <tr key={entry.model}>
+              <tr key={JSON.stringify([entry.model, entry.serviceTier])}>
                 <th scope="row">{entry.model}</th>
+                <td>{formatOutputRateServiceTier(entry.serviceTier, props.language)}</td>
                 <td>{formatOutputRate(entry.outputTokensPerSecond, props.language)}</td>
               </tr>
             ))}
@@ -1176,6 +1183,20 @@ function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdow
       </div>
     </section>
   );
+}
+
+/** 常用速度沿用请求选择器的名称，其他档位保留原始标识。 */
+function formatOutputRateServiceTier(tier: string | null, language: Language): string {
+  switch (tier) {
+    case 'default':
+      return language === 'zh-CN' ? '标准' : 'Standard';
+    case 'priority':
+      return language === 'zh-CN' ? '快速' : 'Fast';
+    case 'ultrafast':
+      return language === 'zh-CN' ? '超快' : 'Ultrafast';
+    default:
+      return tier ?? (language === 'zh-CN' ? '未知' : 'Unknown');
+  }
 }
 
 /** 菜单栏和独立窗口共用同一份费用表结构，避免两套文案与格式漂移。 */
@@ -1456,7 +1477,9 @@ function readStoredSnapshot(): UsageOverviewSnapshot | null {
             Array.isArray(provider.overviewRanges[range].costBreakdown) &&
             provider.overviewRanges[range].costBreakdown.every((entry) => typeof entry.longContext === 'boolean' && (entry.serviceTier === null || typeof entry.serviceTier === 'string')) &&
             Array.isArray(provider.overviewRanges[range].outputRateBreakdown) &&
-            provider.overviewRanges[range].outputRateBreakdown.every((entry) => typeof entry.model === 'string' && typeof entry.outputTokensPerSecond === 'number'),
+            provider.overviewRanges[range].outputRateBreakdown.every(
+              (entry) => typeof entry.model === 'string' && (entry.serviceTier === null || typeof entry.serviceTier === 'string') && typeof entry.outputTokensPerSecond === 'number',
+            ),
         ),
     );
     return value && Array.isArray(value.providers) && compatible && typeof value.updatedAt === 'string' ? value : null;
