@@ -1940,17 +1940,14 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   }
   /** 派发前复核任务终态与当前权限，覆盖预检期间发生的任务变化。 */
   const currentTask = requireRunnableTask(options, run.taskId);
-  /** 只冻结需求字段，历史任务状态与授权不能覆盖当前记录。 */
-  const executionTask: ZeusTaskRecord =
-    isRecord(taskSource) && taskSource.type === 'automation'
-      ? {
-          ...currentTask,
-          title: run.contextManifest.task.title,
-          description: run.contextManifest.task.description,
-          taskType: run.contextManifest.task.taskType as ZeusTaskRecord['taskType'],
-          tags: [...run.contextManifest.task.tags],
-        }
-      : currentTask;
+  /** 需求字段沿用运行快照。任务状态与授权字段取当前记录。 */
+  const executionTask: ZeusTaskRecord = {
+    ...currentTask,
+    title: run.contextManifest.task.title,
+    description: run.contextManifest.task.description,
+    taskType: run.contextManifest.task.taskType as ZeusTaskRecord['taskType'],
+    tags: [...run.contextManifest.task.tags],
+  };
   /** 已接纳的运行先重放原回执，目录占用仅在接纳新会话时检查。 */
   const accepted = await options.executeTaskConversationIdempotent(project, executionTask, body, `task-work-run:${run.id}`).catch((error: unknown) => {
     if (isRecord(error) && error.code === 'ZEUS_DIRECT_WORKSPACE_CONCURRENCY_CONFIRMATION_REQUIRED') {
