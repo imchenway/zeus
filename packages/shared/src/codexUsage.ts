@@ -157,10 +157,12 @@ export interface UsageModelCostBreakdown {
   estimatedCosts: import('./modelPricing.js').EstimatedMoney[];
 }
 
-/** 同一模型的可测速文本请求按生成间隔和真实时长加权后的输出速率。 */
+/** 同一模型和速度档位的可测速文本请求按真实时长加权后的输出速率。 */
 export interface UsageModelOutputRateBreakdown {
   /** 请求实际使用的模型标识。 */
   model: string;
+  /** 归一化的请求速度档位；缺少请求级档位依据时为空。 */
+  serviceTier: string | null;
   /** 首个可见 Token 之后的平均生成速率。 */
   outputTokensPerSecond: number;
 }
@@ -174,7 +176,7 @@ export interface UsageOverviewRangeSummary {
   local: CodexLocalUsageTotals;
   /** 当前范围内按模型和历史单价归组的费用依据。 */
   costBreakdown: UsageModelCostBreakdown[];
-  /** 当前范围内按实际请求模型归组的输出速率。 */
+  /** 当前范围内按实际请求模型和速度档位归组的输出速率。 */
   outputRateBreakdown: UsageModelOutputRateBreakdown[];
   /** 当前范围内所有账本记录是否都包含完整用量。 */
   complete: boolean;

@@ -2,6 +2,7 @@ import { codexPricingUrl } from './codexUsagePricing.js';
 import {
   calculateCacheHitRate,
   emptyTokenUsageBreakdown,
+  normalizeCodexPricingServiceTier,
   sumEstimatedCosts,
   type CodexLocalUsageDay,
   type CodexLocalUsageTotals,
@@ -19,7 +20,7 @@ import {
   type UsageProviderSummary,
   type KiloAccountUsage,
 } from '@zeus/shared';
-import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, type ConversationOutputRateMeasurement, type ConversationExecutionRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
+import { conversationModelRequestId, type CodexUsageLedgerRecord, CodexUsageLedgerRepository, type ConversationOutputRateMeasurement, type ConversationExecutionRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ModelConnectionService } from './modelConnectionService.js';
 import type { CopilotRuntimeManager } from '@zeus/ai-runtime';
@@ -318,18 +319,39 @@ function aggregateOutputRateTotals(rows: readonly CodexUsageLedgerRecord[], outp
   return totals;
 }
 
-/** 按真实请求模型汇总速率；同模型仍按生成间隔和时长加权。 */
+/** 按实际模型和请求速度档位汇总生成间隔与时长。 */
 function aggregateOutputRateBreakdown(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: OutputRateIndex): UsageModelOutputRateBreakdown[] {
-  const groups = new Map<string, OutputRateTotals>();
+  /** 每个组合分别累积生成间隔和毫秒数。 */
+  const groups = new Map<string, Pick<UsageModelOutputRateBreakdown, 'model' | 'serviceTier'> & OutputRateTotals>();
   for (const row of rows) {
-    for (const measurement of outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId)) ?? []) {
-      const totals = groups.get(measurement.modelId) ?? { outputTokenIntervals: 0, durationMs: 0 };
+    /** 只处理已匹配到该账本轮次的可测速请求。 */
+    const measurements = outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId));
+    if (!measurements?.length) continue;
+    /** 档位来自同一次请求；轮次级快照可能只记录了最后一笔请求的档位。 */
+    const tiersByRequest = new Map<string, string>();
+    for (const request of row.estimate.requests ?? []) {
+      /** Codex 的空档位表示标准速度；其他供应源的空值没有档位信息。 */
+      const tier = request.estimate.rateSnapshot.serviceTier;
+      if (tier === undefined || (tier === null && row.providerId !== 'codex')) continue;
+      /** 内部观测身份匹配累计用量；真实响应身份匹配旧观测和独立 API 请求。 */
+      const normalizedTier = normalizeCodexPricingServiceTier(tier);
+      tiersByRequest.set(conversationModelRequestId(row.conversationId, `codex-request:${row.providerThreadId}:${request.id}`), normalizedTier);
+      tiersByRequest.set(request.responseId ?? request.id, normalizedTier);
+    }
+    for (const measurement of measurements) {
+      /** 仅按可证明的请求身份关联，未匹配的测速样本归入未知档位。 */
+      const serviceTier = tiersByRequest.get(measurement.requestId) ?? (measurement.providerRequestId === null ? null : (tiersByRequest.get(measurement.providerRequestId) ?? null));
+      /** 组合键区分同模型的各档位，也保留没有档位证据的样本。 */
+      const key = JSON.stringify([measurement.modelId, serviceTier]);
+      const totals = groups.get(key) ?? { model: measurement.modelId, serviceTier, outputTokenIntervals: 0, durationMs: 0 };
       totals.outputTokenIntervals += measurement.outputTokenIntervals;
       totals.durationMs += measurement.durationMs;
-      groups.set(measurement.modelId, totals);
+      groups.set(key, totals);
     }
   }
-  return [...groups].map(([model, totals]) => ({ model, outputTokensPerSecond: (totals.outputTokenIntervals * 1_000) / totals.durationMs })).sort((left, right) => left.model.localeCompare(right.model));
+  return [...groups.values()]
+    .map(({ model, serviceTier, outputTokenIntervals, durationMs }) => ({ model, serviceTier, outputTokensPerSecond: (outputTokenIntervals * 1_000) / durationMs }))
+    .sort((left, right) => left.model.localeCompare(right.model) || Number(left.serviceTier === null) - Number(right.serviceTier === null) || (left.serviceTier ?? '').localeCompare(right.serviceTier ?? ''));
 }
 
 /** 汇总选中账本记录；请求速率按生成间隔和真实文本生成时长加权。 */

@@ -136,6 +136,10 @@ export interface ConversationOutputRateMeasurement {
   providerThreadId: string;
   /** 原生轮次身份。 */
   providerTurnId: string;
+  /** 请求观测的稳定身份，用于关联同一笔请求快照。 */
+  requestId: string;
+  /** 供应商响应身份，历史观测也可据此关联请求快照。 */
+  providerRequestId: string | null;
   /** 请求实际使用的模型标识。 */
   modelId: string;
   /** 首个可见 Token 之后的生成间隔数。 */
@@ -1656,13 +1660,15 @@ export class ConversationExecutionRepository {
       conversation_id: string;
       provider_thread_id: string;
       provider_turn_id: string;
+      request_id: string;
+      provider_request_id: string | null;
       model_id: string;
       output_tokens: number;
       reasoning_output_tokens: number;
       first_text_output_at: string;
       completed_at: string;
     }>(
-      `SELECT r.conversation_id, t.provider_thread_id, t.provider_turn_id, r.model_id,
+      `SELECT r.conversation_id, t.provider_thread_id, t.provider_turn_id, r.id AS request_id, r.provider_request_id, r.model_id,
               r.output_tokens, r.reasoning_output_tokens, r.first_text_output_at, r.completed_at
          FROM conversation_model_requests r
          JOIN conversation_turns t ON t.id = r.turn_id
@@ -1672,7 +1678,9 @@ export class ConversationExecutionRepository {
     );
     return rows.flatMap((row) => {
       const sample = outputRateSample(row.output_tokens, row.reasoning_output_tokens, row.first_text_output_at, row.completed_at);
-      return sample ? [{ conversationId: row.conversation_id, providerThreadId: row.provider_thread_id, providerTurnId: row.provider_turn_id, modelId: row.model_id, ...sample }] : [];
+      return sample
+        ? [{ conversationId: row.conversation_id, providerThreadId: row.provider_thread_id, providerTurnId: row.provider_turn_id, requestId: row.request_id, providerRequestId: row.provider_request_id, modelId: row.model_id, ...sample }]
+        : [];
     });
   }
 
