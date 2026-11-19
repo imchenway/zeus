@@ -1,7 +1,17 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
+/** 连续高度过渡在展开和收起时使用的时序。 */
+export type HeightMotionTiming = Readonly<{
+  /** 展开时长，单位为毫秒。 */
+  enterMs: number;
+  /** 收起时长，单位为毫秒。 */
+  exitMs: number;
+  /** 两个方向共用的 CSS 缓动曲线。 */
+  easing: string;
+}>;
+
 /** 等待元素自身的退出过渡后卸载；重新打开会接管过渡，减少动态效果时立即卸载。 */
-export function useMotionPresence<T extends HTMLElement>(open: boolean, animateHeight = false) {
+export function useMotionPresence<T extends HTMLElement>(open: boolean, animateHeight = false, heightMotionTiming?: HeightMotionTiming) {
   /** 当前动画所属的真实元素，避免等待子内容或循环装饰。 */
   const ref = useRef<T>(null);
   /** 独立测量自然内容，外层高度动画不会反过来触发自身测量。 */
@@ -18,10 +28,14 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
       /** 自然内容保持独立排版，同时覆盖 Markdown、图片和嵌套展开。 */
       const content = contentRef.current;
       if (!element || !content) return;
-      /** 开合与异步补载沿用共享时长，不另设一套动画节奏。 */
+      /** 未指定局部时序时，继续使用共享浮层时序。 */
       const style = getComputedStyle(element);
-      const duration = Number.parseFloat(style.getPropertyValue(open ? '--zeus-motion-duration-layer-enter' : '--zeus-motion-duration-layer-exit')) || (open ? 160 : 120);
-      const easing = style.getPropertyValue('--zeus-motion-ease-out').trim() || 'ease-out';
+      /** 当前方向的局部时长，单位为毫秒。 */
+      const durationOverride = open ? heightMotionTiming?.enterMs : heightMotionTiming?.exitMs;
+      /** 当前方向的实际时长，单位为毫秒。 */
+      const duration = durationOverride ?? (Number.parseFloat(style.getPropertyValue(open ? '--zeus-motion-duration-layer-enter' : '--zeus-motion-duration-layer-exit')) || (open ? 160 : 120));
+      /** 高度在过渡期间的速度曲线。 */
+      const easing = heightMotionTiming?.easing ?? (style.getPropertyValue('--zeus-motion-ease-out').trim() || 'ease-out');
       /** 首次挂载和虚拟列表恢复不重复播放入场。 */
       let targetHeight = Number.parseFloat(element.style.blockSize);
       if (open) setRetained(true);
@@ -91,6 +105,6 @@ export function useMotionPresence<T extends HTMLElement>(open: boolean, animateH
     return () => {
       cancelled = true;
     };
-  }, [open, animateHeight]);
+  }, [open, animateHeight, heightMotionTiming]);
   return { ref, contentRef, present: open || retained };
 }
