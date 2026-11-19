@@ -43,6 +43,7 @@ import {
   browserFrozenContractEntry,
   browserFrozenContractVersion,
   browserFrozenUnsupportedSurfaceKinds,
+  isConversationBrowserFileAllowed,
   type BrowserAutomationContentItem,
   type BrowserAutomationPort,
   type BrowserAutomationToolCall,
@@ -790,7 +791,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'open') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      this.assertAgentUrlAllowed(url);
+      this.assertAgentUrlAllowed(url, input.localFileScope);
       const window = this.preferredWindow(input.conversationId);
       const snapshot = await this.openConversationResource(window, { conversationId: input.conversationId, url });
       if (url !== 'about:blank' && snapshot.activeTabId) {
@@ -804,7 +805,7 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'select_tab') {
       const selected = this.requireConversationTab(input.conversationId, requireNonEmptyString(args.tabId, 'tabId'));
-      this.assertAgentUrlAllowed(selected.snapshot.url);
+      this.assertAgentUrlAllowed(selected.snapshot.url, input.localFileScope);
       const window = this.preferredWindow(input.conversationId);
       await this.activateTab(window, input.conversationId, selected.snapshot.id);
       this.emitOpenRequested(input.conversationId);
@@ -819,27 +820,27 @@ export class BrowserHost implements BrowserAutomationPort {
     const tab = await this.resolveToolTab(input.conversationId, optionalString(args.tabId));
     if (input.tool === 'navigate') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      this.assertAgentUrlAllowed(url);
+      this.assertAgentUrlAllowed(url, input.localFileScope);
       await this.ensureView(tab).webContents.loadURL(url);
       await this.waitForTabReady(tab, 30_000);
       this.emitOpenRequested(input.conversationId);
       return toolJson({ tabId: tab.snapshot.id, url });
     }
 
-    this.assertAgentUrlAllowed(tab.snapshot.url);
+    this.assertAgentUrlAllowed(tab.snapshot.url, input.localFileScope);
     this.emitOpenRequested(input.conversationId);
     if (['snapshot', 'element', 'click', 'type', 'press', 'scroll', 'screenshot', 'invoke'].includes(input.tool)) {
-      return this.cua.invoke({ ...input, arguments: { ...input.arguments, tabId: tab.snapshot.id } }, this.cuaSurface(tab));
+      return this.cua.invoke({ ...input, arguments: { ...input.arguments, tabId: tab.snapshot.id } }, this.cuaSurface(tab, input.localFileScope));
     }
     switch (input.tool) {
       case 'history': {
         const action = requireNonEmptyString(args.action, 'action');
-        const result = await this.invokeHistoryTool(tab, action);
+        const result = await this.invokeHistoryTool(tab, action, input.localFileScope);
         if (action !== 'stop') await this.waitForTabReady(tab, 30_000);
         return result;
       }
       case 'wait':
-        if (args.query !== undefined) return this.cua.wait({ ...input, arguments: { ...args, tabId: tab.snapshot.id } }, this.cuaSurface(tab));
+        if (args.query !== undefined) return this.cua.wait({ ...input, arguments: { ...args, tabId: tab.snapshot.id } }, this.cuaSurface(tab, input.localFileScope));
         return this.invokeWaitTool(tab, args);
       case 'developer':
         return this.invokeDeveloperTool(input, tab);
@@ -882,7 +883,7 @@ export class BrowserHost implements BrowserAutomationPort {
   }
 
   /** 实时读取宿主拥有的页面、窗口及布局，页面脚本不能提供这些身份。 */
-  private cuaSurface(tab: LiveBrowserTab): BrowserCuaSurface {
+  private cuaSurface(tab: LiveBrowserTab, localFileScope: BrowserAutomationToolCall['localFileScope']): BrowserCuaSurface {
     const contents = this.ensureView(tab).webContents;
     const conversationId = tab.snapshot.conversationId;
     const window = (): BrowserWindow => {
@@ -898,7 +899,7 @@ export class BrowserHost implements BrowserAutomationPort {
       bounds: () => tab.view!.getBounds(),
       visible: () => this.visibleTabByWindow.get(window().id) === tab.snapshot.id && window().isVisible() && !window().isMinimized(),
       pendingDialog: () => this.activeJsDialogs.get(tab.snapshot.id)?.parameters,
-      allowUrl: (url) => this.assertAgentUrlAllowed(normalizeBrowserUrl(url)),
+      allowUrl: (url) => this.assertAgentUrlAllowed(normalizeBrowserUrl(url), localFileScope),
     };
   }
 
@@ -1763,10 +1764,12 @@ export class BrowserHost implements BrowserAutomationPort {
     return this.requireConversationTab(conversationId, snapshot.activeTabId!);
   }
 
-  /** 网页操作直接执行，仅保留本地文件访问边界。 */
-  private assertAgentUrlAllowed(targetUrl: string): void {
+  /** 网页直接访问，本地文件沿用会话工作区和 HTML 产物的文件权限。 */
+  private assertAgentUrlAllowed(targetUrl: string, localFileScope: BrowserAutomationToolCall['localFileScope']): void {
     const url = new URL(targetUrl);
-    if (url.protocol === 'file:') throw new Error('Agent automation cannot navigate to local file URLs. Open the file manually in the built-in browser.');
+    if (url.protocol === 'file:' && !isConversationBrowserFileAllowed(url, localFileScope)) {
+      throw new Error(this.text('本地文件不存在或不在当前会话可访问的范围内。', 'The local file is missing or outside this conversation’s file scope.'));
+    }
   }
 
   /** 仅处理网页自身申请的设备等权限，不接收 AI 操作授权。 */
@@ -1804,6 +1807,7 @@ export class BrowserHost implements BrowserAutomationPort {
   private async invokeHistoryTool(
     tab: LiveBrowserTab,
     action: string,
+    localFileScope: BrowserAutomationToolCall['localFileScope'],
   ): Promise<{
     contentItems: BrowserAutomationContentItem[];
     success: boolean;
@@ -1813,8 +1817,8 @@ export class BrowserHost implements BrowserAutomationPort {
     const targetOffset = action === 'back' ? -1 : action === 'forward' ? 1 : 0;
     if (targetOffset !== 0) {
       const target = history.getAllEntries()[history.getActiveIndex() + targetOffset];
-      if (target?.url && safeOrigin(target.url) !== safeOrigin(tab.snapshot.url)) {
-        this.assertAgentUrlAllowed(target.url);
+      if (target?.url) {
+        this.assertAgentUrlAllowed(target.url, localFileScope);
       }
     }
     if (action === 'back' && history.canGoBack()) history.goBack();
@@ -2069,7 +2073,7 @@ export class BrowserHost implements BrowserAutomationPort {
       }
       case 'Tabs.new': {
         const url = optionalString(args.url) ? normalizeBrowserUrl(requireNonEmptyString(args.url, 'url')) : 'about:blank';
-        if (url !== 'about:blank') this.assertAgentUrlAllowed(url);
+        this.assertAgentUrlAllowed(url, input.localFileScope);
         const snapshot = await this.openConversationResource(this.preferredWindow(input.conversationId), { conversationId: input.conversationId, url });
         const tab = this.requireConversationTab(input.conversationId, snapshot.activeTabId!);
         if (url !== 'about:blank') await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
@@ -2117,14 +2121,14 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (path === 'Tab.goto') {
       const url = normalizeBrowserUrl(requireNonEmptyString(args.url, 'url'));
-      this.assertAgentUrlAllowed(url);
+      this.assertAgentUrlAllowed(url, input.localFileScope);
       await this.ensureView(tab).webContents.loadURL(url);
       await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
       return toolJson({ url: tab.snapshot.url, documentGeneration: tab.documentGeneration });
     }
     if (path === 'Tab.back' || path === 'Tab.forward' || path === 'Tab.reload') {
       const action = path === 'Tab.back' ? 'back' : path === 'Tab.forward' ? 'forward' : 'reload';
-      const result = await this.invokeHistoryTool(tab, action);
+      const result = await this.invokeHistoryTool(tab, action, input.localFileScope);
       await this.waitForTabReady(tab, boundedInteger(args.timeoutMs, 30_000, 0, 30_000));
       return result;
     }
@@ -2556,7 +2560,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const submitSelector = this.browserAuthSelector(input, submit.selector);
       if (submitSelector && submit.action === 'click') await this.ensureView(tab).webContents.executeJavaScript(`document.querySelector(${JSON.stringify(submitSelector)})?.click()`, true);
       else if (submitSelector && submit.action === 'press_enter') {
-        const submitted = await this.cua.invoke({ ...input, tool: 'press', arguments: { tabId: tab.snapshot.id, key: 'Enter' } }, this.cuaSurface(tab));
+        const submitted = await this.cua.invoke({ ...input, tool: 'press', arguments: { tabId: tab.snapshot.id, key: 'Enter' } }, this.cuaSurface(tab, input.localFileScope));
         if (!submitted.success) return toolJson({ status: 'submission_unconfirmed', details: submitted.contentItems });
       }
       return toolJson({ status: 'submitted', ...(secure.selectedOption ? { selected_option: secure.selectedOption } : {}) });
@@ -2804,7 +2808,7 @@ export class BrowserHost implements BrowserAutomationPort {
       const changes = asRecord(values[1]);
       if (typeof changes.url === 'string') {
         const url = normalizeBrowserUrl(changes.url);
-        this.assertAgentUrlAllowed(url);
+        this.assertAgentUrlAllowed(url, input.localFileScope);
         await this.ensureView(tab).webContents.loadURL(url);
         await this.waitForTabReady(tab, 30_000);
       }
@@ -2952,14 +2956,14 @@ export class BrowserHost implements BrowserAutomationPort {
       let tab: LiveBrowserTab | undefined;
       try {
         const url = normalizeBrowserUrl(requestedUrl);
-        this.assertAgentUrlAllowed(url);
+        this.assertAgentUrlAllowed(url, input.localFileScope);
         const snapshot = await this.openTab(window, { conversationId: input.conversationId, url });
         tab = this.requireConversationTab(input.conversationId, snapshot.activeTabId!);
         await this.waitForTabReady(tab, timeoutMs);
         /** 快照导出只保存 CUA 观察正文；失败结果不能伪装成页面内容。 */
         let content: string;
         if (contentType === 'domSnapshot') {
-          const observed = await this.cua.invoke({ ...input, tool: 'snapshot', arguments: { tabId: tab.snapshot.id, maxElements: 300 } }, this.cuaSurface(tab));
+          const observed = await this.cua.invoke({ ...input, tool: 'snapshot', arguments: { tabId: tab.snapshot.id, maxElements: 300 } }, this.cuaSurface(tab, input.localFileScope));
           if (!observed.success) throw new Error('CUA 无法读取当前页面。');
           content = observed.contentItems
             .filter((item) => item.type === 'inputText')

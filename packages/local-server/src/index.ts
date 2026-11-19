@@ -210,6 +210,7 @@ export { createMacOSKeychainStore, createPlatformSecretStore, getSecretPresenceL
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
+export { isConversationBrowserFileAllowed } from './conversationResources.js';
 export { browserAutomationDeadline, remainingBrowserAutomationTime, createBrowserAutomationFlow } from './browserAutomationFlow.js';
 export { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOptions } from './digitalTeamWorkflowCoordinator.js';
 export { DigitalTeamWorkflowRouteError, registerDigitalTeamWorkflowRoutes, type DigitalTeamWorkflowRouteCoordinator } from './digitalTeamWorkflowRoutes.js';
@@ -768,6 +769,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const commandRuns = new CommandRunRepository(db);
   const commandArtifacts = new CommandArtifactRepository(db);
   const artifactStore = new ArtifactStore(db, join(dataLayout.artifactsDirectory, 'content-addressed'), () => now().toISOString(), { writeFaultReporter: db });
+  /** HTML 预览只读取分层布局的产物目录，旧布局的资料根包含其他应用数据。 */
+  const htmlArtifactsDirectory = dataLayout.kind === 'layered' ? dataLayout.artifactsDirectory : undefined;
   const projectionDatabases = new ProjectionDatabaseRuntimeManager({
     source: db,
     directory: join(dataLayout.dataDirectory, 'projections'),
@@ -978,8 +981,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  /** 升级时补齐历史图片引用和可重试归档请求，保留既有资源与原件。 */
-  const conversationResourceBackfillRevision = 'durable_image_archive_requests';
+  /** 升级时补齐历史 HTML 预览与可重试的图片归档请求。 */
+  const conversationResourceBackfillRevision = 'assistant_html_artifact_links';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1538,6 +1541,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             text: item.textContent,
             trustedAttachmentRoots: trustedConversationAttachmentRoots,
             artifactsDirectory: dataLayout.artifactsDirectory,
+            htmlArtifactsDirectory,
             now: item.updatedAt,
           },
           conversationResources,
@@ -1917,6 +1921,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             generatedImageRoot,
             assistantImageArchiveRoot: conversationAttachmentRoot,
             artifactsDirectory: dataLayout.artifactsDirectory,
+            htmlArtifactsDirectory,
             now: item.updatedAt,
           });
           const existing = existingResourcesByItem.get(item.id) ?? [];
@@ -1951,6 +1956,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           generatedImageRoot,
           assistantImageArchiveRoot: conversationAttachmentRoot,
           artifactsDirectory: dataLayout.artifactsDirectory,
+          htmlArtifactsDirectory,
           now: item.updatedAt,
         },
         conversationResources,
@@ -2201,6 +2207,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       trustedAttachmentRoots: trustedConversationAttachmentRoots,
       generatedImageRoot,
       artifactsDirectory: dataLayout.artifactsDirectory,
+      htmlArtifactsDirectory,
       getProjectRoot: (projectId) => projects.getById(projectId)?.localPath ?? null,
       ensureExecutionContext: ensureNativeConversationExecutionContext,
       validateContextCapacity: validateNativeContextCapacity,
@@ -3463,6 +3470,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
 
   conversationOperations = createConversationApplicationOperations({
     conversationSources,
+    htmlArtifactsDirectory,
     settings,
     conversationGoals,
     aiRuntimeManager,

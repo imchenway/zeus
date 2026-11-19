@@ -375,6 +375,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         trustedAttachmentRoots: options.trustedAttachmentRoots,
         generatedImageRoot: options.generatedImageRoot,
         artifactsDirectory: options.artifactsDirectory,
+        htmlArtifactsDirectory: options.htmlArtifactsDirectory,
         now: timestamp,
       },
       resources,
