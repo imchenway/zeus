@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { EmployeeWorkSettings } from '@zeus/shared';
 import { codexServiceTierLabel } from '../../session/serviceTierSelection.js';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
-import { compareModelOptions } from '../../modelOptionPresentation.js';
+import { presentModelOptions } from '../../modelOptionPresentation.js';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { PermissionModeControl } from '../../session/PermissionModeControl.js';
@@ -68,8 +68,23 @@ export function EmployeeExecutionSettings(props: {
   }, [props.client, zh]);
   /** 缺省字段继承，显式 null 保留模型默认语义。 */
   const effective = { ...props.inherited, ...props.value };
-  /** 使用当前选定模型，空值只展示目录默认模型的选项。 */
-  const model = models.find((item) => item.id === (effective.modelOverride || preferredModel));
+  /** 空选项代表项目默认，表单值由当前层及继承配置决定。 */
+  const modelValue = effective.modelOverride ?? '';
+  /** 未指定模型时，其他执行字段读取首选模型的能力。 */
+  const model = models.find((item) => item.id === (modelValue || preferredModel));
+  /** 模型分组、排序、搜索与置顶跟随任务推送。 */
+  const modelPresentation = useMemo(() => presentModelOptions(models, modelValue, props.language, { preserveMissingSelection: true }), [models, modelValue, props.language]);
+  /** 已停用或移除的当前模型仍可识别。 */
+  const unavailableModel = modelValue !== '' && (!model || model.available === false);
+  /** 表单补充项目默认入口和当前失效选项。 */
+  const modelFallbackOptions: ZeusSelectOption<string>[] = [{ value: '', label: zh ? '项目默认模型' : 'Project default' }];
+  if (unavailableModel) {
+    modelFallbackOptions.push({
+      value: modelValue,
+      label: [model?.displayName?.trim() || model?.model || modelValue, model?.sourceName, zh ? '不可用' : 'Unavailable'].filter(Boolean).join(' · '),
+      disabled: true,
+    });
+  }
   /** 修改一个字段，不丢失其他覆盖。 */
   const patch = (value: Partial<EmployeeWorkSettings>) => props.onChange({ ...props.value, ...value });
   /** 删除当前层字段后由服务端重新解析继承。 */
@@ -118,15 +133,18 @@ export function EmployeeExecutionSettings(props: {
         {field(
           'modelOverride',
           zh ? '模型' : 'Model',
-          select(
-            '模型',
-            effective.modelOverride ?? '',
-            [
-              { value: '', label: zh ? '项目默认模型' : 'Project default' },
-              ...[...models].sort(compareModelOptions).map((item) => ({ value: item.id, label: `${item.displayName ?? item.model}${item.sourceName ? ` · ${item.sourceName}` : ''}`, disabled: item.available === false })),
-            ],
-            (value) => patch({ modelOverride: value || null }),
-          ),
+          <ZeusSelect
+            size="regular"
+            ariaLabel={zh ? '模型' : 'Model'}
+            value={modelValue}
+            options={[...modelFallbackOptions, ...modelPresentation.options]}
+            pinning={modelPresentation.pinning}
+            triggerLabel={modelValue && !unavailableModel ? modelPresentation.triggerLabel : undefined}
+            onChange={(value) => patch({ modelOverride: value || null })}
+            disabled={props.disabled}
+            searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+            emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
+          />,
         )}
         {field(
           'contextCapacityTokens',
