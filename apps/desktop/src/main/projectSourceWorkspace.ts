@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { access, lstat, mkdir, open, opendir, readFile, readdir, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
+import { readGitHeadFile } from '@zeus/git-core';
 import { assertWindowsPortablePath, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { detectSourceLanguage } from '@zeus/shared';
@@ -268,6 +269,28 @@ export class ProjectSourceWorkspaceService {
     };
   }
 
+  /** 沿用源码窗口的工作树授权；基线缺失或历史正文无法作为 UTF-8 源码时返回空结果。 */
+  async readGitBaseline(projectId: string, relativePath: string): Promise<string | null> {
+    /** 授权根由当前窗口中的项目或工作树身份决定。 */
+    const root = await this.#projectRoot(projectId);
+    /** 与打开源码使用同一目录和路径校验。 */
+    const target = await resolveExistingPath(root, relativePath, 'file');
+    // 父目录的符号链接也不能将 Git 对象读取定位到管理目录。
+    assertSafeRelativePath(relative(root, target.canonicalPath).split(sep).join('/'), false);
+    /** 只对可编辑的普通文本文件读取历史正文。 */
+    const info = await lstat(target.absolutePath);
+    if (!info.isFile() || info.size > maximumEditableBytes || filePreviewKind(filePreviewMime(target.relativePath)) !== 'system') return null;
+    /** 空缓冲区是 Git 已跟踪新文件的有效基线。 */
+    const bytes = await readGitHeadFile(target.canonicalPath, maximumEditableBytes).catch(() => null);
+    if (!bytes || bytes.includes(0)) return null;
+    try {
+      // 采用与源码正文相同的换行格式，工作区的 CRLF 不形成整文件变更。
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?|\n/gu, '\n');
+    } catch {
+      return null;
+    }
+  }
+
   async saveFile(input: SaveProjectSourceFileInput, beforeWrite?: () => Promise<void>): Promise<ProjectSourceDocument> {
     const root = await this.#projectRoot(input.projectId);
     const target = await resolveExistingPath(root, input.relativePath, 'file');
@@ -435,7 +458,8 @@ async function resolveExistingEntryPath(root: string, requestedPath: string): Pr
   return { absolutePath, relativePath };
 }
 
-async function resolveExistingPath(root: string, requestedPath: string, expected?: 'file' | 'directory'): Promise<{ absolutePath: string; relativePath: string }> {
+/** 返回源码操作使用的路径与已验证的真实路径。 */
+async function resolveExistingPath(root: string, requestedPath: string, expected?: 'file' | 'directory'): Promise<{ absolutePath: string; relativePath: string; canonicalPath: string }> {
   const relativePath = normalizeRelativePath(requestedPath);
   const lexicalPath = resolveLexicalPath(root, relativePath);
   const canonicalPath = await realpath(lexicalPath);
@@ -443,7 +467,7 @@ async function resolveExistingPath(root: string, requestedPath: string, expected
   const targetStat = await stat(canonicalPath);
   if (expected === 'file' && !targetStat.isFile()) throw workspaceError('ZEUS_PROJECT_SOURCE_NOT_FILE', '目标不是普通文件。');
   if (expected === 'directory' && !targetStat.isDirectory()) throw workspaceError('ZEUS_PROJECT_SOURCE_NOT_DIRECTORY', '目标不是目录。');
-  return { absolutePath: lexicalPath, relativePath };
+  return { absolutePath: lexicalPath, relativePath, canonicalPath };
 }
 
 function resolveLexicalPath(root: string, relativePath: string): string {

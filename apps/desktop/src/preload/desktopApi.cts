@@ -466,6 +466,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     onFilePreviewSourceWorkspaceRequested: (listener: (workspace: unknown) => void) => transport.subscribe('zeus:file-preview:source-open-workspace', listener),
     /** 读取项目源码文件。 */
     readProjectSourceFile: (input: unknown) => transport.invoke('zeus:project-source:read-file', input),
+    /** 读取当前源码工作树中该文件的 HEAD 正文。 */
+    readProjectSourceGitBaseline: (input: unknown) => transport.invoke('zeus:project-source:git-baseline', input),
     /** 只向受信源码页提供草稿效果预览。 */
     prepareProjectSourcePreview: (input: unknown) => transport.invoke('zeus:project-source:prepare-preview', input),
     /** 关闭页面或切换文件后撤销资源授权。 */

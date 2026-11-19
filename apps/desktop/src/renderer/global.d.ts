@@ -271,6 +271,8 @@ declare global {
       /** 在原生源码页打开主进程校验后的目标，沿用草稿离开保护。 */
       onFilePreviewSourceWorkspaceRequested: (listener: (workspace: import('@zeus/shared').FilePreviewSourceWorkspace) => void) => () => void;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
+      /** 返回该文件的 HEAD 正文；空字符串是有效基线，null 表示无法比较。 */
+      readProjectSourceGitBaseline: (input: { projectId: string; relativePath: string }) => Promise<string | null>;
       /** 项目内的草稿效果预览与相对资源读取。 */
       prepareProjectSourcePreview: (input: import('@zeus/shared').ProjectSourcePreviewRequest) => Promise<import('@zeus/shared').ProjectSourcePreviewGrant>;
       /** 资源授权绑定当前窗口，不保留已关闭页面。 */

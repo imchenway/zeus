@@ -1,0 +1,46 @@
+/* 变更栏紧邻行号区域的代码侧；预留 8 px 给色块及两侧间距。 */
+.cm-gutter.cm-source-git-gutter {
+  width: 8px;
+}
+
+/* 以 CodeMirror 实际渲染的行高定位，包含软换行。 */
+.cm-source-git-gutter .cm-gutterElement {
+  position: relative;
+}
+
+/* 色块宽 4 px。纯增和修改在相邻行间连接成连续色带。 */
+.cm-source-git-marker {
+  position: absolute;
+  z-index: 1;
+  inset: 0 2px;
+}
+
+/* 狭窄的标记保持与明暗主题行号栏背景可辨。 */
+.cm-source-git-marker.addition {
+  background: light-dark(#42945b, #79c68e);
+}
+.cm-source-git-marker.replacement {
+  background: light-dark(#487fcc, #86aff2);
+}
+
+.cm-source-git-marker.start {
+  inset-block-start: 1px;
+  border-start-start-radius: 2px;
+  border-start-end-radius: 2px;
+}
+.cm-source-git-marker.end {
+  inset-block-end: 1px;
+  border-end-start-radius: 2px;
+  border-end-end-radius: 2px;
+}
+
+/* 删除没有当前正文行。高度 6 px 的标记居中跨越行边界。 */
+.cm-source-git-marker.deletion {
+  inset-block: -3px auto;
+  height: 6px;
+  border-radius: 2px;
+  background: light-dark(#7b828e, #a3a7b2);
+}
+.cm-source-git-marker.deletion.at-end {
+  inset-block: auto -3px;
+}
