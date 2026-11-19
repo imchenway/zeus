@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
 import { closeLocalHttpServer } from './closeLocalHttpServer.js';
 import { browserAutomationDeadline, remainingBrowserAutomationTime } from '@zeus/local-server';
+import { codexRemoteControlBootstrapTimeoutMs } from '@zeus/ai-runtime';
 
 export interface DesktopBrowserAutomationBridge {
   baseUrl: string;
@@ -68,7 +69,7 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
   return {
     register,
     /** Windows daemon 必须在 Core Job 外启动；Main 只接纳固定的受管 Codex。 */
-    async ensureCodexRemoteControl() {
+    async ensureCodexRemoteControl(retryProxyHandoff) {
       /** 一次请求只绑定当前 Main 租约，失败后不跨实例重放。 */
       const current = registration;
       if (!current) throw new Error('Zeus 界面离线，无法准备 Codex 远程接管守护进程。');
@@ -76,8 +77,8 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
       const response = await fetch(`${current.baseUrl}/applications/codex/remote-control`, {
         method: 'POST',
         headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(50_000),
+        body: JSON.stringify(retryProxyHandoff ? { retryProxyHandoff } : {}),
+        signal: AbortSignal.timeout(codexRemoteControlBootstrapTimeoutMs),
       });
       /** 官方 CLI 返回的 socket 用于连接，不把 bootstrap 退出当作会话成功。 */
       const result: unknown = await response.json();
@@ -185,8 +186,10 @@ async function handleDesktopBrowserBridgeRequest(request: IncomingMessage, respo
   try {
     const input = await readJsonBody(request);
     if (request.url === '/applications/codex/remote-control') {
-      if (!browserAutomation.ensureCodexRemoteControl || !isRecord(input) || Object.keys(input).length !== 0) throw new Error('Codex 守护进程请求无效或宿主不可用。');
-      sendJson(response, 200, await browserAutomation.ensureCodexRemoteControl());
+      if (!browserAutomation.ensureCodexRemoteControl || !isRecord(input) || Object.keys(input).some((key) => key !== 'retryProxyHandoff' || typeof input[key] !== 'boolean')) {
+        throw new Error('Codex 守护进程请求无效或宿主不可用。');
+      }
+      sendJson(response, 200, await browserAutomation.ensureCodexRemoteControl(input.retryProxyHandoff === true));
       return;
     }
     if (request.url === '/applications/wechat/open') {

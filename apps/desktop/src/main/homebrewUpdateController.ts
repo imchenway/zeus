@@ -49,7 +49,8 @@ interface CreateHomebrewUpdateControllerOptions {
   openDownloadPage: (url: string) => Promise<void>;
   currentVersion: string;
   canInstall: () => void;
-  onInstallReady: (targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>) => Promise<boolean>;
+  /** Homebrew 准备仍可借用旧网络出口，只有 activate 会安排重启。 */
+  onInstallReady: (targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>, prepare: () => Promise<void>) => Promise<boolean>;
   retryDelaysMs?: readonly number[];
 }
 
@@ -301,13 +302,22 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         /** 安装管理方式已经核验；缺少服务不能退回另一种安装行为。 */
         const homebrew = options.homebrew;
         if (!homebrew) throw new Error('当前平台没有 Homebrew 更新服务。');
-        accepted = await options.onInstallReady(prepared.update.executionHostProtocolVersion, async () => {
-          const currentHost = await ensureHost();
+        /** 安装使用已校验的制品；Core 退出前完成 Homebrew 自己的检查与命令。 */
+        const prepareInstall = async () => {
+          await ensureHost();
           installed ??= await homebrew.install(preparedHomebrew, (progress) => {
             void publish(progressCopy(options.language(), progress, preparedHomebrew.update));
           });
-          currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed! });
-        });
+        };
+        accepted = await options.onInstallReady(
+          prepared.update.executionHostProtocolVersion,
+          async () => {
+            await prepareInstall();
+            const currentHost = await ensureHost();
+            currentHost.relaunchAfterProcessExit({ pid: process.pid, ...installed! });
+          },
+          prepareInstall,
+        );
       }
       if (!accepted) {
         phase = 'ready';

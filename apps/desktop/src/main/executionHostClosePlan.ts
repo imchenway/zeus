@@ -1,6 +1,10 @@
+import { codexRemoteControlBootstrapTimeoutMs } from '@zeus/ai-runtime';
+
 export interface ExecutionHostCloseResources {
   recordClosing(): Promise<void>;
   closeRuntime(): Promise<void>;
+  /** Unix Core 等已提交的 Codex 启动完成 PID 登记。 */
+  waitForCodexDaemonCommands?(): Promise<void>;
   closeControlServer(): Promise<void>;
   removeRendezvous(): Promise<void>;
   removeStartupStatus(): Promise<void>;
@@ -14,12 +18,16 @@ const executionHostControlCloseTimeoutMs = 5_000;
 
 /** 向独立 Core 请求停止工作时的等待上限，单位为毫秒。 */
 export const executionHostStopBeforeShutdownTimeoutMs = 10_000;
-/** 等待独立 Core 正常退出并释放租约的上限，单位为毫秒。 */
+/** 等待独立 Core 正常退出的基础时限，单位为毫秒。 */
 export const executionHostGracefulExitTimeoutMs = 45_000;
+/** Unix 的已提交 Codex 命令在 Core 退出前完成，Windows 由 Main 等待，单位为毫秒。 */
+const executionHostDaemonDrainTimeoutMs = process.platform === 'win32' ? 0 : codexRemoteControlBootstrapTimeoutMs;
+/** Core 正常退出包含等待本进程内的守护进程启动命令，单位为毫秒。 */
+export const executionHostShutdownTimeoutMs = executionHostGracefulExitTimeoutMs + executionHostDaemonDrainTimeoutMs;
 /** 发出已核验身份的强制结束请求后，等待进程和租约释放的上限，单位为毫秒。 */
 export const executionHostForcedExitTimeoutMs = 5_000;
-/** Main 等待独立 Core 的总上限，额外为在途连接、控制请求、身份核验和关闭本地桥预留三十秒。 */
-export const desktopExecutionHostCloseTimeoutMs = executionHostStopBeforeShutdownTimeoutMs + executionHostGracefulExitTimeoutMs + executionHostForcedExitTimeoutMs + 30_000;
+/** Main 等待独立 Core 的总上限，额外覆盖启动期发现、控制请求、身份核验和关闭本地桥，单位为毫秒。 */
+export const desktopExecutionHostCloseTimeoutMs = executionHostStopBeforeShutdownTimeoutMs + executionHostShutdownTimeoutMs + executionHostForcedExitTimeoutMs + 45_000;
 
 /**
  * Execution Host 关闭顺序的唯一组合点。
@@ -37,6 +45,10 @@ export async function closeExecutionHostResources(resources: ExecutionHostCloseR
     runtimeClosed = true;
   } catch (error) {
     errors.push(closeStageError('closeRuntime', error));
+  }
+  const waitForDaemonCommands = resources.waitForCodexDaemonCommands;
+  if (waitForDaemonCommands) {
+    await attempt('waitForCodexDaemonCommands', () => withCloseTimeout(waitForDaemonCommands(), executionHostDaemonDrainTimeoutMs, 'Codex 守护进程启动命令未在 Core 退出前完成。'), errors);
   }
   await attempt('closeControlServer', () => withCloseTimeout(resources.closeControlServer(), executionHostControlCloseTimeoutMs, '控制服务关闭超过 5 秒'), errors);
 

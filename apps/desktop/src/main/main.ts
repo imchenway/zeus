@@ -39,7 +39,7 @@ import { desktopExecutionHostCloseTimeoutMs, withCloseTimeout } from './executio
 import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
 import { createStartupCoordinator } from './startupCoordinator.js';
 import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { ensureWindowsCodexRemoteControl } from './codexRemoteControlBootstrap.js';
+import { ensureWindowsCodexRemoteControl, stopZeusCodexAppServer } from './codexRemoteControlBootstrap.js';
 import { exportPatchToFile } from './patchExport.js';
 import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
 import { exportFaultReport, submitFaultReport } from './faultReporting.js';
@@ -98,14 +98,14 @@ import {
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, readDesktopReleaseUpdateStatus, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { completeWindowsReleaseInstall } from './windowsReleaseInstaller.js';
 import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
-import { businessProcessEnvironment, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
+import { businessProcessEnvironment, codexRemoteControlBootstrapTimeoutMs, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget, type ReserveAutomaticCodexUpdate } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { closeNetworkProxyRuntime, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { getFileBlame, type GitDiffSummary, parseGitUnifiedDiff } from '@zeus/git-core';
-import { applyDesktopNetworkProxy, checkNetworkProxyConnection } from './networkProxy.js';
+import { applyDesktopNetworkProxy, checkNetworkProxyConnection, parseDesktopNetworkProxyAddress } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, readPackagedDesktopApplicationId, resolveDesktopTestDataRoot, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
@@ -118,7 +118,6 @@ import { createSystemMainCommandEnvelope, type MainCommandExecutionContext, Main
 import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
 import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
 import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
-import { executionHostProtocolVersion } from './executionHostProtocol.js';
 
 /** 读取真实资源包属性，避免 Electron 将 asar 虚拟目录的缓存当成磁盘事实。 */
 const resourceFileSystem = createRequire(import.meta.url)('original-fs') as typeof import('node:fs');
@@ -356,14 +355,14 @@ let fullRestartRelaunchScheduled = false;
 let pendingUpgradeHandoff: {
   /** 用户确认后才允许准备安装。 */
   activate: () => void | Promise<void>;
+  /** Homebrew 在旧代理可用时完成安装，重启辅助进程稍后激活。 */
+  prepare?: () => Promise<void>;
   /** Windows 安装器完成持久取消并退出后才返回。 */
   cancel?: () => Promise<void>;
   /** 取消未确认时，后续退出只能继续等待取消，不能重新激活安装。 */
   cancellationRequested: boolean;
   /** 更新窗口可能已关闭，同一取消失败只在主程序提示一次。 */
   cancellationErrorShown: boolean;
-  /** macOS 同协议更新可继续复用已有后台宿主。 */
-  targetExecutionHostProtocolVersion: number;
   /** 安装调用等待本次退出或取消的最终确认。 */
   result: Promise<boolean>;
   /** 只在确定退出或取消后完成安装调用。 */
@@ -421,8 +420,8 @@ function assertUpdateCanInstall(): void {
   }
 }
 
-/** 升级接力只登记为待确认；跨协议时先关闭旧宿主，辅助程序仍须等确认后才能武装。 */
-function requestUpgradeHandoffQuit(targetExecutionHostProtocolVersion: number, activate: () => void | Promise<void>, cancel?: () => Promise<void>): Promise<boolean> {
+/** 升级接力先登记退出意图，等待旧运行环境关闭。 */
+function requestUpgradeHandoffQuit(activate: () => void | Promise<void>, cancel?: () => Promise<void>, prepare?: () => Promise<void>): Promise<boolean> {
   assertUpdateCanInstall();
   if (pendingUpgradeHandoff) throw new Error('另一次更新退出尚未完成，请等待其结果。');
   if (process.platform === 'win32' && !cancel) throw new Error('Windows 更新缺少安装器取消通道。');
@@ -433,7 +432,7 @@ function requestUpgradeHandoffQuit(targetExecutionHostProtocolVersion: number, a
     resolveDecision = resolve;
     rejectDecision = reject;
   });
-  pendingUpgradeHandoff = { activate, cancel, cancellationRequested: false, cancellationErrorShown: false, targetExecutionHostProtocolVersion, result, resolve: resolveDecision, reject: rejectDecision };
+  pendingUpgradeHandoff = { activate, cancel, prepare, cancellationRequested: false, cancellationErrorShown: false, result, resolve: resolveDecision, reject: rejectDecision };
   upgradeHandoffRequested = true;
   taskTableLayoutQuitApproved = true;
   setImmediate(() => app.quit());
@@ -4415,9 +4414,11 @@ async function initializeApplication(): Promise<void> {
         return windowsSecurityRequestAsync<{ applicationPath: string; cliPath: string }>({ operation: 'open-wechat-application', ...(cliPathHint ? { cliPathHint } : {}) });
       },
       /** 用户持有的 Codex daemon 只由 Main 的固定官方入口启动。 */
-      ensureCodexRemoteControl: async () => {
+      ensureCodexRemoteControl: async (retryProxyHandoff) => {
         if (process.platform !== 'win32' || readOnlyValidationDescriptor) throw new Error('当前环境不允许启动 Codex Windows 守护进程。');
-        return ensureWindowsCodexRemoteControl(dataLayout.codexHome);
+        /** 以当前 Core 端点为准，交接过程中 Main 的进程环境可能仍指向旧代理。 */
+        const runtime = localServerRuntime ?? (await rendererRuntimeReady);
+        return ensureWindowsCodexRemoteControl(dataLayout.codexHome, await readNetworkProxyAddress(runtime.config), desktopShutdown.signal, retryProxyHandoff);
       },
       beforeNetwork: async () => {
         await rendererRuntimeReady;
@@ -4528,7 +4529,7 @@ async function initializeApplication(): Promise<void> {
               const error = await shell.openPath(path);
               if (error) throw new Error('无法打开已下载的安装包，请稍后重试。', { cause: error });
             },
-            onInstallReady: (activate, cancel) => requestUpgradeHandoffQuit(executionHostProtocolVersion, activate, cancel),
+            onInstallReady: requestUpgradeHandoffQuit,
           });
           homebrewUpdateController = createHomebrewUpdateController({
             helperPath: process.platform === 'win32' ? nativeDesktopHelperPath('zeus-windows-security.exe') : nativeUpdateProgressHelperPath(),
@@ -4557,7 +4558,7 @@ async function initializeApplication(): Promise<void> {
                 : undefined,
             currentVersion: app.getVersion(),
             canInstall: assertUpdateCanInstall,
-            onInstallReady: requestUpgradeHandoffQuit,
+            onInstallReady: (_protocolVersion, activate, prepare) => requestUpgradeHandoffQuit(activate, undefined, prepare),
           });
           // Windows 原生窗口冷启动移到后台；预热失败保留菜单点击时的正常重试。
           if (process.platform === 'win32') void homebrewUpdateController.warmup().catch((error: unknown) => console.warn('Zeus 更新窗口预热失败。', error));
@@ -4776,14 +4777,12 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       ),
     );
     if (!confirmed) return cancelRequestedRestart();
+    /** 完整重启的关闭阶段负责停止活动工作，必要时强制关闭已核验的 Core。 */
+    if (!upgradeHandoffRequested) return 'final_quit';
     try {
       await runtime.stopActiveWork();
     } catch (error) {
-      console.error('Zeus 无法读取活动数量，且显式停止活动工作失败；已取消重启。', error);
-      await showRestartCancelled(
-        nativeText('无法确认正在运行的工作，也未能完成停止操作。为避免影响这些工作，本次重启已取消。', 'Zeus could not determine which work is active or finish stopping it. Restarting was cancelled to avoid affecting that work.'),
-      );
-      return cancelRequestedRestart();
+      console.error('Zeus 停止活动工作未取得回执，将在退出阶段继续关闭旧宿主。', error);
     }
     return requestedRestartQuitMode();
   }
@@ -4800,19 +4799,19 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
       ),
     );
     if (!confirmed) return cancelRequestedRestart();
+    if (!upgradeHandoffRequested) return 'final_quit';
     try {
       await runtime.stopActiveWork();
-      return requestedRestartQuitMode();
     } catch (error) {
-      console.error('Zeus 完整重启前未能安全记录全部活动工作的中断状态；已取消重启。', error);
-      await showRestartCancelled(nativeText('正在运行的工作未能停止，本次重启已取消。', 'Active work could not be stopped, so restarting was cancelled.'));
-      return cancelRequestedRestart();
+      console.error('Zeus 停止活动工作未取得回执，将在退出阶段继续关闭旧宿主。', error);
     }
+    return requestedRestartQuitMode();
   }
   return 'final_quit';
 }
 
-async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'upgrade_shutdown' | 'final_quit' | 'cancel'> {
+/** 升级与完整重启都要求关闭旧 Core；仅 Windows 提前展示可取消的安装准备窗口。 */
+async function requestedRestartQuitMode(): Promise<'upgrade_shutdown' | 'final_quit' | 'cancel'> {
   if (upgradeHandoffRequested) {
     const handoff = pendingUpgradeHandoff;
     if (!handoff) {
@@ -4821,19 +4820,15 @@ async function requestedRestartQuitMode(): Promise<'upgrade_handoff' | 'upgrade_
     }
     if (handoff.cancellationRequested) return cancelRequestedRestart();
     try {
-      await handoff.activate();
+      await handoff.prepare?.();
+      if (process.platform === 'win32') await handoff.activate();
     } catch (error) {
-      console.error('Zeus 无法在确认后启动升级接力；已取消重启。', error);
-      await showRestartCancelled(nativeText('更新安装程序无法启动，本次重启已取消。更新仍等待安装。', 'The update installer could not start. Restarting was cancelled; the update is still pending.'));
+      console.error('Zeus 无法在确认后准备升级接力；已取消重启。', error);
+      await showRestartCancelled(nativeText('更新安装准备失败，本次重启已取消。', 'The update could not be prepared. Restarting was cancelled.'));
       return cancelRequestedRestart();
     }
-    if (process.platform !== 'win32') {
-      handoff.resolve(true);
-      pendingUpgradeHandoff = null;
-    }
-    return process.platform !== 'win32' && handoff.targetExecutionHostProtocolVersion === executionHostProtocolVersion ? 'upgrade_handoff' : 'upgrade_shutdown';
+    return 'upgrade_shutdown';
   }
-  if (fullRestartRequested) scheduleExactAppRelaunchAfterCurrentProcessExit();
   return 'final_quit';
 }
 
@@ -4913,14 +4908,14 @@ app.on(
       }
     },
     closeSystemNotifications: () => {
-      const cleanupErrors: unknown[] = [];
       try {
         systemNotificationBridge?.close();
-        systemNotificationBridge = undefined;
       } catch (error) {
-        cleanupErrors.push(error);
+        if (!upgradeHandoffRequested) throw error;
+        console.error('Zeus 系统通知资源关闭失败，将继续升级退出流程。', error);
+      } finally {
+        systemNotificationBridge = undefined;
       }
-      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 系统通知资源未能完整关闭。');
     },
     resolveQuitMode: resolveDesktopQuitMode,
     /** 在关闭 Core 前通知所有桌面窗口暂停重连。 */
@@ -4947,7 +4942,9 @@ app.on(
       };
       /** Windows 安装器等待旧 Zeus 退出，准备窗口覆盖这段等待。 */
       const keepUpdateProgress = process.platform === 'win32' && mode === 'upgrade_shutdown';
-      /** 安装器替换文件前必须确认原生进度助手已退出。 */
+      /** 完整重启与安装升级需要确认独立 Core 和专属模型进程都已退出。 */
+      const cleanRestart = !readOnlyValidationDescriptor && (mode === 'upgrade_shutdown' || (fullRestartRequested && !storageRecoveryRestart.isRequested()));
+      /** 在 Main 退出前收尾更新进度窗口及其宿主。 */
       const closeUpdateController = () =>
         attemptCleanup(
           '更新控制器',
@@ -4992,14 +4989,33 @@ app.on(
       });
       conversationInputResources = undefined;
       // 即使任一前序 UI/平台资源清理失败，Detached Core 关闭也必须独立尝试。
+      let coreStopped = false;
       await attemptCleanup(
         'Detached Core',
         async () => {
-          await localServerRuntime?.close(mode);
+          if (localServerRuntime) {
+            const runtime = localServerRuntime;
+            if (mode === 'upgrade_shutdown') {
+              /** 安装器接手前，优雅退出超时使用同一宿主身份执行强制关闭。 */
+              await withCloseTimeout(runtime.close(mode), desktopExecutionHostCloseTimeoutMs, 'Zeus Core 正常退出超时。').catch((error: unknown) => {
+                console.error('Zeus Core 正常退出未完成，尝试强制关闭。', error);
+                return withCloseTimeout(runtime.close('force_quit'), 10_000, 'Zeus Core 强制退出超过十秒。');
+              });
+            } else await runtime.close(mode);
+          } else if (cleanRestart) {
+            /** 启动期重启可能还没取得句柄，按当前数据根回收已登记的独立 Core。 */
+            const { retireDetachedExecutionHost } = await import('./localServerRuntime.js');
+            await retireDetachedExecutionHost(activeZeusDataLayout().root, zeusDataRootHostIdentity(activeDataRootIdentity()));
+          }
           localServerRuntime = undefined;
+          coreStopped = true;
         },
-        desktopExecutionHostCloseTimeoutMs,
+        mode === 'upgrade_shutdown' ? desktopExecutionHostCloseTimeoutMs + 11_000 : desktopExecutionHostCloseTimeoutMs,
       );
+      /** Core 已退出后才停止专属 Codex，避免旧 Core 的自动重连重新拉起它。 */
+      if (cleanRestart && coreStopped) {
+        await attemptCleanup('Zeus 专属 Codex 守护进程', () => stopZeusCodexAppServer(activeZeusDataLayout().codexHome), codexRemoteControlBootstrapTimeoutMs);
+      }
       await attemptCleanup('Main 网络代理连接', closeNetworkProxyRuntime);
       if (process.platform === 'darwin' && !readOnlyValidationDescriptor && (mode === 'final_quit' || mode === 'force_quit') && app.isPackaged) {
         await attemptCleanup('旧 App 备份', async () => {
@@ -5009,35 +5025,61 @@ app.on(
       if (readOnlyValidationDescriptor && cleanupErrors.length === 0) {
         await attemptCleanup('只读验收副本销毁助手', () => scheduleReadOnlyValidationCleanup(readOnlyValidationDescriptor!));
       }
-      if (cleanupErrors.length === 0) await attemptCleanup('独立故障监控', () => desktopFaultMonitor?.closeAndWait(), 30_000);
+      /** 旧 Core 已确定退出后，辅助资源错误只留诊断，Main 仍须按安装协议退出。 */
+      const upgradeCoreClosed = mode === 'upgrade_shutdown' && coreStopped;
+      if (upgradeCoreClosed || cleanupErrors.length === 0) await attemptCleanup('独立故障监控', () => desktopFaultMonitor?.closeAndWait(), 30_000);
       if (keepUpdateProgress) await closeUpdateController();
-      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
+      if (cleanupErrors.length > 0) {
+        const error = new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
+        if (!upgradeCoreClosed) throw error;
+        console.error('旧 Core 已退出，继续安装。其余退出清理错误：', error);
+      }
+      /** 等旧运行环境关闭，再启动 macOS 安装或重启助手。 */
+      if (mode === 'upgrade_shutdown' && process.platform !== 'win32') {
+        const handoff = pendingUpgradeHandoff;
+        if (!handoff || handoff.cancellationRequested) throw new Error('本次升级交接已失效。');
+        await handoff.activate();
+      }
     },
     onCleanupError: async (error, quitMode): Promise<BeforeQuitCleanupFailureAction> => {
       if (quitMode === 'upgrade_shutdown' || (process.platform === 'win32' && pendingUpgradeHandoff)) {
-        console.error('跨协议升级未能完整关闭旧 Zeus Core；保留当前应用，禁止启动新版本。', error);
+        console.error('升级未能完成退出清理或启动安装接力；保留当前应用。', error);
         await cancelRequestedRestart();
         await showRestartCancelled(nativeText('请退出 Zeus，重新打开后再试。', 'Quit and reopen Zeus, then try again.'), nativeText('更新未完成', 'Update incomplete'));
         return 'keep_open';
       }
       // 正常 close 的等待超时后，强制关闭必须绕开原有 Promise，回收同一身份的 Core 进程树。
       try {
-        if (localServerRuntime) await withCloseTimeout(localServerRuntime.close('force_quit'), 10_000, 'Zeus Core 强制退出超过十秒。');
+        if (localServerRuntime) {
+          await withCloseTimeout(localServerRuntime.close('force_quit'), 10_000, 'Zeus Core 强制退出超过十秒。');
+          localServerRuntime = undefined;
+          /** 前一阶段未确认 Core 退出时，专属 Codex 的关闭留到这里补齐。 */
+          if (fullRestartRequested && !readOnlyValidationDescriptor && !storageRecoveryRestart.isRequested()) {
+            await withCloseTimeout(stopZeusCodexAppServer(activeZeusDataLayout().codexHome), codexRemoteControlBootstrapTimeoutMs, 'Zeus 专属 Codex 退出超时。');
+          }
+        }
       } catch (forceError) {
-        console.error('Zeus Core 强制退出失败。', forceError);
+        console.error('Zeus 后台进程强制退出清理未完整完成。', forceError);
       }
       console.error('Zeus 退出清理未完整成功，将结束剩余主进程资源。', error);
       return 'force_quit';
     },
     exitApp: (code) => {
-      if (process.platform === 'win32' && pendingUpgradeHandoff) {
-        // Windows 安装器只有在全部退出清理成功后才能获得确认；失败保留取消通道。
-        if (code !== 0 || pendingUpgradeHandoff.cancellationRequested) throw new Error('Windows 更新尚未确认退出或取消，保留当前进程。');
+      if (pendingUpgradeHandoff) {
+        // 安装器获得退出许可后仍须等待真实的 Main 进程退出。
+        if (code !== 0 || pendingUpgradeHandoff.cancellationRequested) throw new Error('更新尚未确认退出或取消，保留当前进程。');
         pendingUpgradeHandoff.resolve(true);
         pendingUpgradeHandoff = null;
       }
-      desktopFaultMonitor?.close();
-      app.exit(code);
+      /** 正常退出与强制退出都完成已确认的重启接力，辅助进程等待旧 Main 退出再拉起。 */
+      if (fullRestartRequested && !upgradeHandoffRequested && !readOnlyValidationDescriptor && !storageRecoveryRestart.isRequested()) {
+        scheduleExactAppRelaunchAfterCurrentProcessExit();
+      }
+      try {
+        desktopFaultMonitor?.close();
+      } finally {
+        app.exit(code);
+      }
     },
   }),
 );
@@ -5070,12 +5112,16 @@ app.on('did-resign-active', () => {
 
 /** Main 与浏览器使用 Core 的固定出口，代理规则只由 Core 实时维护。 */
 async function initializeNetworkProxy(config: { baseUrl: string; apiToken: string }): Promise<void> {
+  await applyDesktopNetworkProxy(await readNetworkProxyAddress(config), session.fromPartition(browserPartition));
+}
+
+/** 用当前运行配置读取经过认证和校验的 Core 代理地址。 */
+async function readNetworkProxyAddress(config: { baseUrl: string; apiToken: string }): Promise<URL> {
   /** 本机设置读取有界等待，失败时不把手动代理误降级为直连。 */
   const response = await fetch(`${config.baseUrl}/api/settings/network-proxy/runtime`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error('无法读取当前网络运行地址。');
-  /** Main 重新校验内部端点，不把接口数据直接当成任意外部代理。 */
   const runtime: { url?: unknown } = await response.json();
-  await applyDesktopNetworkProxy(runtime.url, session.fromPartition(browserPartition));
+  return parseDesktopNetworkProxyAddress(runtime.url);
 }
 
 /** 单次读取完整设置，避免 Main 与 Renderer 在启动时重复查询。 */

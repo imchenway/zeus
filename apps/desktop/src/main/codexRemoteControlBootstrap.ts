@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import { checkAiCliAdapter, codexInstallationCommand, codexStandaloneCandidates, normalizeProcessEnvironment } from '@zeus/ai-runtime';
-import { assertPrivatePathSync, ensurePrivatePathSync, publishFileSync, readPrivateFileSync, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
+import { businessProcessEnvironment, checkAiCliAdapter, codexInstallationCommand, codexStandaloneCandidates, ensureCodexRemoteControlDaemon, normalizeProcessEnvironment, stopManagedCodexAppServer } from '@zeus/ai-runtime';
+import { networkProxyEnvironment } from '@zeus/shared';
+import { assertOwnedPathSync, assertPrivatePathSync, ensurePrivatePathSync, publishFileSync, readPrivateFileSync, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 
 /** 保留官方设置其余字段，只关闭专属 daemon 自动安装；已有 updater 必须由用户显式停止。 */
 function disableDaemonAutomaticInstallation(home: string): void {
@@ -40,7 +41,7 @@ function disableDaemonAutomaticInstallation(home: string): void {
 }
 
 /** Main 只启动当前数据根的官方 standalone daemon，不接受 Core 提供的程序、参数或环境。 */
-export async function ensureWindowsCodexRemoteControl(codexHome: string): Promise<{ socketPath: string }> {
+export async function ensureWindowsCodexRemoteControl(codexHome: string, proxyAddress: URL, signal: AbortSignal, retryProxyHandoff: boolean): Promise<{ socketPath: string }> {
   if (process.platform !== 'win32' || !isAbsolute(codexHome)) throw new Error('Codex Windows 守护进程需要当前桌面的完整数据目录。');
   /** 查询有效 token，管理员组成员身份不能代替是否提权。 */
   const token = await windowsSecurityRequestAsync<{ elevated: boolean }>({ operation: 'token-status' });
@@ -79,72 +80,41 @@ export async function ensureWindowsCodexRemoteControl(codexHome: string): Promis
   const status = await checkAiCliAdapter('codex', { commandPath: command });
   if (!status.available || status.version !== match[1]) throw new Error(`Codex 官方安装身份检查失败：${status.reason}`);
   disableDaemonAutomaticInstallation(home);
-  /** daemon 独立于 Core 与 Zeus 安装目录，命令环境不含 Zeus 私有桥凭据。 */
-  const env = normalizeProcessEnvironment(process.env);
+  /** 只使用 Main 从当前 Core 读取的网络出口与校验过的安装身份。 */
+  const env = normalizeProcessEnvironment({ ...process.env, ...networkProxyEnvironment({ mode: 'manual', url: proxyAddress.href, bypass: '' }) });
   // 认证命名空间是公开的非敏感执行上下文；保留它才能与 Git 页面共用系统记忆。
   for (const key of Object.keys(env)) if ((key.toUpperCase().startsWith('ZEUS_') && key.toUpperCase() !== 'ZEUS_GIT_ASKPASS_SERVICE') || key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
   env.CODEX_HOME = home;
-  return new Promise((resolveDaemon, reject) => {
-    /** 只有此固定 bootstrap 在 Main 原生启动；官方 CLI 自行管理后台 daemon 的生命周期。 */
-    const child = spawn(command, ['remote-control', 'start', '--json'], { cwd: home, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false });
-    /** 输出仅用于本次启动诊断，超限或超时不自动再次启动。 */
-    let stdout = '';
-    /** stderr 保留真实 CLI 失败原因。 */
-    let stderr = '';
-    /** 合并两路输出计数，限制本次回执占用。 */
-    let bytes = 0;
-    /** 一旦结果未知，本次调用只报告该唯一状态。 */
-    let unknown: Error | undefined;
-    /** 杀死 bootstrap 不能证明它尚未创建 daemon，因此保留结果未知。 */
-    const stop = (message: string) => {
-      if (unknown) return;
-      unknown = new Error(message);
-      clearTimeout(timer);
-      reject(unknown);
-      child.kill();
-    };
-    /** 限制单次启动等待，不能因退出事件缺失无限等待。 */
-    const timer = setTimeout(() => stop('Codex 守护进程启动超时，结果未知。请检查实际状态后手动重试。'), 30_000);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    for (const stream of ['stdout', 'stderr'] as const)
-      child[stream].on('data', (chunk: string) => {
-        if (unknown) return;
-        bytes += Buffer.byteLength(chunk);
-        if (bytes > 128 * 1024) {
-          stop('Codex 守护进程启动输出超限，结果未知。请检查实际状态后手动重试。');
-          return;
-        }
-        if (stream === 'stdout') stdout += chunk;
-        else stderr += chunk;
-      });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (unknown) {
-        reject(unknown);
-        return;
-      }
-      if (code !== 0) {
-        reject(new Error(`Codex 守护进程启动失败（${code}）：${stderr.trim() || '官方 CLI 未返回诊断。'}`));
-        return;
-      }
-      try {
-        /** 只接纳官方 JSON 回执；连接及初始化成功由调用方另行确认。 */
-        const result = JSON.parse(stdout) as { daemon?: { socketPath?: unknown } };
-        /** 接线只使用官方实际返回的控制端点。 */
-        const socketPath = result.daemon?.socketPath;
-        if (typeof socketPath !== 'string' || !isAbsolute(socketPath)) throw new Error('官方 CLI 未返回有效控制套接字。');
-        /** daemon 必须仍属于当前数据根，不能借用其他用户安装的会话。 */
-        const childPath = relative(home, socketPath);
-        if (!childPath || isAbsolute(childPath) || childPath === '..' || childPath.startsWith('..\\') || childPath.startsWith('../')) throw new Error('Codex 控制套接字不属于当前数据目录。');
-        resolveDaemon({ socketPath });
-      } catch (error) {
-        reject(new Error(`Codex 守护进程回执无法确认：${error instanceof Error ? error.message : String(error)}。请检查后手动重试。`));
-      }
-    });
-  });
+  /** Main 继续使用经过校验的本机 CLI，在 Core Job 外执行官方生命周期命令。 */
+  const daemon = await ensureCodexRemoteControlDaemon(env, (args) => spawn(command, args, { cwd: home, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false }), signal, retryProxyHandoff);
+  /** daemon 必须仍属于当前数据根，不能借用其他用户安装的会话。 */
+  const childPath = relative(home, daemon.socketPath);
+  if (!childPath || isAbsolute(childPath) || childPath === '..' || childPath.startsWith('..\\') || childPath.startsWith('../')) throw new Error('Codex 控制套接字不属于当前数据目录。');
+  return daemon;
+}
+
+/** 完整重启时停止 Zeus 专属 Codex，官方命令负责核验并等待对应进程退出。 */
+export async function stopZeusCodexAppServer(codexHome: string): Promise<void> {
+  if (!existsSync(codexHome)) return;
+  const home = realpathSync(codexHome);
+  assertPrivatePathSync(home, 'directory');
+
+  const candidate = codexStandaloneCandidates(home).find((path) => existsSync(path));
+  if (!candidate) {
+    /** 缺少官方入口时，用既有运行痕迹判断是否需要报告安装损坏。 */
+    if (['app-server-daemon/app-server.pid', 'app-server-daemon/daemon.pid', 'app-server-control/app-server-control.sock'].some((name) => existsSync(join(home, name)))) {
+      throw new Error('当前 Zeus 的 Codex 安装不可用，无法确认旧守护进程退出。');
+    }
+    return;
+  }
+  /** current 解析后仍须位于专属安装目录，拒绝执行指向外部安装的链接。 */
+  const command = realpathSync(candidate);
+  const installedPath = relative(join(home, 'packages', 'standalone'), command);
+  if (!installedPath || isAbsolute(installedPath) || installedPath === '..' || installedPath.startsWith('../') || installedPath.startsWith('..\\')) {
+    throw new Error('Codex 停止命令不在当前 Zeus 的专属安装目录。');
+  }
+  assertOwnedPathSync(command, 'file');
+  /** 即使还没有 PID 或套接字，也由官方 stop 按启动记录和锁的实际状态收口。 */
+  const env = businessProcessEnvironment({ ...process.env, CODEX_HOME: home });
+  await stopManagedCodexAppServer(home, (args) => spawn(command, args, { cwd: home, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false }));
 }
