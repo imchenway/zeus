@@ -129,8 +129,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
     .map((root) => safeRealpath(root) ?? resolve(root));
   let sourceIndex = 0;
   /** 只将完成答复中明确交付的 HTML 登记成产物预览。 */
-  const htmlArtifactsDirectory =
-    input.item.status === 'completed' && input.item.itemType === 'agentMessage' && classifyAssistantMessage(input.payload, input.item.phase) === 'final' ? input.htmlArtifactsDirectory : undefined;
+  const htmlArtifactsDirectory = input.item.status === 'completed' && input.item.itemType === 'agentMessage' && classifyAssistantMessage(input.payload, input.item.phase) === 'final' ? input.htmlArtifactsDirectory : undefined;
 
   const generatedImages = normalizeGeneratedImageResources({
     sourceIndex,

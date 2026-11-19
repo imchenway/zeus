@@ -1,6 +1,17 @@
 import { MotionPresence } from './MotionPresence.js';
 import { Collapsible } from './Collapsible.js';
-import { describeUserFacingError, faultReportContext, faultReportDetails, normalizeFaultReportInput, offlineNetworkNotice, readCommandDeliveryDiagnostic, redactUserFacingErrorDetails, userFacingNetworkIssue, type FaultReportInput, type FaultReportReceipt } from '@zeus/shared';
+import {
+  describeUserFacingError,
+  faultReportContext,
+  faultReportDetails,
+  normalizeFaultReportInput,
+  offlineNetworkNotice,
+  readCommandDeliveryDiagnostic,
+  redactUserFacingErrorDetails,
+  userFacingNetworkIssue,
+  type FaultReportInput,
+  type FaultReportReceipt,
+} from '@zeus/shared';
 import { useEffect, useRef, useState } from 'react';
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';

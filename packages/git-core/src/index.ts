@@ -676,7 +676,9 @@ async function readGitRepositoryReferences(cwd: string, readReferences = readGit
   ]);
   return {
     localBranches: splitLines(local).map((ref) => ref.slice('refs/heads/'.length)),
-    remoteBranches: splitLines(remote).filter((ref) => !ref.endsWith('/HEAD')).map((ref) => ref.slice('refs/remotes/'.length)),
+    remoteBranches: splitLines(remote)
+      .filter((ref) => !ref.endsWith('/HEAD'))
+      .map((ref) => ref.slice('refs/remotes/'.length)),
     remotes: splitLines(remotes),
     worktrees: parseGitWorktreeList(worktrees),
   };
@@ -772,15 +774,19 @@ export async function discoverGitRepositoryRoots(containerPath: string, maxDepth
     commonDirectories.add(commonDirectory);
     return true;
   });
-  return independentCandidates.flatMap(({ localPath }) => {
-    const repositoryRelativePath = relative(containerRoot, localPath);
-    if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return [];
-    return [{
-      name: basename(localPath),
-      relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
-      localPath,
-    }];
-  }).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return independentCandidates
+    .flatMap(({ localPath }) => {
+      const repositoryRelativePath = relative(containerRoot, localPath);
+      if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return [];
+      return [
+        {
+          name: basename(localPath),
+          relativePath: repositoryRelativePath ? repositoryRelativePath.split(sep).join('/') : '.',
+          localPath,
+        },
+      ];
+    })
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 /** 完整仓库发现为需要工作区状态的调用者补齐分支和未提交更改。 */

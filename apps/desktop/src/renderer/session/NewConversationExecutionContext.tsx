@@ -66,15 +66,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const branchSnapshot = heads?.value ?? gitQueries?.workbench.getSnapshot().value ?? null;
   /** 仅本项目的成功读取可以成为可选的分支菜单。 */
   const branchList = references?.value?.projectId === props.projectId ? references.value : null;
-  const readError = temporary
-    ? null
-    : gitQueries?.heads
-      ? !branchSnapshot || (props.workspaceMode === 'worktree' && !headsReady)
-        ? heads?.error
-        : null
-      : zh
-        ? '当前无法读取项目分支。'
-        : 'Project branches are unavailable.';
+  const readError = temporary ? null : gitQueries?.heads ? (!branchSnapshot || (props.workspaceMode === 'worktree' && !headsReady) ? heads?.error : null) : zh ? '当前无法读取项目分支。' : 'Project branches are unavailable.';
   const loadState = temporary || branchSnapshot ? 'ready' : readError ? 'error' : 'loading';
   const error = actionError ?? readError;
   const selectedProject = props.projects.find((project) => project.id === props.projectId) ?? null;
@@ -104,7 +96,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const commonBranchName = selection && selections.every((entry) => entry?.branchName === selection.branchName) ? selection.branchName : '';
   const snapshot = selectedRepository?.snapshot;
   /** 缓存中的当前分支可立即显示，已保存的选择优先。 */
-  const shownSource = commonSource ??
+  const shownSource =
+    commonSource ??
     (!selection && snapshot && !snapshot.detached && scopedRepositories.every((repository) => !repository.snapshot.detached && repository.snapshot.branch === snapshot.branch)
       ? { sourceKind: 'local' as const, sourceRef: snapshot.branch }
       : undefined);
@@ -124,11 +117,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     repositories.every((repository) => {
       /** 发送前检查全部成员，不能只检查当前展开的仓库。 */
       const options = selectionForRepository(repository);
-      return Boolean(
-        options &&
-        (props.createTask || (options.branchName.trim().startsWith(branchNamespace) && options.branchName.trim().length > branchNamespace.length)) &&
-        isSourceAvailable(repository.snapshot, options),
-      );
+      return Boolean(options && (props.createTask || (options.branchName.trim().startsWith(branchNamespace) && options.branchName.trim().length > branchNamespace.length)) && isSourceAvailable(repository.snapshot, options));
     });
   const branchLabel = scopedRepositories.some((repository) => repository.snapshot.branch !== snapshot?.branch || repository.snapshot.detached !== snapshot?.detached)
     ? zh
@@ -167,9 +156,12 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     setConfirmedHeads(null);
     const query = gitQueries?.heads;
     if (query) {
-      void query.load(true).then(() => {
-        if (version === loadVersionRef.current) setConfirmedHeads(query);
-      }).catch(() => undefined);
+      void query
+        .load(true)
+        .then(() => {
+          if (version === loadVersionRef.current) setConfirmedHeads(query);
+        })
+        .catch(() => undefined);
     }
     return () => {
       loadVersionRef.current += 1;

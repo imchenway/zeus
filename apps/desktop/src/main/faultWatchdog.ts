@@ -552,13 +552,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
   function showPending(uploadFailed = false): void {
     const zh = pulse.language !== 'en-US';
     /** 主包或附件可能已被接收，重试仍使用同一报告身份。 */
-    const title = uploadFailed
-      ? zh
-        ? '未能确认完整上报，可重试'
-        : 'Full submission could not be confirmed. You can retry.'
-      : zh
-        ? '故障报告尚未完整上报'
-        : 'The fault report is not fully submitted';
+    const title = uploadFailed ? (zh ? '未能确认完整上报，可重试' : 'Full submission could not be confirmed. You can retry.') : zh ? '故障报告尚未完整上报' : 'The fault report is not fully submitted';
     show(
       'fault-pending',
       title,

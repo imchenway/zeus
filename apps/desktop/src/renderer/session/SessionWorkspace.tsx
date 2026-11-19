@@ -4512,11 +4512,7 @@ export function NewConversationComposer(props: {
     >
       {offlineSubmission ? (
         <p className="session-composer-unavailable" role="status">
-          {offlineSubmission === 'unconfirmed'
-            ? props.language === 'zh-CN'
-              ? '暂未确认发送结果，联网后可重试。'
-              : 'Delivery is unconfirmed. Retry when you’re back online.'
-            : offlineNetworkNotice(props.language)}
+          {offlineSubmission === 'unconfirmed' ? (props.language === 'zh-CN' ? '暂未确认发送结果，联网后可重试。' : 'Delivery is unconfirmed. Retry when you’re back online.') : offlineNetworkNotice(props.language)}
         </p>
       ) : null}
       <ConversationComposerAttachments
