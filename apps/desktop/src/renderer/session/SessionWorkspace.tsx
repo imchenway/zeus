@@ -1201,6 +1201,7 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
   const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: acceptance.conversation.id,
+    ...nativeConversationWorkspaceFromAcceptance(conversation),
     /** 使用会话原始创建身份，续接回执不能改用本次续发操作身份。 */
     creationOperationIdentity: nullableStringField(conversation.creationOperationIdentity),
     projectId: stringField(conversation.projectId) ?? task.projectId,
@@ -1321,8 +1322,7 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
   const nativeSession = isRecord(conversation.nativeSession) ? conversation.nativeSession : {};
   return {
     id: conversation.id,
-    workspaceMode: conversation.workspaceMode === 'direct' || conversation.workspaceMode === 'worktree' ? conversation.workspaceMode : undefined,
-    executionPath: nullableStringField(conversation.executionPath),
+    ...nativeConversationWorkspaceFromAcceptance(conversation),
     projectId: stringField(conversation.projectId) ?? owner.projectId,
     taskId: nullableStringField(conversation.taskId),
     title: stringField(conversation.title) ?? owner.projectName,
@@ -1542,6 +1542,16 @@ function stringField(value: unknown): string | null {
 
 function nullableStringField(value: unknown): string | null {
   return value === null ? null : stringField(value);
+}
+
+/** 任务和项目会话从持久回执读取相同的工作区类型、身份和目录。 */
+function nativeConversationWorkspaceFromAcceptance(conversation: Record<string, unknown>): Pick<NativeConversationChoice, 'workspaceMode' | 'executionPath' | 'workspaceId' | 'environmentId'> {
+  return {
+    workspaceMode: conversation.workspaceMode === 'direct' || conversation.workspaceMode === 'worktree' ? conversation.workspaceMode : undefined,
+    executionPath: nullableStringField(conversation.executionPath),
+    workspaceId: nullableStringField(conversation.workspaceId),
+    environmentId: nullableStringField(conversation.environmentId),
+  };
 }
 
 function nativeAgentAndModelIdentity(conversation: Record<string, unknown>): Pick<NativeConversationChoice, 'agent' | 'model'> {
