@@ -620,6 +620,9 @@ export function ProjectWorkspaceNavigation(props: {
   );
 }
 
+/** 项目会话列表的开合时序，时长单位为毫秒。 */
+const projectConversationHeightMotion = { enterMs: 280, exitMs: 220, easing: 'cubic-bezier(0.2, 0, 0.2, 1)' };
+
 /** 项目导航保留状态筛选，会话始终平铺，文字检索统一在搜索弹窗。 */
 export function SidebarNav(props: {
   /** 通知状态驻留工作台，标题行仅承载全局入口。 */
@@ -1231,7 +1234,7 @@ export function SidebarNav(props: {
                     }
                   />
                   {showConversationNavigation ? (
-                    <Collapsible open={expanded} id={projectConversationsId} animateHeight>
+                    <Collapsible open={expanded} id={projectConversationsId} animateHeight heightMotionTiming={projectConversationHeightMotion}>
                       <div className="project-sidebar-conversations">
                         {showConversationNavigation && conversationGroup ? (
                           <ProjectConversationTree
