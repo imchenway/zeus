@@ -152,7 +152,7 @@ export interface ZeusBrowserSettings {
   externalConnectionDetail?: string;
 }
 
-/** 密码管理界面只接收账号标识，不接收密码。 */
+/** 密码列表和填充候选中的账号元数据。 */
 export interface ZeusBrowserPasswordAccount {
   id: string;
   origin: string;
@@ -173,6 +173,8 @@ export interface ZeusBrowserPasswordImportPreview {
   token: string;
   fileName: string;
   added: number;
+  /** 确认后会被单一有效候选覆盖的已有账号数量。 */
+  updated: number;
   unchanged: number;
   invalidRows: Array<{ row: number; reason: string }>;
   conflicts: ZeusBrowserPasswordConflict[];

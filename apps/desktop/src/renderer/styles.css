@@ -10492,6 +10492,117 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app .browser-password-account span {
   color: var(--zeus-product-muted);
 }
+
+/* 已保存账号按设置正文的可用宽度排版。 */
+.macos-ai-app .browser-password-section {
+  container: browser-passwords / inline-size;
+}
+.macos-ai-app .browser-password-saved {
+  /* 表头高度用于保留 320px 的列表滚动区，并让焦点避开固定表头。 */
+  --browser-password-columns-height: 34px;
+  max-block-size: calc(320px + var(--browser-password-columns-height) + 2px);
+  overflow: auto;
+  scroll-padding-block-start: var(--browser-password-columns-height);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.macos-ai-app .browser-password-saved > ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.macos-ai-app :is(.browser-password-columns, .browser-password-saved-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 32px 32px;
+  align-items: center;
+  gap: 4px 8px;
+  padding-inline: 14px 10px;
+}
+.macos-ai-app .browser-password-columns {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  min-block-size: var(--browser-password-columns-height);
+  border-block-end: 1px solid var(--zeus-product-line);
+  background: var(--zeus-product-panel-muted);
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.macos-ai-app .browser-password-saved-row {
+  min-block-size: 42px;
+  padding-block: 4px;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .browser-password-saved-row + .browser-password-saved-row {
+  border-block-start: 1px solid var(--zeus-product-line-soft);
+}
+.macos-ai-app .browser-password-saved-row:is(:hover, :focus-within) {
+  background: var(--zeus-product-list);
+}
+.macos-ai-app .browser-password-saved-row > strong {
+  font-weight: 600;
+}
+.macos-ai-app .browser-password-saved-row > span {
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app :is(.browser-password-reveal, .browser-password-delete) {
+  display: grid;
+  place-items: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .browser-password-reveal:is(:hover, :focus-visible, [aria-expanded='true']):not(:disabled) {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+}
+.macos-ai-app .browser-password-delete:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--zeus-danger-bg);
+  color: var(--zeus-danger-text);
+}
+.macos-ai-app .browser-password-revealed-value {
+  grid-column: 1 / -1;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--zeus-product-panel-muted);
+  user-select: text;
+  white-space: pre-wrap;
+}
+
+@container browser-passwords (max-width: 440px) {
+  .macos-ai-app .browser-password-saved {
+    /* 窄列在每行内展示两项，无需预留表头高度。 */
+    --browser-password-columns-height: 0px;
+  }
+  .macos-ai-app .browser-password-columns {
+    display: none;
+  }
+  .macos-ai-app .browser-password-saved-row {
+    grid-template-columns: minmax(0, 1fr) 32px 32px;
+    gap: 2px 6px;
+    padding-block: 8px;
+  }
+  .macos-ai-app .browser-password-saved-row > span {
+    grid-column: 1;
+    font-size: 12px;
+  }
+  .macos-ai-app .browser-password-reveal {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .macos-ai-app .browser-password-delete {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+}
+
 .macos-ai-app .browser-password-import {
   display: grid;
   gap: 12px;

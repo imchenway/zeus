@@ -1,10 +1,13 @@
+import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
+import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlash';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { useEffect, useState } from 'react';
 import type { ZeusBrowserPasswordAccount, ZeusBrowserPasswordImportPreview } from '@zeus/shared';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
-/** 密码设置只显示账号和来源行，不向 Renderer 请求密码或密钥。 */
+/** 密码列表只加载账号元数据，主动展开时才读取单条密码。 */
 export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-US' }) {
   /** 中英文共用相同的导入、冲突确认和删除行为。 */
   const zh = language === 'zh-CN';
@@ -14,6 +17,10 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [status, setStatus] = useState('');
+  /** 当前展开的账号决定哪条密码可以进入界面。 */
+  const [revealedAccount, setRevealedAccount] = useState<ZeusBrowserPasswordAccount | null>(null);
+  /** 账号身份随结果保存，切换时不会显示上一次读取的密码。 */
+  const [revealedPassword, setRevealedPassword] = useState<{ id: string; value: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -41,9 +48,42 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
     [preview?.token],
   );
 
+  useEffect(() => {
+    if (!revealedAccount) return;
+    /** 已关闭或切换过的查看请求丢弃迟到结果。 */
+    let active = true;
+    /** 失焦立即关闭当前查看，包含还在等待的请求。 */
+    const hidePassword = () => {
+      active = false;
+      setRevealedAccount(null);
+      setRevealedPassword(null);
+    };
+    if (!document.hasFocus() || !window.zeus?.revealBrowserPassword) {
+      hidePassword();
+      return;
+    }
+    window.addEventListener('blur', hidePassword);
+    void window.zeus.revealBrowserPassword(revealedAccount.origin, revealedAccount.id).then(
+      (value) => {
+        if (active) setRevealedPassword({ id: revealedAccount.id, value });
+      },
+      (failure) => {
+        if (!active) return;
+        hidePassword();
+        setError(failure);
+      },
+    );
+    return () => {
+      active = false;
+      window.removeEventListener('blur', hidePassword);
+    };
+  }, [revealedAccount]);
+
   /** 串行处理当前设置操作，失败时保留已有列表及冲突选择以便重试。 */
   async function run(operation: () => Promise<void>): Promise<void> {
     if (busy) return;
+    setRevealedAccount(null);
+    setRevealedPassword(null);
     setBusy(true);
     setError(null);
     setStatus('');
@@ -74,7 +114,7 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
       setPreview(null);
       setStatus(
         zh
-          ? `新增 ${result.added} 个账号，更新 ${result.updated} 个账号，跳过 ${result.skipped} 条记录，无效 ${result.invalid} 条。`
+          ? `新增 ${result.added} 个账号，覆盖 ${result.updated} 个账号，跳过 ${result.skipped} 条记录，无效 ${result.invalid} 条。`
           : `Added ${result.added} accounts, updated ${result.updated} accounts, skipped ${result.skipped} records, invalid ${result.invalid}.`,
       );
       setAccounts(await window.zeus!.listBrowserPasswords());
@@ -122,8 +162,8 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
           <strong className="browser-password-file">{preview.fileName}</strong>
           <p className="browser-settings-status">
             {zh
-              ? `新增 ${preview.added} · 相同 ${preview.unchanged} · 冲突 ${preview.conflicts.length} · 无效 ${preview.invalidRows.length}`
-              : `New ${preview.added} · Unchanged ${preview.unchanged} · Conflicts ${preview.conflicts.length} · Invalid ${preview.invalidRows.length}`}
+              ? `新增 ${preview.added} · 覆盖 ${preview.updated} · 相同 ${preview.unchanged} · 文件内冲突 ${preview.conflicts.length} · 无效 ${preview.invalidRows.length}`
+              : `New ${preview.added} · Update ${preview.updated} · Unchanged ${preview.unchanged} · Conflicts in CSV ${preview.conflicts.length} · Invalid ${preview.invalidRows.length}`}
           </p>
           {preview.conflicts.length ? (
             <ul className="browser-password-list">
@@ -168,25 +208,71 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
         </section>
       ) : null}
       {accounts?.length ? (
-        <ul className="browser-password-list" aria-label={zh ? '已保存的账号' : 'Saved accounts'}>
-          {accounts.map((account) => (
-            <li key={account.id} className="browser-password-row">
-              <span className="browser-password-account">
-                <strong>{account.origin}</strong>
-                <span>{account.username || (zh ? '无用户名' : 'No username')}</span>
-              </span>
-              <Button
-                size="compact"
-                variant="danger"
-                disabled={busy || Boolean(preview)}
-                aria-label={zh ? `删除 ${account.origin} 的 ${account.username || '无用户名'} 账号` : `Delete ${account.username || 'No username'} at ${account.origin}`}
-                onClick={() => remove(account)}
-              >
-                {zh ? '删除' : 'Delete'}
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <div
+          className="browser-password-saved"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && revealedAccount) {
+              event.stopPropagation();
+              setRevealedAccount(null);
+              setRevealedPassword(null);
+            }
+          }}
+        >
+          <div className="browser-password-columns" aria-hidden="true">
+            <span>{zh ? '网站' : 'Website'}</span>
+            <span>{zh ? '用户名' : 'Username'}</span>
+          </div>
+          <ul role="list" aria-label={zh ? '已保存的账号' : 'Saved accounts'}>
+            {accounts.map((account) => {
+              /** 展开与密码结果分别校验同一账号。 */
+              const expanded = revealedAccount?.id === account.id;
+              /** 查看按钮同时提示当前动作和目标账号。 */
+              const revealLabel = expanded ? (zh ? '隐藏密码' : 'Hide password') : zh ? '查看密码' : 'Show password';
+              return (
+                <li key={account.id} className="browser-password-saved-row">
+                  <strong>{account.origin}</strong>
+                  <span>{account.username || (zh ? '无用户名' : 'No username')}</span>
+                  <Button
+                    unstyled
+                    type="button"
+                    className="browser-password-reveal"
+                    disabled={busy || Boolean(preview) || !window.zeus?.revealBrowserPassword}
+                    aria-expanded={expanded}
+                    aria-label={`${revealLabel} · ${account.origin} · ${account.username || (zh ? '无用户名' : 'No username')}`}
+                    data-icon-tooltip={revealLabel}
+                    onClick={() => {
+                      setRevealedPassword(null);
+                      setError(null);
+                      setRevealedAccount(expanded ? null : account);
+                    }}
+                  >
+                    {expanded ? <EyeSlash size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                  </Button>
+                  <Button
+                    unstyled
+                    type="button"
+                    className="browser-password-delete"
+                    disabled={busy || Boolean(preview)}
+                    aria-label={zh ? `删除 ${account.origin} 的 ${account.username || '无用户名'} 账号` : `Delete ${account.username || 'No username'} at ${account.origin}`}
+                    data-icon-tooltip={zh ? '删除' : 'Delete'}
+                    onClick={() => remove(account)}
+                  >
+                    <Trash size={16} aria-hidden="true" />
+                  </Button>
+                  {expanded ? (
+                    <div className="browser-password-revealed-value">
+                      {revealedPassword?.id === account.id ? (
+                        <code>{revealedPassword.value}</code>
+                      ) : (
+                        <span role="status">{zh ? '正在读取密码…' : 'Loading password…'}</span>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : accounts === null && !error ? (
         <p className="browser-settings-status" role="status">
           {zh ? '正在读取密码…' : 'Loading passwords…'}

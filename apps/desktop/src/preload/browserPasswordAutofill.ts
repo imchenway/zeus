@@ -124,10 +124,12 @@ function autofillScript(context: AutofillContext): string {
     usernameFieldSource,
     defaultsSource.slice(0, defaultsEnd),
   ].join('\n');
-  /** 原生菜单只适配上游入口及回执，字段选择与事件触发交给原始引擎。 */
+  /** Zeus 候选弹层复用上游的字段识别与填充。 */
   const entry = `
     let zeusInitializing = null;
     let zeusMenuInput = null;
+    // 记录弹层所描述的输入框，表单被替换时要求重新选择。
+    let zeusProbedFields = null;
     let zeusFilling = false;
     const zeusReady = async () => {
       if (!['text/html', 'application/xhtml+xml'].includes(document.contentType)) return false;
@@ -144,21 +146,38 @@ function autofillScript(context: AutofillContext): string {
     };
     // 通过上游识别结果把菜单绑定到触发它的登录框。
     const zeusCombination = (input) => kpxc.combinations.find((item) => item.username === input || item.password === input);
+    // 点击登录框与工具栏入口沿用相同的表单选择规则。
+    const zeusTarget = () => zeusMenuInput ? zeusCombination(zeusMenuInput) : zeusCombination(zeusActiveInput()) ?? kpxcFields.getCombinationFromAllInputs();
     globalThis.zeusAutofill = {
       probe: async (origin) => {
         if (origin !== self.origin || origin !== zeusContext.origin || !await zeusReady()) return null;
         await kpxc.initCredentialFields();
-        const found = zeusMenuInput ? zeusCombination(zeusMenuInput) : kpxc.combinations.length > 0;
-        return found ? { documentId: zeusContext.documentId } : null;
+        const combination = zeusTarget();
+        if (!combination) return null;
+        const username = Boolean(combination.username && combination.username !== combination.password);
+        const password = Boolean(combination.password);
+        if (!username && !password) return null;
+        zeusProbedFields = { username: combination.username, password: combination.password };
+        // 子 frame 的相对坐标不能直接定位到外层窗口。
+        const active = zeusMenuInput ?? zeusActiveInput();
+        const input = zeusCombination(active) === combination ? active : combination.password ?? combination.username;
+        const rect = window === window.top ? input?.getBoundingClientRect() : null;
+        const anchor = rect && rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth
+          ? { x: rect.x, y: rect.y, height: rect.height }
+          : undefined;
+        return { documentId: zeusContext.documentId, username, password, anchor };
       },
       fill: async (origin, documentId) => {
         if (origin !== self.origin || origin !== zeusContext.origin || documentId !== zeusContext.documentId) return 'page_changed';
         if (!await zeusReady()) return 'unavailable';
         zeusFilling = true;
         try {
+          // 弹层接管焦点后继续使用原先探测的字段。
+          const fields = zeusProbedFields;
+          zeusProbedFields = null;
           await kpxc.initCredentialFields();
-          const combination = zeusMenuInput ? zeusCombination(zeusMenuInput) : zeusCombination(zeusActiveInput()) ?? kpxcFields.getCombinationFromAllInputs();
-          if (!combination) return 'no_login_form';
+          const combination = fields && kpxc.combinations.find((item) => item.username === fields.username && item.password === fields.password);
+          if (!combination || [fields.username, fields.password].some((input) => input && !input.isConnected)) return 'page_changed';
           const selection = zeusHost.takeSelection();
           if (!selection) return 'unavailable';
           const { id, username, password } = selection;

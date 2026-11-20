@@ -698,6 +698,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     getBrowserSettings: () => transport.invoke('zeus:browser:get-settings'),
     /** 读取账号元数据，密码不进入 Renderer。 */
     listBrowserPasswords: () => transport.invoke('zeus:browser:list-passwords'),
+    /** 仅在设置中主动展开单条凭据时读取密码，不经过命令账本。 */
+    revealBrowserPassword: (origin: string, id: string) => transport.invoke('zeus:browser:reveal-password', origin, id),
     /** 主进程打开原生选择器并保留 CSV 明文候选。 */
     prepareBrowserPasswordImport: () => transport.invoke('zeus:browser:prepare-password-import'),
     /** 取消尚未提交的导入。 */

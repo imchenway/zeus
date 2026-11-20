@@ -509,6 +509,8 @@ declare global {
       getBrowserSettings: () => Promise<ZeusBrowserSettings>;
       /** 密码管理只接收元数据、冲突来源与统计回执。 */
       listBrowserPasswords: () => Promise<ZeusBrowserPasswordAccount[]>;
+      /** 获取用户在密码设置中主动展开的单条密码。 */
+      revealBrowserPassword: (origin: string, id: string) => Promise<string>;
       prepareBrowserPasswordImport: () => Promise<ZeusBrowserPasswordImportPreview | null>;
       cancelBrowserPasswordImport: (token: string) => Promise<void>;
       commitBrowserPasswordImport: (input: { token: string; choices: Record<string, number> }) => Promise<ZeusBrowserPasswordImportResult>;

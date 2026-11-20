@@ -8486,9 +8486,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
-/* 播放器和网页跟随正文阅读宽度，混合资源仍沿用原列表网格。 */
-.session-codex-parity-v1 .session-resource-card-list:not([data-compact]):has(> .session-resource-video, > [data-web-page]) {
+/* 视频列表沿用默认阅读宽度。 */
+.session-codex-parity-v1 .session-resource-card-list:not([data-compact]):has(> .session-resource-video) {
   max-inline-size: min(100%, var(--session-markdown-max));
+}
+
+/* 回复底部的网页列表与正文共用宽度，含图表或展开时同步拓宽。 */
+.session-codex-parity-v1 .session-resource-card-list:not([data-compact]):has(> [data-web-page]) {
+  max-inline-size: var(--session-assistant-content-width, min(var(--session-markdown-max), 100%));
 }
 
 .session-codex-parity-v1 .session-resource-video {
@@ -8513,7 +8518,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-conversation-markdown .session-resource-card[data-web-page] {
-  max-inline-size: var(--session-markdown-max);
   margin-block: 12px;
 }
 
