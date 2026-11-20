@@ -23,6 +23,8 @@ export interface TaskWorkArrangement {
   outputKinds: EmployeeWorkOutputKind[];
   /** 本工作后续覆盖。 */
   settings: EmployeeWorkSettings;
+  /** 自动化领取本分工时冻结的指令，分工启动前可从安排恢复。 */
+  automationInstruction?: string;
   /** 当前分工实际生效的委派范围。 */
   delegation?: EmployeeWorkSettings['delegation'];
   /** 执行前预检失败的当前原因。 */
