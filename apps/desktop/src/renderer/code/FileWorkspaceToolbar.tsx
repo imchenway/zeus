@@ -12,16 +12,25 @@ interface FilePathBreadcrumbsProps {
   name?: string;
   /** 当前文件的实际 Git 状态。 */
   status?: string;
+  /** 上方标签已经显示当前文件名，路径栏只显示目录。 */
+  fileNameInTab?: boolean;
   /** 路径与操作区域的中英文名称。 */
   zh: boolean;
   /** 只接收当前文件的工作区相对父目录。 */
   onRevealDirectory?: (path: string) => void | Promise<void>;
 }
 
-/** 源码、预览和审阅统一渲染目录按钮和当前文件名。 */
-export function FilePathBreadcrumbs({ path, copyPath, name, status, zh, onRevealDirectory, compact }: FilePathBreadcrumbsProps & { /** 项目源码页使用原有紧凑行高。 */ compact?: boolean }) {
-  /** 同一条路径用于显示和累积工作区相对目录。 */
+/** 按字素切分目录名，保留组合字符和文件扩展名的末尾。 */
+const filenameSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/** 源码、预览和审阅共享逐级可点击的路径。 */
+export function FilePathBreadcrumbs({ path, copyPath, name, status, fileNameInTab, zh, onRevealDirectory, compact }: FilePathBreadcrumbsProps & { /** 项目源码页使用原有紧凑行高。 */ compact?: boolean }) {
+  /** 完整路径用于定位、复制和显示提示。 */
   const parts = path.split('/');
+  /** 文件名位于标签时，路径栏只占用目录所需的空间。 */
+  const displayedParts = fileNameInTab ? parts.slice(0, -1) : parts;
+  if (!displayedParts.some(Boolean)) return null;
+
   return (
     <nav
       className={compact ? 'session-source-breadcrumbs project-source-breadcrumbs' : 'session-source-breadcrumbs'}
@@ -31,18 +40,34 @@ export function FilePathBreadcrumbs({ path, copyPath, name, status, zh, onReveal
       data-file-name={name}
       data-icon-tooltip={parts.join(compact ? ' / ' : ' › ')}
     >
-      {parts.map((part, index) => (
-        <span key={index} aria-current={index === parts.length - 1 ? 'page' : undefined} data-file-status={index === parts.length - 1 ? status : undefined}>
-          {index > 0 ? <span aria-hidden="true">{compact ? '/' : '›'}</span> : null}
-          {onRevealDirectory && index < parts.length - 1 ? (
-            <Button unstyled type="button" className="file-path-directory" onClick={() => onRevealDirectory(parts.slice(0, index + 1).join('/'))}>
-              {part}
-            </Button>
-          ) : (
-            part
-          )}
-        </span>
-      ))}
+      {displayedParts.map((part, index) => {
+        if (!part) return null;
+        /** 最后一段是文件，目录仍以原始相对路径定位。 */
+        const isFile = index === parts.length - 1;
+        /** 保留长名称最后三个字素，由 CSS 在前半部分的末尾绘制省略号。 */
+        const graphemes = Array.from(filenameSegmenter.segment(part), ({ segment }) => segment);
+        /** 短名称使用一个文本节点，优先完整显示。 */
+        const hasSuffix = graphemes.length > 5;
+        /** 屏幕阅读器和提示读取原始名称。 */
+        const label = (
+          <span className="file-path-label">
+            <span>{hasSuffix ? graphemes.slice(0, -3).join('') : part}</span>
+            {hasSuffix ? <span>{graphemes.slice(-3).join('')}</span> : null}
+          </span>
+        );
+        return (
+          <span key={index} data-abbreviate={hasSuffix || undefined} aria-current={isFile ? 'page' : undefined} data-file-status={isFile ? status : undefined} data-icon-tooltip={part}>
+            {index > 0 ? <span aria-hidden="true">{compact ? '/' : '›'}</span> : null}
+            {onRevealDirectory && !isFile ? (
+              <Button unstyled type="button" className="file-path-directory" aria-label={part} data-icon-tooltip={part} onClick={() => onRevealDirectory(parts.slice(0, index + 1).join('/'))}>
+                {label}
+              </Button>
+            ) : (
+              label
+            )}
+          </span>
+        );
+      })}
     </nav>
   );
 }

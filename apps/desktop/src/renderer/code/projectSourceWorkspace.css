@@ -394,7 +394,7 @@
   background: var(--zeus-code-editor-bg);
 }
 
-/* 标签和工具按钮共用一行，长文件列表单独滚动，入口始终可见。 */
+/* 标签和工具按钮共用一行，更多文件通过标签选择器切换。 */
 .project-source-editor-header {
   display: flex;
   min-width: 0;
@@ -689,17 +689,18 @@
 /* 文件效果入口并入已有路径行，避免额外占用一排工具栏。 */
 .project-source-file-toolbar {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   align-items: center;
 }
-.project-source-file-toolbar > .project-source-breadcrumbs {
-  flex: 1;
-  min-width: 0;
-}
 .project-source-view-modes {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-inline-size: 100%;
   flex: 0 0 auto;
   gap: 2px;
+  margin-inline-start: auto;
   padding-inline: 8px;
 }
 .project-source-view-modes button,

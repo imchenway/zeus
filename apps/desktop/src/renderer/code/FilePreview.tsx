@@ -146,6 +146,8 @@ export function FileReviewContent(props: {
   const [showDiff, setShowDiff] = useReadingState(`review-diff:${JSON.stringify(props.review?.location)}`, false);
   /** 恢复同一个行号入口时不覆盖之后手动选择的比较模式。 */
   const initialLocation = useRef(props.review?.location).current;
+  /** 图标模式和完整按钮使用同一个操作名称。 */
+  const diffActionLabel = showDiff ? (props.zh ? '返回文件' : 'Back to file') : props.zh ? '查看改动' : 'View changes';
   useEffect(() => {
     // 再次点击同一引用也回到源码，不能停留在上次切换的差异页。
     if (props.review?.location?.line && props.review.location !== initialLocation) setShowDiff(false);
@@ -157,11 +159,12 @@ export function FileReviewContent(props: {
           <>
             <Button
               size="compact"
+              aria-label={diffActionLabel}
               title={showDiff ? (props.zh ? '返回文件内容' : 'Back to file content') : props.zh ? '与上次提交比较（含暂存与未暂存改动）' : 'Compare with the last commit (staged and unstaged changes)'}
               onClick={() => setShowDiff(!showDiff)}
             >
               {showDiff ? <FileCode aria-hidden="true" /> : <GitDiff aria-hidden="true" />}
-              {showDiff ? (props.zh ? '返回文件' : 'Back to file') : props.zh ? '查看改动' : 'View changes'}
+              <span className="file-toolbar-action-label">{diffActionLabel}</span>
             </Button>
             <span className="file-review-stats">
               <span className="is-addition" aria-label={`${props.zh ? '新增行数' : 'Added lines'}: ${props.review.diff.addedLines}`}>
@@ -205,8 +208,10 @@ export function FilePreview(props: {
   location?: ConversationFileLocation;
   /** 中英文文案。 */
   zh: boolean;
-  /** 会话顶栏使用本次已读取文件的名称，不额外申请预览。 */
+  /** 调用方顶栏使用本次预览结果，无需另外读取文件。 */
   renderHeader?: (item: FilePreviewItem | null) => ReactNode;
+  /** 调用方的标签已显示文件名。 */
+  fileNameInTab?: boolean;
   /** 文本继续复用原差异与评论界面。 */
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 调用方已有的关闭等操作并入预览工具栏。 */
@@ -246,6 +251,7 @@ export function FilePreview(props: {
         location={props.location}
         zh={props.zh}
         renderHeader={props.renderHeader}
+        fileNameInTab={props.fileNameInTab}
         actions={props.actions}
         onRevealDirectory={props.onRevealDirectory}
         fileStatus={props.fileStatus}
@@ -273,8 +279,10 @@ function FilePreviewBody(props: {
   /** 文本差异需要补丁，媒体无需等它。 */
   pendingDiff?: boolean;
   zh: boolean;
-  /** 文件标签与正文使用同一份已授权预览。 */
+  /** 顶栏与正文使用同一份已授权预览。 */
   renderHeader?: (item: FilePreviewItem | null) => ReactNode;
+  /** 路径栏不再重复外部标签中的文件名。 */
+  fileNameInTab?: boolean;
   children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
   /** 已在源码页时直接定位其文件树。 */ onRevealDirectory?: (path: string) => void;
@@ -472,15 +480,17 @@ function FilePreviewBody(props: {
       setError(userFacingErrorCause(cause));
     }
   }
+  /** 版本预览里的按钮切回差异，窄工具栏以图标保留该入口。 */
+  const viewDiffLabel = props.zh ? '查看差异' : 'View changes';
   /** 单文件的刷新、版本切换与系统操作放在同一行；比较视图保留公共操作栏。 */
   const toolbar = (
     <>
       {showDiff ? (
         <span className="diff-review-toolbar-slot" ref={setToolbarTarget} />
       ) : props.children ? (
-        <Button size="compact" onClick={() => setMode('diff')}>
+        <Button size="compact" aria-label={viewDiffLabel} data-icon-tooltip={viewDiffLabel} onClick={() => setMode('diff')}>
           <GitDiff size={16} aria-hidden="true" />
-          {props.zh ? '查看差异' : 'View changes'}
+          <span className="file-toolbar-action-label">{viewDiffLabel}</span>
         </Button>
       ) : null}
       {!showDiff && !images && items && items.length > 1
@@ -564,6 +574,7 @@ function FilePreviewBody(props: {
                   item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
                   request={attachment}
                   onRevealDirectory={props.onRevealDirectory}
+                  fileNameInTab={props.fileNameInTab}
                   zh={props.zh}
                   fileStatus={props.fileStatus}
                   commentPath={props.commentPath}
@@ -751,6 +762,8 @@ function FilePreviewContent(props: {
   request: FilePreviewRequest;
   /** 已在源码页时直接定位其文件树。 */
   onRevealDirectory?: (path: string) => void;
+  /** 文件名已由外部源码或审阅标签显示。 */
+  fileNameInTab?: boolean;
   zh: boolean;
   /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string;
   /** 当前用户选择的解码方式。 */ encoding: FilePreviewTextEncoding | '';
@@ -835,6 +848,7 @@ function FilePreviewContent(props: {
               path={props.onRevealDirectory ? displayPath : (item.workspaceRelativePath ?? displayPath)}
               copyPath={displayPath}
               name={item.name}
+              fileNameInTab={props.fileNameInTab}
               status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}
               zh={props.zh}
               onRevealDirectory={props.onRevealDirectory ?? (item.workspaceRelativePath ? (path) => action('reveal-directory', path) : undefined)}
