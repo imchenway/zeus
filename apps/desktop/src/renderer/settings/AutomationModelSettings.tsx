@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import { normalizeAutomationModelSettings, type InputSuggestionModelOption } from '@zeus/shared';
+import { normalizeAutomationModelSettings, type AutomationModelSelection, type InputSuggestionModelOption } from '@zeus/shared';
 import type { AppShellSettings } from '../features/settings/settingsContracts.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
+import { NativeControlRow } from '../features/workspace/workspaceSupport.js';
+import { presentModelOptions } from '../modelOptionPresentation.js';
+import { selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierPickerValue, serviceTierWireOverride } from '../session/serviceTierSelection.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
-/** 浏览器和桌面模型沿用现有设置存储、目录查询和下拉控件。 */
+/** 浏览器和桌面操作各自选择模型及其目录支持的速度。 */
 export function AutomationModelSettings(props: {
   /** 主界面已加载的全局偏好。 */
   value: AppShellSettings;
@@ -32,6 +35,8 @@ export function AutomationModelSettings(props: {
   const [error, setError] = useState<unknown>(null);
   /** 单个来源失效时仍显示其他可用模型。 */
   const [warning, setWarning] = useState('');
+  /** 置顶沿用会话的目录 ID，保存时使用带来源的运行引用。 */
+  const catalog = models.map((model) => ({ ...model, id: model.catalogId ?? model.id, modelRef: model.id, model: model.model ?? model.id, displayName: model.displayName ?? model.label }));
 
   useEffect(() => {
     /** 返回设置窗口或登录变化后更新可选目录。 */
@@ -69,13 +74,13 @@ export function AutomationModelSettings(props: {
     return () => controller.abort();
   }, [props.client, revision]);
 
-  /** 局部更新不改变主会话模型，也不触碰浏览器资料和权限。 */
-  async function save(capability: 'browser' | 'computer', model: string): Promise<void> {
+  /** 模型和速度一并保存，另一操作能力沿用服务端当前设置。 */
+  async function save(capability: 'browser' | 'computer', selection: AutomationModelSelection | null): Promise<void> {
     if (!props.client || status === 'saving') return;
     setStatus('saving');
     setError(null);
     try {
-      const saved = await props.client.saveAppShellSettings({ automationModels: { [capability]: model || null } });
+      const saved = await props.client.saveAppShellSettings({ automationModels: { [capability]: selection } });
       props.onChange((current) => ({ ...current, automationModels: saved.automationModels }));
       setStatus('saved');
     } catch (cause) {
@@ -92,28 +97,60 @@ export function AutomationModelSettings(props: {
       </header>
       <section className="native-settings-pane browser-settings-pane" aria-label={zh ? '操作模型' : 'Operation models'}>
         {(['browser', 'computer'] as const).map((capability) => {
-          /** 目录离线或模型被移除时仍保留原选择，避免显示成跟随模式。 */
+          /** 两种操作分别保留固定模型；空值交给当前会话。 */
           const selected = settings[capability];
-          /** 选项名称来自真实模型目录，未配置的能力沿用当前会话。 */
+          /** 原有设置按带来源的引用查找，列表使用共享置顶身份。 */
+          const model = catalog.find((item) => item.modelRef === selected?.modelRef);
+          /** 目录离线或模型被移除时仍保留原选择。 */
+          const selectedId = model?.id ?? selected?.modelRef ?? '';
+          /** 供应商分组、排序、搜索、置顶沿用会话模型列表。 */
+          const presentation = presentModelOptions(catalog, selectedId, props.value.appLanguage, { preserveMissingSelection: true });
+          /** 跟随选项没有模型身份，不参与置顶。 */
           const options = [
             { value: '', label: zh ? '跟随当前会话' : 'Follow conversation' },
-            ...models.map((model) => ({ value: model.id, label: model.label })),
-            ...(selected && !models.some((model) => model.id === selected) ? [{ value: selected, label: `${selected}${loading ? '' : zh ? '（目录不可用）' : ' (unavailable)'}` }] : []),
+            ...presentation.options,
+            ...(selected && !model ? [{ value: selectedId, label: `${selectedId}${loading ? '' : zh ? '（目录不可用）' : ' (unavailable)'}`, disabled: true }] : []),
           ];
+          /** 只有目录提供加速档位的固定模型才需要速度选择。 */
+          const speedModel = { serviceTiers: model?.serviceTiers ?? [] };
+          /** 档位名称、标准速度及目录筛选与会话一致。 */
+          const speeds = serviceTierOptions(speedModel, props.value.appLanguage);
+          /** 行标题同时用于区分同一设置页的两个选择器。 */
+          const title = capability === 'browser' ? 'Browser Use' : 'Computer Use';
           return (
-            <div className="native-control-row browser-settings-row" key={capability}>
-              <span>{capability === 'browser' ? 'Browser Use' : 'Computer Use'}</span>
+            <NativeControlRow title={title} className="browser-settings-row automation-model-settings-row" key={capability}>
               <ZeusSelect
                 size="regular"
-                ariaLabel={capability === 'browser' ? 'Browser Use model' : 'Computer Use model'}
-                value={selected ?? ''}
+                ariaLabel={zh ? `${title} 模型` : `${title} model`}
+                value={selectedId}
+                triggerLabel={model ? presentation.triggerLabel : undefined}
+                triggerTitle={model ? presentation.triggerLabel : undefined}
                 options={options}
+                pinning={presentation.pinning}
                 disabled={!props.client || status === 'saving'}
-                onChange={(value) => void save(capability, value)}
+                onChange={(value) => {
+                  if (value === selectedId) return;
+                  /** 切换模型从标准速度开始；空选项跟随当前会话。 */
+                  const next = catalog.find((item) => item.id === value);
+                  if (next || !value) void save(capability, next ? { modelRef: next.modelRef, serviceTier: null } : null);
+                }}
+                searchable
                 searchPlaceholder={zh ? '搜索模型' : 'Search models'}
                 emptyLabel={zh ? '没有匹配模型' : 'No matching models'}
               />
-            </div>
+              {selected && speeds.length > 1 ? (
+                <ZeusSelect
+                  className="automation-model-speed-select"
+                  size="regular"
+                  ariaLabel={zh ? `${title} 速度` : `${title} speed`}
+                  value={serviceTierPickerValue(selectionFromEffectiveServiceTier(selected.serviceTier), speedModel)}
+                  options={speeds}
+                  disabled={!props.client || status === 'saving'}
+                  searchable={false}
+                  onChange={(value) => void save(capability, { modelRef: selected.modelRef, ...serviceTierWireOverride(selectionFromEffectiveServiceTier(value)) })}
+                />
+              ) : null}
+            </NativeControlRow>
           );
         })}
       </section>

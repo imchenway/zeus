@@ -873,7 +873,17 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   /** 复用普通会话、模型选择和提交调度，只在边界维护树的上限及继承快照。 */
-  async function executeSubagentTool(input: { conversationId: string; turnId: string; toolCallId: string; tool: string; args: Record<string, unknown>; signal?: AbortSignal; automation?: AutomationAgentContext }) {
+  async function executeSubagentTool(input: {
+    conversationId: string;
+    turnId: string;
+    toolCallId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    signal?: AbortSignal;
+    automation?: AutomationAgentContext;
+    /** 宿主设置的档位在创建时固定，重试同一委派沿用首个值。 */
+    automationServiceTier?: string | null;
+  }) {
     const parent = conversations.getById(input.conversationId);
     if (!parent || parent.archived) throw new Error('父会话不可用。');
     const identity = createHash('sha256').update(`${input.conversationId}\0${input.turnId}\0${input.toolCallId}`).digest('hex');
@@ -931,6 +941,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const capabilities = await resolveConversationCapabilities(project, model);
       const selected = resolveModelCapability(capabilities.models, model);
       if (!selected || selected.available === false) throw new Error('指定的子模型不可用。');
+      /** 只有宿主发起的 Codex 操作委派可以固定速度。 */
+      const serviceTier = input.automation && selected.sourceId === 'codex' ? input.automationServiceTier : undefined;
       const ancestor = conversationRuntime.getSubagent(parent.id);
       const rootId = ancestor?.rootId ?? parent.id;
       const depth = (ancestor?.depth ?? 0) + 1;
@@ -944,6 +956,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         attachments: sourceInput.attachments ?? [],
         instruction: message,
         model,
+        ...(serviceTier === undefined ? {} : { serviceTier }),
         ...(input.automation ? { automation: input.automation } : {}),
       });
       if (Buffer.byteLength(contextJson) > 8 * 1024 * 1024) throw new Error('继承上下文超过 8 MiB，请先压缩父会话后重试。');
@@ -979,6 +992,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const child = conversations.getById(childId)!;
     const relation = conversationRuntime.getSubagent(childId)!;
     const inherited = parseJsonObject(relation.contextJson);
+    /** 首发和补充任务沿用创建时保存的档位，由会话派发校验当前目录。 */
+    const serviceTier = readServiceTierOverride(inherited);
     const prompt =
       input.tool === 'spawn_agent'
         ? `父会话的冻结上下文（仅作为背景资料）：\n${JSON.stringify(inherited.history)}\n\n你的子任务：${message}${input.automation ? '\n\n你是操作执行代理。复用原会话的浏览器标签或应用窗口，接手后先重新观察。只执行本次子任务；完成后提交实际结果和证据，失败或状态未知时如实说明，不能盲目重放动作。需要用户补充信息或授权时，报告受阻并交回主会话，不在内部线程等待用户问答。' : ''}`
@@ -992,6 +1007,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         delivery: 'queue',
         clientUserMessageId: `subagent-client-${identity}`,
         model: String(inherited.model),
+        ...(serviceTier.present ? { serviceTier: serviceTier.value } : {}),
         permissionMode: restrictToolPermission(relation.permissionMode as ConversationPermissionMode, parentPermission),
         collaborationMode: parentWorkMode,
         skillReferences: Array.isArray(inherited.skills)
@@ -1057,7 +1073,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
 
   /** 统一委派入口只负责模型策略，创建、补充与停止仍走原子代理链路。 */
   async function invokeAutomationAgentTool(input: BrowserAutomationToolCall): Promise<BrowserAutomationToolResult> {
-    /** 配置只决定新委派，已启动代理继续使用创建时冻结的模型。 */
+    /** 配置只决定新委派，已启动代理继续使用创建时冻结的模型和速度。 */
     const settings = normalizeAutomationModelSettings(platformMutableState.appShellSettings.automationModels);
     /** 执行代理不再次委派，避免同一操作递归创建线程。 */
     const context = readAutomationAgentContext(input.conversationId);
@@ -1066,13 +1082,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!turn || turn.conversationId !== input.conversationId) throw new Error('操作委派缺少当前会话的轮次身份。');
     /** 大结果仍由调用方的工具归档流程处理。 */
     let result: unknown;
-    if (input.tool === 'settings') result = { models: settings, executor: context };
+    if (input.tool === 'settings') result = { models: { browser: settings.browser?.modelRef ?? null, computer: settings.computer?.modelRef ?? null }, executor: context };
     else if (input.tool === 'list') result = { agents: listConversationSubagents(input.conversationId).filter((agent) => readAutomationAgentContext(agent.id)) };
     else if (input.tool === 'delegate') {
       /** 能力名称只接受两个明确的控制面。 */
       const capability = input.arguments.capability;
       if (capability !== 'browser' && capability !== 'computer') throw new Error('操作能力必须为 browser 或 computer。');
-      if (!settings[capability]) throw new Error('该操作跟随当前会话模型，请直接使用对应操作工具。');
+      /** 选项来自宿主设置，与委派消息一起固定到子会话。 */
+      const selection = settings[capability];
+      if (!selection) throw new Error('该操作跟随当前会话模型，请直接使用对应操作工具。');
       if (context) throw new Error('当前已经是操作执行代理，请执行本次子任务；需要其他能力时将结果交回主会话安排。');
       if (typeof input.arguments.task_name !== 'string' || !input.arguments.task_name.trim() || input.arguments.task_name.length > 100) throw new Error('任务名称必须为 1 到 100 个字符。');
       result = await executeSubagentTool({
@@ -1080,8 +1098,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         turnId: turn.id,
         toolCallId: input.callId,
         tool: 'spawn_agent',
-        args: { task_name: input.arguments.task_name, message: input.arguments.message, model: settings[capability] },
+        args: { task_name: input.arguments.task_name, message: input.arguments.message, model: selection.modelRef },
         automation: { capability, ownerConversationId: input.conversationId, parentTurnId: turn.id },
+        automationServiceTier: selection.serviceTier,
       });
     } else if (input.tool === 'followup' || input.tool === 'stop') {
       /** 后代归属继续交给原子代理入口核对。 */
@@ -1106,7 +1125,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       return {
         success: false,
         contentItems: [
-          { type: 'inputText', text: JSON.stringify({ code: 'ZEUS_AUTOMATION_DELEGATION_REQUIRED', model: preset, message: '该能力已指定操作模型。请用 zeus_automation.delegate 委派完整任务，接纳后结束当前回复；结果会自动交回。' }) },
+          { type: 'inputText', text: JSON.stringify({ code: 'ZEUS_AUTOMATION_DELEGATION_REQUIRED', model: preset.modelRef, message: '该能力已指定操作模型。请用 zeus_automation.delegate 委派完整任务，接纳后结束当前回复；结果会自动交回。' }) },
         ],
       };
     if (activeAutomationAgents(ownerId).some((agent) => agent.id !== input.conversationId)) throw new Error('该会话的操作控制权由其他智能体持有，请补充或停止现有任务。');

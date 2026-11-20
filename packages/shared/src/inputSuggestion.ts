@@ -16,12 +16,24 @@ export interface InputSuggestionSettings {
   serviceTier?: CodexServiceTierId | null;
 }
 
-/** 专用模型选择器只需要稳定身份和可读名称。 */
+/** 专用模型目录同时提供运行引用、展示信息与模型能力。 */
 export interface InputSuggestionModelOption {
   /** 沿用现有模型目录身份，不由显示名称推断供应商。 */
   id: string;
   /** 模型目录提供的供应商及模型名称。 */
   label: string;
+  /** Codex 原始目录 ID，用于与会话共享置顶。 */
+  catalogId?: string;
+  /** 模型目录中的原始名称，用于稳定排序和搜索。 */
+  model?: string;
+  /** 供应商名称，用于列表分组。 */
+  sourceName?: string;
+  /** 模型名称，不含供应商前缀。 */
+  displayName?: string;
+  /** 目录确认是否支持百万 Token 上下文。 */
+  supports1MContext?: boolean;
+  /** 模型本身的速度标签，与 Codex 可选速度档位无关。 */
+  speedLabel?: 'standard' | 'high_speed' | 'flash' | 'turbo';
   /** 仅提供模型目录确认支持的档位，不由界面推测。 */
   supportedReasoningEfforts?: string[];
   /** 沿用现有模型目录的速度能力，缺失时不推断支持加速档位。 */

@@ -12,7 +12,7 @@ import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses }
 import { resolveConversationGitRepository, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
-import type { AutomationActionConfig, AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
+import type { AutomationActionConfig, AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest, InputSuggestionModelOption } from '@zeus/shared';
 import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, InputSuggestionJobRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
 import { WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -961,7 +961,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 提交说明和输入建议共用现有模型目录及登录能力。 */
   async function loadTextGenerationModels(selectedModelRef?: string, purpose: 'agent' | 'text' = 'agent', source?: 'codex' | 'custom') {
     /** 设置入口和生成服务使用同一份模型能力，不能猜测可用档位。 */
-    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string; sourceName: string; displayName: string }> = (
+    const items: Array<InputSuggestionModelOption & Pick<CodexModelCapability, 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { sourceName: string; displayName: string }> = (
       source === 'codex' || selectedModelRef?.startsWith('codex:') ? [] : await modelConnections.listSelectableModels(selectedModelRef, purpose)
     )
       .filter((model: SelectableConnectionModel) => model.available && model.enabled)
@@ -972,6 +972,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         label: `${model.sourceName} · ${model.displayName}`,
         sourceName: model.sourceName,
         displayName: model.displayName,
+        supports1MContext: model.supports1MContext,
+        speedLabel: model.speedLabel,
         supportedReasoningEfforts: model.supportedReasoningEfforts,
         defaultReasoningEffort: model.defaultReasoningEffort ?? undefined,
         serviceTiers: model.serviceTiers,
@@ -1005,6 +1007,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           .filter((model: CodexModelCapability) => !selectedModelRef || selectedModelRef === `codex:${model.model}`)
           .map((model: CodexModelCapability) => ({
             id: `codex:${model.model}`,
+            catalogId: model.id,
             model: model.model,
             label: `Codex · ${model.displayName || model.model}`,
             sourceName: 'Codex',
