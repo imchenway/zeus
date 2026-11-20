@@ -3416,7 +3416,7 @@ async function applyPiPromptHooks(
     payload: { prompt: input.prompt },
     maximumWaitMs: pluginDispatchHookWaitLimitMs,
   });
-  if (result.runs.some((run) => run.state === 'timed_out')) throw piError('ZEUS_PLUGIN_HOOK_DISPATCH_TIMEOUT', 'Plugin Hook 等待超时，本次消息尚未发送。请检查 Plugin 后重试。');
+  if (result.foregroundTimedOut) throw piError('ZEUS_PLUGIN_HOOK_DISPATCH_TIMEOUT', 'Plugin Hook 等待超时，本次消息尚未发送。请检查 Plugin 后重试。');
   if (!result.continue) throw piError('ZEUS_PLUGIN_HOOK_PROMPT_BLOCKED', result.stopReasons.join('\n') || 'Plugin Hook 已阻断本次提示。');
   const context = [...result.systemMessages, ...result.additionalContext].filter(Boolean);
   return context.length > 0 ? `${input.prompt}\n\n[ZEUS_PLUGIN_HOOK_CONTEXT]\n${context.join('\n')}\n[/ZEUS_PLUGIN_HOOK_CONTEXT]` : input.prompt;
