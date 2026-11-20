@@ -748,7 +748,6 @@
     .session-thread-item,
     .session-activity-group,
     .session-plan-summary,
-    .session-plan-entry,
     .session-question-panel,
     .session-plan-progress,
     .session-turn-change-card,
@@ -3311,7 +3310,6 @@
     .session-activity-group,
     .session-reasoning-summary,
     .session-plan-summary,
-    .session-plan-entry,
     .session-question-panel,
     .session-plan-progress,
     .session-turn-change-card,
@@ -4807,7 +4805,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     .session-activity-group,
     .session-reasoning-summary,
     .session-plan-summary,
-    .session-plan-entry,
     .session-question-panel,
     .session-plan-progress,
     .session-turn-change-card,
@@ -7181,8 +7178,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-plan-summary-title,
 .session-codex-parity-v1 .session-plan-summary-collapse,
-.session-codex-parity-v1 .session-plan-summary nav > button,
-.session-codex-parity-v1 .session-plan-entry {
+.session-codex-parity-v1 .session-plan-summary nav > button {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -7211,6 +7207,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-plan-summary-title > strong {
   font-size: 14px;
   font-weight: 620;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-plan-summary-symbol {
@@ -7236,8 +7235,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   gap: 1px;
 }
 
-.session-codex-parity-v1 .session-plan-summary nav > button,
-.session-codex-parity-v1 .session-plan-workspace nav > button {
+.session-codex-parity-v1 .session-plan-summary nav > button {
   border-radius: 7px;
   color: var(--session-text-muted);
   justify-content: center;
@@ -7245,14 +7243,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-plan-summary nav > button:hover:not(:disabled):not([aria-disabled='true']),
-.session-codex-parity-v1 .session-plan-summary nav > button[aria-pressed='true'],
-.session-codex-parity-v1 .session-plan-workspace nav > button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-codex-parity-v1 .session-plan-summary nav > button[aria-pressed='true'] {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 .session-plan-summary nav svg,
-.session-codex-parity-v1 .session-plan-workspace nav svg {
+.session-codex-parity-v1 .session-plan-summary nav svg {
   block-size: 17px;
   inline-size: 17px;
 }
@@ -7283,18 +7279,33 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   line-height: 24px;
 }
 
-.session-codex-parity-v1 .session-plan-entry {
-  border: 1px solid var(--session-line-soft);
-  border-radius: 9px;
-  gap: 8px;
-  justify-content: space-between;
-  min-block-size: 38px;
-  padding: 6px 10px;
-  inline-size: 100%;
+/* 在右侧阅读时，会话仅保留原位的计划入口与选中状态。 */
+.session-codex-parity-v1 .session-plan-summary[data-panel-open='true'] {
+  background: transparent;
+  border: 0;
 }
 
-.session-codex-parity-v1 .session-plan-entry:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--session-control-hover);
+.session-codex-parity-v1 .session-plan-summary[data-panel-open='true'] > header {
+  min-block-size: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-plan-summary-title[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--session-accent) 12%, transparent);
+  color: var(--session-accent);
+}
+
+.session-codex-parity-v1 .session-plan-summary-title[aria-expanded='true'] .session-plan-summary-symbol {
+  color: inherit;
+}
+
+.session-codex-parity-v1 .session-plan-summary-title > svg {
+  flex: none;
+}
+
+.session-codex-parity-v1 .session-plan-summary-title:focus-visible {
+  outline: 2px solid var(--session-accent);
+  outline-offset: -2px;
 }
 
 .session-codex-parity-v1 .session-plan-workspace {
@@ -7309,43 +7320,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   overflow: hidden;
 }
 
-.session-codex-parity-v1 .session-plan-workspace > header {
-  align-items: center;
-  border-block-end: 0;
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: space-between;
-  min-block-size: 48px;
-  padding: 0 12px 0 16px;
-}
-
-.session-codex-parity-v1 .session-plan-workspace-tab,
-.session-codex-parity-v1 .session-plan-workspace nav {
-  align-items: center;
-  display: flex;
-  gap: 7px;
-}
-
-.session-codex-parity-v1 .session-plan-workspace-tab svg {
-  color: var(--session-text-muted);
-}
-
-.session-codex-parity-v1 .session-plan-workspace nav > button {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  display: inline-grid;
-  place-items: center;
-}
-
 .session-codex-parity-v1 .session-plan-workspace-content {
   box-sizing: border-box;
   flex: 1 1 auto;
   inline-size: 100%;
   min-block-size: 0;
   overflow-y: auto;
-  padding: 34px clamp(28px, 5vw, 72px) 68px;
+  padding: 12px clamp(28px, 5vw, 72px) 68px;
 }
 
 .session-codex-parity-v1 .session-plan-workspace-content > .session-markdown {
@@ -8492,9 +8473,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   max-inline-size: min(100%, var(--session-markdown-max));
 }
 
-/* 回复底部的网页列表与正文共用宽度，含图表或展开时同步拓宽。 */
+/* 回复底部的网页卡与文件变更卡共用会话列宽。 */
 .session-codex-parity-v1 .session-resource-card-list:not([data-compact]):has(> [data-web-page]) {
-  max-inline-size: var(--session-assistant-content-width, min(var(--session-markdown-max), 100%));
+  max-inline-size: min(var(--session-thread-max), 100%);
 }
 
 .session-codex-parity-v1 .session-resource-video {
@@ -10719,14 +10700,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1
   :where(.session-turn-process-body)
-  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
   inline-size: 100%;
   margin-inline: 0;
 }
 
 .session-codex-parity-v1
   .session-live-turn-row
-  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-plan-entry, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
+  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
   inline-size: 100%;
   margin-inline: 0;
 }

@@ -2154,7 +2154,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
-  /** 浏览器标签与文件标题直接挂在会话顶栏，避免内容上方再叠一层工具栏。 */
+  /** 右侧工作面的标签和标题直接挂在会话顶栏。 */
   const [contextToolbarHost, setContextToolbarHost] = useState<HTMLDivElement | null>(null);
   /** 环境卡在浏览器旁占用实际空间，避免遮盖原生网页。 */
   const [browserEnvironmentHost, setBrowserEnvironmentHost] = useState<HTMLDivElement | null>(null);
@@ -2195,7 +2195,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 关闭全宽面板时立即恢复正文的交互。 */
   const contextCoversConversation = contextOpen && (contextFullWidth || browserLayoutWidth <= 840);
   /** 支持顶栏挂载的工作面在退出期间继续显示标签及标题。 */
-  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question', 'subagents'].includes(contextWorkspace.kind);
+  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question', 'subagents', 'plan'].includes(contextWorkspace.kind);
   /** 阅读回执使用持久项目身份，不使用面板导航身份。 */
   const contentProjectId = props.conversation?.projectId;
   /** 正文会话身份在提醒字段刷新时保持稳定。 */
@@ -3429,9 +3429,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
                     onOpenAsyncQuestion={transcriptInteractionsEnabled && !props.suppressComposer && actions.onAnswerAsyncQuestion ? asyncQuestionDock.open : undefined}
-                    openPlanItem={planWorkspaceItem}
-                    onOpenPlan={(item) => {
-                      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                    openPlanItem={contextOpen ? planWorkspaceItem : null}
+                    onSelectPlan={(item, trigger) => {
+                      if (!item) return closeContextWorkspace();
+                      contextReturnFocusRef.current = trigger;
                       setContextFullWidth(false);
                       setContextWorkspace({ kind: 'plan', item });
                     }}
@@ -3585,7 +3586,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           />
                         ) : null}
                         {contextWorkspace.kind === 'plan' && planWorkspaceItem ? (
-                          <PlanWorkspace item={planWorkspaceItem} language={props.language} fullWidth={contextFullWidth} onFullWidthChange={setContextFullWidth} onClose={closeContextWorkspace} />
+                          <PlanWorkspace
+                            item={planWorkspaceItem}
+                            language={props.language}
+                            toolbarHost={contextToolbarHost}
+                            open={contextOpen}
+                            canSplit={browserLayoutWidth > 840}
+                            fullWidth={contextFullWidth}
+                            onFullWidthChange={setContextFullWidth}
+                            onClose={closeContextWorkspace}
+                          />
                         ) : null}
                         {contextWorkspace.kind === 'file' ? (
                           <FilePreviewWorkspace

@@ -72,7 +72,8 @@ export interface ConversationTranscriptProps {
   projectPersistedPlans?: boolean;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
   openPlanItem?: NativeSessionItemBuffer | null;
-  onOpenPlan?: (item: NativeSessionItemBuffer) => void;
+  /** 选中计划以打开预览，传空值时收起并归还入口焦点。 */
+  onSelectPlan?: (item: NativeSessionItemBuffer | null, trigger: HTMLButtonElement | null) => void;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
@@ -792,7 +793,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const renderProps: ConversationTranscriptProps = {
     ...props,
     onEditUserItem: useStableOptionalCallback(props.onEditUserItem),
-    onOpenPlan: useStableOptionalCallback(props.onOpenPlan),
+    onSelectPlan: useStableOptionalCallback(props.onSelectPlan),
     onOpenResource: useStableOptionalCallback(props.onOpenResource),
     onLoadResourcePreview: useStableOptionalCallback(props.onLoadResourcePreview),
     onReviewTurnChanges: useStableOptionalCallback(props.onReviewTurnChanges),
@@ -2440,7 +2441,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   if (row.item.type === 'plan') {
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
-        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={isSamePlanItem(options.props.openPlanItem, row.item)} onOpenPanel={options.props.onOpenPlan} />
+        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={isSamePlanItem(options.props.openPlanItem, row.item)} onSelectPlan={options.props.onSelectPlan} />
       </TranscriptV2ContentBoundary>
     );
   }

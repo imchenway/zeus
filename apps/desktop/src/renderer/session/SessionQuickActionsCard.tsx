@@ -644,8 +644,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     </Button>
                   ) : null}
                 </section>
-
-                {workspaceState === 'error' ? <p role="status">{zh ? '显示最近一次读取的目录与分支。' : 'Shows the most recently loaded folder and branch.'}</p> : null}
               </Collapsible>
             </section>
             <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} onStopOperationAgent={props.onStopOperationAgent} />

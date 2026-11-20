@@ -1,5 +1,5 @@
 import { Collapsible } from '../ui/Collapsible.js';
-import { type ReactNode, useId, useState } from 'react';
+import { type ReactNode, useId, useRef, useState } from 'react';
 import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -14,7 +14,15 @@ import { ConversationMarkdown, conversationMarkdownPhaseForStatus } from './Conv
 import { Button } from '../ui/Button.js';
 
 /** 计划卡片复用右栏预览，卡片内部操作与正文选区保持独立。 */
-export function PlanSummary(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; motionActive?: boolean; panelOpen?: boolean; onOpenPanel?: (item: NativeSessionItemBuffer) => void }) {
+export function PlanSummary(props: {
+  item: NativeSessionItemBuffer;
+  language: SessionUiLanguage;
+  motionActive?: boolean;
+  panelOpen?: boolean;
+  onSelectPlan?: (item: NativeSessionItemBuffer | null, trigger: HTMLButtonElement | null) => void;
+}) {
+  /** 会话内的计划入口在预览开合时保留，用于恢复焦点。 */
+  const titleRef = useRef<HTMLButtonElement>(null);
   /** 内容身份用于折叠按钮的辅助阅读关联。 */
   const contentId = useId();
   /** 折叠只控制会话内正文，不影响右侧计划。 */
@@ -31,6 +39,10 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
   const streaming = phase === 'streaming';
   /** 标题同时作为预览按钮的可见名称。 */
   const title = streaming ? (zh ? '正在编写计划' : 'Writing plan') : zh ? '计划' : 'Plan';
+  /** 右侧预览打开后，同一入口改为关闭操作。 */
+  const previewLabel = props.panelOpen ? (zh ? '关闭计划预览' : 'Close plan preview') : zh ? '在右侧打开计划' : 'Open plan at right';
+  /** 正文、标题与图标共用入口，关闭预览后将焦点交还标题。 */
+  const selectPlan = () => props.onSelectPlan?.(props.panelOpen ? null : props.item, titleRef.current);
   /** 卡片操作使用原生按钮，父级点击不会接管其动作。 */
   const iconButton = (label: string, child: ReactNode, onClick: () => void, pressed?: boolean) => (
     <Button unstyled type="button" aria-label={label} data-icon-tooltip={label} aria-pressed={pressed} onClick={onClick}>
@@ -38,55 +50,59 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
     </Button>
   );
 
-  if (props.panelOpen) {
-    return (
-      <Button unstyled type="button" className="session-plan-entry" onClick={() => props.onOpenPanel?.(props.item)}>
-        <span>{title}</span>
-        <SidebarSimple aria-hidden="true" />
-      </Button>
-    );
-  }
-
   return (
     <article
       className="session-plan-summary"
       data-streaming={streaming || undefined}
       data-motion-active={props.motionActive || undefined}
       data-collapsed={collapsed || undefined}
-      data-preview-enabled={Boolean(props.onOpenPanel) || undefined}
+      data-panel-open={props.panelOpen || undefined}
+      data-preview-enabled={(Boolean(props.onSelectPlan) && !props.panelOpen) || undefined}
       onClick={(event) => {
-        if (!props.onOpenPanel || event.defaultPrevented) return;
+        if (!props.onSelectPlan || props.panelOpen || event.defaultPrevented) return;
         /** 链接、工具栏和正文内控件各自处理点击，不重复打开右栏。 */
         const target = event.target;
         if (target instanceof Element && target.closest('button, a, input, textarea, select, summary, [role="button"], [contenteditable="true"]')) return;
         /** 拖选本卡片的文字只保留选区，不将鼠标释放视作预览操作。 */
         const selection = event.currentTarget.ownerDocument.defaultView?.getSelection();
         if (selection && !selection.isCollapsed && (event.currentTarget.contains(selection.anchorNode) || event.currentTarget.contains(selection.focusNode))) return;
-        return props.onOpenPanel(props.item);
+        return selectPlan();
       }}
     >
       <header>
         <div className="session-plan-summary-heading">
-          <Button unstyled type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} data-icon-tooltip={zh ? '在右侧打开计划' : 'Open plan at right'}>
+          <Button
+            unstyled
+            ref={titleRef}
+            type="button"
+            className="session-plan-summary-title"
+            disabled={!props.onSelectPlan}
+            aria-expanded={props.onSelectPlan ? Boolean(props.panelOpen) : undefined}
+            onClick={selectPlan}
+            data-icon-tooltip={previewLabel}
+          >
             <span className="session-plan-summary-symbol" aria-hidden="true">
               <Lightbulb />
             </span>
             <strong>{title}</strong>
+            {props.panelOpen ? <SidebarSimple aria-hidden="true" size={14} /> : null}
           </Button>
-          <Button
-            unstyled
-            data-icon-tooltip={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
-            type="button"
-            className="session-plan-summary-collapse"
-            onClick={() => setCollapsed((value) => !value)}
-            aria-expanded={!collapsed}
-            aria-controls={contentId}
-            aria-label={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
-          >
-            <CaretDown aria-hidden="true" />
-          </Button>
+          {!props.panelOpen ? (
+            <Button
+              unstyled
+              data-icon-tooltip={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
+              type="button"
+              className="session-plan-summary-collapse"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-expanded={!collapsed}
+              aria-controls={contentId}
+              aria-label={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
+            >
+              <CaretDown aria-hidden="true" />
+            </Button>
+          ) : null}
         </div>
-        {!streaming ? (
+        {!streaming && !props.panelOpen ? (
           <nav aria-label={zh ? '计划操作' : 'Plan actions'}>
             {iconButton(zh ? '下载计划 Markdown' : 'Download plan Markdown', <Download aria-hidden="true" />, () => downloadPlan(props.item.text))}
             {iconButton(copied ? (zh ? '已复制' : 'Copied') : zh ? '复制计划 Markdown' : 'Copy plan Markdown', <Copy aria-hidden="true" />, () => {
@@ -107,20 +123,22 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
               () => setFeedback((value) => (value === 'bad' ? null : 'bad')),
               feedback === 'bad',
             )}
-            {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <ArrowsOutSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
-            {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <SidebarSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
+            {props.onSelectPlan ? iconButton(previewLabel, <ArrowsOutSimple aria-hidden="true" />, selectPlan) : null}
+            {props.onSelectPlan ? iconButton(previewLabel, <SidebarSimple aria-hidden="true" />, selectPlan) : null}
           </nav>
         ) : null}
       </header>
-      <Collapsible open={!collapsed}>
-        <div id={contentId} className="session-plan-summary-content">
-          {streaming && !props.item.text.trim() ? (
-            <span className="session-thinking-pulse" aria-hidden="true" />
-          ) : (
-            <ConversationMarkdown text={props.item.text} streamId={`plan-summary:${props.item.itemId}`} phase={phase} language={props.language} />
-          )}
-        </div>
-      </Collapsible>
+      {!props.panelOpen ? (
+        <Collapsible open={!collapsed}>
+          <div id={contentId} className="session-plan-summary-content">
+            {streaming && !props.item.text.trim() ? (
+              <span className="session-thinking-pulse" aria-hidden="true" />
+            ) : (
+              <ConversationMarkdown text={props.item.text} streamId={`plan-summary:${props.item.itemId}`} phase={phase} language={props.language} />
+            )}
+          </div>
+        </Collapsible>
+      ) : null}
     </article>
   );
 }
