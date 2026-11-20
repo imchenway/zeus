@@ -4,6 +4,8 @@ import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWi
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { OpenWithMenu } from './ConversationResources.js';
@@ -19,6 +21,7 @@ import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsI
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { FileWorkspaceToolbar } from '../code/FileWorkspaceToolbar.js';
+import { FileWorkspaceTabs } from '../code/FileWorkspaceTabs.js';
 import { useFilePreviewRefresh } from '../code/useFilePreviewRefresh.js';
 import { fileStatusLabel } from '../code/fileStatus.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
@@ -248,6 +251,8 @@ function SourceWorkspaceView(props: {
   const contentScroll = useReadingScroll(`content:${props.viewMode}`);
   /** 当前打开应用的真实图标与名称。 */
   const openApplication = openTargets.find((target) => target.id === openTarget);
+  /** 图标按钮仍提供完整打开动作名称。 */
+  const openLabel = zh ? '打开' : 'Open';
   /** 展示宿主打开失败，不吞掉权限或应用错误。 */
   const [openError, setOpenError] = useState<unknown>(null);
   /** 成功提示绑定资源，切换文件不会显示上一文件的复制结果。 */
@@ -317,57 +322,54 @@ function SourceWorkspaceView(props: {
   const markdownPreview = supportsMarkdownPreview(props.preview);
   /** 当前只挂载被选中的一种展示模式。 */
   const renderedMarkdown = Boolean(sourcePreview && markdownPreview && props.viewMode === 'preview');
+  /** Markdown 的按钮描述当前可切换到的模式。 */
+  const markdownActionLabel = renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview';
   useEffect(() => {
-    titleRef.current?.focus();
-    titleRef.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    titleRef.current?.focus({ preventScroll: true });
   }, [tabId, sourcePreview?.location]);
 
   /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
   const header = (
     <header className="session-context-workspace-header session-source-header">
-      <div
-        className="session-source-tabs zeus-workspace-tabs"
-        role="tablist"
-        aria-label={zh ? '已打开文件' : 'Open files'}
-        onKeyDown={(event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return;
-          event.preventDefault();
-          const tabs = props.tabs ?? [props.preview];
-          const index = tabs.findIndex((tab) => sourceWorkspaceTabId(tab) === tabId);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-          props.onSelectTab?.(tabs[next]!);
-          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
-        }}
-      >
-        {(props.tabs ?? [props.preview]).map((preview) => (
-          <div className="zeus-workspace-tab-shell" data-active={sourceWorkspaceTabId(preview) === tabId || undefined} key={sourceWorkspaceTabId(preview)}>
-            <Button
-              unstyled
-              type="button"
-              ref={sourceWorkspaceTabId(preview) === tabId ? titleRef : undefined}
-              role="tab"
-              className="zeus-workspace-tab"
-              tabIndex={sourceWorkspaceTabId(preview) === tabId ? 0 : -1}
-              aria-selected={sourceWorkspaceTabId(preview) === tabId}
-              data-icon-tooltip={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
-              aria-label={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
-              onClick={() => props.onSelectTab?.(preview)}
-            >
-              {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
-              <span data-file-status={preview.review?.status}>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
-            </Button>
-            <Button
-              unstyled
-              type="button"
-              className="zeus-workspace-tab-close"
-              aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
-              data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
-              onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}
-            >
-              <X aria-hidden="true" />
-            </Button>
-          </div>
-        ))}
+      <div className="session-source-tabs file-workspace-tab-strip">
+        <FileWorkspaceTabs
+          tabs={props.tabs ?? [props.preview]}
+          activeId={tabId}
+          tabId={sourceWorkspaceTabId}
+          tabLabel={(preview) => (preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}
+          zh={zh}
+          onSelect={(preview) => props.onSelectTab?.(preview)}
+          renderTab={(preview) => (
+            <div className="zeus-workspace-tab-shell" data-active={sourceWorkspaceTabId(preview) === tabId || undefined} key={sourceWorkspaceTabId(preview)}>
+              <Button
+                unstyled
+                type="button"
+                ref={sourceWorkspaceTabId(preview) === tabId ? titleRef : undefined}
+                role="tab"
+                className="zeus-workspace-tab"
+                tabIndex={sourceWorkspaceTabId(preview) === tabId ? 0 : -1}
+                aria-selected={sourceWorkspaceTabId(preview) === tabId}
+                data-file-path={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName}
+                data-icon-tooltip={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
+                aria-label={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
+                onClick={() => props.onSelectTab?.(preview)}
+              >
+                {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
+                <span data-file-status={preview.review?.status}>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
+              </Button>
+              <Button
+                unstyled
+                type="button"
+                className="zeus-workspace-tab-close"
+                aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
+                data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
+                onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+        />
         {props.onOpenFile && props.resources?.length ? (
           <div className="session-source-add-tab-shell">
             <Plus aria-hidden="true" />
@@ -431,7 +433,7 @@ function SourceWorkspaceView(props: {
         zh={zh}
         toolbar={(reviewActions) => (
           <>
-            <FileWorkspaceToolbar path={displayPath} zh={zh} onRevealDirectory={props.preview.resource.kind === 'file' ? (path) => fileAction('reveal-directory', path) : undefined}>
+            <FileWorkspaceToolbar path={displayPath} fileNameInTab zh={zh} onRevealDirectory={props.preview.resource.kind === 'file' ? (path) => fileAction('reveal-directory', path) : undefined}>
               {reviewActions}
               {props.onRefresh ? (
                 <Button unstyled type="button" aria-label={zh ? '刷新文件' : 'Refresh file'} data-icon-tooltip={zh ? '刷新文件' : 'Refresh file'} aria-busy={props.refreshing} disabled={props.refreshing} onClick={() => props.onRefresh?.()}>
@@ -450,8 +452,9 @@ function SourceWorkspaceView(props: {
                 />
               ) : null}
               {markdownPreview ? (
-                <Button size="compact" className="session-source-mode-toggle" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
-                  {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
+                <Button size="compact" aria-label={markdownActionLabel} data-icon-tooltip={markdownActionLabel} onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
+                  {renderedMarkdown ? <FileCode aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                  <span className="file-toolbar-action-label">{markdownActionLabel}</span>
                 </Button>
               ) : null}
               <Button
@@ -470,7 +473,14 @@ function SourceWorkspaceView(props: {
                 {copied ? copyLabel : ''}
               </span>
               <div className="session-source-open-group">
-                <Button unstyled type="button" disabled={!props.onOpen} data-icon-tooltip={openApplication?.label} onClick={() => openResource(openTarget ?? 'system_default')}>
+                <Button
+                  unstyled
+                  type="button"
+                  disabled={!props.onOpen}
+                  aria-label={openLabel}
+                  data-icon-tooltip={openApplication?.label ? `${openLabel} · ${openApplication.label}` : openLabel}
+                  onClick={() => openResource(openTarget ?? 'system_default')}
+                >
                   {openApplication?.iconDataUrl ? (
                     <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
                   ) : openTarget === 'system_default' ? (
@@ -478,7 +488,7 @@ function SourceWorkspaceView(props: {
                   ) : (
                     <AppWindow aria-hidden="true" />
                   )}
-                  {zh ? '打开' : 'Open'}
+                  <span className="file-toolbar-action-label">{openLabel}</span>
                 </Button>
                 <OpenWithMenu
                   key={props.preview.resource.id}
@@ -583,18 +593,20 @@ export function FilePreviewWorkspace(props: {
   /** 每次切换文件将焦点移到当前文件标签。 */
   const titleRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    titleRef.current?.focus();
+    titleRef.current?.focus({ preventScroll: true });
   }, [props.request]);
   /** 文件标签使用本次预览返回的名称，加载前使用已有展示路径。 */
   function renderHeader(item: FilePreviewItem | null) {
     /** 标题只读取展示信息，不用路径申请额外文件授权。 */
-    const name = item?.name ?? basename(props.commentPath ?? ('path' in props.request ? props.request.path : zh ? '文件审阅' : 'File review'));
+    const path = props.commentPath ?? ('path' in props.request ? props.request.path : item?.path);
+    /** 加载文件前使用请求路径或审阅标题。 */
+    const name = item?.name ?? (path ? basename(path) : zh ? '文件审阅' : 'File review');
     /** 文件审阅复用源码标签的尺寸、关闭入口和键盘焦点样式。 */
     const header = (
       <header className="session-context-workspace-header session-source-header">
-        <div className="session-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
+        <div className="session-source-tabs file-workspace-tab-list" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
           <div className="zeus-workspace-tab-shell" data-active="true">
-            <Button unstyled type="button" role="tab" aria-selected="true" className="zeus-workspace-tab" ref={titleRef} data-icon-tooltip={name}>
+            <Button unstyled type="button" role="tab" aria-selected="true" className="zeus-workspace-tab" ref={titleRef} data-icon-tooltip={name} data-file-name={name} data-file-path={path}>
               <FileTypeIcon name={name} />
               <span data-file-status={item?.review?.status}>{name}</span>
             </Button>
@@ -621,7 +633,7 @@ export function FilePreviewWorkspace(props: {
   }
   return (
     <section className="session-context-workspace session-source-workspace" aria-label={zh ? '文件审阅' : 'File review'}>
-      <FilePreview request={props.request} location={props.location} zh={zh} renderHeader={renderHeader} commentPath={props.commentPath} comments={props.comments} onCommentsChange={props.onCommentsChange} />
+      <FilePreview request={props.request} location={props.location} zh={zh} renderHeader={renderHeader} fileNameInTab commentPath={props.commentPath} comments={props.comments} onCommentsChange={props.onCommentsChange} />
     </section>
   );
 }

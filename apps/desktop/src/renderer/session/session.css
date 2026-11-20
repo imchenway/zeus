@@ -13714,7 +13714,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   border: 0;
   color: inherit;
   font: inherit;
-  padding: 0 12px;
+  padding: 0 var(--file-action-padding, 12px);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -13743,7 +13743,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   border-left: 0;
   border-radius: 0;
   min-block-size: 0;
-  padding: 0 10px;
+  padding: 0 var(--file-action-padding, 10px);
+}
+.session-source-open-group button:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
 }
 
 .session-codex-parity-v1 .session-source-header .session-context-workspace-title strong {
@@ -13785,7 +13789,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   content: '- ';
   color: var(--session-text-muted);
 }
-/* 文件标签独立承载文件名，窄面板仍可缩短并横向滚动。 */
+/* 文件标签独立承载文件名，窄面板优先留出当前标签。 */
 .session-codex-parity-v1 .session-source-header {
   background: light-dark(color-mix(in srgb, var(--session-text) 2%, var(--session-canvas)), var(--zeus-dark-canvas));
 }

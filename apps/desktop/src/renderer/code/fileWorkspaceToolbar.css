@@ -1,3 +1,53 @@
+/* 文件标签单行收缩，放不下的标签通过原生选择器切换。 */
+.file-workspace-tab-strip,
+.file-workspace-tabs,
+.file-workspace-tab-list {
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
+  gap: 4px;
+}
+.file-workspace-tab-strip,
+.file-workspace-tabs {
+  flex: 1 1 0;
+}
+.macos-ai-app .file-workspace-tab-list > .zeus-workspace-tab-shell {
+  min-inline-size: 0;
+  flex-shrink: 1;
+}
+.macos-ai-app .file-workspace-tab-list > .zeus-workspace-tab-shell:not([data-active]) {
+  flex-shrink: 3;
+}
+.file-workspace-tab-picker {
+  position: relative;
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  block-size: 28px;
+  border-radius: 6px;
+}
+.file-workspace-tab-picker:hover {
+  background: var(--zeus-interaction-hover);
+}
+.file-workspace-tab-picker:focus-within {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+.file-workspace-tab-picker > svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+.file-workspace-tab-picker > select {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  block-size: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
 /* 文件操作沿用紧凑控件高度；文字与图标入口共用外框尺寸，宽度按内容保留。 */
 .session-source-actions > button,
 .macos-ai-app .session-source-actions > .zeus-button[data-zeus-primitive='button'][data-button-size] {
@@ -12,7 +62,7 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  padding: 0 12px;
+  padding: 0 var(--file-action-padding, 12px);
   border-radius: 999px;
   min-block-size: var(--zeus-control-height, 32px);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text, var(--zeus-control-text)) 3%, transparent);
@@ -20,7 +70,7 @@
 }
 /* 仅旧图标按钮使用方形点击区，共用按钮保留图标与文字所需宽度。 */
 .session-source-actions > button:not([data-zeus-primitive='button']):has(> svg:only-child) {
-  inline-size: 40px;
+  inline-size: var(--file-action-icon-width, 40px);
   padding: 0;
 }
 .session-source-actions > button:disabled {
@@ -32,23 +82,22 @@
   height: 18px;
 }
 .session-source-toolbar {
+  container: file-toolbar / inline-size;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px 12px;
+  gap: 4px 8px;
+  padding: 8px clamp(8px, 2%, 16px) 12px;
   flex: 0 0 auto;
   min-width: 0;
 }
-/* 路径独立横向滚动，窄面板仍能触达每一级目录。 */
+/* 先压缩单个名称，其最小宽度不足时在路径段之间换行。 */
 .session-source-breadcrumbs {
   display: flex;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  white-space: nowrap;
-  gap: 8px;
+  flex: 1 1 0;
+  min-inline-size: min(100%, 9rem);
+  flex-wrap: wrap;
+  gap: 0 8px;
   align-items: center;
   box-sizing: border-box;
   min-height: 40px;
@@ -60,17 +109,41 @@
 }
 .session-source-breadcrumbs > span {
   display: inline-flex;
-  flex: 0 0 auto;
+  max-inline-size: 100%;
+  min-inline-size: 0;
   align-items: center;
   gap: 8px;
   color: var(--session-text-muted, var(--zeus-control-muted-text));
 }
-.session-source-breadcrumbs > span:last-child {
+.session-source-breadcrumbs > span[data-abbreviate] {
+  flex: 1 1 0;
+  min-inline-size: min(100%, 6ch);
+  max-inline-size: max-content;
+}
+.session-source-breadcrumbs > span[aria-current='page'] {
   color: var(--session-text, var(--zeus-control-text));
+}
+/* 原文保留在 DOM 中，仅当起始文本被压缩时显示省略号。 */
+.file-path-label {
+  display: inline-flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.file-path-label > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-path-label > span + span {
+  flex: 0 0 auto;
+  max-inline-size: 50%;
 }
 /* 目录保留路径字号，悬停和键盘焦点提供明确的操作反馈。 */
 .session-source-breadcrumbs .file-path-directory {
   appearance: none;
+  display: inline-flex;
+  min-inline-size: 0;
   border: 0;
   border-radius: 4px;
   padding: 4px 0;
@@ -89,6 +162,9 @@
 }
 .session-source-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-inline-size: 100%;
   align-items: center;
   gap: 6px;
   margin-inline-start: auto;
@@ -111,19 +187,24 @@
   border-radius: 999px;
   padding: 7px 10px;
 }
-@container (max-width: 520px) {
-  .session-source-toolbar {
-    flex-wrap: wrap;
-  }
+/* 窄面板只收起按钮文案，按钮保留名称、焦点和操作范围。 */
+@container file-toolbar (width < 680px) {
   .session-source-breadcrumbs {
-    flex-basis: 100%;
+    column-gap: 6px;
+    padding-inline: 6px;
   }
-}
-@container (max-width: 360px) {
-  /* 窄文件面板允许操作换行，保留完整文案和点击范围。 */
+  .session-source-breadcrumbs > span {
+    gap: 4px;
+  }
   .session-source-actions {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    margin-inline-start: 0;
+    --file-action-icon-width: 32px;
+    --file-action-padding: 6px;
+    gap: 4px;
+  }
+  .file-toolbar-action-label {
+    display: none;
+  }
+  .session-source-actions .file-review-stats {
+    gap: 4px;
   }
 }

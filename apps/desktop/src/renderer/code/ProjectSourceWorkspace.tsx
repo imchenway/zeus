@@ -4,6 +4,7 @@ import { projectSourcePreviewKind, sourceLanguageOptions } from '@zeus/shared';
 import { isMacOSPlatform } from '../platform.js';
 import { FilePreview } from './FilePreview.js';
 import { FilePathBreadcrumbs } from './FileWorkspaceToolbar.js';
+import { FileWorkspaceTabs } from './FileWorkspaceTabs.js';
 import { FileFindButton, fileFindShortcut, openFileFindIn, requestGroupedFileFind, useFileFindGroup } from './fileFind.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
@@ -170,8 +171,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const directoriesRef = useRef(directories);
   const tabsRef = useRef(tabs);
   const activePathRef = useRef(activePath);
-  /** 切换或恢复文件后显示完整标签，包括独立关闭入口。 */
-  const activeTabElementRef = useRef<HTMLDivElement | null>(null);
   const dirtyRef = useRef(false);
   const fileOpenRequestedRef = useRef(false);
   /** 编辑器更新时保留目录树的回调引用，各动作仍读取当前工作区状态。 */
@@ -204,11 +203,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }
   const dirty = tabs.some((tab) => tab.dirty);
   dirtyRef.current = dirty;
-
-  /** 标签恢复和切换后，只滚动标签列表的必要范围。 */
-  useEffect(() => {
-    activeTabElementRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [activePath, tabs.length]);
 
   /** 读取并更新目录快照，同时向定位流程返回该级节点。 */
   const loadDirectory = useCallback(
@@ -1008,7 +1002,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
         <main className="project-source-editor-pane">
           <div className="project-source-editor-header">
-            <div className="project-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
+            <div className="project-source-tabs file-workspace-tab-strip">
               <Button
                 unstyled
                 data-icon-tooltip={zh ? '显示代码目录' : 'Show source tree'}
@@ -1021,61 +1015,60 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               >
                 <FolderOpen aria-hidden="true" />
               </Button>
-              {tabs.map((tab, index) => (
-                <div
-                  key={tab.document.relativePath}
-                  ref={tab.document.relativePath === activePath ? activeTabElementRef : undefined}
-                  className="zeus-workspace-tab-shell"
-                  data-active={tab.document.relativePath === activePath || undefined}
-                  onAuxClick={(event) => {
-                    if (event.button !== 1) return;
-                    event.preventDefault();
-                    closeTab(tab.document.relativePath);
-                  }}
-                >
-                  <Button
-                    unstyled
-                    type="button"
-                    role="tab"
-                    data-icon-tooltip={tab.document.name}
-                    data-file-path={tab.document.relativePath}
-                    aria-selected={tab.document.relativePath === activePath}
-                    tabIndex={tab.document.relativePath === activePath ? 0 : -1}
-                    className="zeus-workspace-tab"
-                    data-busy-behavior="background"
-                    onClick={() => openFile(tab.document.relativePath)}
-                    onKeyDown={(event) => {
-                      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              <FileWorkspaceTabs
+                tabs={tabs}
+                activeId={activePath}
+                tabId={(tab) => tab.document.relativePath}
+                tabLabel={(tab) => tab.document.relativePath}
+                zh={zh}
+                onSelect={(tab) => openFile(tab.document.relativePath)}
+                renderTab={(tab) => (
+                  <div
+                    key={tab.document.relativePath}
+                    className="zeus-workspace-tab-shell"
+                    data-active={tab.document.relativePath === activePath || undefined}
+                    onAuxClick={(event) => {
+                      if (event.button !== 1) return;
                       event.preventDefault();
-                      /** 复用终端标签的循环选择方式，首尾键直接定位边界。 */
-                      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-                      void openFile(tabs[nextIndex]!.document.relativePath);
-                      event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+                      closeTab(tab.document.relativePath);
                     }}
                   >
-                    <FileTypeIcon name={tab.document.name} />
-                    <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
-                    {tab.dirty ? (
-                      <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
-                    ) : tab.externalChange ? (
-                      <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
-                        !
-                      </i>
-                    ) : null}
-                  </Button>
-                  <Button
-                    unstyled
-                    type="button"
-                    className="zeus-workspace-tab-close"
-                    data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                    aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                    disabled={tab.saving}
-                    onClick={() => closeTab(tab.document.relativePath)}
-                  >
-                    <X size={14} aria-hidden="true" />
-                  </Button>
-                </div>
-              ))}
+                    <Button
+                      unstyled
+                      type="button"
+                      role="tab"
+                      data-icon-tooltip={tab.document.name}
+                      data-file-path={tab.document.relativePath}
+                      aria-selected={tab.document.relativePath === activePath}
+                      tabIndex={tab.document.relativePath === activePath ? 0 : -1}
+                      className="zeus-workspace-tab"
+                      data-busy-behavior="background"
+                      onClick={() => openFile(tab.document.relativePath)}
+                    >
+                      <FileTypeIcon name={tab.document.name} />
+                      <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
+                      {tab.dirty ? (
+                        <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
+                      ) : tab.externalChange ? (
+                        <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
+                          !
+                        </i>
+                      ) : null}
+                    </Button>
+                    <Button
+                      unstyled
+                      type="button"
+                      className="zeus-workspace-tab-close"
+                      data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                      aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                      disabled={tab.saving}
+                      onClick={() => closeTab(tab.document.relativePath)}
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </Button>
+                  </div>
+                )}
+              />
             </div>
           </div>
           {openingDocument ? (
@@ -1087,9 +1080,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </>
           ) : activeTab ? (
             <>
-              <div className="project-source-file-toolbar">
-                <FilePathBreadcrumbs compact path={activeTab.document.relativePath} zh={zh} onRevealDirectory={revealDirectory} />
-                {activeTab.document.editable ? (
+              {activeTab.document.editable ? (
+                <div className="project-source-file-toolbar">
+                  <FilePathBreadcrumbs compact fileNameInTab path={activeTab.document.relativePath} zh={zh} onRevealDirectory={revealDirectory} />
                   <div className="project-source-view-modes" role="group" aria-label={zh ? '源码操作' : 'Source actions'}>
                     {renderedPreviewKind
                       ? sourceViewModes.map(({ id, zh: chinese, en, icon: Icon }) => (
@@ -1114,13 +1107,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                       }}
                     />
                   </div>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
               {!activeTab.document.editable ? (
                 <FilePreview
                   request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }}
                   revision={activeTab.document.revision.sha256}
                   fileStatus={gitFileStatuses[activeTab.document.relativePath]}
+                  fileNameInTab
+                  renderHeader={(item) => <div className="project-source-file-toolbar">{item ? null : <FilePathBreadcrumbs compact fileNameInTab path={activeTab.document.relativePath} zh={zh} onRevealDirectory={revealDirectory} />}</div>}
                   onRevealDirectory={revealDirectory}
                   zh={zh}
                 />
