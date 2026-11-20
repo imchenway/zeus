@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { TaskWorkStoreError, type ConversationProviderItemRepository, type TaskWorkDeliverableBundle, type TaskWorkRunRecord, type TurnChangeSetRepository, type TaskWorkDeploymentReceipt } from '@zeus/storage';
+import { TaskWorkStoreError, type ArtifactStore, type ConversationProviderItemRepository, type TaskWorkDeliverableBundle, type TaskWorkRunRecord, type TurnChangeSetRepository, type TaskWorkDeploymentReceipt } from '@zeus/storage';
+import { readCommandEvidenceOutput } from './conversationStorageCompaction.js';
 
 /** 冻结原会话真实产物，不通过模型文字推断代码、验证或部署成功。 */
 export function captureTaskWorkEvidence(input: {
@@ -12,6 +13,8 @@ export function captureTaskWorkEvidence(input: {
   statement?: string;
   changes: TurnChangeSetRepository;
   providerItems: ConversationProviderItemRepository;
+  /** 已归档的命令按归属校验后读取完整输出。 */
+  artifacts?: ArtifactStore;
   deployments?: TaskWorkDeploymentReceipt[];
   /** 原安排的交付要求随同证据缺口展示。 */
   requiredKinds?: TaskWorkDeliverableBundle['availableKinds'];
@@ -46,8 +49,6 @@ export function captureTaskWorkEvidence(input: {
       }
       /** 部分来源将原始项目放入 item 包装中。 */
       const detail = payload.item && typeof payload.item === 'object' ? (payload.item as Record<string, unknown>) : payload;
-      /** 完整输出优先使用 Provider 原始字段。 */
-      const output = typeof detail.aggregatedOutput === 'string' ? detail.aggregatedOutput : command.textContent;
       /** 只有真实数字返回值才记录成功与失败。 */
       const exitCode = typeof detail.exitCode === 'number' ? detail.exitCode : null;
       /** 命令文本不从任意工具参数中推测。 */
@@ -56,6 +57,8 @@ export function captureTaskWorkEvidence(input: {
         bundle.gaps.push(`命令 ${command.id} 尚无完成结果。`);
         continue;
       }
+      /** 完成证据使用原始输出，归档记录通过同一会话的句柄读回。 */
+      const output = readCommandEvidenceOutput(input.artifacts, command.conversationId, detail, command.textContent);
       bundle.sources.push({ kind: 'command', id: command.id, command: title, sha256: digest(JSON.stringify({ title, output, exitCode })), status: exitCode === 0 ? 'passed' : exitCode !== null ? 'failed' : 'unverified' });
       if (exitCode !== null && !bundle.availableKinds.includes('verification')) bundle.availableKinds.push('verification');
       if (exitCode !== 0) bundle.gaps.push(`命令 ${command.id} ${exitCode === null ? '缺少明确退出状态' : `退出状态为 ${exitCode}`}，请审查其影响。`);
@@ -102,6 +105,7 @@ export function captureDeploymentCommands(
   run: TaskWorkRunRecord,
   providerItems: ConversationProviderItemRepository,
   input: { deploymentCommandId: string; verificationCommandId?: string; outcome: 'succeeded' | 'failed' | 'unknown' },
+  artifacts?: ArtifactStore,
 ): TaskWorkDeploymentReceipt['commands'] {
   /** 两个不同命令分别提供执行和后续核对证据。 */
   const identities = [{ id: input.deploymentCommandId, purpose: 'deploy' as const }, ...(input.verificationCommandId ? [{ id: input.verificationCommandId, purpose: 'verify' as const }] : [])];
@@ -126,7 +130,7 @@ export function captureDeploymentCommands(
     if (!detail || typeof detail.command !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_DEPLOYMENT_EVIDENCE', '命令原始记录不完整，不能生成部署凭证。');
     const exitCode = typeof detail.exitCode === 'number' && Number.isInteger(detail.exitCode) ? detail.exitCode : null;
     if (input.outcome === 'succeeded' && (record.status !== 'completed' || exitCode !== 0)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DEPLOYMENT_EVIDENCE', '部署或验证命令没有成功完成，不能记录为成功。');
-    const output = typeof detail.aggregatedOutput === 'string' ? detail.aggregatedOutput : record.textContent;
+    const output = readCommandEvidenceOutput(artifacts, record.conversationId, detail, record.textContent);
     return { id, purpose, command: detail.command, output, exitCode, completedAt: record.completedAt, sha256: digest(JSON.stringify({ command: detail.command, output, exitCode })) };
   });
 }

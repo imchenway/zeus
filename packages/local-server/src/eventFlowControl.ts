@@ -84,7 +84,6 @@ export const conversationEventTypeRegistry = {
     'conversation.tokenUsage.changed',
     'conversation.sessionMetrics.changed',
     'conversation.rateLimits.changed',
-    'conversation.mcpStartup.changed',
   ],
   // 当前产品没有把临时 UI 事件送进 Core；空集合本身也是受门禁保护的精确声明。
   ephemeral_ui: [],

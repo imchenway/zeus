@@ -146,6 +146,7 @@ import { ConversationDispatchCommandApplication } from './conversationDispatchCo
 import { createConversationExecutionContextOperations } from './conversationExecutionContextOperations.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import { clearMcpStartupHistory, compactStoredCommandOutputs } from './conversationStorageCompaction.js';
 import { ConversationSourceContextReader } from './conversationSourceContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
@@ -1886,6 +1887,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   } = conversationExecutionContextOperations;
   /** 历史资源不参与 Core 就绪判定，退出前只需等待最后一批提交结束。 */
   let resourceBackfill: Promise<void> | undefined;
+  /** 新读取逻辑启用后再清理磁盘上的旧格式。 */
+  let storageCompaction: Promise<void> | undefined;
   /** 同步日志维护由 HTTP 监听完成后排程，关闭时取消待执行轮次。 */
   let syncRetentionTimer: ReturnType<typeof setTimeout> | undefined;
   /** 关闭时等最后一个清理批次退出，避免数据库被后台访问。 */
@@ -2010,7 +2013,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     /** 任一步失败都继续关闭其余资源，保留全部失败原因。 */
     const results = await Promise.allSettled([codexNativeCoordinator.close({ mode: settleCodexPendingOnClose ? 'final' : 'handoff' })]);
     if (ownsCodexAppServerManager) results.push(...(await Promise.allSettled([codexAppServerManager.close()])));
-    results.push(...(await Promise.allSettled([startupRecovery, resourceBackfill, syncRetention])));
+    results.push(...(await Promise.allSettled([startupRecovery, resourceBackfill, syncRetention, storageCompaction])));
     /** 恢复和关闭均已结束后才向调用方报告失败。 */
     const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
     if (errors.length > 0) throw new AggregateError(errors, 'Zeus 后台恢复关闭失败。');
@@ -3092,11 +3095,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     /** 异步问题完成后刷新项目待回复提示，普通条目和文本增量不增加聚合查询。 */
     const asyncQuestionCompleted = mappedType === 'conversation.item.completed' && payload.itemPayload !== null && typeof payload.itemPayload === 'object' && asyncMessageQuestions(payload.itemPayload as Record<string, unknown>).length > 0;
     const conversationIds =
-      typeof payload.conversationId === 'string'
-        ? [payload.conversationId]
-        : mappedType === 'conversation.rateLimits.changed' || mappedType === 'conversation.mcpStartup.changed'
-          ? conversations.listNativeBoundRecords('codex').map((conversation) => conversation.id)
-          : [];
+      typeof payload.conversationId === 'string' ? [payload.conversationId] : mappedType === 'conversation.rateLimits.changed' ? conversations.listNativeBoundRecords('codex').map((conversation) => conversation.id) : [];
     if (mappedType === 'conversation.turn.completed' || mappedType === 'conversation.item.started' || mappedType === 'conversation.item.completed') {
       queueMicrotask(() => void zeusConversationPluginRuntime?.observeConversationEvent(mappedType, payload).catch(() => undefined));
     }
@@ -4341,7 +4340,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     server.addHook('onListen', async () => {
       if (startupRecoveryStopping) return;
       resourceBackfill = backfillConversationResources().catch((error: unknown) => console.error('Zeus 历史资源回填中断。', error));
-      if (executionHostDispatchMayResume) scheduleConversationSyncRetention(60_000);
+      if (executionHostDispatchMayResume) {
+        scheduleConversationSyncRetention(60_000);
+        storageCompaction = clearMcpStartupHistory(db, () => startupRecoveryStopping)
+          .then(() => compactStoredCommandOutputs(db, artifactStore, () => startupRecoveryStopping))
+          .catch((error: unknown) => console.error('Zeus 历史会话去重中断。', error));
+      }
     });
   }
   traceStartup('routes_ready');
