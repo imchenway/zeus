@@ -4,7 +4,7 @@ import { randomId } from './randomId.js';
 import type { ArtifactRef } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { conversationProcessProviderItemId, splitEstimatedUsageCosts, sumEstimatedCosts, type CodexUsageEstimate, type ConversationTurnUsage, type TokenUsageBreakdown } from '@zeus/shared';
-import { ConversationTranscriptRepository, hashConversationTranscriptContent, providerEntryId } from './conversationTranscriptStore.js';
+import { ConversationTranscriptRepository, hashConversationTranscriptContent, modelHistoryVisibleInTranscriptSql, providerEntryId } from './conversationTranscriptStore.js';
 
 /** 菜单栏与会话共用测速条件；历史记录中混入用户回答、审批或 MCP 交互的请求也必须排除。 */
 const outputRateMeasurementCondition = `r.measurement_complete = 1
@@ -1794,6 +1794,8 @@ export class ConversationExecutionRepository {
       confirmedAt: string;
     },
   ): void {
+    // 接纳已保存完整模型输入，只有可见输入取得时间线身份。
+    if (record.role === 'user' && record.submissionId && !this.db.get(`SELECT 1 FROM conversation_model_history WHERE id = ? AND ${modelHistoryVisibleInTranscriptSql}`, [record.id])) return;
     const content = parseJsonRecord(input.content);
     const reasoning = parseJsonRecord(input.reasoningSource);
     /** 工具声明与结果共享调用身份；同阶段的不同工具保持独立。 */

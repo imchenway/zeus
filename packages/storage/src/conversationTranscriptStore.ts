@@ -16,6 +16,22 @@ const conversationTranscriptInitializationBatchLimit = 512;
 /** 旧数据初始化按固定来源顺序保存独立扫描游标。 */
 const conversationTranscriptInitializationDomains = ['model_history', 'provider_item', 'process', 'expert_execution', 'request', 'resource'] as const;
 
+/** 内部提交的用户输入仅供模型使用。同一提交的助手输出仍进入时间线。 */
+export const modelHistoryVisibleInTranscriptSql = `(conversation_model_history.role <> 'user' OR NOT EXISTS (
+  SELECT 1 FROM conversation_submissions AS internal_submission
+  WHERE internal_submission.conversation_id = conversation_model_history.conversation_id
+    AND internal_submission.id = conversation_model_history.submission_id
+    AND CASE WHEN json_valid(internal_submission.input_json) THEN json_type(internal_submission.input_json, '$.internalOperation') END = 'true'
+))`;
+
+/** 排序时也过滤升级前已暂存的内部输入，保持采集断点的偏移量有效。 */
+const reconstructionFactVisibleInTranscriptSql = `(fact.source_domain <> 'model_history' OR NOT EXISTS (
+  SELECT 1 FROM conversation_model_history
+  WHERE conversation_model_history.conversation_id = fact.conversation_id
+    AND conversation_model_history.id = fact.source_id
+    AND NOT ${modelHistoryVisibleInTranscriptSql}
+))`;
+
 /** 旧数据初始化支持的来源种类。 */
 type ConversationTranscriptInitializationDomain = (typeof conversationTranscriptInitializationDomains)[number];
 
@@ -549,7 +565,8 @@ export class ConversationTranscriptRepository {
         LEFT JOIN conversation_transcript_aliases AS alias ON alias.conversation_id = fact.conversation_id
           AND alias.source_domain = fact.source_domain AND alias.source_scope = fact.source_scope AND alias.source_id = fact.source_id AND alias.facet = fact.facet
         LEFT JOIN conversation_transcript_entries AS entry ON entry.conversation_id = alias.conversation_id AND entry.id = alias.entry_id
-        WHERE fact.conversation_id = ? AND (alias.entry_id IS NULL OR entry.id IS NULL OR alias.entry_id <> fact.preferred_entry_id) LIMIT 1`,
+        WHERE fact.conversation_id = ? AND ${reconstructionFactVisibleInTranscriptSql}
+          AND (alias.entry_id IS NULL OR entry.id IS NULL OR alias.entry_id <> fact.preferred_entry_id) LIMIT 1`,
       [conversationId],
     );
     if (missing) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INCOMPLETE', `来源尚未完成位置登记：${missing.source_id}`);
@@ -1205,7 +1222,8 @@ export class ConversationTranscriptRepository {
       /** 持久来源游标使用原序号和完整作用域，重复时间不影响续做。 */
       const after = previousCursors[domain];
       const rows = this.db.select<{ fact_json: string }>(
-        `SELECT fact_json FROM conversation_transcript_initialization_facts WHERE conversation_id = ? AND source_domain = ?
+        `SELECT fact_json FROM conversation_transcript_initialization_facts AS fact WHERE conversation_id = ? AND source_domain = ?
+          AND ${reconstructionFactVisibleInTranscriptSql}
           ${after ? 'AND (source_order, source_scope, source_id, facet) > (?, ?, ?, ?)' : ''}
           ORDER BY source_order, source_scope, source_id, facet LIMIT ?`,
         [conversationId, domain, ...(after ?? []), limit],

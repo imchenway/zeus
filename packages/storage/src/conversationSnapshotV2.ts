@@ -30,7 +30,7 @@ import {
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, modelHistoryContentWithToolProjectionSql, readConversationSessionMetrics } from './conversationExecutionStore.js';
-import { ConversationTranscriptRepository, providerFacet } from './conversationTranscriptStore.js';
+import { ConversationTranscriptRepository, modelHistoryVisibleInTranscriptSql, providerFacet } from './conversationTranscriptStore.js';
 import { createHash } from 'node:crypto';
 import { inputSuggestionUserTurnSql } from './inputSuggestionStore.js';
 import { ConversationSystemMessageRepository } from './conversationSystemMessageStore.js';
@@ -968,6 +968,7 @@ export class ConversationSnapshotV2Repository {
       LEFT JOIN conversation_transcript_entries AS transcript_entry
         ON transcript_entry.conversation_id = transcript_alias.conversation_id AND transcript_entry.id = transcript_alias.entry_id
       WHERE conversation_model_history.conversation_id = ?
+        AND ${modelHistoryVisibleInTranscriptSql}
         AND conversation_model_history.role IN ('user', 'assistant') AND tool_pair_id IS NULL
         AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
         -- 来源记录也用于普通答复；沿用正文分类，只排除可读思考摘要。
@@ -1487,6 +1488,7 @@ export class ConversationSnapshotV2Repository {
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
         WHERE conversation_id = ? AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?${dialogueWhere}
+          AND ${modelHistoryVisibleInTranscriptSql}
           ${input.assistantOutputOnly ? `AND ${modelHistoryDialogueSql} AND role = 'assistant'` : ''}
         ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
@@ -1518,7 +1520,7 @@ export class ConversationSnapshotV2Repository {
     const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}${input.dialogueOnly ? (input.includeReasoningSummaries ? ':dialogue-with-summary' : ':dialogue') : ''}`, {
       table: 'conversation_model_history',
       column: 'sequence',
-      extraWhere: ` AND turn_id = ?${dialogueWhere}`,
+      extraWhere: ` AND turn_id = ? AND ${modelHistoryVisibleInTranscriptSql}${dialogueWhere}`,
       extraParams: [turnId],
     });
     const rows = this.db.select<ModelHistoryProjectionRow>(
@@ -1547,7 +1549,7 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND turn_id = ?${dialogueWhere}
+        WHERE conversation_id = ? AND turn_id = ? AND ${modelHistoryVisibleInTranscriptSql}${dialogueWhere}
           AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?
         ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
@@ -1587,7 +1589,7 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND sequence < ? AND sequence <= ?
+        WHERE conversation_id = ? AND sequence < ? AND sequence <= ? AND ${modelHistoryVisibleInTranscriptSql}
         ORDER BY sequence DESC
         LIMIT ?`,
       [previewCharacterLimit, conversationId, beforeSequence, throughSequence, limits.entryLimit + 1],
@@ -2381,7 +2383,7 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND turn_id = ? AND role = 'user'
+        WHERE conversation_id = ? AND turn_id = ? AND role = 'user' AND ${modelHistoryVisibleInTranscriptSql}
         ORDER BY sequence
         LIMIT 1`,
       [previewCharacterLimit, conversationId, turnId],
@@ -2662,7 +2664,7 @@ export class ConversationSnapshotV2Repository {
                 confirmed_at AS revision,
                 0 AS transitioning
            FROM conversation_model_history
-          WHERE conversation_id = ? AND sequence = ?${dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : ''}`,
+          WHERE conversation_id = ? AND sequence = ? AND ${modelHistoryVisibleInTranscriptSql}${dialogueOnly ? ` AND ${modelHistoryDialogueSql}` : ''}`,
         [sliceStart, sliceCharacters, payload.conversationId, numericIdentity(payload.identity)],
       );
     }
