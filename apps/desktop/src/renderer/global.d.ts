@@ -27,6 +27,7 @@ import type {
   ZeusBrowserCommand,
   ZeusBrowserConversationSnapshot,
   ZeusBrowserEvent,
+  ZeusBrowserNativePage,
   ZeusBrowserPreparedSubmission,
   ZeusBrowserSettings,
   ZeusBrowserPasswordAccount,
@@ -486,6 +487,8 @@ declare global {
         | null
       >;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
+      /** 打开 Chromium 原生管理页或官方商店。 */
+      openNativeBrowserPage?: (page: ZeusBrowserNativePage) => Promise<boolean>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
       /** 首发受理后迁移草稿网页，仅将本次提交的批注标记为已发送。 */
       adoptBrowserDraft: (input: { sourceConversationId: string; conversationId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;

@@ -267,7 +267,25 @@ export interface ZeusBrowserConversationSnapshot {
   pendingApprovals: ZeusBrowserApprovalRequest[];
   /** 工具请求打开后保持为真，直到所属会话实际显示网页或关闭全部标签。 */
   openRequested: boolean;
+  /** 当前会话最近的下载，按发起顺序倒序排列。 */
+  downloads?: ZeusBrowserDownload[];
 }
+
+/** 下载状态和已接收字节数，文件路径由宿主管理。 */
+export interface ZeusBrowserDownload {
+  /** 同名文件也有独立的操作身份。 */
+  id: string;
+  fileName: string;
+  receivedBytes: number;
+  /** 服务端未声明长度时为 null。 */
+  totalBytes: number | null;
+  state: 'downloading' | 'paused' | 'interrupted' | 'completed' | 'cancelled' | 'failed';
+  /** 仅传输对象仍可继续时显示继续操作。 */
+  canResume: boolean;
+}
+
+/** 浏览器原生管理入口，只接受固定页面。 */
+export type ZeusBrowserNativePage = 'extensions' | 'store' | 'downloads';
 
 export interface ZeusBrowserPreparedSubmission {
   tabId: string;
@@ -315,7 +333,9 @@ export type ZeusBrowserCommand =
   | { action: 'set_annotation_mode'; enabled: boolean }
   | { action: 'clear_comments' }
   | { action: 'delete_comment'; commentId: string }
-  | { action: 'focus_comment'; commentId: string };
+  | { action: 'focus_comment'; commentId: string }
+  /** 下载操作只作用于当前会话内由宿主记录的项目。 */
+  | { action: 'download'; downloadId: string; operation: 'pause' | 'resume' | 'cancel' | 'reveal' };
 
 /** 网页权限按本次请求允许或拒绝，不再管理 AI 站点放行。 */
 export type ZeusBrowserApprovalDecision = 'allow_once' | 'deny';

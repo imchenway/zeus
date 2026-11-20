@@ -7920,6 +7920,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   /* 浏览器外壳沿用会话底色，避免导航栏在分栏交界处形成白色台阶。 */
   background: var(--zeus-card-background, var(--session-canvas));
   color: var(--session-text);
+  container: browser-workspace / inline-size;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -9748,6 +9749,89 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .browser-more-trigger svg {
   block-size: 17px;
   inline-size: 17px;
+}
+
+.session-codex-parity-v1 .browser-downloads-trigger[data-downloading='true'] {
+  color: var(--session-focus-outline);
+}
+
+/* 下载列表调整原生网页视口高度，并把长列表的滚动留在面板内。 */
+.session-codex-parity-v1 .browser-downloads-panel {
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  max-block-size: min(248px, 40vh);
+  padding: 0 12px 6px;
+}
+
+.session-codex-parity-v1 .browser-downloads-panel > header,
+.session-codex-parity-v1 .browser-downloads-panel li {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .browser-downloads-panel > header {
+  font-size: 13px;
+  justify-content: space-between;
+}
+
+.session-codex-parity-v1 .browser-downloads-panel ul {
+  list-style: none;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .browser-downloads-panel li {
+  border-block-start: 1px solid var(--session-line-soft);
+  padding-block: 6px;
+}
+
+.session-codex-parity-v1 .browser-download-file-icon {
+  color: var(--session-text-muted);
+  flex: 0 0 16px;
+}
+
+.session-codex-parity-v1 .browser-download-file {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .browser-download-file strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-downloads-panel :is(small, p) {
+  color: var(--session-text-muted);
+  font-size: 11px;
+}
+
+.session-codex-parity-v1 .browser-download-file progress {
+  accent-color: var(--session-focus-outline);
+  block-size: 5px;
+  inline-size: 100%;
+}
+
+@container browser-workspace (max-width: 364px) {
+  .session-codex-parity-v1 .browser-navigation-toolbar {
+    flex-basis: auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 3px;
+  }
+
+  .session-codex-parity-v1 .browser-navigation-trailing {
+    grid-column: 1 / -1;
+  }
 }
 
 /* 翻译沿用工具栏按钮尺寸，选中态表示当前页面保留双语。 */
