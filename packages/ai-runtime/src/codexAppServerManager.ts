@@ -1272,13 +1272,28 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   /** app-server 负责解析功能开关配置，包括由管理员锁定的值。 */
   async function readExperimentalFeatures(generationId: string): Promise<Record<string, unknown>[]> {
     try {
-      /** 功能目录与模型目录使用同一个 app-server 连接。 */
-      const response = asRecord(await retryableReadRpc(generationId, 'experimentalFeature/list', { limit: 200 }));
-      return Array.isArray(response.data) ? response.data.filter(isRecord) : [];
+      /** 完整的开关目录用于判断功能是否缺失或关闭。 */
+      const features: Record<string, unknown>[] = [];
+      /** 重复游标表示分页没有前进。 */
+      const cursors = new Set<string>();
+      /** 首次读取不传游标，后续使用 app-server 返回的值。 */
+      let cursor: string | undefined;
+      // ponytail: 沿用模型目录的 20 页上限。开关目录增长时可提高页数上限。
+      for (let page = 0; page < 20; page += 1) {
+        /** 功能目录的每一页使用同一个 app-server 连接。 */
+        const { data, nextCursor } = asRecord(await retryableReadRpc(generationId, 'experimentalFeature/list', { limit: 200, ...(cursor ? { cursor } : {}) }));
+        if (!Array.isArray(data)) return [];
+        features.push(...data.filter(isRecord));
+        if (nextCursor === null || nextCursor === undefined) return features;
+        if (typeof nextCursor !== 'string' || !nextCursor || cursors.has(nextCursor)) return [];
+        cursors.add(nextCursor);
+        cursor = nextCursor;
+      }
     } catch {
       // 无法确认的功能不作为当前连接的可用能力。
       return [];
     }
+    return [];
   }
 
   /** 目标入口沿用 Codex 回报的功能阶段与开关。 */
