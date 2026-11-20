@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { setImmediate as yieldToRequests, setTimeout as delay } from 'node:timers/promises';
 import {
   canonicalJson,
   conversationSchemaGeneration,
@@ -22,12 +23,22 @@ export function isDurableConversationEventTooLarge(error: unknown): boolean {
   return Boolean(error) && typeof error === 'object' && (error as { code?: unknown }).code === 'ZEUS_CONVERSATION_SYNC_EVENT_TOO_LARGE';
 }
 export const conversationSyncTransportBudgets = conversationEventFlowBudgets.websocket;
-export const maximumRetainedConversationSyncEvents = 4_096;
-export const maximumRetainedConversationSyncBytes = 16 * 1024 * 1024;
+/** 单个会话最近可追赶的事件条数。 */
+export const maximumRetainedConversationSyncEvents = 512;
+/** 单个会话最近可追赶的 JSON 字节数。 */
+export const maximumRetainedConversationSyncBytes = 2 * 1024 * 1024;
+/** 每追加 64 条事件重算一次保留范围。 */
 const conversationSyncCompactionInterval = 64;
+/** 提前腾出一个压缩间隔的条数，避免中间写入越过条数预算。 */
 const retainedConversationSyncEventsWatermark = maximumRetainedConversationSyncEvents - conversationSyncCompactionInterval;
-const retainedConversationSyncBytesWatermark = 12 * 1024 * 1024;
+/** 单条事件达到 64 KiB 时立即重算字节预算。 */
 const immediateCompactionEventBytes = 64 * 1024;
+/** 最近无增量的同步流超过七天后由会话快照恢复。 */
+const conversationSyncRetentionMs = 7 * 24 * 60 * 60 * 1000;
+/** 全库仅保留最近活动的 512 个增量流，其他会话从快照恢复。 */
+const maximumRetainedConversationStreams = 512;
+/** 每页只读取 64 个同步流的尾部元数据。 */
+const conversationSyncActivityPageSize = 64;
 
 /** WebSocket 路由只依赖这一个诊断端口，不感知流控实现及其他阶段预算。 */
 export interface ConversationSyncFlowControlPort {
@@ -98,6 +109,29 @@ export class ConversationSyncProtocol {
     return this.currentStream(conversationId)?.latestSequence ?? 0;
   }
 
+  /** 扫描与回收按批让出事件循环，避免大库维护占用 Core 心跳和前台请求。 */
+  async expireInactiveStreams(shouldStop: () => boolean): Promise<void> {
+    const cutoff = this.now().getTime() - conversationSyncRetentionMs;
+    const activity: ReturnType<ConversationSyncEventRepository['listStreamActivityAfter']> = [];
+    let afterConversationId = '';
+    while (!shouldStop()) {
+      await yieldToRequests();
+      if (shouldStop()) return;
+      const page = this.options.repository.listStreamActivityAfter(afterConversationId, conversationSyncActivityPageSize);
+      if (page.length === 0) break;
+      activity.push(...page);
+      afterConversationId = page[page.length - 1]!.conversationId;
+    }
+    activity.sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt));
+    for (const [index, stream] of activity.entries()) {
+      if (index < maximumRetainedConversationStreams && Date.parse(stream.occurredAt) >= cutoff) continue;
+      // 同步删除一次只占用一个会话的事务，给后续请求留出处理机会。
+      await delay(10);
+      if (shouldStop()) return;
+      this.options.repository.expireCurrentStream(stream.conversationId, stream.generationId, stream.latestSequence);
+    }
+  }
+
   append(input: AppendDurableConversationEventInput): DurableConversationRealtimeEvent {
     const occurredAt = input.occurredAt ?? durableEventOccurredAt(input) ?? this.now().toISOString();
     const eventId = input.eventId ?? stableDurableEventId(input) ?? randomUUID();
@@ -144,7 +178,7 @@ export class ConversationSyncProtocol {
         conversationId: input.conversationId,
         generationId: conversationSyncProtocolGeneration,
         maximumEvents: retainedConversationSyncEventsWatermark,
-        maximumBytes: retainedConversationSyncBytesWatermark,
+        maximumBytes: maximumRetainedConversationSyncBytes,
       });
       if (compacted.prunedEvents > 0) this.options.flowControl?.observeCoalescedProcessEvent(compacted.prunedEvents);
     }

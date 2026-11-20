@@ -262,6 +262,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     restartAfterStartupFailure: () => transport.invoke('zeus:startup-failure:restart'),
     /** 在启动失败后退出应用。 */
     exitAfterStartupFailure: () => transport.invoke('zeus:startup-failure:exit'),
+    /** 打开独立故障窗口，现场留在本机直至用户确认上报。 */
+    openStartupFaultReport: (detail: string) => transport.invoke('zeus:startup-failure:report', detail),
     /** 上报启动阶段及耗时，不包含业务正文。 */
     reportStartupSpan: (input: { stage: string; durationMs: number }) => transport.send('zeus:renderer-startup-span', input),
     /** 通知宿主主页已可交互。 */

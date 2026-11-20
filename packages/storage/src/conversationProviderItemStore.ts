@@ -318,21 +318,33 @@ export class ConversationProviderItemRepository {
       .map((row) => row.provider_turn_id);
   }
 
-  /** 一次性补齐图片查看、最终答复图片及两条执行链的正文链接，只读取含资源引用的已完成消息。 */
-  listCompletedItemsForResourceBackfill(): ZeusConversationItemRecord[] {
-    return this.db
+  /** 先限制扫描条数，再筛选资源候选，避免一页没有匹配时遍历余下全部历史。 */
+  readResourceBackfillPage(afterId: string, includeLegacy: boolean): { endId: string; items: ZeusConversationItemRecord[] } | null {
+    /** 主键不会随条目状态修改，已提交的扫描位置可在重启后继续使用。 */
+    const endId = this.db.select<{ id: string }>(`SELECT id FROM conversation_provider_item_states WHERE id > ? ORDER BY id LIMIT 64`, [afterId]).at(-1)?.id;
+    if (endId === undefined) return null;
+    /** 首次回填包含仍绑定原生线程的旧附件，其余只补含资源引用的已完成条目。 */
+    const items = this.db
       .select<ProviderItemRow>(
         `SELECT *
-           FROM conversation_provider_item_states
-          WHERE status = 'completed' AND (
-            item_type IN ('imageView', 'imageGeneration')
-            OR instr(payload_projection_json, 'Generated images are saved') > 0
-            OR (phase = 'final_answer' AND instr(text_projection, '![') > 0)
-            OR ((agent_kind = 'pi' OR item_type = 'agentMessage') AND (instr(text_projection, '](') > 0 OR instr(text_projection, '![') > 0))
+           FROM conversation_provider_item_states AS item
+          WHERE item.id > ? AND item.id <= ? AND (
+            (? = 1 AND EXISTS (
+              SELECT 1 FROM conversations AS conversation
+               WHERE conversation.id = item.conversation_id AND conversation.transport_kind = 'codex_native'
+                 AND conversation.provider_thread_id IS NOT NULL AND conversation.provider_state NOT IN ('closed', 'failed') AND conversation.archived = 0
+            )) OR (item.status = 'completed' AND (
+              item.item_type IN ('imageView', 'imageGeneration')
+              OR instr(item.payload_projection_json, 'Generated images are saved') > 0
+              OR (item.phase = 'final_answer' AND instr(item.text_projection, '![') > 0)
+              OR ((item.agent_kind = 'pi' OR item.item_type = 'agentMessage') AND (instr(item.text_projection, '](') > 0 OR instr(item.text_projection, '![') > 0))
+            ))
           )
-          ORDER BY conversation_id, updated_at, id`,
+          ORDER BY item.id`,
+        [afterId, endId, includeLegacy ? 1 : 0],
       )
       .map(mapRow);
+    return { endId, items };
   }
 
   getLatestCompletedPlanByTurn(turnId: string): ZeusConversationItemRecord | undefined {

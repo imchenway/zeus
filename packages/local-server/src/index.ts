@@ -111,7 +111,6 @@ import {
   TurnChangeFileRepository,
   TurnChangeSetRepository,
   type ZeusAuditLogRecord,
-  type ZeusConversationResourceRecord,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
   type ZeusProjectRecord,
@@ -152,7 +151,7 @@ import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchC
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import { isObjectLike } from './conversationResourcePreview.js';
-import { normalizeConversationResources, syncConversationResources } from './conversationResources.js';
+import { syncConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { ConversationSyncProtocol } from './conversationSyncProtocol.js';
 import { type ConversationRealtimeSocket } from './conversationSyncRoutes.js';
@@ -1885,95 +1884,103 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     mirrorTaskEnvironmentContainer,
     overlayTaskEnvironmentSharedPaths,
   } = conversationExecutionContextOperations;
-  const resourceBackfillState = settings.getJson<{ revision?: string }>(conversationResourceBackfillSettingKey);
-  if (!readOnlyValidation && resourceBackfillState?.revision !== conversationResourceBackfillRevision) {
-    const existingResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
-    let conversationResourceBackfillCount = 0;
-    // 首次资源回填仍处理全部 item；升级只补图片查看、最终答复图片和已完成正文中的链接，
-    // 不把全部历史正文重新载入内存，也不覆盖已经存在的文件/网页资源。
-    if (existingResourceCount === 0) {
-      for (const conversation of conversations.listNativeBoundRecords()) {
-        const project = projects.getById(conversation.projectId);
-        if (!project) continue;
-        const conversationExecutionRoot = resolveNativeConversationExecutionRoot(conversation);
-        // 任务会话的文件属于独立 worktree；执行根不可恢复时不能回退到项目主目录重写资源。
-        if (!conversationExecutionRoot) continue;
-        const submissions = conversationSubmissions.listByConversation(conversation.id);
-        const existingResourcesByItem = new Map<string, ReturnType<typeof conversationResources.listByItem>>();
-        for (const resource of conversationResources.listByConversation(conversation.id)) {
-          const existing = existingResourcesByItem.get(resource.itemId) ?? [];
-          existing.push(resource);
-          existingResourcesByItem.set(resource.itemId, existing);
-        }
-        for (const item of conversationProviderItems.listByConversation(conversation.id)) {
-          const submission = item.itemType === 'userMessage' ? submissions.find((candidate) => candidate.providerTurnId === item.providerTurnId) : undefined;
+  /** 历史资源不参与 Core 就绪判定，退出前只需等待最后一批提交结束。 */
+  let resourceBackfill: Promise<void> | undefined;
+  /** 同步日志维护由 HTTP 监听完成后排程，关闭时取消待执行轮次。 */
+  let syncRetentionTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 关闭时等最后一个清理批次退出，避免数据库被后台访问。 */
+  let syncRetention: Promise<void> | undefined;
+
+  /** 等待毫秒后维护一次，排程从上轮结束开始计时。 */
+  function scheduleConversationSyncRetention(waitMs: number): void {
+    syncRetentionTimer = setTimeout(() => {
+      syncRetention = conversationSyncProtocol
+        .expireInactiveStreams(() => startupRecoveryStopping)
+        .catch((error: unknown) => console.error('Zeus 会话同步日志维护中断。', error))
+        .finally(() => {
+          if (!startupRecoveryStopping) scheduleConversationSyncRetention(30 * 60_000);
+        });
+    }, waitMs);
+    syncRetentionTimer.unref();
+  }
+
+  /** 资源落库与扫描位置同批提交，历史库重启后不会从头扫描。 */
+  async function backfillConversationResources(): Promise<void> {
+    /** revision 只记录已完成的回填，旧版本也能正确识别尚未完成的任务。 */
+    const state = settings.getJson<{ revision?: string; pendingRevision?: string; cursor?: string; existingResourceCount?: number; backfilledResourceCount?: number }>(conversationResourceBackfillSettingKey);
+    if (state?.revision === conversationResourceBackfillRevision) return;
+    /** 只复用当前回填规则写下的进度。 */
+    const progress = state?.pendingRevision === conversationResourceBackfillRevision ? state : undefined;
+    /** 首次回填需要覆盖尚无资源记录的旧附件，整个任务按开始时的资源数判断。 */
+    const existingResourceCount = progress?.existingResourceCount ?? db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_resources')?.count ?? 0;
+    /** 按不可变条目 ID 扫描，避免同时到达的实时事件改变顺序。 */
+    let cursor = progress?.cursor ?? '';
+    /** 延续已提交的新增资源数，包含此前启动完成的批次。 */
+    let backfilledResourceCount = progress?.backfilledResourceCount ?? 0;
+    while (!startupRecoveryStopping) {
+      // 每批前给 HTTP、控制心跳和关闭请求留出处理时间。
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      if (startupRecoveryStopping) return;
+      /** 读取的范围有界，即使这批没有资源候选也推进位置。 */
+      const page = conversationProviderItems.readResourceBackfillPage(cursor, existingResourceCount === 0);
+      if (!page) break;
+      db.transaction(() => {
+        /** 同一批只解析一次会话归属及原执行目录。 */
+        const scopes = new Map<string, { projectId: string; projectRoot: string; registeredProjectRoot?: string } | null>();
+        for (const item of page.items) {
+          /** 使用会话主记录，避免为资源路径反复读取完整对话。 */
+          if (!scopes.has(item.conversationId)) {
+            const conversation = conversations.getRecordById(item.conversationId);
+            const project = conversation && projects.getById(conversation.projectId);
+            const projectRoot = project && conversation && resolveNativeConversationExecutionRoot(conversation);
+            scopes.set(item.conversationId, project && projectRoot ? { projectId: project.id, projectRoot, registeredProjectRoot: project.localPath ?? undefined } : null);
+          }
+          const scope = scopes.get(item.conversationId);
+          if (!scope) continue;
+          /** 旧用户条目的附件引用来自已接纳的原始提交。 */
+          const submission = existingResourceCount === 0 && item.itemType === 'userMessage' ? conversationSubmissions.listByConversation(item.conversationId).find((candidate) => candidate.providerTurnId === item.providerTurnId) : undefined;
           const payload = parseJsonObject(item.payloadJson);
-          const normalized = normalizeConversationResources({
-            projectId: conversation.projectId,
-            projectRoot: conversationExecutionRoot,
-            registeredProjectRoot: project.localPath ?? undefined,
-            conversationId: conversation.id,
-            turnId: item.turnId,
-            item,
-            payload: submission ? { ...payload, attachments: parseJsonObject(submission.inputJson).attachments } : payload,
-            text: item.textContent,
-            trustedAttachmentRoots: trustedConversationAttachmentRoots,
-            generatedImageRoot,
-            assistantImageArchiveRoot: conversationAttachmentRoot,
-            artifactsDirectory: dataLayout.artifactsDirectory,
-            htmlArtifactsDirectory,
-            now: item.updatedAt,
-          });
-          const existing = existingResourcesByItem.get(item.id) ?? [];
-          if (conversationResourceRecordsEqual(existing, normalized)) continue;
-          conversationResources.replaceForItem(item.id, normalized, item.updatedAt);
-          conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
+          const previousCount = conversationResources.listByItem(item.id).length;
+          const updatedResources = syncConversationResources(
+            {
+              ...scope,
+              conversationId: item.conversationId,
+              turnId: item.turnId,
+              item,
+              payload: submission ? { ...payload, attachments: parseJsonObject(submission.inputJson).attachments } : payload,
+              text: item.textContent,
+              trustedAttachmentRoots: trustedConversationAttachmentRoots,
+              generatedImageRoot,
+              assistantImageArchiveRoot: conversationAttachmentRoot,
+              artifactsDirectory: dataLayout.artifactsDirectory,
+              htmlArtifactsDirectory,
+              now: item.updatedAt,
+            },
+            conversationResources,
+          );
+          backfilledResourceCount += updatedResources.length - previousCount;
         }
-      }
+        settings.setJson(conversationResourceBackfillSettingKey, {
+          revision: state?.revision,
+          pendingRevision: conversationResourceBackfillRevision,
+          cursor: page.endId,
+          existingResourceCount,
+          backfilledResourceCount,
+        });
+      });
+      await db.save();
+      cursor = page.endId;
     }
-    /** 空资源表也补已关闭会话；数据库只筛选有资源引用的已完成消息。 */
-    const resourceItems = conversationProviderItems.listCompletedItemsForResourceBackfill();
-    for (const item of resourceItems) {
-      const conversation = conversations.getById(item.conversationId);
-      if (!conversation) continue;
-      const project = projects.getById(conversation.projectId);
-      if (!project) continue;
-      const projectRoot = resolveNativeConversationExecutionRoot(conversation);
-      // 执行根丢失时不借用项目主目录，否则同名代码文件会指向错误工作树。
-      if (!projectRoot) continue;
-      const previousResourceCount = conversationResources.listByItem(item.id).length;
-      const updatedResources = syncConversationResources(
-        {
-          projectId: conversation.projectId,
-          projectRoot,
-          registeredProjectRoot: project.localPath ?? undefined,
-          conversationId: conversation.id,
-          turnId: item.turnId,
-          item,
-          payload: parseJsonObject(item.payloadJson),
-          text: item.textContent,
-          trustedAttachmentRoots: trustedConversationAttachmentRoots,
-          generatedImageRoot,
-          assistantImageArchiveRoot: conversationAttachmentRoot,
-          artifactsDirectory: dataLayout.artifactsDirectory,
-          htmlArtifactsDirectory,
-          now: item.updatedAt,
-        },
-        conversationResources,
-      );
-      conversationResourceBackfillCount += updatedResources.length - previousResourceCount;
-    }
-    const projectedResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
+    if (startupRecoveryStopping) return;
     settings.setJson(conversationResourceBackfillSettingKey, {
       revision: conversationResourceBackfillRevision,
       completedAt: now().toISOString(),
-      projectedResourceCount,
-      backfilledResourceCount: conversationResourceBackfillCount,
+      projectedResourceCount: db.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_resources')?.count ?? 0,
+      backfilledResourceCount,
       adoptedExistingProjection: existingResourceCount > 0,
     });
     await db.save();
   }
-  traceStartup('conversation_resources_ready');
   const turnChangeSetService = createTurnChangeSetService({
     db,
     changeSets: turnChangeSets,
@@ -1999,10 +2006,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** 先停止接纳和结束 Provider 等待，再确认后台恢复不会继续访问数据库。 */
   async function stopStartupProviders(): Promise<void> {
     startupRecoveryStopping = true;
+    clearTimeout(syncRetentionTimer);
     /** 任一步失败都继续关闭其余资源，保留全部失败原因。 */
     const results = await Promise.allSettled([codexNativeCoordinator.close({ mode: settleCodexPendingOnClose ? 'final' : 'handoff' })]);
     if (ownsCodexAppServerManager) results.push(...(await Promise.allSettled([codexAppServerManager.close()])));
-    results.push(...(await Promise.allSettled([startupRecovery])));
+    results.push(...(await Promise.allSettled([startupRecovery, resourceBackfill, syncRetention])));
     /** 恢复和关闭均已结束后才向调用方报告失败。 */
     const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
     if (errors.length > 0) throw new AggregateError(errors, 'Zeus 后台恢复关闭失败。');
@@ -4328,6 +4336,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
     }
   }
+  // 只有 HTTP 真实监听后才开始扫描，构建失败时关闭流程无需等待回填。
+  if (!readOnlyValidation) {
+    server.addHook('onListen', async () => {
+      if (startupRecoveryStopping) return;
+      resourceBackfill = backfillConversationResources().catch((error: unknown) => console.error('Zeus 历史资源回填中断。', error));
+      if (executionHostDispatchMayResume) scheduleConversationSyncRetention(60_000);
+    });
+  }
   traceStartup('routes_ready');
   return server;
 }
@@ -4479,28 +4495,6 @@ function buildReadonlyGitChanges(diff: GitDiffSummary): Array<{
       additions: fileDiff?.addedLines ?? 0,
       deletions: fileDiff?.deletedLines ?? 0,
     };
-  });
-}
-
-function conversationResourceRecordsEqual(existing: readonly ZeusConversationResourceRecord[], next: readonly Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>[]): boolean {
-  if (existing.length !== next.length) return false;
-  return existing.every((resource, index) => {
-    const candidate = next[index];
-    return (
-      candidate !== undefined &&
-      resource.id === candidate.id &&
-      resource.projectId === candidate.projectId &&
-      resource.conversationId === candidate.conversationId &&
-      resource.turnId === candidate.turnId &&
-      resource.itemId === candidate.itemId &&
-      resource.sourceIndex === candidate.sourceIndex &&
-      resource.canonicalTargetDigest === candidate.canonicalTargetDigest &&
-      resource.kind === candidate.kind &&
-      resource.presentation === candidate.presentation &&
-      resource.displayJson === candidate.displayJson &&
-      resource.targetJson === candidate.targetJson &&
-      resource.authorityJson === candidate.authorityJson
-    );
   });
 }
 

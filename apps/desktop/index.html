@@ -35,45 +35,109 @@
       }
 
       .zeus-startup-loader {
+        box-sizing: border-box;
         position: fixed;
         inset: 0;
         display: grid;
         place-items: center;
         pointer-events: none;
         user-select: none;
+        padding: 24px;
+        color: light-dark(#24252b, #eeedf4);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       }
 
-      .zeus-startup-icon {
-        width: 72px;
-        height: 72px;
-        animation: zeus-startup-pulse 1.4s ease-in-out infinite;
+      /* 与失败页采用同一字号，窄窗口保留状态和进度的阅读宽度。 */
+      .zeus-startup-content {
+        inline-size: min(336px, 100%);
       }
 
-      @keyframes zeus-startup-pulse {
-        0%,
-        100% {
-          opacity: 0.76;
-          transform: scale(0.98);
-        }
+      .zeus-startup-content h1 {
+        font-size: clamp(22px, 5vw, 28px);
+        font-weight: 600;
+        margin: 0 0 16px;
+      }
 
-        50% {
-          opacity: 1;
-          transform: scale(1);
+      .zeus-startup-stage {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        font-size: 14px;
+        margin: 0 0 10px;
+      }
+
+      .zeus-startup-stage [data-startup-step],
+      [data-startup-elapsed] {
+        color: light-dark(#565966, #b6b4c0);
+        font-size: 12px;
+      }
+
+      [data-startup-elapsed] {
+        margin: 10px 0 0;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* 每段对应一个真实步骤；移动部分只表示该步骤仍在处理。 */
+      .zeus-startup-progress {
+        --startup-accent: light-dark(#5747d0, #a89dff);
+        --startup-highlight: light-dark(#4374e9, #79baff);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .zeus-startup-progress span {
+        block-size: 5px;
+        border-radius: 5px;
+        background: light-dark(#d9dae2, #45444c);
+        overflow: hidden;
+      }
+
+      .zeus-startup-progress [data-state='done'] {
+        background: linear-gradient(90deg, var(--startup-accent), var(--startup-highlight));
+      }
+
+      .zeus-startup-progress [data-state='active'] {
+        background: color-mix(in srgb, var(--startup-accent) 27%, transparent);
+      }
+
+      .zeus-startup-progress [data-state='active']::after {
+        content: '';
+        display: block;
+        inline-size: 100%;
+        block-size: 100%;
+        /* 两端透明，光带完全离开轨道时再循环，避免往返减速和回跳。 */
+        background: linear-gradient(90deg, transparent, var(--startup-accent) 42%, var(--startup-highlight) 62%, transparent);
+        transform: translate3d(-100%, 0, 0);
+        will-change: transform;
+        animation: zeus-startup-working 1.2s linear infinite;
+      }
+
+      @keyframes zeus-startup-working {
+        to {
+          transform: translate3d(100%, 0, 0);
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .zeus-startup-icon {
+        .zeus-startup-progress [data-state='active']::after {
           animation: none;
+          transform: none;
+          will-change: auto;
         }
       }
     </style>
   </head>
   <body>
     <div id="root">
-      <div class="zeus-startup-loader" role="status" aria-label="正在启动 Zeus" aria-live="polite">
-        <!-- 与启动失败页共用透明底图标，保留原有圆角底板。 -->
-        <img class="zeus-startup-icon" src="./assets/startup-mark.png" alt="" tabindex="-1" draggable="false" />
+      <div class="zeus-startup-loader">
+        <section class="zeus-startup-content" aria-labelledby="zeus-startup-title">
+          <h1 id="zeus-startup-title">正在启动 Zeus</h1>
+          <p class="zeus-startup-stage" role="status"><span id="zeus-startup-stage">正在检查本机数据</span><span data-startup-step>第 1 步，共 3 步</span></p>
+          <div class="zeus-startup-progress" role="progressbar" aria-labelledby="zeus-startup-stage"><span data-state="active"></span><span></span><span></span></div>
+          <p data-startup-elapsed>已等待 0 秒</p>
+        </section>
       </div>
     </div>
     <script type="module" src="/src/renderer/bootstrap.ts"></script>

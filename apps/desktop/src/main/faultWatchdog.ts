@@ -560,6 +560,12 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     );
   }
 
+  /** 只有主包和附件全部接收后才显示完成状态。 */
+  function showReported(): void {
+    const zh = pulse.language !== 'en-US';
+    show('fault-reported', zh ? '故障报告已完整接收' : 'The complete report was received', zh ? '诊断与清单中的现场附件均已确认接收。' : 'Diagnostics and every declared evidence attachment were confirmed received.');
+  }
+
   /** 首次上报与补报共用上传流程，成功、失败和取消都不触发重启。 */
   async function reportFault(supplement?: unknown): Promise<void> {
     if (cleanExit || !saved || recovering || reporting) return;
@@ -587,8 +593,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
         })(),
         15_000,
       );
-      if (!dismissed && !cancellation.signal.aborted && saved?.reportId === reportId)
-        show('fault-reported', zh ? '故障报告已完整接收' : 'The complete report was received', zh ? '诊断与清单中的现场附件均已确认接收。' : 'Diagnostics and every declared evidence attachment were confirmed received.');
+      if (!dismissed && !cancellation.signal.aborted && saved?.reportId === reportId) showReported();
     } catch (error) {
       const cancelled = cancellation.signal.aborted;
       cancellation.abort();
@@ -695,6 +700,28 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
     await fault;
   }
 
+  /** 启动错误页优先打开同一窗口已保存的启动现场，包括早先捕获的超时。 */
+  async function openStartupReport(windowId: number, detail: string): Promise<void> {
+    await fault;
+    if (cleanExit || recovering || reporting) return;
+    if (saved?.context.windowId === String(windowId) && (saved.diagnostics?.scene?.reason === 'startup_timeout' || saved.diagnostics?.scene?.reason === 'startup_failed')) {
+      const received = await stat(join(directory, `${saved.reportId}.receipt.json`)).then(
+        () => true,
+        () => false,
+      );
+      if (received) showReported();
+      else showSaved();
+      return;
+    }
+    if (fault && lastFault?.windowId === windowId && (lastFault.reason === 'startup_timeout' || lastFault.reason === 'startup_failed')) {
+      showCaptureFailure();
+      return;
+    }
+    if (fault && !dismissed) return;
+    fault = undefined;
+    await detect('startup_failed', windowId, detail);
+  }
+
   process.on('message', (value: FaultWatchdogMessage) => {
     if (value.kind === 'pulse') {
       pulse = value.value;
@@ -702,6 +729,7 @@ async function runWatchdog(bootstrap: FaultMonitorBootstrap): Promise<void> {
       breadcrumbs.push(value.value);
       if (breadcrumbs.length > 60) breadcrumbs.shift();
     } else if (value.kind === 'fault') void detect(value.reason, value.windowId, value.detail);
+    else if (value.kind === 'startup-report') void openStartupReport(value.windowId, value.detail);
     else if (value.kind === 'resume') {
       resumedAt = Date.now();
       coreFailureAt = undefined;

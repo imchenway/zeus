@@ -29,7 +29,7 @@ import {
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
-import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
+import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, modelHistoryContentWithToolProjectionSql, readConversationSessionMetrics } from './conversationExecutionStore.js';
 import { ConversationTranscriptRepository, providerFacet } from './conversationTranscriptStore.js';
 import { createHash } from 'node:crypto';
 import { inputSuggestionUserTurnSql } from './inputSuggestionStore.js';
@@ -134,7 +134,7 @@ const modelHistoryVisibleContentSql = `COALESCE(
     THEN content_json
   WHEN json_valid(content_json) AND json_type(content_json, '$.text') = 'text'
     THEN json_extract(content_json, '$.text')
-  ELSE content_json
+  ELSE ${modelHistoryContentWithToolProjectionSql('conversation_model_history')}
 END)`;
 const modelHistoryUserProviderItemSql = `(SELECT message.provider_item_id
   FROM conversation_submissions AS submission

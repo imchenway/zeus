@@ -20,6 +20,26 @@ const outputRateMeasurementCondition = `r.measurement_complete = 1
 
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
+/** 读取历史时按同一会话、工具配对和句柄还原结果预览，兼容仍内嵌预览的历史。 */
+export function modelHistoryContentWithToolProjectionSql(history: 'conversation_model_history' | 'history'): string {
+  const content = `${history}.content_json`;
+  return `CASE WHEN ${history}.role = 'tool' AND json_valid(${content}) THEN
+    CASE WHEN json_type(${content}, '$.projection') IS NULL THEN COALESCE(
+      (SELECT json_set(${content}, '$.projection', json_extract(result.projection_json, '$.text'))
+         FROM conversation_tool_results AS result
+        WHERE result.handle = json_extract(${content}, '$.handle')
+          AND result.conversation_id = ${history}.conversation_id AND result.tool_pair_id = ${history}.tool_pair_id
+          AND CASE WHEN json_valid(result.projection_json) THEN json_type(result.projection_json, '$.text') = 'text' END),
+      ${content}
+    ) ELSE ${content} END
+  ELSE ${content} END`;
+}
+
+/** 历史读取只返回一份正文，避免同一大字段同时通过 SQLite 原列与还原列返回。 */
+const modelHistoryReadColumns = `id, conversation_id, sequence, turn_id, submission_id, segment_id, role,
+  ${modelHistoryContentWithToolProjectionSql('conversation_model_history')} AS content_json,
+  reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at`;
+
 /** 执行片段使用实际 Provider 身份决定恢复和归档边界。 */
 export type ConversationRuntimeKind = 'codex' | 'pi' | 'copilot';
 export type ConversationSegmentState = 'provisional' | 'current' | 'sealed' | 'abandoned';
@@ -1173,6 +1193,17 @@ export class ConversationExecutionRepository {
       }
       const sequence = this.nextSequence(input.conversationId, 'model_history_sequence');
       const id = `conversation_model_history_${randomId(12)}`;
+      /** 工具预览逐字相同时只保留结果引用，调用者提供的其他字段继续原样写入。 */
+      let storedContent = input.content;
+      if (input.role === 'tool' && input.toolPairId && input.content && typeof input.content === 'object' && !Array.isArray(input.content)) {
+        const { projection, ...reference } = parseJsonRecord(input.content);
+        if (typeof projection === 'string' && typeof reference.handle === 'string') {
+          const result = this.getToolResult(reference.handle);
+          if (result?.conversationId === input.conversationId && result.toolPairId === input.toolPairId && parseJsonRecord(result.projectionJson).text === projection) {
+            storedContent = reference;
+          }
+        }
+      }
       this.db.execute(
         `INSERT INTO conversation_model_history
        (id, conversation_id, sequence, turn_id, submission_id, segment_id, role, content_json,
@@ -1186,7 +1217,7 @@ export class ConversationExecutionRepository {
           input.submissionId ?? null,
           input.segmentId,
           input.role,
-          JSON.stringify(input.content),
+          JSON.stringify(storedContent),
           input.reasoningSource === undefined ? null : JSON.stringify(input.reasoningSource),
           input.toolPairId ?? null,
           input.capabilityLoss === undefined ? null : JSON.stringify(input.capabilityLoss),
@@ -1202,7 +1233,10 @@ export class ConversationExecutionRepository {
   confirmedModelHistory(conversationId: string, throughSequence?: number): ConversationModelHistoryRecord[] {
     const clause = throughSequence === undefined ? '' : ' AND sequence <= ?';
     const params = throughSequence === undefined ? [conversationId] : [conversationId, throughSequence];
-    return this.db.select<ModelHistoryRow>(`SELECT * FROM conversation_model_history WHERE conversation_id = ?${clause} ORDER BY sequence`, params).map(mapModelHistory);
+    return this.db.select<ModelHistoryRow>(
+      `SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE conversation_id = ?${clause} ORDER BY sequence`,
+      params,
+    ).map(mapModelHistory);
   }
 
   modelHistoryByProviderItem(conversationId: string, providerItemId: string, itemType: string): ConversationModelHistoryRecord | undefined {
@@ -1878,7 +1912,10 @@ export class ConversationExecutionRepository {
   }
 
   private modelHistoryById(id: string): ConversationModelHistoryRecord | undefined {
-    const row = this.db.get<ModelHistoryRow>(`SELECT * FROM conversation_model_history WHERE id = ?`, [id]);
+    const row = this.db.get<ModelHistoryRow>(
+      `SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE id = ?`,
+      [id],
+    );
     return row ? mapModelHistory(row) : undefined;
   }
 

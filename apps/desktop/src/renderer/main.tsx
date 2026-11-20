@@ -510,6 +510,18 @@ function RendererBootstrapReady(): null {
   return null;
 }
 
+/** 进度由已经完成的启动步骤推进，运行时间只显示在进度条下方。 */
+function showStartupStep(step: 1 | 2 | 3, label: string): void {
+  const loader = document.querySelector('.zeus-startup-loader');
+  const stage = loader?.querySelector('#zeus-startup-stage');
+  const stepLabel = loader?.querySelector('[data-startup-step]');
+  if (stage) stage.textContent = label;
+  if (stepLabel) stepLabel.textContent = startupLanguage === 'zh-CN' ? `第 ${step} 步，共 3 步` : `Step ${step} of 3`;
+  loader?.querySelectorAll<HTMLElement>('.zeus-startup-progress span').forEach((segment, index) => {
+    segment.dataset.state = index + 1 === step ? 'active' : index + 1 < step ? 'done' : 'pending';
+  });
+}
+
 function gitOperationReason(operation: string): string {
   const reasons: Record<string, string> = {
     stash: '用户从 Git Diff 面板请求暂存当前变更',
@@ -534,6 +546,7 @@ async function hydrateRenderer(): Promise<void> {
     return;
   }
   await waitForConversationStoreMigration();
+  showStartupStep(2, startupLanguage === 'zh-CN' ? '正在准备项目和会话' : 'Preparing projects and chats');
   // App 模块与宿主就绪检查并行；会话缓存只在选择会话后读取。
   const appModuleStartedAt = performance.now();
   const mainWindowBootstrap = surface
@@ -551,6 +564,7 @@ async function hydrateRenderer(): Promise<void> {
     return;
   }
   const config = await window.zeus.getLocalServerConfig();
+  showStartupStep(3, startupLanguage === 'zh-CN' ? (surface ? '正在打开窗口' : '正在打开工作区') : surface ? 'Opening the window' : 'Opening your workspace');
   const client = createDashboardClient({
     ...config,
     onPerformanceSpan: (span) => {
@@ -590,11 +604,13 @@ async function hydrateRenderer(): Promise<void> {
 }
 
 function renderExecutionHostMaintenance(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getExecutionHostMaintenanceStatus']>>>): void {
-  renderStartupFailure(status);
+  const summary = status.code === 'ZEUS_EXECUTION_HOST_STARTUP_TIMEOUT' ? (startupLanguage === 'zh-CN' ? '准备项目和会话超时。' : 'Preparing projects and chats took too long.') : undefined;
+  renderStartupFailure(status, summary);
 }
 
 /** 首屏只显示简述，诊断信息经独立入口展开；原生折叠保留键盘操作。 */
-function renderStartupFailure(error: unknown): void {
+function renderStartupFailure(error: unknown, summary?: string): void {
+  window.clearInterval(startupElapsedTimer);
   const zh = startupLanguage === 'zh-CN';
   const failure = describeUserFacingError(error, startupLanguage, zh ? '启动未能完成，请查看错误详情。' : 'Startup could not finish. See the error details.');
   reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
@@ -620,13 +636,14 @@ function renderStartupFailure(error: unknown): void {
   const details = document.createElement('details');
   const description = document.createElement('p');
   description.className = 'startup-failure-description';
-  description.textContent = failure.message;
+  description.textContent = summary ?? failure.message;
   /** 详情入口与简述分离，初始保持原生 details 的收起状态。 */
   const detailsLink = document.createElement('summary');
   detailsLink.textContent = zh ? '错误详情' : 'Error details';
 
   const logHint = document.createElement('p');
   logHint.className = 'startup-failure-log-hint';
+  logHint.setAttribute('role', 'status');
   logHint.textContent = zh ? '重启会中断仍在运行的工作。' : 'Restarting will interrupt any work still running.';
   const original = document.createElement('pre');
   original.textContent = failure.details;
@@ -636,7 +653,8 @@ function renderStartupFailure(error: unknown): void {
 
   const actions = document.createElement('div');
   actions.className = 'startup-failure-actions';
-  const restart = startupFailureButton(zh ? '重新启动' : 'Restart', true);
+  const openReport = window.zeus?.openStartupFaultReport;
+  const restart = startupFailureButton(zh ? '重新启动' : 'Restart', !openReport);
   /** 预加载缺失时，按钮不能接纳一个永远不会执行的操作。 */
   const restartAction = window.zeus?.restartAfterStartupFailure;
   restart.disabled = !restartAction;
@@ -673,6 +691,23 @@ function renderStartupFailure(error: unknown): void {
     }
   };
   actions.append(exit, restart);
+  if (openReport) {
+    /** 本轮线程采样由独立报告窗口接管，失败页本身只负责打开它。 */
+    const report = startupFailureButton(zh ? '上报故障' : 'Report fault', true);
+    report.onclick = async () => {
+      report.disabled = true;
+      try {
+        await openReport(failure.details);
+        logHint.textContent = zh ? '重启会中断仍在运行的工作。' : 'Restarting will interrupt any work still running.';
+      } catch (reportError) {
+        logHint.textContent = describeUserFacingError(reportError, startupLanguage).message;
+      } finally {
+        report.disabled = false;
+        report.focus();
+      }
+    };
+    actions.append(report);
+  }
   content.append(mark, title, description, details, actions, logHint);
   shell.append(content);
   root.replaceChildren(shell);
@@ -692,53 +727,16 @@ async function waitForConversationStoreMigration(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 180));
   let status = await bridge.getConversationStoreMigrationStatus();
   if (!status || status.phase === 'completed' || status.phase === 'not_required') return;
-  /** 保留 HTML 的原有启动图标；迁移结束后，业务模块和后台服务仍可能尚未就绪。 */
-  const startupLoader = document.querySelector('#root > .zeus-startup-loader');
   bridge.reportRendererBootstrapReady?.();
   while (status && status.phase !== 'completed' && status.phase !== 'not_required') {
-    renderConversationStoreMigration(status);
-    if (status.phase === 'failed' || status.phase === 'promoted_but_validation_failed') await new Promise<void>(() => undefined);
+    if (status.phase === 'failed' || status.phase === 'promoted_but_validation_failed') {
+      renderStartupFailure(status.error ?? status);
+      await new Promise<void>(() => undefined);
+    }
+    showStartupStep(1, startupLanguage === 'zh-CN' ? '正在升级对话数据' : 'Updating conversation data');
     await new Promise((resolve) => setTimeout(resolve, 250));
     status = await bridge.getConversationStoreMigrationStatus();
   }
-  // 不能先清空页面；恢复原有加载状态，待业务页面或错误页实际就绪后再替换。
-  if (startupLoader) document.getElementById('root')?.replaceChildren(startupLoader);
-}
-
-function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getConversationStoreMigrationStatus']>>>): void {
-  const root = document.getElementById('root');
-  if (!root) return;
-  const shell = document.createElement('main');
-  shell.className = 'zeus-conversation-migration';
-  Object.assign(shell.style, {
-    minHeight: '100%',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '32px',
-    boxSizing: 'border-box',
-    // 迁移早于应用设置加载，颜色继承首屏的系统或明确主题。
-    background: 'light-dark(#f7f8fa, var(--zeus-dark-canvas))',
-    color: 'light-dark(#202124, var(--zeus-dark-text))',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  });
-  const panel = document.createElement('section');
-  Object.assign(panel.style, { width: 'min(620px, 100%)', padding: '28px', border: '0', borderRadius: '18px', background: 'transparent', boxSizing: 'border-box' });
-  const title = document.createElement('h1');
-  const migrationFailed = status.phase === 'failed' || status.phase === 'promoted_but_validation_failed';
-  if (migrationFailed) {
-    renderStartupFailure(status.error ?? status);
-    return;
-  }
-  const zh = startupLanguage === 'zh-CN';
-  title.textContent = zh ? '正在升级对话数据' : 'Updating conversation data';
-  Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
-  const detail = document.createElement('p');
-  detail.textContent = zh ? '正在准备和检查你的对话记录。完成后会自动打开 Zeus，请保持应用开启。' : 'Preparing and checking your conversation history. Zeus will open automatically when ready. Keep the app open.';
-  Object.assign(detail.style, { margin: '0', color: 'light-dark(#5f6368, var(--zeus-dark-muted))', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
-  panel.append(title);
-  panel.append(detail);
-  shell.append(panel);
-  root.replaceChildren(shell);
 }
 
 const executionHostDrainRecoveryLimitMs = 120_000;
@@ -758,22 +756,32 @@ async function hydrateRendererWithExecutionHostRecovery(): Promise<void> {
   }
 }
 
-hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
-  const surface = new URLSearchParams(window.location.search).get('surface');
-  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'menu-bar-usage-cost-detail' || surface === 'task-git-delivery' || surface === 'project-git-diff';
-  console.error(
-    surface === 'menu-bar-usage'
-      ? 'Zeus menu bar usage hydration failed'
-      : surface === 'menu-bar-usage-cost-detail'
-        ? 'Zeus menu bar usage cost detail hydration failed'
-        : surface === 'task-git-delivery'
-          ? 'Zeus task Git delivery hydration failed'
-          : 'Zeus dashboard hydration failed',
-    error,
-  );
-  renderStartupFailure(error);
-  if (!auxiliarySurface) window.zeus?.reportRendererBootstrapReady?.();
-});
+/** 秒表只在首屏仍可见时更新，避免逐秒触发阶段的读屏播报。 */
+const startupElapsedTimer = window.setInterval(() => {
+  const elapsed = document.querySelector<HTMLElement>('[data-startup-elapsed]');
+  if (!elapsed) return;
+  const seconds = Math.floor(performance.now() / 1_000);
+  elapsed.textContent = startupLanguage === 'zh-CN' ? `已等待 ${seconds} 秒` : `${seconds} s elapsed`;
+}, 1_000);
+
+hydrateRendererWithExecutionHostRecovery()
+  .catch((error: unknown) => {
+    const surface = new URLSearchParams(window.location.search).get('surface');
+    const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'menu-bar-usage-cost-detail' || surface === 'task-git-delivery' || surface === 'project-git-diff';
+    console.error(
+      surface === 'menu-bar-usage'
+        ? 'Zeus menu bar usage hydration failed'
+        : surface === 'menu-bar-usage-cost-detail'
+          ? 'Zeus menu bar usage cost detail hydration failed'
+          : surface === 'task-git-delivery'
+            ? 'Zeus task Git delivery hydration failed'
+            : 'Zeus dashboard hydration failed',
+      error,
+    );
+    renderStartupFailure(error);
+    if (!auxiliarySurface) window.zeus?.reportRendererBootstrapReady?.();
+  })
+  .finally(() => window.clearInterval(startupElapsedTimer));
 
 function reportSurfaceFatalError(error: Error, language: 'zh-CN' | 'en', source: string): void {
   console.error(`Zeus ${source} render failed`, error);

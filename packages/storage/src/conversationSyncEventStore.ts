@@ -357,6 +357,35 @@ export function pruneArchivedConversationSyncEvents(db: ZeusDatabasePort, conver
 export class ConversationSyncEventRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** 按会话 ID 分页读取非空同步流的末条事件，避免读取事件正文。 */
+  listStreamActivityAfter(afterConversationId: string, limit: number): { conversationId: string; generationId: string; latestSequence: number; occurredAt: string }[] {
+    return this.db.select(
+      `SELECT stream.conversation_id AS conversationId, stream.generation_id AS generationId,
+              stream.latest_sequence AS latestSequence, last_event.occurred_at AS occurredAt
+         FROM conversation_sync_event_streams AS stream
+         JOIN conversation_sync_events AS last_event
+           ON last_event.conversation_id = stream.conversation_id AND last_event.generation_id = stream.generation_id
+          AND last_event.sequence = stream.latest_sequence
+        WHERE stream.is_current = 1 AND stream.base_sequence <= stream.latest_sequence AND stream.conversation_id > ?
+        ORDER BY stream.conversation_id LIMIT ?`,
+      [afterConversationId, limit],
+    );
+  }
+
+  /** 回收整段追赶日志并保留高水位。扫描后出现新事件时由下轮重新判断。 */
+  expireCurrentStream(conversationId: string, generationId: string, expectedLatestSequence: number): void {
+    this.db.transaction(() => {
+      const stream = this.readStream(conversationId, generationId);
+      if (!stream?.is_current || stream.latest_sequence !== expectedLatestSequence || stream.base_sequence > stream.latest_sequence) return;
+      this.assertStreamBoundaries(stream);
+      this.db.execute('DELETE FROM conversation_sync_events WHERE conversation_id = ? AND generation_id = ?', [conversationId, generationId]);
+      this.db.execute(
+        'UPDATE conversation_sync_event_streams SET base_sequence = latest_sequence + 1 WHERE conversation_id = ? AND generation_id = ?',
+        [conversationId, generationId],
+      );
+    });
+  }
+
   /** 归档事件完成实时广播登记后，删除该会话全部可重建追赶日志。 */
   pruneArchivedConversation(conversationId: string): PruneArchivedConversationSyncEventsResult {
     return pruneArchivedConversationSyncEvents(this.db, conversationId);

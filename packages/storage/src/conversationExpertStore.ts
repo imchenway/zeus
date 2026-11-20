@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { captureCompletedInputSuggestion } from './inputSuggestionStore.js';
 import { nextQueuePositionFor } from './conversationStore.js';
+import { modelHistoryContentWithToolProjectionSql } from './conversationExecutionStore.js';
 import { randomId } from './randomId.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 
@@ -205,7 +206,7 @@ export class ConversationExpertRepository {
   }> {
     return this.db
       .select<{ sequence: number; role: string; content_json: string; segment_id: string; actor_kind: string | null; actor_id: string | null; submission_id: string | null }>(
-        `SELECT history.sequence, history.role, history.content_json, history.segment_id,
+        `SELECT history.sequence, history.role, ${modelHistoryContentWithToolProjectionSql('history')} AS content_json, history.segment_id,
                 history.actor_kind, history.actor_id, history.submission_id
            FROM conversation_model_history AS history
            LEFT JOIN conversation_submissions AS history_submission ON history_submission.id = history.submission_id

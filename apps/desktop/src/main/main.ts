@@ -1885,6 +1885,13 @@ function setupIpc(): void {
     }
     app.quit();
   });
+  /** 启动失败页走独立监控，Core 未启动时也能打开已保存现场。 */
+  ipcMain.handle('zeus:startup-failure:report', (event, detail: unknown) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !isTrustedZeusRendererWindow(owner) || event.senderFrame !== event.sender.mainFrame || readOnlyValidationDescriptor) throw new Error('Fault reporting is unavailable in this window.');
+    if (!desktopFaultMonitor) throw new Error(nativeText('本机故障监控不可用。', 'Local fault monitoring is unavailable.'));
+    desktopFaultMonitor.openStartupReport(owner, typeof detail === 'string' ? sanitizeRendererRuntimeLogDetail(detail) : '');
+  });
   ipcMain.handle('zeus:startup-settings:get', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return loadStartupSettings(runtime.config);

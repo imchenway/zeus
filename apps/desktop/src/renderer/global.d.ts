@@ -116,6 +116,8 @@ declare global {
       exitExecutionHostMaintenance: () => Promise<void>;
       restartAfterStartupFailure: () => Promise<void>;
       exitAfterStartupFailure: () => Promise<void>;
+      /** 交给独立监控打开本轮启动现场。 */
+      openStartupFaultReport: (detail: string) => Promise<void>;
       /** 启动耗时与主页可交互状态上报。 */
       reportStartupSpan: (input: { stage: string; durationMs: number }) => void;
       reportHomeInteractive: () => void;

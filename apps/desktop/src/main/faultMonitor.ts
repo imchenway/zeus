@@ -44,6 +44,7 @@ export type FaultWatchdogMessage =
   | { kind: 'pulse'; value: FaultMonitorPulse }
   | { kind: 'breadcrumb'; value: FaultReportEvent }
   | { kind: 'fault'; reason: FaultReportScene['reason']; windowId?: number; detail?: string }
+  | { kind: 'startup-report'; windowId: number; detail: string }
   | { kind: 'clean-exit' }
   | { kind: 'resume' };
 
@@ -60,6 +61,7 @@ export function startFaultMonitor(
   context: (event: IpcMainEvent, context: unknown) => void;
   breadcrumb: (event: IpcMainEvent, value: unknown) => void;
   fault: (reason: FaultReportScene['reason'], window?: BrowserWindow, detail?: string) => void;
+  openStartupReport: (window: BrowserWindow, detail: string) => void;
   responsive: (window: BrowserWindow, responsive: boolean) => void;
   ready: (window: BrowserWindow) => void;
   loading: (window: BrowserWindow) => void;
@@ -237,6 +239,12 @@ export function startFaultMonitor(
       if (quitting) return;
       if (reason === 'manual_report') pulse();
       send({ kind: 'fault', reason, ...(window ? { windowId: window.id } : {}), ...(detail ? { detail } : {}) });
+    },
+    /** 打开上报前刷新本轮窗口身份，网络提交仍由监控窗口单独确认。 */
+    openStartupReport: (window, detail) => {
+      if (quitting || closed || unavailable || !child.connected) throw new Error(options.language === 'zh-CN' ? '本机故障监控不可用。' : 'Local fault monitoring is unavailable.');
+      pulse();
+      send({ kind: 'startup-report', windowId: window.id, detail });
     },
     responsive: (window, responsive) => {
       const state = windows.get(window.id);
