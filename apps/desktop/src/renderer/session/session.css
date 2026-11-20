@@ -6374,6 +6374,56 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   margin: 0 8px -2px;
 }
 
+/* 只在已接纳的计划修改切换中建立可动画的底部高度。 */
+.session-codex-parity-v1 .session-bottom-input {
+  display: contents;
+}
+
+.session-codex-parity-v1 .session-bottom-input[data-plan-refinement-transition] {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-interaction-dock[data-plan-refinement-exiting] {
+  inset-block-end: 0;
+  inset-inline: 0;
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 6;
+}
+
+/* 保留旧队列占用的高度；可见队列随新输入框接管。 */
+.session-codex-parity-v1 .session-interaction-dock[data-plan-refinement-exiting] > .session-queued-messages {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .session-codex-parity-v1 .session-interaction-dock[data-plan-refinement-exiting] {
+    animation: session-plan-refinement-exit var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
+  }
+
+  .session-codex-parity-v1 .session-bottom-input[data-plan-refinement-transition] > .session-composer-stack {
+    animation: zeus-object-enter var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out) both;
+  }
+}
+
+/* 使用独立的退场动画，使已经播放完的进场动画不会被沿用。 */
+@keyframes session-plan-refinement-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
 .session-codex-parity-v1 .session-interaction-dock {
   /* 为共用问答卡的四周阴影留出绘制空间，滚动时不贴边裁切。 */
   box-sizing: border-box;
@@ -10355,6 +10405,44 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   color: white;
 }
 
+/* 提交与等待状态占用同一个按钮尺寸，避免右侧操作跳动。 */
+.session-codex-parity-v1 .session-rui-inline-actions .session-plan-refinement-submit {
+  display: inline-grid;
+  place-items: center;
+}
+
+.session-codex-parity-v1 .session-plan-refinement-submit:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.session-codex-parity-v1 .session-rui-inline-actions .session-plan-refinement-submit[data-loading='true'] {
+  opacity: 1;
+}
+
+.session-codex-parity-v1 .session-plan-refinement-submit > span,
+.session-codex-parity-v1 .session-plan-refinement-submit::after {
+  grid-area: 1 / 1;
+}
+
+.session-codex-parity-v1 :is(.session-plan-refinement-submit[data-loading='true'], [data-plan-refinement-exiting] .session-plan-refinement-submit) > span {
+  visibility: hidden;
+}
+
+.session-codex-parity-v1 :is(.session-plan-refinement-submit[data-loading='true'], [data-plan-refinement-exiting] .session-plan-refinement-submit)::after {
+  block-size: 12px;
+  inline-size: 12px;
+  border: 1.5px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  content: '';
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .session-codex-parity-v1 .session-plan-refinement-submit[data-loading='true']::after {
+    animation: session-spinner 850ms linear infinite;
+  }
+}
+
 .session-codex-parity-v1 .session-rui-inline-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
 }
@@ -10377,6 +10465,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   .session-codex-parity-v1 .session-rui-request .session-question-option,
   .session-codex-parity-v1 .session-rui-inline-actions button {
     transition: none;
+  }
+
+  .session-codex-parity-v1 .session-plan-refinement-submit:active:not(:disabled) {
+    transform: none;
   }
 }
 

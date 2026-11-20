@@ -2129,6 +2129,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 防止关闭后的空标签通知重复触发同一会话的清理。 */
   const closingBrowserConversationsRef = useRef(new Set<string>());
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
+  /** 只为当前会话主动提交的修改意见保留原计划卡。 */
+  const [planRefinement, setPlanRefinement] = useState<{ conversationId: string | null; request: NativePlanImplementationRequest } | null>(null);
+  /** 底部切换时量取接替内容的自然高度。 */
+  const bottomInputRef = useRef<HTMLDivElement>(null);
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 打开的工作区与源码标签属于会话，切换或卸载不自动关闭。 */
   const {
@@ -2304,6 +2308,45 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion));
   /** 底部一次只显示一个交互表单，后台异步执行不转成等待状态。 */
   const dockedAsyncQuestion = blockingPendingRequest || blockingPlanImplementationRequest ? null : asyncQuestionDock.selected;
+  /** 普通输入框继续让位于阻塞表单及只读入口。 */
+  const showConversationComposer = !props.readOnlyGate && !props.suppressComposer && !blockingPendingRequest && !blockingPlanImplementationRequest && !dockedAsyncQuestion;
+  /** 卡片退场后由共享动效边界卸载；业务状态可以立即切换。 */
+  const { ref: planDockRef, present: planDockPresent } = useMotionPresence<HTMLElement>(Boolean(blockingPlanImplementationRequest && !props.suppressComposer && !props.historyOnly));
+  /** HTTP 或实时事件都能确认接纳，仅接纳同一修改请求才退场。 */
+  const outgoingPlan =
+    planRefinement &&
+    planRefinement.conversationId === (props.conversation?.id ?? null) &&
+    showConversationComposer &&
+    !props.historyOnly &&
+    !contextCoversConversation &&
+    planDockPresent &&
+    props.state?.planImplementationRequests.some((request) => request.id === planRefinement.request.id && request.status === 'refinement_requested')
+      ? planRefinement.request
+      : null;
+
+  useLayoutEffect(() => {
+    /** 新输入区参与布局，旧卡片固定在同一底边。 */
+    const incoming = bottomInputRef.current;
+    const outgoing = planDockRef.current;
+    if (!outgoingPlan || !incoming || !outgoing || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    /** 高度包含计划卡所在区域的底部留白，单位为 CSS 像素。 */
+    const style = getComputedStyle(outgoing);
+    const from = outgoing.offsetHeight + Number.parseFloat(style.marginBlockEnd);
+    const to = incoming.offsetHeight;
+    if (Math.abs(from - to) < 1) return;
+    /** 与接续动效共用时长（毫秒）和缓动曲线。 */
+    const animation = incoming.animate([{ blockSize: `${from}px` }, { blockSize: `${to}px` }], {
+      duration: Number.parseFloat(style.getPropertyValue('--zeus-motion-duration-layer-enter')) || 160,
+      easing: style.getPropertyValue('--zeus-motion-ease-out').trim() || 'ease-out',
+    });
+    return () => animation.cancel();
+  }, [outgoingPlan, planDockRef]);
+
+  useEffect(() => {
+    if (!planRefinement || blockingPlanImplementationRequest?.id === planRefinement.request.id || outgoingPlan) return;
+    setPlanRefinement((current) => (current === planRefinement ? null : current));
+  }, [blockingPlanImplementationRequest?.id, outgoingPlan, planRefinement]);
+
   const blockingInteractionCount = pendingRequests.length + pendingPlanImplementationRequests.length + Number(Boolean(dockedAsyncQuestion));
   const turnDiffChangeSet = contextWorkspace.kind === 'turn_diff' ? (props.state?.changeSetsByProviderId[contextWorkspace.turnId] ?? null) : null;
   const dockedPlan = props.state ? selectDockedTurnPlan(props.state) : null;
@@ -2332,6 +2375,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     composerRuntimeSettingsDirtyRef.current = false;
     lastNextTurnSettingsSyncRef.current = null;
     setRequestErrors({});
+    setPlanRefinement(null);
     setInterruptArmed(false);
     escapeController.reset();
     clearInterruptResetTimer(interruptResetTimerRef);
@@ -2717,13 +2761,31 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     },
   ): Promise<void> {
     if (!actions.onRespondToPlanImplementationRequest || !responseGuard.begin(request.id)) return;
+    /** 请求发起后仍绑定原会话，切换会话时只丢弃局部反馈。 */
     const conversationId = workspaceIdentityRef.current;
     setRequestErrors((current) => {
+      if (!(request.id in current)) return current;
       const next = { ...current };
       delete next[request.id];
       return next;
     });
     try {
+      if (input.action === 'refine') {
+        /** 先让表单呈现提交状态。帧被限流时，34 毫秒后继续提交。 */
+        await new Promise<void>((resolve) => {
+          /** 定时回退和绘制机会只有一个会继续执行请求。 */
+          const fallback = window.setTimeout(() => {
+            window.cancelAnimationFrame(frame);
+            resolve();
+          }, 34);
+          /** 等当前帧有机会绘制后再开始请求。 */
+          const frame = window.requestAnimationFrame(() => {
+            window.clearTimeout(fallback);
+            window.setTimeout(resolve, 0);
+          });
+        });
+        if (workspaceIdentityRef.current === conversationId) setPlanRefinement({ conversationId, request });
+      }
       await actions.onRespondToPlanImplementationRequest(request.id, input);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
@@ -3093,18 +3155,26 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         </section>
       );
     }
-    if (blockingPlanImplementationRequest) {
+    /** 退场期间继续使用同一张表单，以保留显示中的正文和附件。 */
+    const planRequest = blockingPlanImplementationRequest ?? outgoingPlan;
+    if (planRequest) {
       return (
-        <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+        <section
+          ref={planDockRef}
+          className="session-interaction-dock"
+          data-plan-refinement-exiting={outgoingPlan ? true : undefined}
+          inert={Boolean(outgoingPlan)}
+          aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}
+        >
           {renderQueuedConversationMessages()}
           <PlanImplementationRequestSurface
-            key={blockingPlanImplementationRequest.id}
-            request={blockingPlanImplementationRequest}
+            key={planRequest.id}
+            request={planRequest}
             language={props.language}
             autoFocus
-            busy={isRequestResponseBusy(props.state?.busyOperation ?? null, blockingPlanImplementationRequest.id)}
-            error={requestErrors[blockingPlanImplementationRequest.id]}
-            onRespond={(_requestId, response) => respondToPlanImplementationRequest(blockingPlanImplementationRequest, response)}
+            busy={Boolean(outgoingPlan) || isRequestResponseBusy(props.state?.busyOperation ?? null, planRequest.id)}
+            error={outgoingPlan ? undefined : requestErrors[planRequest.id]}
+            onRespond={(_requestId, response) => respondToPlanImplementationRequest(planRequest, response)}
             onChooseAttachments={actions.onChooseStartAttachments}
           />
         </section>
@@ -3466,42 +3536,44 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
                   />
                   {props.suppressComposer || props.historyOnly || !dockedPlan ? null : <SessionPlanProgress plan={dockedPlan} language={props.language} />}
-                  {renderBottomInteraction()}
-                  {transcriptPreparationError ? (
-                    <p className="session-composer-unavailable" role="status">
-                      <span>
-                        {props.language === 'zh-CN'
-                          ? transcriptPreparationError.message
-                          : transcriptPreparationError.retryable
-                            ? 'Conversation history is still being prepared. Try again later.'
-                            : 'Conversation history could not be prepared. View the error details.'}
-                      </span>
-                      {transcriptPreparationError.retryable && actions.onReconnect ? (
-                        <Button unstyled type="button" onClick={() => actions.onReconnect?.()}>
-                          {props.language === 'zh-CN' ? '重试' : 'Retry'}
-                        </Button>
-                      ) : (
-                        <Button unstyled type="button" onClick={() => reportApplicationError(transcriptPreparationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' })}>
-                          {props.language === 'zh-CN' ? '查看详情' : 'View details'}
-                        </Button>
-                      )}
-                    </p>
-                  ) : props.state?.transcriptInitializing && props.state.snapshot ? (
-                    <p className="session-composer-unavailable" role="status">
-                      {props.language === 'zh-CN' ? '正在准备会话历史，当前内容已保留。' : 'Preparing conversation history. Your current content is preserved.'}
-                    </p>
-                  ) : null}
-                  {props.readOnlyGate ? (
-                    taskReadOnlyAction
-                  ) : props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
-                    <>
-                      {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
-                      <div className="session-composer-stack">
-                        {renderQueuedConversationMessages()}
-                        {renderConversationComposer()}
-                      </div>
-                    </>
-                  )}
+                  <div ref={bottomInputRef} className="session-bottom-input" data-plan-refinement-transition={outgoingPlan ? true : undefined}>
+                    {renderBottomInteraction()}
+                    {transcriptPreparationError ? (
+                      <p className="session-composer-unavailable" role="status">
+                        <span>
+                          {props.language === 'zh-CN'
+                            ? transcriptPreparationError.message
+                            : transcriptPreparationError.retryable
+                              ? 'Conversation history is still being prepared. Try again later.'
+                              : 'Conversation history could not be prepared. View the error details.'}
+                        </span>
+                        {transcriptPreparationError.retryable && actions.onReconnect ? (
+                          <Button unstyled type="button" onClick={() => actions.onReconnect?.()}>
+                            {props.language === 'zh-CN' ? '重试' : 'Retry'}
+                          </Button>
+                        ) : (
+                          <Button unstyled type="button" onClick={() => reportApplicationError(transcriptPreparationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' })}>
+                            {props.language === 'zh-CN' ? '查看详情' : 'View details'}
+                          </Button>
+                        )}
+                      </p>
+                    ) : props.state?.transcriptInitializing && props.state.snapshot ? (
+                      <p className="session-composer-unavailable" role="status">
+                        {props.language === 'zh-CN' ? '正在准备会话历史，当前内容已保留。' : 'Preparing conversation history. Your current content is preserved.'}
+                      </p>
+                    ) : null}
+                    {props.readOnlyGate ? (
+                      taskReadOnlyAction
+                    ) : showConversationComposer ? (
+                      <>
+                        {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
+                        <div className="session-composer-stack">
+                          {renderQueuedConversationMessages()}
+                          {renderConversationComposer()}
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                   {!props.historyOnly && interruptArmed ? (
                     <p className="session-interrupt-confirm" role="status">
                       {copy.interruptConfirm}
