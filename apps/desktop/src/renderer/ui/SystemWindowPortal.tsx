@@ -6,7 +6,16 @@ import { installIconTooltips } from '../../preload/iconTooltip.js';
 import { installMarkdownListInput } from '../../preload/markdownListInput.js';
 
 /** 仅已迁移的工作窗口可请求主进程白名单。 */
-export type SystemWindowKind = 'git-push' | 'git-commit' | 'task-push' | 'file-preview';
+export type SystemWindowKind = 'git-push' | 'git-update' | 'git-commit' | 'task-push' | 'file-preview';
+
+/** 原生控制按钮由系统绘制，内容区只提供标题和拖动区域。 */
+export function SystemWindowTitleBar({ title }: { title: string }) {
+  return (
+    <div className="zeus-system-window-titlebar" aria-hidden="true">
+      <span>{title}</span>
+    </div>
+  );
+}
 
 /** 原窗口继续管理表单和授权，系统窗口只承载同源界面。 */
 export function SystemWindowPortal(props: { kind: SystemWindowKind; title: string; activation?: unknown; onClose?: () => void; children: ReactNode }) {

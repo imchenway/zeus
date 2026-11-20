@@ -57,7 +57,7 @@ import { extractThirdPartyTaskInfo, openThirdPartyTaskLogin } from './thirdParty
 import { defaultMainWindowSize, findSavedWindowDisplay, minimumMainWindowSize, type PersistedMainWindowState, readPersistedMainWindowState, type ResolvedMainWindowState, resolveMainWindowState } from './windowState.js';
 import { waitForSavedWindowDisplay } from './windowRestoration.js';
 import { createPersistentWindow } from './persistentWindow.js';
-import { activeSystemWindow, registerSystemWindowIpc, systemWindowOpenHandler } from './systemWindows.js';
+import { activeSystemWindow, registerSystemWindowIpc, systemWindowChrome, systemWindowOpenHandler, trackSystemWindowAppearance } from './systemWindows.js';
 import { registerConversationAudio } from './conversationAudio.js';
 import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
@@ -1085,11 +1085,8 @@ async function openProjectGitDiffWindow(
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
-    // 网页首帧前的原生底色与加载页使用同一主题。
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
     show: false,
-    // 差异窗口直接使用系统标题栏，提供可发现的拖动、缩放与全屏入口。
-    titleBarStyle: 'default',
+    ...systemWindowChrome(),
     // 允许从窗口边缘调整大小。
     resizable: true,
     // 允许通过系统标题栏移动窗口。
@@ -1109,6 +1106,7 @@ async function openProjectGitDiffWindow(
       allowRunningInsecureContent: false,
     },
   });
+  trackSystemWindowAppearance(window);
   projectGitDiffWindows.add(window);
   if (snapshot) projectGitDiffSnapshots.set(window.id, { filePath: input.path, diff: snapshot });
   window.on('closed', () => {
@@ -1265,15 +1263,12 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
     parent,
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${desktopDisplayName()}`,
-    // 网页首帧前的原生底色与加载页使用同一主题。
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
     show: false,
+    ...systemWindowChrome(),
     resizable: true,
     minimizable: true,
     maximizable: true,
     fullscreenable: true,
-    // macOS 沿用交通灯布局；Windows 复用主窗口的系统标题栏和窗口控制。
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } } : { titleBarStyle: 'default' as const }),
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),
       contextIsolation: true,
@@ -1283,6 +1278,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
       allowRunningInsecureContent: false,
     },
   });
+  trackSystemWindowAppearance(window);
   taskGitDeliveryWindows.set(key, window);
   if (!preload) taskGitDeliveryFirstFrames.set(window.id, { startedAt: requestedAt, mode: 'cold' });
   if (preload)
@@ -1824,12 +1820,6 @@ function setupIpc(): void {
     /** Only the main frame of a conversation-capable Zeus window may request the tap. */
     const window = BrowserWindow.fromWebContents(event.sender);
     return Boolean(window && windows.has(window) && event.senderFrame === event.sender.mainFrame && !readOnlyValidationDescriptor);
-  });
-  /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
-  nativeTheme.on('updated', () => {
-    for (const window of projectGitDiffWindows) {
-      if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa');
-    }
   });
   ipcMain.handle('zeus:conversation-store-migration:get-status', () => {
     if (dataRootPreparationError !== undefined) return null;
