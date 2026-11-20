@@ -38,7 +38,6 @@ const ownershipGroups = [
     tables: [
       'settings',
       'audit_logs',
-      'event_log',
       'idempotency_requests',
       'command_inbox',
       'command_outbox',
