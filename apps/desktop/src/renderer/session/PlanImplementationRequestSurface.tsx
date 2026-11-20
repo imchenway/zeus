@@ -36,6 +36,8 @@ export function PlanImplementationRequestSurface(props: {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   /** 修改意见在提交确认前保留。 */
   const [feedback, setFeedback] = useState('');
+  /** 自由输入的提交反馈先于会话级操作状态。 */
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
   /** 附件只归属当前修改意见，提交失败时保留。 */
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>([]);
   /** 资源读取错误使用现有错误提示。 */
@@ -51,13 +53,13 @@ export function PlanImplementationRequestSurface(props: {
     language: zh ? 'zh-CN' : 'en',
     textareaRef: inputRef,
     text: feedback,
-    disabled: props.busy === true,
+    disabled: submittingFeedback || props.busy === true,
     onTextChange: setFeedback,
     onAddAttachments: addAttachments,
     onError: setResourceError,
   });
   /** 附件未准备完成时，不允许发送或关闭当前意见。 */
-  const responding = props.busy || inputResources.processing;
+  const responding = submittingFeedback || props.busy || inputResources.processing;
 
   /** 相同受信资源只显示一次，选择与粘贴共用添加入口。 */
   function addAttachments(added: NativeConversationAttachment[]): void {
@@ -76,12 +78,22 @@ export function PlanImplementationRequestSurface(props: {
   useEffect(() => {
     if (feedbackOpen) inputRef.current?.focus();
   }, [feedbackOpen]);
+  useEffect(() => {
+    if (props.error && feedbackOpen && !submittingFeedback) inputRef.current?.focus({ preventScroll: true });
+  }, [props.error, feedbackOpen, submittingFeedback]);
 
   /** 表单按钮与回车共用提交入口，允许仅用附件表达修改意见。 */
-  function submitFeedback(event: FormEvent): void | Promise<void> {
+  async function submitFeedback(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if ((!feedback.trim() && attachments.length === 0) || responding) return;
-    return props.onRespond(props.request.id, { action: 'refine', feedback: feedback.trim(), ...(attachments.length ? { attachments } : {}) });
+    /** 本次提交绑定的意见，去除首尾空白。 */
+    const text = feedback.trim();
+    if ((!text && attachments.length === 0) || responding) return;
+    setSubmittingFeedback(true);
+    try {
+      await props.onRespond(props.request.id, { action: 'refine', feedback: text, ...(attachments.length ? { attachments } : {}) });
+    } finally {
+      setSubmittingFeedback(false);
+    }
   }
 
   /** 复用答题卡的操作顺序、品牌色和高度；展开输入前只显示跳过。 */
@@ -105,8 +117,14 @@ export function PlanImplementationRequestSurface(props: {
         {zh ? '跳过' : 'Skip'}
       </Button>
       {feedbackOpen ? (
-        <Button unstyled type="submit" disabled={(!feedback.trim() && attachments.length === 0) || responding}>
-          {zh ? '提交' : 'Submit'}
+        <Button
+          unstyled
+          type="submit"
+          className="session-plan-refinement-submit"
+          aria-label={submittingFeedback ? (zh ? '正在提交' : 'Submitting') : undefined}
+          disabled={(!feedback.trim() && attachments.length === 0) || responding}
+        >
+          <span>{zh ? '提交' : 'Submit'}</span>
         </Button>
       ) : null}
     </div>
@@ -160,6 +178,7 @@ export function PlanImplementationRequestSurface(props: {
               rows={1}
               aria-label={zh ? '修改计划' : 'Revise plan'}
               aria-keyshortcuts="Enter Shift+Enter"
+              readOnly={submittingFeedback}
               value={feedback}
               placeholder={zh ? '说明希望如何修改计划' : 'Describe how you would like to change the plan'}
               onChange={(event) => setFeedback(event.currentTarget.value)}
