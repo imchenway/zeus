@@ -272,39 +272,15 @@
   margin-left: 0;
 }
 .git-branch-repositories button:hover,
-.git-reference-tree button:hover,
-.git-reference-tree summary:hover {
+.git-reference-tree button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
 }
 .git-branch-repositories button.is-current,
 .git-reference-tree button.is-current {
   background: var(--zeus-source-list-selected);
 }
-.git-reference-tree .git-reference-tree {
-  padding-left: 18px;
-}
-.git-reference-tree summary {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 24px;
-  padding: 2px 9px;
-  cursor: pointer;
-  list-style: none;
-  font-size: 12px;
-  line-height: 20px;
-  border-radius: 5px;
-}
-.git-reference-tree summary::-webkit-details-marker {
-  display: none;
-}
-.git-reference-tree details[open] > summary > svg {
-  transform: rotate(90deg);
-}
 .git-reference-tree button:focus-visible,
 .git-branch-repositories button:focus-visible,
-.git-reference-tree summary:focus-visible,
 .git-command-toolbar > button:focus-visible {
   outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
@@ -484,11 +460,16 @@
   width: min(340px, calc(100vw - 16px));
   z-index: 121;
 }
+/* 类型、远程名和分支前缀共用行高，子级缩进留出完整的点击区域。 */
+.git-branch-collapsible-group > :is(.git-reference-tree, .git-branch-collapsible-group) {
+  margin-inline-start: 16px;
+}
 .git-branch-collapsible-group > summary {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  color: var(--zeus-product-muted);
   min-height: 24px;
   padding: 2px 9px;
   border-radius: 5px;
@@ -496,6 +477,12 @@
   font-size: 12px;
   line-height: 20px;
   cursor: pointer;
+}
+.git-branch-collapsible-group > summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .git-branch-collapsible-group > summary::-webkit-details-marker {
   display: none;
@@ -505,7 +492,8 @@
   height: 14px;
   flex-shrink: 0;
 }
-.git-branch-collapsible-group[open] > summary > svg {
+.git-branch-collapsible-group[open] > summary > svg,
+.git-reference-tree button[aria-expanded='true']:has(+ .project-git-common-branch-actions) > svg:last-child {
   transform: rotate(90deg);
 }
 .git-branch-collapsible-group > summary:hover {

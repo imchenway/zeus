@@ -228,6 +228,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     segmentLifecycle?: ConversationSegmentLifecycle,
     serviceTierFallbackAttempted = false,
     turnStartRetryAttempted = false,
+    retryProviderThreadId: string | null = null,
   ): Promise<NativeAcceptedOperation> {
     /** 异步阶段始终沿用同一会话身份，不依赖恢复过程重赋值的记录对象。 */
     const conversationId = conversationInput.id;
@@ -273,7 +274,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     if (conversation.collaborationMode !== context.workMode) options.conversations.updateCollaborationMode(conversation.id, context.workMode);
     conversation = segmentLifecycle?.requiresNewSegment ? conversation : requireConversation(conversation.id);
     contexts.set(conversation.id, context);
-    let candidateProviderThreadId: string | null = null;
+    let candidateProviderThreadId = retryProviderThreadId;
     let commandOutboxId: string | null = null;
     let commandTraceIdentity: string | null = null;
     let commandProviderGenerationId: string | null = null;
@@ -317,7 +318,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       commandTraceIdentity = dispatchEnvelope.traceIdentity ?? null;
       segmentLifecycle?.bindCommandDelivery({ outboxId: preparedDelivery.outbox.id, providerId: 'codex' });
       runStates.set(conversation.id, { type: 'dispatching', submissionId: submission.id });
-      let providerThreadId = segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId;
+      let providerThreadId = retryProviderThreadId ?? (segmentLifecycle?.requiresNewSegment ? null : conversation.providerThreadId);
       commandProviderGenerationId = providerThreadId ? options.manager.generationForThread(providerThreadId) : readyGenerationId();
       if (!providerThreadId && !commandProviderGenerationId) {
         commandProviderGenerationId = (
@@ -351,6 +352,12 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       /** 默认轮补充执行清单规则；计划轮必须把协作模板完全交还 app-server。 */
       const turnDeveloperInstructions = context.workMode === 'default' ? [developerInstructions, defaultModeDeveloperInstructions()].filter(Boolean).join('\n') : null;
       const dynamicTools = codexConversationDynamicTools(zeusToolBroker, pluginPreparation?.codexDynamicTools);
+      if (retryProviderThreadId) {
+        // 首轮被拒绝后恢复已创建的候选线程，避免重新提交 thread/start 或改写其请求身份。
+        const resumed = await options.manager.resumeThread({ threadId: retryProviderThreadId, cwd: context.projectLocalPath, dynamicTools, contextCapacityTokens: context.contextCapacityTokens });
+        if (resumed.id !== retryProviderThreadId) throw coordinatorError('ZEUS_CODEX_THREAD_IDENTITY_MISMATCH', 'Codex returned a different thread during dispatch retry.');
+        providerThreadAuthority.markSubscribed(resumed.id);
+      }
       const providerBootstrapUtf8Bytes = Buffer.byteLength(
         JSON.stringify({
           developerInstructions,
@@ -441,7 +448,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
             providerState: conversation.providerState,
           });
         }
-      } else if (segmentLifecycle) {
+      } else if (segmentLifecycle && !retryProviderThreadId) {
         segmentLifecycle.nativeSessionReady({
           nativeSessionId: providerThreadId,
           nativeSessionPath: conversation.providerThreadPath,
@@ -733,34 +740,53 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       return accepted(submission, 'active', providerThreadId, turn.id);
     } catch (error) {
-      if (!dispatchStopped(submission.id) && !serviceTierFallbackAttempted && isCodexServiceTierId(context.serviceTier) && isServiceTierUnavailableError(error, context.serviceTier)) {
-        /** 明确拒绝加速档位时，仅用标准速度重试本次提交。 */
-        const standardContext: ConversationDispatchContext = { ...context, serviceTier: null };
-        persistSubmissionDispatchContext(submission, standardContext, context.serviceTier);
-        options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
-        contexts.set(conversation.id, standardContext);
+      const fallbackTier = !serviceTierFallbackAttempted && isCodexServiceTierId(context.serviceTier) && isServiceTierUnavailableError(error, context.serviceTier) ? context.serviceTier : null;
+      /** 新线程明确拒绝首轮时，保留一次原线程重试。 */
+      const retryStart = !fallbackTier && !turnStartRetryAttempted && threadStartedForSubmission && isRuntimeRejected(error);
+      if (!dispatchStopped(submission.id) && (fallbackTier || retryStart)) {
+        /** 先持久化拒绝回执，再允许同一提交身份预备下一次派发。 */
+        if (segmentLifecycle) await segmentLifecycle.rejectBeforeAcceptance(error, now(), { retry: true });
+        else if (commandOutboxId)
+          options.commandDeliveries.recordOutcome({
+            outboxId: commandOutboxId,
+            outcome: 'explicitly_rejected',
+            evidence: serializeError(error),
+            providerId: 'codex',
+            providerGenerationId: commandProviderGenerationId,
+            nativeSessionId: candidateProviderThreadId ?? conversation.providerThreadId,
+            occurredAt: now(),
+          });
+        if (dispatchStopped(submission.id)) {
+          await segmentLifecycle?.fail(error, now());
+          return accepted(submission, 'interrupted', candidateProviderThreadId ?? conversation.providerThreadId, null);
+        }
+        const standardContext: ConversationDispatchContext | null = fallbackTier ? { ...context, serviceTier: null } : null;
+        if (standardContext && fallbackTier) {
+          persistSubmissionDispatchContext(submission, standardContext, fallbackTier);
+          options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(standardContext));
+          contexts.set(conversation.id, standardContext);
+        }
         options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
         runStates.set(conversation.id, { type: 'idle' });
+        lease.contentWriteStarted = false;
         await persist();
         const retrySubmission = options.submissions.getById(submission.id) ?? submission;
         const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
-        const result = await dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, segmentLifecycle, true);
-        if (result.status !== 'recovery_required' && result.status !== 'provider_archived') {
+        const result = await dispatchSubmissionWithLease(
+          retryConversation,
+          retrySubmission,
+          lease,
+          providerArchiveRecoveryAttempted,
+          segmentLifecycle,
+          serviceTierFallbackAttempted || Boolean(fallbackTier),
+          turnStartRetryAttempted || retryStart,
+          candidateProviderThreadId,
+        );
+        if (standardContext && result.status !== 'recovery_required' && result.status !== 'provider_archived') {
           recordServiceTierDowngrade(conversation.id, retrySubmission, standardContext, 'app_server_rejected');
           await persist();
         }
         return result;
-      }
-      // 新建线程后首个 turn/start 可能撞上 app-server 尚未加载线程的短暂竞态
-      // （表现为 thread not loaded）。重试一次走 thread/resume + turn/start，
-      // 避免提交永久停留在 dispatching，让任务和会话看起来一直“正在执行”。
-      if (!dispatchStopped(submission.id) && !turnStartRetryAttempted && threadStartedForSubmission && isRuntimeRejected(error)) {
-        options.submissions.updateStatus(submission.id, 'queued', { providerTurnId: null, updatedAt: now() });
-        runStates.set(conversation.id, { type: 'idle' });
-        await persist();
-        const retrySubmission = options.submissions.getById(submission.id) ?? submission;
-        const retryConversation = options.conversations.getById(conversation.id) ?? conversation;
-        return dispatchSubmissionWithLease(retryConversation, retrySubmission, lease, providerArchiveRecoveryAttempted, segmentLifecycle, serviceTierFallbackAttempted, true);
       }
       const providerArchived = isProviderThreadArchivedError(error);
       const explicitlyRejected = isRuntimeRejected(error) || providerArchived;

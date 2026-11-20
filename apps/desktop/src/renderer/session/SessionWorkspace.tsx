@@ -860,9 +860,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
               /** 仅处理服务端确认归属当前会话的操作代理。 */
               const snapshot = await props.client.loadNativeSubagents!(projectId, conversationId);
               for (const agent of snapshot.items.filter((item) => item.operation && (!threadId || item.id === threadId) && ['pending', 'running', 'waiting'].includes(item.status))) {
-                /** 先取消未发送输入，停止当前轮次后不能继续旧补充任务。 */
-                const queue = await props.client.loadNativeConversationQueueV2(projectId, agent.id);
-                for (const submission of queue.submissions.filter((item) => !item.providerTurnId && ['queued', 'paused'].includes(item.status))) await props.client.deleteNativeQueuedSubmission(projectId, agent.id, submission.id);
+                /** 未知送达先走核对；仍无回执时保留该提交，再处理已知轮次。 */
+                const currentQueue = await props.client.loadNativeConversationQueueV2(projectId, agent.id);
+                const queue = currentQueue.submissions.some((item) => item.pausedReason === 'outcome_unknown') ? await props.client.recoverNativeQueue(projectId, agent.id, 'check') : currentQueue;
+                for (const submission of queue.submissions.filter((item) => !item.providerTurnId && item.pausedReason !== 'outcome_unknown' && ['queued', 'paused'].includes(item.status)))
+                  await props.client.deleteNativeQueuedSubmission(projectId, agent.id, submission.id);
                 /** 子线程详情提供真实 Provider 轮次身份，不使用父轮次猜测。 */
                 const thread = await props.client.loadNativeSubagentThread!(projectId, conversationId, agent.id);
                 /** 只中断仍在执行的轮次，结束的线程保留原结果。 */

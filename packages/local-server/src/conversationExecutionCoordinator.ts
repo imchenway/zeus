@@ -59,7 +59,8 @@ export interface ConversationSegmentLifecycle {
   failContextCompaction(error: unknown, failedAt: string): Promise<void>;
   bindCommandDelivery(input: { outboxId: string; providerId: string; providerGenerationId?: string | null }): void;
   markProviderWriteStarted(): void;
-  rejectBeforeAcceptance(error: unknown, occurredAt: string): Promise<void>;
+  /** 已有明确拒绝回执时可保留当前派发租约供原提交重试。 */
+  rejectBeforeAcceptance(error: unknown, occurredAt: string, options?: { retry: true }): Promise<void>;
   acceptSynchronously(input: { providerTurnId: string; acceptedAt: string; runtimeEvidence: unknown; providerEcho?: unknown }): string;
   fail(error: unknown, occurredAt: string): Promise<void>;
 }
@@ -375,10 +376,11 @@ export class ConversationExecutionCoordinator {
         }
         providerWriteStarted = true;
       },
-      rejectBeforeAcceptance: async (error, occurredAt) => {
+      rejectBeforeAcceptance: async (error, occurredAt, options) => {
         if (acceptedByRuntime) return;
         const rejection = serializeError(error);
         const mutateBusinessState = () => {
+          if (options?.retry) return;
           if (switchOperationId) this.options.execution.rejectSwitchBeforeAcceptance(switchOperationId, rejection, occurredAt);
           else if (submissionId) this.options.execution.rejectCurrentSubmissionBeforeAcceptance(input.conversationId, submissionId, rejection, occurredAt);
         };
@@ -400,7 +402,10 @@ export class ConversationExecutionCoordinator {
           mutateBusinessState();
           await this.options.db.save();
         }
-        if (submissionId) this.releaseLease(input.conversationId, submissionId);
+        if (options?.retry) {
+          commandDelivery = null;
+          providerWriteStarted = false;
+        } else if (submissionId) this.releaseLease(input.conversationId, submissionId);
       },
       acceptSynchronously: (accepted) => {
         if (!submissionId || !segmentId || !nativeSessionId) throw executionError('ZEUS_CONVERSATION_SEGMENT_NOT_PREPARED', '运行分段尚未完成本地预备。');
