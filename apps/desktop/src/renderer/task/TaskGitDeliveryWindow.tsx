@@ -40,8 +40,8 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
   const scopeTitle = props.scope.kind === 'task' ? (props.scope.task.taskCode ?? props.scope.task.id) : props.scope.kind === 'conversation' ? props.scope.conversation.title : props.scope.project.name;
 
   useEffect(() => {
-    /** 正式打开可能发生在首份上下文返回后、事件订阅前。订阅后再读取一次仍在预热的任务窗口。 */
-    let needsContext = props.scope.kind === 'task' && props.initialCurrentContext.opened === false;
+    /** 任务和会话交付都等待正式打开；订阅后补读可能错过的打开状态。 */
+    let needsContext = (props.scope.kind === 'task' || props.scope.kind === 'conversation') && props.initialCurrentContext.opened === false;
     /** 同一条广播更新会话范围和正式打开状态，避免用旧范围加载文件。 */
     const unsubscribe = window.zeus?.onTaskGitDeliveryCurrentContext?.((context) => {
       needsContext = false;
@@ -102,9 +102,9 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
             language={surfaceSettings.language}
             onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
           />
-        ) : (
+        ) : currentContext.opened !== false ? (
           <ConversationGitDeliveryContent client={scopedClient} project={props.scope.project} conversation={props.scope.conversation} language={surfaceSettings.language} onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()} />
-        )}
+        ) : null}
       </MotionPresence>
     </main>
   );

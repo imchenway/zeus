@@ -282,12 +282,19 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['所选范围是整个磁盘，无法作为项目扫描。请选择实际存放项目的文件夹。', 'The selected location covers the entire filesystem and cannot be scanned as a project. Select the folder that contains your project.'],
   ],
   [['源码文件不存在。'], ['找不到要打开的源码文件，它可能已被移动或删除。请刷新文件列表，确认文件位置。', 'The source file could not be found. It may have been moved or deleted. Refresh the file list and check its location.']],
+  [
+    ['ZEUS_CONVERSATION_RESOURCE_PATH_UNAVAILABLE', 'The conversation file or its folder is unavailable.'],
+    ['无法访问这个会话文件。请检查文件和所在工作目录。', 'Cannot access this conversation file. Check the file and its working folder.'],
+  ],
   [['源码必须位于项目根目录内。'], ['这个文件不在当前项目内，无法从此入口打开。请切换到对应项目。', 'This file is outside the current project and cannot be opened here. Switch to its project.']],
   [
     ['预览授权已失效。', '文件已变化，请刷新预览。', '读取期间文件发生变化，请刷新。'],
     ['文件预览已过期，或文件内容已经变化。请刷新预览或重新打开文件。', 'The preview expired or the file changed. Refresh the preview or reopen the file.'],
   ],
-  [['文件超出授权目录。'], ['这个文件不在允许预览的文件夹内。请从对应项目或附件重新打开。', 'This file is outside the folder allowed for this preview. Reopen it from its project or attachment.']],
+  [
+    ['文件超出授权目录。', 'ZEUS_CONVERSATION_RESOURCE_PATH_FORBIDDEN', 'Conversation file resource is outside its authorized root.', 'Conversation file resource resolves outside its authorized root.'],
+    ['这个文件不在允许预览的文件夹内。请从对应项目或附件重新打开。', 'This file is outside the folder allowed for this preview. Reopen it from its project or attachment.'],
+  ],
   [['目标不是普通文件。'], ['所选内容不是可预览的普通文件。请选择文件，或使用系统打开。', 'The selected item is not a regular file that can be previewed. Select a file or open it with the system.']],
   // 文件预览自身的明确提示也支持语言切换，沿用现有系统预览和刷新入口。
   [

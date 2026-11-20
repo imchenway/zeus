@@ -448,7 +448,8 @@ async function authorizedFile(intent: ConversationResourceOpenIntent): Promise<{
     throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_FORBIDDEN', 'Conversation file resource is outside its authorized root.');
   }
   const [rootRealPath, fileRealPath] = await Promise.all([realPath(allowedRoot), realPath(absolutePath)]);
-  if (!rootRealPath || !fileRealPath || !isInsideRoot(fileRealPath, rootRealPath)) {
+  if (!rootRealPath || !fileRealPath) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_UNAVAILABLE', 'The conversation file or its folder is unavailable.');
+  if (!isInsideRoot(fileRealPath, rootRealPath)) {
     throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_FORBIDDEN', 'Conversation file resource resolves outside its authorized root.');
   }
   return { absolutePath: fileRealPath, allowedRoot: rootRealPath };

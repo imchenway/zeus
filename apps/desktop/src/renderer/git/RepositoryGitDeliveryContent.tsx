@@ -238,7 +238,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
 
   useGitDeliveryRefresh({
     client: props.client,
-    open,
+    /** 首次读取由页面处理；取得有效快照后再订阅后续变化。 */
+    open: open && snapshot !== null,
     blocked: busyAction !== null,
     projectId: props.project.id,
     scope: props.conversation && props.conversationWorkspaceMode !== 'direct' ? { conversationId: props.conversation.id } : {},

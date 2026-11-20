@@ -44,6 +44,8 @@ export interface ZeusPluginHookRunResult {
 export interface ZeusPluginHookEventResult {
   event: ZeusPluginHookEventName;
   runs: ZeusPluginHookRunResult[];
+  /** 当前事件直接等待的 Hook 是否超时。 */
+  foregroundTimedOut: boolean;
   permissionDecision: 'allow' | 'deny' | null;
   permissionDecisionReason: string | null;
   updatedInput: Record<string, unknown> | null;
@@ -109,8 +111,15 @@ export function createZeusPluginHookRuntime(options: {
       }
       foreground.push(executeCandidate(candidate, event, !trusted, undefined, event.maximumWaitMs));
     }
-    const runs = [...immediate, ...(await Promise.all(foreground))];
-    const result = aggregateHookResults(event.event, runs);
+    /** 历史后台结果保留在 runs 中，只用当前前台结果判断派发超时。 */
+    const foregroundRuns = await Promise.all(foreground);
+    /** 当前结果与已结束的后台结果继续一起提供给诊断及上下文聚合。 */
+    const runs = [...immediate, ...foregroundRuns];
+    const result = aggregateHookResults(
+      event.event,
+      runs,
+      foregroundRuns.some((run) => run.state === 'timed_out'),
+    );
     options.publish?.('plugin.hook.completed', {
       conversationId: event.conversationId,
       event: event.event,
@@ -418,7 +427,8 @@ function hookInput(event: ZeusPluginHookEvent): Record<string, unknown> {
   };
 }
 
-function aggregateHookResults(event: ZeusPluginHookEventName, runs: ZeusPluginHookRunResult[]): ZeusPluginHookEventResult {
+/** 聚合 Hook 输出，派发超时只使用本轮等待的前台运行结果。 */
+function aggregateHookResults(event: ZeusPluginHookEventName, runs: ZeusPluginHookRunResult[], foregroundTimedOut: boolean): ZeusPluginHookEventResult {
   let permissionDecision: 'allow' | 'deny' | null = null;
   let permissionDecisionReason: string | null = null;
   let updatedInput: Record<string, unknown> | null = null;
@@ -470,7 +480,7 @@ function aggregateHookResults(event: ZeusPluginHookEventName, runs: ZeusPluginHo
       if (typeof output.stopReason === 'string') stopReasons.push(output.stopReason);
     }
   }
-  return { event, runs, permissionDecision, permissionDecisionReason, updatedInput, additionalContext, systemMessages, continue: shouldContinue, stopReasons, continuationPrompts, replaceToolResult };
+  return { event, runs, foregroundTimedOut, permissionDecision, permissionDecisionReason, updatedInput, additionalContext, systemMessages, continue: shouldContinue, stopReasons, continuationPrompts, replaceToolResult };
 
   function applyBlock(blockEvent: ZeusPluginHookEventName, reason: string): void {
     if (blockEvent === 'PreToolUse' || blockEvent === 'PermissionRequest') applyPermission('deny', reason);
