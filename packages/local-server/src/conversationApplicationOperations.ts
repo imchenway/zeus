@@ -789,31 +789,39 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const submissions = conversationSubmissions.listByConversation(relation.conversationId);
         const last = submissions.at(-1);
         const active = conversationTurns.getLatestActiveByConversation(relation.conversationId);
-        /** 启动检查暂停仍可处理，列表与详情共用已保存的原因。 */
-        const startupBlock = !active && last?.status === 'paused' && last.pausedReason === 'preflight_failed' && !last.providerTurnId ? { error: toNativeSubmissionError(last.errorJson) } : undefined;
+        /** 操作代理在已拒绝或待核对时停止展示启动动画。 */
+        const operation = readAutomationAgentContext(relation.conversationId)?.capability;
+        const dispatchUnconfirmed = Boolean(operation && !active && submissions.some((submission) => submission.status === 'paused' && (submission.pausedReason === 'outcome_unknown' || submission.submissionOutcome === 'outcome_unknown')));
+        const startupBlock =
+          !active && !dispatchUnconfirmed && last?.status === 'paused' && !last.providerTurnId && (last.pausedReason === 'preflight_failed' || (operation && last.pausedReason === 'runtime_rejected'))
+            ? { error: toNativeSubmissionError(last.errorJson) }
+            : undefined;
         /** 提交完成只说明已收口；任务是否被停止以对应轮次为准。 */
         const latestTurn = last ? conversationTurns.listByConversation(relation.conversationId).find((turn) => turn.clientSubmissionId === last.id) : undefined;
-        const status: ConversationSubagentSummary['status'] = active
-          ? active.status === 'waiting'
-            ? 'waiting'
-            : 'running'
-          : latestTurn?.status === 'interrupted' || (child?.providerState === 'paused' && !last)
-            ? 'interrupted'
-            : !last
-              ? 'unknown'
-              : last.status === 'completed'
-                ? 'completed'
-                : ['cancelled', 'deleted'].includes(last.status)
-                  ? 'interrupted'
-                  : last.status === 'failed'
-                    ? 'failed'
-                    : startupBlock
-                      ? 'waiting'
-                      : 'pending';
+        const status: ConversationSubagentSummary['status'] = dispatchUnconfirmed
+          ? 'waiting'
+          : active
+            ? active.status === 'waiting'
+              ? 'waiting'
+              : 'running'
+            : latestTurn?.status === 'interrupted' || (child?.providerState === 'paused' && !last)
+              ? 'interrupted'
+              : !last
+                ? 'unknown'
+                : last.status === 'completed'
+                  ? 'completed'
+                  : ['cancelled', 'deleted'].includes(last.status)
+                    ? 'interrupted'
+                    : last.status === 'failed'
+                      ? 'failed'
+                      : startupBlock
+                        ? 'waiting'
+                        : 'pending';
         return {
           id: relation.conversationId,
-          operation: readAutomationAgentContext(relation.conversationId)?.capability,
+          operation,
           ...(startupBlock ? { startupBlock } : {}),
+          ...(dispatchUnconfirmed ? { dispatchUnconfirmed: true } : {}),
           parentThreadId: relation.parentId,
           title: child?.title ?? '子代理',
           nickname: null,
@@ -827,6 +835,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
       });
   }
 
+  /** 停止只取消未发送的提交。Codex 操作代理先核对可能已提交的轮次。 */
+  async function cancelQueuedSubagentSubmissions(conversationId: string): Promise<void> {
+    const queue = () => conversationSubmissions.listQueueByConversation(conversationId);
+    const unresolved = (submission: ReturnType<typeof queue>[number]) => submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown';
+    const child = conversations.getById(conversationId);
+    if (child && child.agentKind !== 'pi' && child.agentKind !== 'copilot' && readAutomationAgentContext(conversationId) && queue().some(unresolved)) {
+      // 核对不可用时保留待核对提交，继续停止其余已知轮次。
+      await codexNativeCoordinator.recoverQueue({ conversationId, intent: 'check' }).catch(() => undefined);
+    }
+    for (const submission of queue()) {
+      if (!submission.providerTurnId && ['queued', 'paused'].includes(submission.status) && !unresolved(submission)) {
+        conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
+      }
+    }
+  }
+
   /** 父会话显式停止时，先取消未发送输入，再停止所有活动后代。 */
   async function stopConversationSubagents(conversationId: string): Promise<void> {
     cancelPendingAutomationResults(conversationId);
@@ -838,9 +862,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (child.agentKind === 'pi' || child.agentKind === 'copilot') {
         sdkCoordinator(child.agentKind).stopOwnedProcesses(child.id);
       }
-      for (const submission of conversationSubmissions.listQueueByConversation(child.id)) {
-        if (!submission.providerTurnId && ['queued', 'paused'].includes(submission.status)) conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
-      }
+      await cancelQueuedSubagentSubmissions(child.id);
       const turn = conversationTurns.getLatestActiveByConversation(child.id);
       conversations.updateAgentRuntime(child.id, { providerState: 'paused' });
       if (!turn?.providerTurnId) continue;
@@ -867,8 +889,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const child = owned().find((item) => item.id === input.args.target);
       if (!child) throw new Error('目标不属于本会话的子代理。');
       await stopConversationSubagents(child.id);
-      for (const submission of conversationSubmissions.listQueueByConversation(child.id))
-        if (!submission.providerTurnId && ['queued', 'paused'].includes(submission.status)) conversationSubmissions.updateStatus(submission.id, 'cancelled', { resolvedAt: now().toISOString(), updatedAt: now().toISOString() });
+      await cancelQueuedSubagentSubmissions(child.id);
       const conversation = conversations.getById(child.id)!;
       // 子回合结束后仍可能留下后台命令或目标续跑，显式停止须清理其自身归属。
       if (conversationGoals.get(child.id)?.status === 'active')
@@ -1137,7 +1158,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const parent = relation ? conversations.getById(relation.parentId) : null;
     if (!context || !child || !parent || parent.archived || parent.providerState === 'paused' || child.providerState === 'paused') return;
     const origin = conversationTurns.getById(context.parentTurnId);
-    if (!origin || !['running', 'waiting', 'completed'].includes(origin.status)) return;
+    if (!origin || origin.conversationId !== parent.id || !['running', 'waiting', 'completed'].includes(origin.status)) return;
     if (conversationSubmissions.listQueueByConversation(child.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))) return;
     // 补充要求已有后续轮次时，只交回最后一轮，避免报告过期结果。
     for (const turn of conversationTurns.listByConversation(child.id).slice(-1)) {
@@ -1148,6 +1169,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const key = `automation-result:${child.id}:${turn.id}`;
       const submissionId = `conversation_submission_${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
       if (conversationSubmissions.getById(submissionId)) continue;
+      const continuation = readFrozenContinuation(parent.id, origin.clientSubmissionId);
       const result = child.messages
         .filter((message) => message.role === 'assistant' && message.providerTurnId === turn.providerTurnId)
         .map((message) => message.content)
@@ -1156,7 +1178,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       await acceptNativeConversationMessage(
         parent,
         prompt,
-        { content: prompt, delivery: 'queue', clientUserMessageId: key },
+        { ...continuation.settings, content: prompt, delivery: 'queue', clientUserMessageId: key },
         key,
         key,
         {
@@ -1173,6 +1195,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         },
         submissionId,
         'automation_completion',
+        continuation.source,
       );
       await dispatchUnifiedConversationQueueHead?.(parent.id);
     }
@@ -1601,32 +1624,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ) {
         throw Object.assign(nativeApiError('ZEUS_CONVERSATION_RETRY_NOT_READY', '该轮次已改变，或仍有消息尚未确认，请先检查处理状态。'), { statusCode: 409 });
       }
-      /** 失败轮次关联的原提交决定续接配置。 */
-      const previous = turn.clientSubmissionId ? conversationSubmissions.getById(turn.clientSubmissionId) : undefined;
-      if (!previous || previous.conversationId !== conversation.id) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
-      /** 已关联的执行快照是本轮实际配置，快照缺失或归属不符时停止续接。 */
-      const frozenSnapshot = previous.executionSnapshotId ? conversationExecution.getExecutionSnapshot(previous.executionSnapshotId) : undefined;
-      if (previous.executionSnapshotId && frozenSnapshot?.conversationId !== conversation.id) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
-      /** 仅未关联执行快照的历史提交使用其持久配置。 */
-      const persistedContext = frozenSnapshot ? null : parseJsonObject(previous.inputJson).context;
-      /** 历史输入只接受结构化会话上下文。 */
-      const context = isNativeApiRecord(persistedContext) ? persistedContext : {};
-      /** 使用原提供方模型 ID 和已保存的权限、协作模式。 */
-      const model = frozenSnapshot ? frozenSnapshot.modelId : context.model;
-      const permissionMode = parseConversationPermissionMode(frozenSnapshot ? frozenSnapshot.permissionMode : context.permissionMode);
-      const collaborationMode = frozenSnapshot ? parseConversationCollaborationMode(frozenSnapshot.collaborationMode) : (parseConversationCollaborationMode(context.workMode) ?? 'default');
-      if (typeof model !== 'string' || !model.trim() || !permissionMode || !collaborationMode) {
-        throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
-      }
-      /** 托管模型以运行时标识来源，自定义 API 模型使用原连接 ID。 */
-      const sourceId = frozenSnapshot ? (frozenSnapshot.connectionId ?? frozenSnapshot.runtimeKind) : context.modelSourceId;
-      /** 无容量覆盖时保留模型默认值，容量单位为 Token。 */
-      const contextCapacityTokens = (frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : context.contextCapacityTokens) ?? null;
-      assertContextCapacity(contextCapacityTokens);
-      /** 历史提交曾使用 effort 或 thinkingLevel 保存推理档位。 */
-      const effort = frozenSnapshot ? frozenSnapshot.effort : typeof context.effort === 'string' ? context.effort : context.thinkingLevel;
-      /** 空服务层级也是快照值，历史提交保留是否显式选择的区别。 */
-      const serviceTier = frozenSnapshot ? { present: true as const, value: frozenSnapshot.serviceTier } : readServiceTierOverride(context);
+      const continuation = readFrozenContinuation(conversation.id, turn.clientSubmissionId);
       /** 新提交只携带服务端生成的续接意图，不复制原用户消息和附件。 */
       const restored = await acceptNativeConversationMessage(
         conversation,
@@ -1635,19 +1633,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
           clientUserMessageId: idempotencyKey,
           displayText: '已请求继续上次中断的操作',
           delivery: 'queue',
-          contextCapacityTokens,
-          model: typeof sourceId === 'string' && (frozenSnapshot || sourceId !== 'codex') ? modelRef(sourceId, model) : model,
-          effort: typeof effort === 'string' ? effort : undefined,
-          ...(serviceTier.present ? { serviceTier: serviceTier.value } : {}),
-          permissionMode,
-          collaborationMode,
+          ...continuation.settings,
         },
         idempotencyKey,
         input.operationIdentity,
         input.providerWriteLifecycle,
         undefined,
         true,
-        { submissionId: previous.id, frozenEffort: frozenSnapshot?.effort },
+        continuation.source,
       );
       return { statusCode: 202, body: restored };
     }
@@ -1907,6 +1900,46 @@ export function createConversationApplicationOperations(dependencies: Conversati
       .replace(/\uFFFD$/u, '')}...`;
   }
 
+  /** 内部续接只读取原提交的冻结配置，存量无快照的提交沿用其持久配置。 */
+  function readFrozenContinuation(conversationId: string, submissionId: string | null | undefined) {
+    const previous = submissionId ? conversationSubmissions.getById(submissionId) : undefined;
+    if (!previous || previous.conversationId !== conversationId) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+    /** 已关联的执行快照是本轮实际配置，快照缺失或归属不符时停止续接。 */
+    const frozenSnapshot = previous.executionSnapshotId ? conversationExecution.getExecutionSnapshot(previous.executionSnapshotId) : undefined;
+    if (previous.executionSnapshotId && frozenSnapshot?.conversationId !== conversationId) throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+    /** 仅未关联执行快照的历史提交使用其持久配置。 */
+    const persistedContext = frozenSnapshot ? null : parseJsonObject(previous.inputJson).context;
+    /** 历史输入只接受结构化会话上下文。 */
+    const context = isNativeApiRecord(persistedContext) ? persistedContext : {};
+    /** 使用原提供方模型 ID 和已保存的权限、协作模式。 */
+    const model = frozenSnapshot ? frozenSnapshot.modelId : context.model;
+    const permissionMode = parseConversationPermissionMode(frozenSnapshot ? frozenSnapshot.permissionMode : context.permissionMode);
+    const collaborationMode = frozenSnapshot ? parseConversationCollaborationMode(frozenSnapshot.collaborationMode) : (parseConversationCollaborationMode(context.workMode) ?? 'default');
+    if (typeof model !== 'string' || !model.trim() || !permissionMode || !collaborationMode) {
+      throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+    }
+    /** 托管模型以运行时标识来源，自定义 API 模型使用原连接 ID。 */
+    const sourceId = frozenSnapshot ? (frozenSnapshot.connectionId ?? frozenSnapshot.runtimeKind) : context.modelSourceId;
+    /** 无容量覆盖时保留模型默认值，容量单位为 Token。 */
+    const contextCapacityTokens = (frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : context.contextCapacityTokens) ?? null;
+    assertContextCapacity(contextCapacityTokens);
+    /** 历史提交曾使用 effort 或 thinkingLevel 保存推理档位。 */
+    const effort = frozenSnapshot ? frozenSnapshot.effort : typeof context.effort === 'string' ? context.effort : context.thinkingLevel;
+    /** 空服务层级也是快照值，历史提交保留是否显式选择的区别。 */
+    const serviceTier = frozenSnapshot ? { present: true as const, value: frozenSnapshot.serviceTier } : readServiceTierOverride(context);
+    return {
+      settings: {
+        contextCapacityTokens,
+        model: typeof sourceId === 'string' && (frozenSnapshot || sourceId !== 'codex') ? modelRef(sourceId, model) : model,
+        effort: typeof effort === 'string' ? effort : undefined,
+        ...(serviceTier.present ? { serviceTier: serviceTier.value } : {}),
+        permissionMode,
+        collaborationMode,
+      },
+      source: { submissionId: previous.id, frozenEffort: frozenSnapshot?.effort },
+    };
+  }
+
   async function acceptNativeConversationMessage(
     conversation: ZeusConversationWithMessagesRecord,
     content: string,
@@ -1918,7 +1951,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     /** 仅服务端已校验的恢复或操作结果可以设置内部来源。 */
     internalOperation: boolean | 'automation_completion' = false,
     /** 续接关联原提交；快照中空档位表示沿用原先未指定的推理档位。 */
-    retry?: { submissionId: string; frozenEffort?: string | null },
+    continuation?: ReturnType<typeof readFrozenContinuation>['source'],
   ) {
     if (body.contextCapacityTokens !== undefined) assertContextCapacity(body.contextCapacityTokens);
     const project = projects.getById(conversation.projectId);
@@ -2070,7 +2103,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       selectedModel = capability.model;
       selectedModelSourceId = capability.sourceId ?? null;
       selectedAgentKind = capability.agentKind ?? 'codex';
-      selectedEffort = retry?.frozenEffort === null ? null : (effort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null);
+      selectedEffort = continuation?.frozenEffort === null ? null : (effort ?? capability.defaultReasoningEffort ?? capability.supportedReasoningEfforts[0] ?? null);
       selectedServiceTier = normalizeServiceTierForCapability(requestedServiceTier, capability);
       selectedContextWindow = capability.contextWindow;
     }
@@ -2283,7 +2316,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       return codexNativeCoordinator.submitMessage({
         ...(internalOperation ? { internalOperation: true } : {}),
-        ...(retry ? { resumeSubmissionId: retry.submissionId } : {}),
+        ...(continuation ? { resumeSubmissionId: continuation.submissionId } : {}),
         conversationId: conversation.id,
         ...(reservedSubmissionId ? { submissionId: reservedSubmissionId } : {}),
         content: providerContent,

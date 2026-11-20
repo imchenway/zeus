@@ -169,6 +169,8 @@ export interface NativeSubagentSummary {
   operation?: 'browser' | 'computer';
   /** 派发前暂停的状态及其已记录错误。 */
   startupBlock?: { error: { code: string; message: string } | null };
+  /** Provider 尚未确认接纳结果，停止前需要核对。 */
+  dispatchUnconfirmed?: true;
   id: string;
   parentThreadId: string | null;
   title: string;

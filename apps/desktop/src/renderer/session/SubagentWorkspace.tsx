@@ -244,7 +244,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
                 .finally(() => setStopping(false));
             }}
           >
-            {zh ? '停止' : 'Stop'}
+            {selectedAgent.dispatchUnconfirmed ? (zh ? '核对并停止' : 'Check and stop') : zh ? '停止' : 'Stop'}
           </Button>
         ) : null}
         <Button unstyled type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'} onClick={() => (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
@@ -425,9 +425,10 @@ function SubagentStatus(props: { label: string; busy?: boolean }) {
 }
 
 /** 已暂停的提交在列表和无可见轮次的详情中使用同一个标签。 */
-function statusLabel({ status, startupBlock }: NativeSubagentSummary, language: SessionUiLanguage): string {
+function statusLabel({ status, startupBlock, dispatchUnconfirmed }: NativeSubagentSummary, language: SessionUiLanguage): string {
   const zh = language === 'zh-CN';
   if (startupBlock) return zh ? '启动受阻' : 'Startup blocked';
+  if (dispatchUnconfirmed) return zh ? '派发待核对' : 'Dispatch unconfirmed';
   if (status === 'pending') return zh ? '准备中' : 'Preparing';
   if (status === 'running') return zh ? '运行中' : 'Running';
   if (status === 'waiting') return zh ? '等待中' : 'Waiting';
