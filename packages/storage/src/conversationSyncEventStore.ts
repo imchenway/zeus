@@ -379,10 +379,7 @@ export class ConversationSyncEventRepository {
       if (!stream?.is_current || stream.latest_sequence !== expectedLatestSequence || stream.base_sequence > stream.latest_sequence) return;
       this.assertStreamBoundaries(stream);
       this.db.execute('DELETE FROM conversation_sync_events WHERE conversation_id = ? AND generation_id = ?', [conversationId, generationId]);
-      this.db.execute(
-        'UPDATE conversation_sync_event_streams SET base_sequence = latest_sequence + 1 WHERE conversation_id = ? AND generation_id = ?',
-        [conversationId, generationId],
-      );
+      this.db.execute('UPDATE conversation_sync_event_streams SET base_sequence = latest_sequence + 1 WHERE conversation_id = ? AND generation_id = ?', [conversationId, generationId]);
     });
   }
 

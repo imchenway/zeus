@@ -1233,10 +1233,7 @@ export class ConversationExecutionRepository {
   confirmedModelHistory(conversationId: string, throughSequence?: number): ConversationModelHistoryRecord[] {
     const clause = throughSequence === undefined ? '' : ' AND sequence <= ?';
     const params = throughSequence === undefined ? [conversationId] : [conversationId, throughSequence];
-    return this.db.select<ModelHistoryRow>(
-      `SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE conversation_id = ?${clause} ORDER BY sequence`,
-      params,
-    ).map(mapModelHistory);
+    return this.db.select<ModelHistoryRow>(`SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE conversation_id = ?${clause} ORDER BY sequence`, params).map(mapModelHistory);
   }
 
   modelHistoryByProviderItem(conversationId: string, providerItemId: string, itemType: string): ConversationModelHistoryRecord | undefined {
@@ -1912,10 +1909,7 @@ export class ConversationExecutionRepository {
   }
 
   private modelHistoryById(id: string): ConversationModelHistoryRecord | undefined {
-    const row = this.db.get<ModelHistoryRow>(
-      `SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE id = ?`,
-      [id],
-    );
+    const row = this.db.get<ModelHistoryRow>(`SELECT ${modelHistoryReadColumns} FROM conversation_model_history WHERE id = ?`, [id]);
     return row ? mapModelHistory(row) : undefined;
   }
 
