@@ -678,7 +678,15 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     };
   }, [languageLabels.diagramRenderFailed, languageLabels.diagramRuntimeUnavailable, languageLabels.diagramSyntaxInvalid, onRenderError, props.node.code, streaming]);
   return (
-    <div ref={containerRef} className="session-code-block session-mermaid-block" aria-label={languageLabels.diagram} role="group" data-source={showSource || Boolean(diagnostic) || undefined} data-error={diagnostic ? 'true' : undefined} aria-busy={streaming || undefined}>
+    <div
+      ref={containerRef}
+      className="session-code-block session-mermaid-block"
+      aria-label={languageLabels.diagram}
+      role="group"
+      data-source={showSource || Boolean(diagnostic) || undefined}
+      data-error={diagnostic ? 'true' : undefined}
+      aria-busy={streaming || undefined}
+    >
       <div className="session-mermaid-toolbar">
         {/* 为已有缩放控件保留同行位置，由图表范围内的 CSS 锚点定位。 */}
         {!showSource && !diagnostic ? <span className="session-mermaid-zoom-slot" aria-hidden="true" /> : null}

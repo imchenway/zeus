@@ -38,9 +38,10 @@ export function VideoPlayer(props: { url: string; name: string; zh: boolean; onE
   function togglePlayback(): void {
     const element = video.current;
     if (!element) return;
-    if (element.paused) void element.play().catch((error: DOMException) => {
-      if (error.name !== 'AbortError') props.onError();
-    });
+    if (element.paused)
+      void element.play().catch((error: DOMException) => {
+        if (error.name !== 'AbortError') props.onError();
+      });
     else element.pause();
   }
 
@@ -92,10 +93,18 @@ export function VideoPlayer(props: { url: string; name: string; zh: boolean; onE
             setCurrentTime(event.currentTarget.valueAsNumber);
           }}
         />
-        <span className="zeus-video-time">{videoTime(currentTime)} / {videoTime(duration)}</span>
-        <Button unstyled type="button" aria-label={muteLabel} data-icon-tooltip={muteLabel} onClick={() => {
-          if (video.current) video.current.muted = !video.current.muted;
-        }}>
+        <span className="zeus-video-time">
+          {videoTime(currentTime)} / {videoTime(duration)}
+        </span>
+        <Button
+          unstyled
+          type="button"
+          aria-label={muteLabel}
+          data-icon-tooltip={muteLabel}
+          onClick={() => {
+            if (video.current) video.current.muted = !video.current.muted;
+          }}
+        >
           {muted || !volume ? <SpeakerX aria-hidden="true" /> : <SpeakerHigh aria-hidden="true" />}
         </Button>
         <input
