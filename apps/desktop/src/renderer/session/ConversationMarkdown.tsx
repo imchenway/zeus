@@ -4,12 +4,12 @@ import { CodeIcon as Code } from '@phosphor-icons/react/dist/csr/Code';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, filePreviewLimits, normalizeConversationResourceReference } from '@zeus/shared';
-import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
+import MarkdownRender, { MermaidBlockNode, ParagraphNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
 // 公式与字体资源随应用打包，供所有 Markdown 展示入口共用。
 import 'katex/dist/katex.min.css';
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
-import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
+import { ConversationInlineResource, ConversationMarkdownImage, ConversationResourceCard, ConversationResourceVideo, isImageResource, isVideoResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
 import { MarkdownDocumentOutline } from './MarkdownDocumentOutline.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -28,6 +28,8 @@ export const MAX_CONVERSATION_MARKDOWN_NODES = 4_096;
 
 const CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown';
 const STRUCTURED_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-structured';
+/** 媒体段落仅在助手正文中覆盖默认段落渲染。 */
+const MEDIA_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-media';
 const EMPTY_RESOURCES: ConversationResource[] = [];
 const CHILD_ARRAY_FIELDS = ['children', 'items', 'rows', 'cells', 'term', 'definition'] as const;
 /** 图表复用按需加载的原生预览，禁止正文开启脚本、链接交互或导出入口。 */
@@ -128,6 +130,8 @@ export interface ConversationMarkdownProps {
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
   onRenderSettled?: () => void;
+  /** 助手正文的独立媒体链接可在原段落位置展开。 */
+  showMedia?: boolean;
   /** 用户消息中的结构化引用标签，按原标签文本渲染为胶囊而不是普通 Markdown 文本。 */
   structuredTokens?: readonly StructuredMessageToken[];
   /** 编辑器等场景可主动关闭流式分批；已完成正文默认一次呈现。 */
@@ -222,7 +226,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   onRenderSettledRef.current = props.onRenderSettled;
 
   const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language, props.documentMode), [props.documentMode, props.language, props.text]);
-  const customId = props.customComponentsId ?? (props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID);
+  const customId = props.customComponentsId ?? (props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : props.showMedia ? MEDIA_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID);
   const parseOptions = useMemo<NonNullable<NodeRendererProps['parseOptions']>>(
     () => ({
       reuseStableTopLevelNodes: true,
@@ -328,6 +332,27 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
     </MarkdownRuntimeContext.Provider>
   );
 });
+
+/** 完成答复中独占段落的视频和本地网站按已登记的身份呈现。 */
+function ConversationParagraphNode(props: ComponentProps<typeof ParagraphNode>) {
+  /** 流式正文的最后一段可能继续追加文字，完成后再确定它是否独占一段。 */
+  const runtime = useContext(MarkdownRuntimeContext);
+  if (runtime?.phase === 'final' && runtime.onOpenResource && props.node.children?.length === 1) {
+    /** 只有普通 Markdown 链接可以升级为块级资源。 */
+    const link = props.node.children[0];
+    if (link?.type === 'link' && link.href) {
+      /** 使用和普通内联链接一致的身份匹配。 */
+      const resource = matchingInlineResource(runtime.resources, link.text || link.href, link.href);
+      if (resource && isVideoResource(resource)) {
+        return <ConversationResourceVideo key={`${resource.id}:${resource.updatedAt}`} resource={resource} language={runtime.language} onOpenResource={runtime.onOpenResource} />;
+      }
+      if (resource?.kind === 'website' && resource.local) {
+        return <ConversationResourceCard resource={resource} language={runtime.language} onOpenResource={runtime.onOpenResource} />;
+      }
+    }
+  }
+  return <ParagraphNode {...props} />;
+}
 
 /** 链接以授权资源是否就绪为准，解析器缓存的流式标记不能遮住已完成链接。 */
 function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
@@ -653,9 +678,8 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     };
   }, [languageLabels.diagramRenderFailed, languageLabels.diagramRuntimeUnavailable, languageLabels.diagramSyntaxInvalid, onRenderError, props.node.code, streaming]);
   return (
-    <div ref={containerRef} className="session-code-block session-mermaid-block" data-error={diagnostic ? 'true' : undefined} aria-busy={streaming || undefined}>
+    <div ref={containerRef} className="session-code-block session-mermaid-block" aria-label={languageLabels.diagram} role="group" data-source={showSource || Boolean(diagnostic) || undefined} data-error={diagnostic ? 'true' : undefined} aria-busy={streaming || undefined}>
       <div className="session-mermaid-toolbar">
-        <span>{languageLabels.diagram}</span>
         {/* 为已有缩放控件保留同行位置，由图表范围内的 CSS 锚点定位。 */}
         {!showSource && !diagnostic ? <span className="session-mermaid-zoom-slot" aria-hidden="true" /> : null}
         {/* 查看源码不改变图形内容；语法错误时直接显示源码与原因。 */}
@@ -755,6 +779,7 @@ export const conversationMarkdownComponents = {
 } as unknown as CustomComponentMap;
 
 setCustomComponents(CUSTOM_COMPONENTS_ID, conversationMarkdownComponents);
+setCustomComponents(MEDIA_CUSTOM_COMPONENTS_ID, { ...conversationMarkdownComponents, paragraph: ConversationParagraphNode });
 setCustomComponents(STRUCTURED_CUSTOM_COMPONENTS_ID, { ...conversationMarkdownComponents, text: StructuredTextNode } as CustomComponentMap);
 
 /** 共用复制入口只在写入成功后确认，并向键盘和辅助阅读用户报告失败。 */

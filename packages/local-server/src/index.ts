@@ -768,7 +768,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const commandRuns = new CommandRunRepository(db);
   const commandArtifacts = new CommandArtifactRepository(db);
   const artifactStore = new ArtifactStore(db, join(dataLayout.artifactsDirectory, 'content-addressed'), () => now().toISOString(), { writeFaultReporter: db });
-  /** HTML 预览只读取分层布局的产物目录，旧布局的资料根包含其他应用数据。 */
+  /** 网页和视频产物共用分层布局的独立目录，旧布局的资料根包含其他应用数据。 */
   const htmlArtifactsDirectory = dataLayout.kind === 'layered' ? dataLayout.artifactsDirectory : undefined;
   const projectionDatabases = new ProjectionDatabaseRuntimeManager({
     source: db,

@@ -1,0 +1,108 @@
+/* 画面与控件共享一个边框，播放进度不会盖住录屏内容。 */
+.zeus-video-player {
+  --video-line: color-mix(in srgb, var(--zeus-product-text) 14%, transparent);
+  background: var(--zeus-product-canvas);
+  border: 1px solid var(--video-line);
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--zeus-product-text);
+  container-type: inline-size;
+  inline-size: 100%;
+  overflow: hidden;
+}
+
+.zeus-video-player > video {
+  aspect-ratio: 16 / 9;
+  background: var(--zeus-product-panel);
+  display: block;
+  inline-size: 100%;
+  max-block-size: 56vh;
+  object-fit: contain;
+}
+
+.zeus-video-controls {
+  align-items: center;
+  border-block-start: 1px solid var(--video-line);
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.zeus-video-player .zeus-video-controls > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 30px;
+  block-size: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.zeus-video-player .zeus-video-controls > button:hover {
+  background: var(--zeus-interaction-hover);
+}
+
+.zeus-video-controls > :is(button, input):focus-visible {
+  outline: 2px solid var(--zeus-brand-text);
+  outline-offset: 1px;
+}
+
+.zeus-video-controls > input[type='range'] {
+  accent-color: var(--zeus-product-accent);
+  background: transparent;
+  flex: 1 1 0;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+.zeus-video-controls > .zeus-video-volume[type='range'] {
+  flex: 0 1 52px;
+  min-inline-size: 26px;
+}
+
+.zeus-video-time {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 极窄时进度独占第一行，音量与全屏操作仍可用。 */
+@container (max-width: 280px) {
+  .zeus-video-controls {
+    flex-wrap: wrap;
+  }
+
+  .zeus-video-controls > input[type='range']:not(.zeus-video-volume) {
+    flex: 0 0 100%;
+    order: -1;
+  }
+}
+
+.zeus-video-player:fullscreen {
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.zeus-video-player:fullscreen > video {
+  flex: 1;
+  max-block-size: none;
+  min-block-size: 0;
+}
+
+.zeus-video-player:not(:fullscreen) .zeus-video-exit-fullscreen,
+.zeus-video-player:fullscreen .zeus-video-enter-fullscreen {
+  display: none;
+}
+
+.zeus-video-player > small {
+  display: block;
+  padding: 0 12px 8px;
+}
