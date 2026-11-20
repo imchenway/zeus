@@ -1,3 +1,5 @@
+import { isCodexServiceTierId, type CodexServiceTierId } from './codexServiceTier.js';
+
 /** 内置浏览器页面中的矩形；坐标均以当前 frame viewport 为参照。 */
 export interface ZeusBrowserRect {
   x: number;
@@ -112,15 +114,23 @@ export type ZeusBrowserScreenshotMode = 'always' | 'necessary';
 export type ZeusWebLinkOpenTarget = 'zeus_browser' | 'system_default';
 export type ZeusFileOpenTarget = 'zeus_source' | 'system_default' | 'editor:vscode' | 'editor:vscode-insiders' | 'editor:cursor' | 'editor:windsurf';
 
-/** 浏览器与桌面操作分别选择模型；空值沿用当前会话，不创建代理。 */
-export interface AutomationModelSettings {
-  /** 浏览器操作使用的完整模型目录身份。 */
-  browser: string | null;
-  /** 桌面操作使用的完整模型目录身份。 */
-  computer: string | null;
+/** 固定模型与速度一起保存，切换模型时不会沿用上一模型的档位。 */
+export interface AutomationModelSelection {
+  /** 用于派发的完整模型目录引用。 */
+  modelRef: string;
+  /** 空值使用标准速度，非空档位由派发时的模型目录校验。 */
+  serviceTier: CodexServiceTierId | null;
 }
 
-/** 缺省配置保留当前会话的执行方式；非法目录身份拒绝保存。 */
+/** 浏览器与桌面操作分别选择模型和速度；空值沿用当前会话。 */
+export interface AutomationModelSettings {
+  /** 浏览器操作使用的固定模型和速度。 */
+  browser: AutomationModelSelection | null;
+  /** 桌面操作使用的固定模型和速度。 */
+  computer: AutomationModelSelection | null;
+}
+
+/** 缺省值跟随当前会话，旧版模型字符串按标准速度读取。 */
 export function normalizeAutomationModelSettings(value: unknown): AutomationModelSettings {
   if (value === undefined) return { browser: null, computer: null };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('操作模型设置必须为对象。');
@@ -128,10 +138,19 @@ export function normalizeAutomationModelSettings(value: unknown): AutomationMode
   if (Object.keys(input).some((key) => key !== 'browser' && key !== 'computer')) throw new Error('操作模型设置包含未知字段。');
   const result: AutomationModelSettings = { browser: null, computer: null };
   for (const capability of ['browser', 'computer'] as const) {
-    const model = input[capability];
-    if (model === null || model === undefined) continue;
-    if (typeof model !== 'string' || !model.trim() || model.length > 512 || /\p{Cc}/u.test(model)) throw new Error('操作模型身份无效。');
-    result[capability] = model.trim();
+    /** 历史设置只保存完整模型引用。 */
+    const saved = input[capability];
+    if (saved === null || saved === undefined) continue;
+    /** 统一读取新旧设置，同时拒绝未知的选项字段。 */
+    const selection = typeof saved === 'string' ? { modelRef: saved } : saved;
+    if (typeof selection !== 'object' || Array.isArray(selection) || Object.keys(selection).some((key) => key !== 'modelRef' && key !== 'serviceTier')) {
+      throw new Error('操作模型配置无效。');
+    }
+    /** 设置保存只校验格式，模型能力以派发时的目录为准。 */
+    const { modelRef, serviceTier } = selection as Record<string, unknown>;
+    if (typeof modelRef !== 'string' || !modelRef.trim() || modelRef.length > 512 || /\p{Cc}/u.test(modelRef)) throw new Error('操作模型身份无效。');
+    if (serviceTier != null && !isCodexServiceTierId(serviceTier)) throw new Error('操作模型速度档位无效。');
+    result[capability] = { modelRef: modelRef.trim(), serviceTier: serviceTier ?? null };
   }
   return result;
 }

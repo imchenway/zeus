@@ -10527,6 +10527,21 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   inline-size: min(100%, 220px);
 }
 
+/* 模型与速度同排，长模型名可收缩，启用速度选择时行高保持一致。 */
+.macos-ai-app .automation-model-settings-row .native-control-slot {
+  flex-wrap: nowrap;
+}
+
+.macos-ai-app .automation-model-settings-row .automation-model-speed-select {
+  flex: 0 0 100px;
+}
+
+@media (min-width: 861px) {
+  .macos-ai-app .native-control-row.automation-model-settings-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, min(62%, 376px));
+  }
+}
+
 .macos-ai-app .browser-settings-row.danger .native-control-copy > strong {
   color: var(--zeus-danger-text, oklch(42% 0.095 28));
 }
