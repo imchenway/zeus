@@ -9,10 +9,12 @@ import {
   MenuItem,
   MessageChannelMain,
   nativeImage,
+  type DownloadItem,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type Rectangle,
   session,
+  shell,
   type Session,
   type WebContents,
   type WebFrameMain,
@@ -20,9 +22,9 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { publishFile } from '@zeus/storage/platform-security';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { defaultBrowserTranslationService, isFreeBrowserTranslationService, serializeBrowserComments, validBrowserTranslationSegments } from '@zeus/shared';
 import type { createBrowserTranslationClient } from './browserTranslationClient.js';
 import type {
@@ -32,6 +34,7 @@ import type {
   ZeusBrowserComment,
   ZeusBrowserConversationSnapshot,
   ZeusBrowserDesignChange,
+  ZeusBrowserDownload,
   ZeusBrowserEvent,
   ZeusBrowserPageAnchor,
   ZeusBrowserPreparedSubmission,
@@ -59,12 +62,14 @@ import type { BrowserCuaSurface } from './browserCuaBridge.js';
 import type { ComputerHost } from './computerHost.js';
 import type { BrowserPasswordFrameProbe, BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
 
-/** 仅保存长期设置与书签；标签、活动页和分组随本次应用运行结束。 */
+/** 保存浏览器偏好、书签和近期下载；标签随本次应用运行结束。 */
 interface PersistedBrowserState {
   version: 1;
   settings: ZeusBrowserSettings;
   managementBookmarks?: ManagedBrowserBookmark[];
   managementAudit?: ManagedBrowserAuditEntry[];
+  /** 旧资料可能没有历史下载。 */
+  downloads?: BrowserDownload[];
 }
 
 interface LiveBrowserTab {
@@ -120,12 +125,11 @@ interface PendingApproval {
   timer: ReturnType<typeof setTimeout>;
 }
 
-interface BrowserDownload {
+/** 保留文件落盘路径和原始会话归属，界面只传下载身份。 */
+interface BrowserDownload extends ZeusBrowserDownload {
   conversationId: string;
   tabId: string;
-  fileName: string;
   path?: string;
-  state: 'started' | 'completed' | 'failed';
   createdAt: string;
 }
 
@@ -254,7 +258,10 @@ export class BrowserHost implements BrowserAutomationPort {
   private readonly pendingOpenRequests = new Set<string>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly grantedWebPermissions = new Set<string>();
+  /** 本机下载记录包含已结束的项目。 */
   private readonly downloads: BrowserDownload[] = [];
+  /** 仅当前进程的活动传输可暂停、继续或取消。 */
+  private readonly downloadItems = new Map<string, DownloadItem>();
   private readonly advancedHandles = new Map<string, AdvancedBrowserHandle>();
   private readonly advancedTabClaims = new Map<string, AdvancedTabClaim>();
   private readonly sessionNames = new Map<string, string>();
@@ -458,6 +465,7 @@ export class BrowserHost implements BrowserAutomationPort {
       if (active) this.activeTabByConversation.set(target, active);
       this.activeTabByConversation.delete(source);
       for (const download of this.downloads) if (download.conversationId === source) download.conversationId = target;
+      this.schedulePersist();
       this.emitSnapshot(source);
       this.emitSnapshot(target);
       return this.snapshotFor(target);
@@ -816,7 +824,9 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'clipboard') return this.invokeClipboardTool(input);
     if (input.tool === 'downloads') {
-      return toolJson(this.downloads.filter((download) => download.conversationId === input.conversationId).slice(-50));
+      return toolJson(this.downloads.filter((download) => download.conversationId === input.conversationId).slice(-50).map(({ conversationId, tabId, fileName, path, state, canResume, createdAt }) => ({
+        conversationId, tabId, fileName, ...(path ? { path } : {}), state: legacyDownloadState(state, canResume), createdAt,
+      })));
     }
     if (input.tool === 'select_tab') {
       const selected = this.requireConversationTab(input.conversationId, requireNonEmptyString(args.tabId, 'tabId'));
@@ -942,6 +952,10 @@ export class BrowserHost implements BrowserAutomationPort {
       for (const audit of parsed.managementAudit ?? []) {
         if (audit && typeof audit.id === 'string') this.managementAudit.push(audit);
       }
+      for (const download of Array.isArray(parsed.downloads) ? parsed.downloads : []) {
+        if (!download || typeof download.id !== 'string' || typeof download.conversationId !== 'string' || typeof download.fileName !== 'string') continue;
+        this.downloads.push({ ...download, state: ['downloading', 'paused'].includes(download.state) ? 'interrupted' : download.state, canResume: false });
+      }
     } catch {
       // 首次启动或损坏的本机浏览器元数据都回退到空状态；Chromium profile 不在此文件中。
     }
@@ -981,42 +995,82 @@ export class BrowserHost implements BrowserAutomationPort {
     this.browserSession.on('will-download', (_event, item, webContents) => {
       const tab = this.tabFromWebContents(webContents);
       if (!tab) return;
+      if (this.options.readOnlyValidation) {
+        item.cancel();
+        return;
+      }
+      /** Chromium 建议的名称只用于当前下载目录下的文件名。 */
       const fileName = basename(item.getFilename());
       const download: BrowserDownload = {
+        id: randomUUID(),
         conversationId: tab.snapshot.conversationId,
         tabId: tab.snapshot.id,
-        fileName,
-        state: 'started',
+        fileName: !fileName || fileName === '.' || fileName === '..' ? 'download' : fileName,
+        state: 'downloading',
+        receivedBytes: 0,
+        totalBytes: item.getTotalBytes() || null,
+        canResume: false,
         createdAt: this.now(),
       };
       this.downloads.push(download);
-      if (!this.settings.askWhereToSave) {
-        const target = join(this.settings.downloadDirectory, fileName);
+      this.downloadItems.set(download.id, item);
+      if (this.settings.askWhereToSave) {
+        item.setSaveDialogOptions({
+          title: this.text('保存下载文件', 'Save browser download'),
+          defaultPath: join(this.settings.downloadDirectory, download.fileName),
+        });
+      } else {
+        const target = this.availableDownloadPath(download.fileName);
         item.setSavePath(target);
         download.path = target;
-      } else {
-        item.pause();
-        void dialog
-          .showSaveDialog(this.preferredWindow(tab.snapshot.conversationId), {
-            title: this.text('保存下载文件', 'Save browser download'),
-            defaultPath: join(this.settings.downloadDirectory, fileName),
-          })
-          .then((result) => {
-            if (result.canceled || !result.filePath) {
-              item.cancel();
-              return;
-            }
-            download.path = result.filePath;
-            item.setSavePath(result.filePath);
-            item.resume();
-          });
       }
       this.emitDownload(download);
+      this.schedulePersist();
+      /** 进度快照最多每 250 毫秒推送一次，状态变化立即推送。 */
+      let lastProgressAt = Date.now();
+      item.on('updated', (_downloadEvent, state) => {
+        const previousState = download.state;
+        download.state = state === 'interrupted' ? 'interrupted' : item.isPaused() ? 'paused' : 'downloading';
+        this.readDownloadProgress(download, item);
+        const now = Date.now();
+        if (download.state === previousState && now - lastProgressAt < 250) return;
+        lastProgressAt = now;
+        this.emitSnapshot(download.conversationId);
+      });
       item.once('done', (_downloadEvent, state) => {
-        download.state = state === 'completed' ? 'completed' : 'failed';
+        this.readDownloadProgress(download, item);
+        this.downloadItems.delete(download.id);
+        download.state = state === 'completed' || state === 'cancelled' ? state : 'failed';
+        download.canResume = false;
         this.emitDownload(download);
+        this.schedulePersist();
       });
     });
+  }
+
+  /** 为自动保存避开已有文件和仍在传输的同名下载。 */
+  private availableDownloadPath(fileName: string): string {
+    const extension = extname(fileName);
+    const stem = basename(fileName, extension);
+    const directory = this.settings.downloadDirectory;
+    const activePaths = new Set(this.downloads.filter((download) => this.downloadItems.has(download.id)).map((download) => download.path));
+    let candidate = join(directory, fileName);
+    for (let copy = 1; existsSync(candidate) || activePaths.has(candidate); copy += 1) {
+      candidate = join(directory, `${stem} (${copy})${extension}`);
+    }
+    return candidate;
+  }
+
+  /** 保存进度单位为字节，并读取系统保存对话框实际选定的路径。 */
+  private readDownloadProgress(download: BrowserDownload, item: DownloadItem): void {
+    download.receivedBytes = item.getReceivedBytes();
+    download.totalBytes = item.getTotalBytes() || null;
+    download.canResume = item.canResume();
+    const path = item.getSavePath();
+    if (path) {
+      download.path = path;
+      download.fileName = basename(path);
+    }
   }
 
   private requireRendererWindow(event: IpcMainInvokeEvent): BrowserWindow {
@@ -1392,6 +1446,9 @@ export class BrowserHost implements BrowserAutomationPort {
     const view = this.ensureView(tab);
     if (!command || typeof command !== 'object' || typeof command.action !== 'string') throw new TypeError('Browser command is invalid.');
     switch (command.action) {
+      case 'download':
+        await this.runDownloadCommand(conversationId, command);
+        break;
       case 'autofill':
         await this.showPasswordPicker(window, tab, view.webContents.focusedFrame ?? view.webContents.mainFrame);
         break;
@@ -1502,6 +1559,35 @@ export class BrowserHost implements BrowserAutomationPort {
         break;
       default:
         throw new TypeError('不支持的浏览器操作。');
+    }
+  }
+
+  /** 下载动作按会话及下载身份查找，渲染端不能提交文件路径。 */
+  private async runDownloadCommand(conversationId: string, command: Extract<ZeusBrowserCommand, { action: 'download' }>): Promise<void> {
+    this.assertWritableBrowserCapability();
+    const download = this.downloads.find((candidate) => candidate.id === command.downloadId && candidate.conversationId === conversationId);
+    if (!download) throw new Error(this.text('此下载记录已不存在。', 'This download is no longer available.'));
+    const item = this.downloadItems.get(download.id);
+    switch (command.operation) {
+      case 'pause':
+        if (download.state === 'downloading') item?.pause();
+        return;
+      case 'resume':
+        if (item?.canResume()) item.resume();
+        return;
+      case 'cancel':
+        item?.cancel();
+        return;
+      case 'reveal': {
+        const path = download.path;
+        if (download.state !== 'completed' || typeof path !== 'string' || !isAbsolute(path) || !(await stat(path).catch(() => null))?.isFile()) {
+          throw new Error(this.text('下载文件已移动或删除。', 'The downloaded file was moved or deleted.'));
+        }
+        shell.showItemInFolder(path);
+        return;
+      }
+      default:
+        throw new TypeError('Browser download operation is invalid.');
     }
   }
 
@@ -1744,6 +1830,9 @@ export class BrowserHost implements BrowserAutomationPort {
       conversationId,
       tabs,
       activeTabId,
+      downloads: this.downloads.filter((download) => download.conversationId === conversationId).slice(-50).reverse().map(({ id, fileName, receivedBytes, totalBytes, state, canResume }) => ({
+        id, fileName, receivedBytes, totalBytes, state, canResume,
+      })),
       pendingApprovals: [...this.pendingApprovals.values()].map(({ request }) => request).filter((request) => request.conversationId === conversationId),
       openRequested: this.pendingOpenRequests.has(conversationId),
     };
@@ -1763,10 +1852,11 @@ export class BrowserHost implements BrowserAutomationPort {
       type: 'download',
       conversationId: download.conversationId,
       tabId: download.tabId,
-      state: download.state,
+      state: legacyDownloadState(download.state, download.canResume),
       fileName: download.fileName,
       ...(download.path ? { path: download.path } : {}),
     });
+    this.emitSnapshot(download.conversationId);
   }
 
   private emitError(tab: LiveBrowserTab, error: unknown): void {
@@ -3071,7 +3161,8 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     this.pendingApprovals.clear();
     this.grantedWebPermissions.clear();
-    this.downloads.length = 0;
+    // 清除历史时仍允许用户管理正在写入文件的下载。
+    this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((download) => this.downloadItems.has(download.id)));
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         await tab.view.webContents.loadURL('about:blank');
@@ -3119,13 +3210,14 @@ export class BrowserHost implements BrowserAutomationPort {
     return operation;
   }
 
-  /** 写入长期偏好，不保存下次启动会重新打开的标签数据。 */
+  /** 写入偏好和近期记录，重启后不自动打开网页或继续传输。 */
   private async writePersistedState(): Promise<void> {
     const value: PersistedBrowserState = {
       version: 1,
       settings: this.settings,
       managementBookmarks: [...this.managementBookmarks.values()],
       managementAudit: this.managementAudit.slice(-500),
+      downloads: this.downloads.slice(-500),
     };
     const directoryPath = dirname(this.statePath);
     await mkdir(directoryPath, { recursive: true, mode: 0o700 });
@@ -3151,6 +3243,12 @@ export class BrowserHost implements BrowserAutomationPort {
 
 export function createBrowserHost(options: CreateBrowserHostOptions): BrowserHost {
   return new BrowserHost(options);
+}
+
+/** 浏览器工具与原下载事件沿用已有的三种状态。 */
+function legacyDownloadState(state: ZeusBrowserDownload['state'], canResume: boolean): 'started' | 'completed' | 'failed' {
+  if (state === 'completed') return 'completed';
+  return state === 'failed' || state === 'cancelled' || (state === 'interrupted' && !canResume) ? 'failed' : 'started';
 }
 
 /**

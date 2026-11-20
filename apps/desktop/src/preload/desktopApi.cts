@@ -1,4 +1,5 @@
 import { createRendererBootstrapReporter, shouldReportRendererWindowError } from './rendererBootstrapState.cjs';
+import type { ZeusBrowserNativePage } from '@zeus/shared';
 
 /** 桌面界面与宿主的通信契约；不向网页暴露底层通信对象。 */
 export interface DesktopTransport {
@@ -379,16 +380,14 @@ export function createDesktopApi(transport: DesktopTransport) {
     hideMenuBarUsage: () => transport.invoke('zeus:menu-bar-usage:hide'),
     /** 将内容高度交给主进程校验，菜单栏浮窗宽度保持不变。 */
     resizeMenuBarUsage: (height: number) => transport.invoke('zeus:menu-bar-usage:resize', height),
-    ...(transport.kind === 'electron-ipc'
-      ? {
-          /** 可见刻度订阅只影响本窗口的采集生命周期。 */
-          subscribeConversationAudio: (active: boolean) => transport.invoke('zeus:conversation-audio:subscribe', active),
-          /** 输入仅包含频谱能量和音量，不包含音频样本。 */
-          onConversationAudioFrame: (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => transport.subscribe('zeus:conversation-audio:frame', listener),
-          /** 采集不可用时刻度恢复静态样式。 */
-          onConversationAudioUnavailable: (listener: () => void) => transport.subscribe('zeus:conversation-audio:unavailable', listener),
-        }
-      : {}),
+    /** 可见刻度订阅只影响本窗口的采集生命周期，由 Electron 提供。 */
+    subscribeConversationAudio: transport.kind === 'electron-ipc' ? (active: boolean) => transport.invoke('zeus:conversation-audio:subscribe', active) : undefined,
+    /** 输入仅包含频谱能量和音量，不包含音频样本。 */
+    onConversationAudioFrame: transport.kind === 'electron-ipc'
+      ? (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => transport.subscribe('zeus:conversation-audio:frame', listener)
+      : undefined,
+    /** 采集不可用时刻度恢复静态样式。 */
+    onConversationAudioUnavailable: transport.kind === 'electron-ipc' ? (listener: () => void) => transport.subscribe('zeus:conversation-audio:unavailable', listener) : undefined,
     /** 在鼠标屏幕锚点旁显示独立透明费用明细窗口。 */
     showMenuBarUsageCostDetail: (input: unknown) => transport.invoke('zeus:menu-bar-usage:cost-detail-show', input),
     /** 指针离开触发器或明细窗口时延迟关闭。 */
@@ -669,6 +668,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     showBrowserMenu: (input: unknown) => transport.invoke('zeus:browser:show-menu', input),
     /** 按会话读取当前浏览器标签快照。 */
     getBrowserSnapshot: (conversationId: string) => transport.invoke('zeus:browser:get-snapshot', conversationId),
+    /** Chromium 在当前浏览器资料中打开受限管理页。 */
+    openNativeBrowserPage: transport.kind === 'chromium-native' ? (page: ZeusBrowserNativePage) => transport.invoke('zeus:browser:open-native-page', page) : undefined,
     /** 按会话身份打开内置浏览器标签。 */
     openBrowserTab: (input: unknown) => transport.invoke('zeus:browser:open-tab', input),
     /** 首发受理后把当前窗口的浏览器草稿归入真实会话。 */

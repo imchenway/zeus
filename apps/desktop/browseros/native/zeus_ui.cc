@@ -14,12 +14,14 @@
 #include "chrome/browser/ui/webui/zeus/resources/zeus_csp.h"
 #include "chrome/browser/ui/webui/zeus/resources/zeus_resources_map.h"
 #include "chrome/browser/ui/webui/zeus/zeus_desktop_session.h"
+#include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "content/public/common/url_constants.h"
+#include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
 namespace zeus {
@@ -91,6 +93,10 @@ class ZeusDesktopHandler : public content::WebUIMessageHandler {
       RejectJavascriptCallback(base::Value(callback_id), base::Value("Zeus 原生桌面请求格式或通道无效。"));
       return;
     }
+    if (args[1].GetString() == "zeus:browser:open-native-page") {
+      OpenBrowserPage(callback_id, args[2].GetList()[1].GetList());
+      return;
+    }
     // 窗口身份由宿主设置，不能用地址相同的普通浏览器标签替代。
     auto* session = ZeusDesktopSession::Get(web_ui()->GetWebContents());
     if (!session) {
@@ -112,6 +118,31 @@ class ZeusDesktopHandler : public content::WebUIMessageHandler {
     session->InvokeChannel(args[1].GetString(), args[2].Clone(),
         base::BindOnce(&ZeusDesktopHandler::OnReply, weak_factory_.GetWeakPtr(),
                        callback_id, session->GetWeakPtr()));
+  }
+
+  // 固定地址由可信 WebUI 在当前资料中新开标签，安装授权交给 Chromium。
+  void OpenBrowserPage(const std::string& callback_id,
+                       const base::ListValue& args) {
+    const char* url = nullptr;
+    if (args.size() == 1 && args[0].is_string()) {
+      const std::string& page = args[0].GetString();
+      if (page == "extensions") {
+        url = "chrome://extensions/";
+      } else if (page == "store") {
+        url = "https://chromewebstore.google.com/";
+      } else if (page == "downloads") {
+        url = "chrome://downloads/";
+      }
+    }
+    if (!url) {
+      RejectJavascriptCallback(base::Value(callback_id), base::Value("浏览器管理页无效。"));
+      return;
+    }
+    const content::OpenURLParams params(
+        GURL(url), content::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        ui::PAGE_TRANSITION_AUTO_TOPLEVEL, /*is_renderer_initiated=*/false);
+    const bool opened = web_ui()->GetWebContents()->OpenURL(params, {}) != nullptr;
+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(opened));
   }
 
   // 单向通知不创建虚假响应，也不接受请求通道作为通知执行。

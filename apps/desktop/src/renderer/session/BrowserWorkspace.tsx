@@ -1,7 +1,7 @@
 import { nativeViewportOccluded, nativeViewportOverlaysChanged, nativeViewportPopoverSelector } from '../ui/nativeViewport.js';
 import { platformShortcutLabel } from '../platform.js';
 import { createPortal } from 'react-dom';
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -12,17 +12,21 @@ import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/di
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CrosshairSimpleIcon as CrosshairSimple } from '@phosphor-icons/react/dist/csr/CrosshairSimple';
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
+import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { PuzzlePieceIcon as PuzzlePiece } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TranslateIcon as Translate } from '@phosphor-icons/react/dist/csr/Translate';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { KeyIcon as Key } from '@phosphor-icons/react/dist/csr/Key';
-import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserNativePage, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { modelSetupRequestedEvent, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Form } from '../ui/Form.js';
 import { Button } from '../ui/Button.js';
+import { MenuSurface } from '../ui/MenuSurface.js';
+import { BrowserDownloadsPanel } from './BrowserDownloadsPanel.js';
 
 /** 浏览器正文保持原生视图，标签栏可挂到会话顶栏。 */
 interface BrowserWorkspaceProps {
@@ -136,6 +140,17 @@ const copy = {
 /** 同步会话标签与原生网页，最后一个标签关闭时退出浏览器工作面。 */
 export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const labels = copy[props.language];
+  /** BrowserOS 直接打开 Chromium 原生管理页。 */
+  const nativeBrowser = Boolean(window.zeus?.openNativeBrowserPage);
+  const chinese = props.language === 'zh-CN';
+  const downloadsLabel = chinese ? '下载' : 'Downloads';
+  const extensionsLabel = chinese ? '扩展程序' : 'Extensions';
+  /** 下载开关和列表配对，关闭时归还键盘焦点。 */
+  const downloadsPanelId = useId();
+  const downloadsTrigger = useRef<HTMLButtonElement>(null);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  /** 原生扩展菜单跟随工具栏按钮定位。 */
+  const [extensionsAnchor, setExtensionsAnchor] = useState<{ left: number; top: number; button: HTMLButtonElement } | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   /** 标签横向溢出时始终将当前标签带回可见区域。 */
   const activeTabElementRef = useRef<HTMLDivElement | null>(null);
@@ -162,6 +177,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   /** 原生网页为浮层让位时，保留当前标签的无交互画面。 */
   const [viewportPreview, setViewportPreview] = useState<{ tabId: string; imageUrl: string } | null>(null);
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
+  const downloads = snapshot?.downloads ?? [];
+  const hasActiveDownloads = downloads.some((download) => download.state === 'downloading');
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
 
   useEffect(() => {
@@ -174,6 +191,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
 
   useEffect(() => {
     let active = true;
+    /** 实时下载和标签状态优先于订阅开始前的补读。 */
+    let snapshotReceived = false;
     const bridge = window.zeus;
     if (!bridge?.getBrowserSnapshot || !bridge.openBrowserTab || !bridge.onBrowserEvent) {
       setError(labels.unavailable);
@@ -182,6 +201,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const handleEvent = (event: ZeusBrowserEvent): void => {
       if (!active) return;
       if (event.type === 'snapshot' && event.snapshot.conversationId === props.conversationId) {
+        snapshotReceived = true;
         if (event.snapshot.tabs.length === 0) {
           // 工具关闭最后一个标签与手动关闭一致；迟到的初始化结果不得重新打开工作面。
           active = false;
@@ -197,9 +217,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     void bridge
       .getBrowserSnapshot(props.conversationId)
       .then(async (current) => {
-        if (!active) return;
+        if (!active || snapshotReceived) return;
         const resolved = current.tabs.length ? current : await bridge.openBrowserTab!({ conversationId: props.conversationId });
-        if (active) setSnapshot(resolved);
+        if (active && !snapshotReceived) setSnapshot(resolved);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError : labels.loadFailed);
@@ -400,6 +420,25 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       );
     } catch (commandError) {
       setError(commandError);
+    }
+  }
+
+  /** 收起下载面板后，把焦点交回原工具栏按钮。 */
+  function closeDownloads(): void {
+    setDownloadsOpen(false);
+    downloadsTrigger.current?.focus();
+  }
+
+  /** 只在 Chromium 宿主中调用原生路径，失败时显示现有错误提示。 */
+  async function openNativePage(page: ZeusBrowserNativePage): Promise<void> {
+    setExtensionsAnchor(null);
+    setError(null);
+    try {
+      if (!(await window.zeus?.openNativeBrowserPage?.(page))) {
+        throw new Error(chinese ? '无法打开浏览器管理页。' : 'Could not open the browser page.');
+      }
+    } catch (pageError) {
+      setError(pageError);
     }
   }
 
@@ -684,12 +723,43 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                 <Plus weight="bold" />
               </span>
             </Button>
+            {nativeBrowser ? (
+              <Button unstyled type="button" className="browser-more-trigger" aria-label={extensionsLabel} aria-haspopup="menu" aria-expanded={Boolean(extensionsAnchor)}
+                data-icon-tooltip={extensionsLabel} onClick={(event) => {
+                  event.currentTarget.focus();
+                  const { left, bottom } = event.currentTarget.getBoundingClientRect();
+                  setExtensionsAnchor(extensionsAnchor ? null : { left, top: bottom + 4, button: event.currentTarget });
+                }}>
+                <PuzzlePiece aria-hidden="true" />
+              </Button>
+            ) : null}
+            <Button unstyled type="button" ref={downloadsTrigger} className="browser-more-trigger browser-downloads-trigger" aria-label={downloadsLabel}
+              aria-expanded={nativeBrowser ? undefined : downloadsOpen} aria-controls={downloadsOpen ? downloadsPanelId : undefined}
+              data-icon-tooltip={downloadsLabel} data-downloading={hasActiveDownloads || undefined}
+              onClick={() => nativeBrowser ? openNativePage('downloads') : setDownloadsOpen(!downloadsOpen)}>
+              <DownloadSimple aria-hidden="true" />
+            </Button>
             <Button unstyled type="button" className="browser-more-trigger" aria-label={labels.more} data-icon-tooltip={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => openMoreMenu(event.currentTarget)}>
               <DotsThreeVertical aria-hidden="true" weight="bold" />
             </Button>
           </span>
         </div>
       )}
+
+      {extensionsAnchor ? createPortal(
+        <MenuSurface aria-label={extensionsLabel} className="conversation-context-menu zeus-quiet-more-menu" style={{ left: extensionsAnchor.left, top: extensionsAnchor.top }} toggleAnchor={extensionsAnchor.button} onClose={() => setExtensionsAnchor(null)}>
+          <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('extensions')}>
+            <span>{chinese ? '管理扩展程序' : 'Manage extensions'}</span>
+          </Button>
+          <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('store')}>
+            <span>{chinese ? '访问 Chrome 网上应用店' : 'Visit Chrome Web Store'}</span>
+          </Button>
+        </MenuSurface>,
+        document.querySelector('.macos-ai-app.zeus-shell') ?? document.body,
+      ) : null}
+      {downloadsOpen && !nativeBrowser ? (
+        <BrowserDownloadsPanel id={downloadsPanelId} language={props.language} downloads={downloads} onClose={closeDownloads} onCommand={command} />
+      ) : null}
 
       {findOpen ? (
         <Form
