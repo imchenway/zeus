@@ -61,6 +61,8 @@ interface DigitalEmployeeOrchestratorOptions {
     executionId: string | null;
     source: string;
     sourceRef: string;
+    /** 已有任务的本次自动化指令，由项目流程入口判断是否能接纳。 */
+    automationInstruction?: string;
     context?: { permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access' };
     /** 异步流程预检结束后，在接纳事务内复核自动化控制状态。 */
     assertCanAccept?: () => void;
@@ -112,6 +114,8 @@ export interface DigitalEmployeeOrchestrator {
     taskId: string;
     employeeId: string;
     sourceRef: string;
+    /** 已有任务使用冻结指令作为本次执行输入。 */
+    automationInstruction?: string;
     bypassWorkflow?: boolean;
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     /** 每个新接纳分支在写入前调用，原回执重放不受影响。 */
@@ -192,6 +196,8 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     source: DigitalEmployeeExecutionSource;
     sourceRef: string;
     eventIdentity?: string;
+    /** 从本次运行的冻结修订取指令，新建任务已通过需求正文提供。 */
+    automationInstruction?: string;
     /** 调研工作不进入项目研发流程。 */
     bypassWorkflow?: boolean;
     /** 自动化权限只能收紧员工和任务的既有授权。 */
@@ -210,6 +216,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         executionId: null,
         source: input.source,
         sourceRef: input.sourceRef,
+        ...(input.automationInstruction ? { automationInstruction: input.automationInstruction } : {}),
         ...(input.permissionMode ? { context: { permissionMode: input.permissionMode } } : {}),
         assertCanAccept: input.assertCanAccept,
       });
@@ -225,6 +232,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         taskId: input.task.id,
         employeeId: input.employee.id,
         sourceRef: input.sourceRef,
+        automationInstruction: input.automationInstruction,
         permissionMode: input.permissionMode,
         assertCanAccept: input.assertCanAccept,
       });
@@ -237,7 +245,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       return null;
     }
     const sourceRef = input.source === 'task_pool' ? input.sourceRef : `${input.employee.id}:${input.sourceRef}`;
-    const created = await options.taskWorkManagement.createAutomatedWorkItem({ taskId: input.task.id, employeeId: input.employee.id, sourceRef, permissionMode: input.permissionMode, assertCanAccept: input.assertCanAccept });
+    const created = await options.taskWorkManagement.createAutomatedWorkItem({
+      taskId: input.task.id,
+      employeeId: input.employee.id,
+      sourceRef,
+      automationInstruction: input.automationInstruction,
+      permissionMode: input.permissionMode,
+      assertCanAccept: input.assertCanAccept,
+    });
     if (input.automation && input.eventIdentity) options.automations.recordEventReceipt({ automationId: input.automation.id, eventIdentity: input.eventIdentity, executionId: null, createdAt: now().toISOString() });
     options.taskEvents.create({
       taskId: input.task.id,
@@ -884,7 +899,16 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       if (!task || task.projectId !== input.projectId) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_TASK_UNAVAILABLE', '自动化目标任务已不可用。', false);
       const employee = options.employees.ensureProjectEmployee(input.projectId, input.employeeId);
       if (!employee.enabled) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。', false);
-      return queueExecution({ employee, task, source: 'automation', sourceRef: input.sourceRef, bypassWorkflow: input.bypassWorkflow, permissionMode: input.permissionMode, assertCanAccept: input.assertCanAccept });
+      return queueExecution({
+        employee,
+        task,
+        source: 'automation',
+        sourceRef: input.sourceRef,
+        automationInstruction: input.automationInstruction,
+        bypassWorkflow: input.bypassWorkflow,
+        permissionMode: input.permissionMode,
+        assertCanAccept: input.assertCanAccept,
+      });
     },
     kick: () => {
       if (timer) clearTimeout(timer);

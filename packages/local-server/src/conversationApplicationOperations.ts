@@ -3670,6 +3670,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const effort = typeof body.effort === 'string' ? body.effort.trim() : '';
         const workMode = body.workMode === 'plan' || body.workMode === 'default' ? body.workMode : null;
         const supplementalInfo = typeof body.supplementalInfo === 'string' ? body.supplementalInfo.trim() : '';
+        /** 只有内部工作派发可提供已校验长度的冻结自动化指令。 */
+        const digitalTeamPolicy = readDigitalTeamTaskPushPolicy(body);
+        const automationInstruction = digitalTeamPolicy && 'automationInstruction' in body && typeof body.automationInstruction === 'string' ? body.automationInstruction : '';
         // 阶段化数字员工在没有可继承任务工作区时，代码审查只能审查已确认的
         // 实施交付报告。它仍需通过 task_push 创建独立只读会话，而不能伪造
         // environmentId/workspaceId 或绕过阶段尝试与交付物冻结。
@@ -3714,7 +3717,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const stageSupplementalInfo = taskStage ? [taskStageHandoffText(taskStage), supplementalInfo].filter(Boolean).join('\n\n## 本次补充信息\n\n') : supplementalInfo;
         const taskPushLayout = buildTaskPushLayoutForTask(
           task,
-          stageSupplementalInfo,
+          automationInstruction ? `${stageSupplementalInfo}\n\n## 本次自动化指令\n\n${automationInstruction}` : stageSupplementalInfo,
           currentAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
           taskContextInput.currentConversationPaths,
           filterContextAttachments(taskContextInput.parentContexts),
@@ -3738,7 +3741,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const executionCwd = taskEnvironment?.cwd ?? project.localPath;
         const skill = taskEnvironment && projectSkill ? await resolveWorkflowSkill(projectSkill.id, executionCwd) : projectSkill;
         /** 数字团队权限只读取不可序列化的服务端冻结策略，并再次与任务授权取交集。 */
-        const digitalTeamPolicy = readDigitalTeamTaskPushPolicy(body);
         const digitalTeamWriteNode = digitalTeamPolicy?.purpose === 'work';
         const digitalTeamVerificationNode = digitalTeamPolicy?.purpose === 'verify';
         const allowDigitalTeamCodeChanges = Boolean(digitalTeamWriteNode && digitalTeamPolicy.allowCodeChanges && task.allowCodeChanges);

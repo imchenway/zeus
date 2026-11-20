@@ -76,6 +76,8 @@ export interface TaskWorkPreviewSelection {
   plannedWorkItemId?: string;
   employeeId: string;
   supplementalInfo?: string | null;
+  /** 服务端接纳已有任务时冻结的自动化指令。 */
+  automationInstruction?: string;
   supplementalAttachments?: TaskWorkSupplementalAttachmentInput[];
   /** 显式上下文容量覆盖，空值使用模型默认。 */
   contextCapacityTokens?: number | null;
@@ -246,6 +248,8 @@ export interface TaskWorkManagementController {
     taskId: string;
     employeeId: string;
     sourceRef: string;
+    /** 领取时与员工一起冻结，分工可在后续调度时启动。 */
+    automationInstruction?: string;
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     /** 统一自动化的新领取在接纳事务内复核当前控制状态。 */
     assertCanAccept?: () => void;
@@ -254,6 +258,8 @@ export interface TaskWorkManagementController {
     taskId: string;
     employeeId: string;
     sourceRef: string;
+    /** 来自自动化修订，作为独立工作的补充输入。 */
+    automationInstruction?: string;
     permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
     /** 统一自动化预检完成后，在创建工作前复核当前控制状态。 */
     assertCanAccept?: () => void;
@@ -810,10 +816,10 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       return true;
     },
     hasExistingTaskWork: (taskId) => options.items.listByTask(taskId).some((item) => !item.arrangement && item.status !== 'cancelled'),
-    claimPlannedAutomationWork: async ({ taskId, employeeId, sourceRef, permissionMode, assertCanAccept }) => {
+    claimPlannedAutomationWork: async ({ taskId, employeeId, sourceRef, automationInstruction, permissionMode, assertCanAccept }) => {
       /** 固定来源命令先读原接纳回执，重启后不能领取另一代安排或另一组分工。 */
       const identity = `automation-planned:${sourceRef}`;
-      const input = { taskId, employeeId, sourceRef, ...(permissionMode ? { permissionMode } : {}) };
+      const input = { taskId, employeeId, sourceRef, ...(permissionMode ? { permissionMode } : {}), ...(automationInstruction ? { automationInstruction } : {}) };
       const parsed = options.application.parse<typeof input>({
         value: commandEnvelope(workManagementCommandTypes.taskWorkItemAssign, 'task', taskId, identity, input, workManagementInputSha256(input)),
         commandType: workManagementCommandTypes.taskWorkItemAssign,
@@ -846,7 +852,11 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             const configured = mergeEmployeeWorkSettings(plan.settings, stage?.settings, assigned.arrangement!.settings).permissionMode ?? (task.allowCodeChanges || task.allowTests || task.allowGitCommit ? 'auto' : 'read-only');
             /** 自动化与原安排取更严格的权限，员工身份不再携带权限副本。 */
             const boundedPermission = restrictToolPermission(configured, permissionMode ?? configured);
-            options.planning.updateArrangement(assigned, { ...assigned.arrangement!, settings: { ...assigned.arrangement!.settings, permissionMode: boundedPermission } });
+            options.planning.updateArrangement(assigned, {
+              ...assigned.arrangement!,
+              ...(automationInstruction ? { automationInstruction } : {}),
+              settings: { ...assigned.arrangement!.settings, permissionMode: boundedPermission },
+            });
           }
           return { kind: 'task_plan', id: plan.id, taskId, generation: plan.generation };
         },
@@ -859,7 +869,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       return result.result;
     },
     hasAutomationSource: (sourceRef) => Boolean(options.items.getBySource('automation', sourceRef)),
-    createAutomatedWorkItem: async ({ taskId, employeeId, sourceRef, permissionMode, assertCanAccept }) => {
+    createAutomatedWorkItem: async ({ taskId, employeeId, sourceRef, automationInstruction, permissionMode, assertCanAccept }) => {
       const replay = options.items.getBySource('automation', sourceRef);
       if (replay?.currentRunId) {
         const run = options.runs.getById(replay.currentRunId);
@@ -867,7 +877,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       }
       const task = requireTaskOrThrow(options, taskId);
       const employee = requireEmployeeOrThrow(options, task.projectId, employeeId);
-      const preview = await resolvePreview(options, task, { employeeId, permissionMode, workspace: { mode: 'create' } });
+      const preview = await resolvePreview(options, task, { employeeId, permissionMode, automationInstruction, workspace: { mode: 'create' } });
       const blockers = preview.blockers;
       if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
       assertCanAccept?.();
@@ -1471,6 +1481,8 @@ async function resolvePreview(
   /** 对照分工身份解析每一层配置，独立会话不会虚构阶段。 */
   const planned = selection.plannedWorkItemId ? options.items.getById(selection.plannedWorkItemId) : null;
   if (selection.plannedWorkItemId && (!planned || planned.taskId !== task.id || planned.employeeId !== selection.employeeId)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ASSIGNMENT_CONFLICT', '分工或执行人已经改变，请重新读取。');
+  /** 已领取分工优先使用接纳时保存的指令。 */
+  const automationInstruction = planned?.arrangement?.automationInstruction ?? selection.automationInstruction;
   const plan = employeeSnapshot ? null : options.planning.get(task.id);
   const stage = planned?.arrangement?.stageId ? plan?.stages.find((candidate) => candidate.id === planned.arrangement!.stageId) : null;
   const effective = mergeEmployeeWorkSettings(plan?.settings, stage?.settings, planned?.arrangement?.settings, { ...selection, workMode: selection.workMode ?? undefined, permissionMode: selection.permissionMode ?? undefined });
@@ -1560,6 +1572,7 @@ async function resolvePreview(
       projectMemoryPolicy: null,
       workMode,
       supplementalInfo: selection.supplementalInfo,
+      ...(automationInstruction ? { automationInstruction } : {}),
       ...(selection.supplementalAttachments ? { supplementalAttachments: selection.supplementalAttachments } : {}),
     };
     authority = resolveRunAuthority(selection.permissionMode ?? employee.permissionMode, task);
@@ -1591,7 +1604,7 @@ async function resolvePreview(
       context,
       skills,
     });
-    promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo, supplementalAttachments);
+    promptPreview = buildTaskWorkPromptPreview(task, automationInstruction ? `${supplementalInfo}\n\n## 本次自动化指令\n\n${automationInstruction}` : supplementalInfo, supplementalAttachments);
   }
 
   /** 来源与最终值一起冻结，不由前端猜测配置继承。 */
@@ -1918,6 +1931,8 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     ...(typeof run.entrypointSnapshot.autonomyObjective === 'string' && run.entrypointSnapshot.autonomyObjective ? { goalObjective: run.entrypointSnapshot.autonomyObjective } : {}),
     workMode: run.entrypointSnapshot.workMode === 'plan' ? 'plan' : 'default',
     supplementalInfo,
+    /** 独立字段保留自动化规则的长度限制，并计入会话接纳摘要。 */
+    ...(typeof run.entrypointSnapshot.automationInstruction === 'string' ? { automationInstruction: run.entrypointSnapshot.automationInstruction } : {}),
     ...(displayText?.trim() ? { displayText } : {}),
     ...(supplementalAttachments.length > 0 ? { supplementalAttachments } : {}),
     workspace,

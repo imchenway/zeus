@@ -12,7 +12,7 @@ import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses }
 import { resolveConversationGitRepository, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
-import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
+import type { AutomationActionConfig, AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, InputSuggestionJobRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
 import { WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -3893,6 +3893,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     inputDeliverableIds?: string[];
     reason?: string;
     context?: Record<string, unknown>;
+    /** 已有任务的本次指令仅适用于能接纳新执行输入的入口。 */
+    automationInstruction?: string;
     /** 自动化预检完成后，仅在实际写入新接纳时复核控制状态。 */
     assertCanAccept?: () => void;
   }): Promise<{ workflowRunId: string } | null> => {
@@ -3933,6 +3935,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       resourceId: input.taskId,
       mutateBusinessState: () => {
         input.assertCanAccept?.();
+        /** 在途流程已冻结自己的执行输入，不能用它的回执确认一条新指令。 */
+        if (input.automationInstruction) throw new Error('ZEUS_AUTOMATION_WORKFLOW_IN_PROGRESS: 目标任务已有在途团队流程，无法接纳本次自动化指令。');
         return digitalTeamWorkflowCoordinator!.acceptEmployeeAssignment(input.projectId, assignment, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }, prepared);
       },
     });
@@ -4083,6 +4087,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerDigitalTeamWorkflowRoutes({ server, application: workManagementCommands, coordinator: digitalTeamWorkflowCoordinator, save: () => db.save() });
 
   if (!readOnlyValidation) {
+    /** 目标冻结和接纳共用原规则的选择策略，兼容未显式保存策略的修订。 */
+    const resolveAutomationTaskSelection = (action: AutomationActionConfig, isEventProject: boolean): NonNullable<AutomationActionConfig['taskSelection']> =>
+      action.kind === 'employee_work' ? 'create' : (action.taskSelection ?? (action.taskId ? 'specified' : action.useEventTask !== false && isEventProject ? 'event' : 'create'));
     automationScheduler = createAutomationScheduler({
       synchronizeNotifications: () => automationNotifications.synchronize(),
       migrateLegacy: () => migrateEmployeeAutomationsToUnified(db),
@@ -4102,11 +4109,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         /** 员工绑定与任务在业务接纳前解析并交由调度器冻结。 */
         const employee = digitalEmployees.ensureProjectEmployee(project.id, snapshot.action.projectEmployeeIds?.[project.id] ?? snapshot.action.employeeId!);
         if (!employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。');
-        /** 新配置明确策略；既有新规则仍保留原指定与事件优先语义。 */
-        const selection =
-          snapshot.action.kind === 'employee_work'
-            ? 'create'
-            : (snapshot.action.taskSelection ?? (snapshot.action.taskId ? 'specified' : snapshot.action.useEventTask !== false && run.sourceEvent?.projectId === project.id ? 'event' : 'create'));
+        /** 必须依据冻结修订选择目标。 */
+        const selection = resolveAutomationTaskSelection(snapshot.action, run.sourceEvent?.projectId === project.id);
         /** 任务池为空明确跳过，不创建替代任务。 */
         const pooledTask = selection === 'pool' ? digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, undefined, snapshot.action.taskFilter) : null;
         if (selection === 'pool' && !pooledTask) return null;
@@ -4136,12 +4140,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         /** 历史绑定的有效授权仍需实时核对，但不能换成另一员工。 */
         const employee = digitalEmployees.getById(target.employeeId!);
         if (!employee || employee.projectId !== project.id || !employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '已冻结的自动化员工不可用。');
+        /** 新建任务的需求正文已经承载自动化指令，已有任务使用独立的执行输入。 */
+        const selection = resolveAutomationTaskSelection(snapshot.action, run.sourceEvent?.projectId === project.id);
         /** 创建任务采用原运行与项目的稳定身份，中断恢复只读取原记录。 */
         let task = tasks.getById(taskId);
         if (!task) {
           /** 只有明确新建策略或既有新建语义才有创建权限。 */
-          const selection = snapshot.action.taskSelection ?? (snapshot.action.taskId ? 'specified' : snapshot.action.useEventTask !== false && run.sourceEvent?.projectId === project.id ? 'event' : 'create');
-          if (snapshot.action.kind === 'project_task' && selection !== 'create') throw nativeApiError('ZEUS_AUTOMATION_TASK_REQUIRED', '已冻结的待领取任务已不可用，不能创建替代任务。');
+          if (selection !== 'create') throw nativeApiError('ZEUS_AUTOMATION_TASK_REQUIRED', '已冻结的待领取任务已不可用，不能创建替代任务。');
           task = workManagementCoreOperations.createUserTask(
             {
               projectId: project.id,
@@ -4179,6 +4184,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           taskId,
           employeeId: employee.id,
           sourceRef: target.sourceRef,
+          ...(selection !== 'create' ? { automationInstruction: snapshot.prompt } : {}),
           bypassWorkflow: snapshot.action.kind === 'employee_work',
           permissionMode: snapshot.permissionMode,
           assertCanAccept,
