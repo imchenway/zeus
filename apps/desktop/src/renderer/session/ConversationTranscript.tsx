@@ -2441,7 +2441,13 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   if (row.item.type === 'plan') {
     return (
       <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
-        <PlanSummary item={row.item} language={options.props.language} motionActive={row.item.key === options.motionFocus?.itemKey} panelOpen={isSamePlanItem(options.props.openPlanItem, row.item)} onSelectPlan={options.props.onSelectPlan} />
+        <PlanSummary
+          item={row.item}
+          language={options.props.language}
+          motionActive={row.item.key === options.motionFocus?.itemKey}
+          panelOpen={isSamePlanItem(options.props.openPlanItem, row.item)}
+          onSelectPlan={options.props.onSelectPlan}
+        />
       </TranscriptV2ContentBoundary>
     );
   }

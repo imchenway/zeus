@@ -117,13 +117,7 @@ export function PlanImplementationRequestSurface(props: {
         {zh ? '跳过' : 'Skip'}
       </Button>
       {feedbackOpen ? (
-        <Button
-          unstyled
-          type="submit"
-          className="session-plan-refinement-submit"
-          aria-label={submittingFeedback ? (zh ? '正在提交' : 'Submitting') : undefined}
-          disabled={(!feedback.trim() && attachments.length === 0) || responding}
-        >
+        <Button unstyled type="submit" className="session-plan-refinement-submit" aria-label={submittingFeedback ? (zh ? '正在提交' : 'Submitting') : undefined} disabled={(!feedback.trim() && attachments.length === 0) || responding}>
           <span>{zh ? '提交' : 'Submit'}</span>
         </Button>
       ) : null}
