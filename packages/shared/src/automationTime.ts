@@ -29,6 +29,17 @@ export function parseAutomationOnceAt(at: unknown): Date {
   return new Date(at);
 }
 
+/** 每周规则至少指定一天，使用日历编号 0（周日）至 6（周六）。 */
+export function hasValidAutomationWeekdays(weekdays: unknown): weekdays is number[] {
+  return Array.isArray(weekdays) && weekdays.length > 0 && weekdays.every((weekday) => Number.isInteger(weekday) && weekday >= 0 && weekday <= 6);
+}
+
+/** 保存和恢复每周规则必须使用用户明确选择的执行日。 */
+export function parseAutomationWeekdays(weekdays: unknown): number[] {
+  if (!hasValidAutomationWeekdays(weekdays)) throw new Error('ZEUS_AUTOMATION_CONFIG_WEEKDAYS_INVALID: 请至少选择一个有效的每周执行日。');
+  return weekdays;
+}
+
 /** 将已保存时刻转为规则时区的分钟输入值；无效旧配置留空供用户修正。 */
 export function formatAutomationOnceInput(at: unknown, timeZone: string): string {
   try {

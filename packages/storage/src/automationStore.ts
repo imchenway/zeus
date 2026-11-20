@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto';
-import { localParts, parseAutomationOnceAt, temporaryWorkspaceId, zonedLocalToUtc, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
+import {
+  localParts,
+  parseAutomationOnceAt,
+  parseAutomationWeekdays,
+  temporaryWorkspaceId,
+  zonedLocalToUtc,
+  type AutomationActionConfig,
+  type AutomationDispatchTarget,
+  type AutomationExecutionReference,
+  type AutomationSourceEvent,
+} from '@zeus/shared';
 import { randomId } from './randomId.js';
 import { migrateAutomationDispatchNotifications, migrateAutomationNotifications } from './automationNotificationStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -817,6 +827,7 @@ export class AutomationTaskRepository {
       const task = this.getById(id);
       if (task?.migrationIssue) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 请先核对旧规则目标选择并保存。');
       if (task?.triggerKind === 'once') parseAutomationOnceAt(task.triggerConfig.at);
+      if (task?.triggerKind === 'weekly') parseAutomationWeekdays(task.triggerConfig.weekdays);
     }
     const timestamp = nowIso();
     this.db.execute(`UPDATE automation_tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, id]);

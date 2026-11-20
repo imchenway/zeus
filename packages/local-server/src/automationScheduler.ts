@@ -11,7 +11,7 @@ import type {
   ConversationSubmissionRepository,
   ZeusProjectRecord,
 } from '@zeus/storage';
-import { automationEventStatusId, localParts, parseAutomationOnceAt, zonedLocalToUtc, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
+import { automationEventStatusId, localParts, parseAutomationOnceAt, parseAutomationWeekdays, zonedLocalToUtc, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
 
 export interface AutomationDispatchResult {
   conversationId: string;
@@ -88,8 +88,18 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
       recovered = true;
     }
     const now = options.now();
+    /** 在接纳和派发前检查活动规则，包括没有缓存时间的旧每周排程。 */
+    const activeTasks = options.tasks.list().filter((task) => task.status === 'active');
+    for (const task of activeTasks) {
+      if (task.triggerKind !== 'weekly') continue;
+      try {
+        parseAutomationWeekdays(task.triggerConfig.weekdays);
+      } catch (error) {
+        pauseInvalidSchedule(task, error);
+      }
+    }
     acceptDue(now);
-    acceptEvents();
+    acceptEvents(activeTasks);
     options.runs.cancelDeletedQueuedRuns();
     reconcileRunning();
     /** 未完成逐目标派发的原运行优先恢复，不能让排队运行越过它。 */
@@ -102,8 +112,9 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
   }
 
   /** 按原事件的前后状态与来源接纳，不从处理时的任务状态重新推断。 */
-  function acceptEvents(): void {
-    for (const task of options.tasks.list().filter((entry) => entry.status === 'active' && entry.triggerKind === 'event')) {
+  function acceptEvents(activeTasks: AutomationTaskRecord[]): void {
+    for (const task of activeTasks) {
+      if (task.triggerKind !== 'event') continue;
       /** 条件来源固定到实际作者修订，状态、游标等后续更新时间不能替代。 */
       const revision = options.tasks.getRevision(task.currentRevisionId);
       if (!revision) continue;
@@ -532,7 +543,8 @@ export function computeNextRun(task: AutomationTaskRecord, from: Date): string |
   const parts = localParts(from, task.timezone);
   const [hour, minute] = parseLocalTime(task.triggerConfig.localTime ?? '09:00');
   if (task.triggerKind === 'daily' || task.triggerKind === 'weekly') {
-    const allowed = task.triggerKind === 'weekly' ? new Set(task.triggerConfig.weekdays ?? [1]) : null;
+    /** 周日对应 0，未配置执行日的规则无法生成计划。 */
+    const allowed = task.triggerKind === 'weekly' ? new Set(parseAutomationWeekdays(task.triggerConfig.weekdays)) : null;
     for (let dayOffset = 0; dayOffset <= 8; dayOffset += 1) {
       const localDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset, hour, minute));
       if (allowed && !allowed.has(localDate.getUTCDay())) continue;
