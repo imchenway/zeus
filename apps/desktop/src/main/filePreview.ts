@@ -110,17 +110,27 @@ interface PreviewGrant {
   image?: Buffer;
 }
 
-/** 验证并固定普通文件路径，阻止越界链接和 Git 内部文件泄漏。 */
-async function authorizedPath(source: FilePreviewSource): Promise<string> {
-  if (!source.root || !source.path) throw new Error('文件授权路径缺失。');
+/** 验证真实路径；监听可以使用已授权父目录等待缺失文件重新出现。 */
+async function authorizedPath(source: FilePreviewSource, watchMissingFile = false): Promise<string> {
+  /** 业务授权提供的文件路径，监听和读取使用同一身份。 */
+  const sourcePath = source.path;
+  if (!source.root || !sourcePath) throw new Error('文件授权路径缺失。');
   /** 授权根的真实路径。 */
   const root = await realpath(source.root);
   /** 本次读取的准确文件路径。 */
-  const path = await realpath(source.path);
+  const path = await realpath(sourcePath).catch(async (error: NodeJS.ErrnoException) => {
+    if (!watchMissingFile || error.code !== 'ENOENT') throw error;
+    return join(await realpath(dirname(sourcePath)), basename(sourcePath));
+  });
   /** 当前子进程或授权根相对位置。 */
   const child = relative(root, path);
   if (!child || isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`) || resolve(root, child) !== path || child.split(sep).includes('.git')) throw new Error('文件超出授权目录。');
-  if (!(await stat(path)).isFile()) throw new Error('目标不是普通文件。');
+  /** 监听注册前文件可能被删除；实际读取仍要求文件存在。 */
+  const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
+    if (!watchMissingFile || error.code !== 'ENOENT') throw error;
+    return null;
+  });
+  if (info && !info.isFile()) throw new Error('目标不是普通文件。');
   return path;
 }
 
@@ -244,7 +254,7 @@ export function registerFilePreview(services: {
             (await services.resolve(input, window)).sides
               .slice(0, 2)
               .filter((source) => !source.blob && !source.sha256 && !source.missing && !source.reason && !source.submodule)
-              .map(authorizedPath),
+              .map((source) => authorizedPath(source, true)),
           );
     const id = randomUUID();
     const watchers: FSWatcher[] = [];

@@ -164,6 +164,7 @@ export function createZeusConversationPluginRuntime(options: {
       : {
           event: 'SessionStart',
           runs: [],
+          foregroundTimedOut: false,
           continue: true,
           systemMessages: [],
           additionalContext: [],
@@ -325,7 +326,7 @@ export function createZeusConversationPluginRuntime(options: {
 
 /** 发送前同步 Hook 超时属于未知外部结果，必须停止本次派发并交给用户明确重试。 */
 function rejectTimedOutDispatchHooks(result: ZeusPluginHookEventResult): void {
-  if (!result.runs.some((run) => run.state === 'timed_out')) return;
+  if (!result.foregroundTimedOut) return;
   throw runtimeError('ZEUS_PLUGIN_HOOK_DISPATCH_TIMEOUT', 'Plugin Hook 等待超时，本次消息尚未发送。请检查 Plugin 后重试。');
 }
 
