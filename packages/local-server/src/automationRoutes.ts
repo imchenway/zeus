@@ -1,4 +1,5 @@
 import type { AutomationRunRepository, AutomationTaskRepository, CreateAutomationTaskInput, UpdateAutomationTaskInput, ZeusDatabasePort } from '@zeus/storage';
+import { parseAutomationWeekdays } from '@zeus/shared';
 import type { AutomationNotificationService } from './automationNotificationService.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AutomationMutationApplication, type AutomationMutationResult } from './automationMutationApplication.js';
@@ -45,6 +46,7 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
 
   server.post('/api/automations', async (request: FastifyRequest<{ Body: CreateAutomationTaskInput }>, reply) => {
     return mutate(request, reply, () => {
+      if (request.body.triggerKind === 'weekly') parseAutomationWeekdays(request.body.triggerConfig?.weekdays);
       const created = tasks.create(request.body);
       tasks.setNextRun(created.id, computeNextRun(created, new Date(options.now())));
       // 返回已写入下一次时间的记录，使界面与持久化排程一致。
@@ -54,7 +56,14 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
 
   server.patch('/api/automations/:automationId', async (request: FastifyRequest<{ Params: { automationId: string }; Body: UpdateAutomationTaskInput }>, reply) => {
     return mutate(request, reply, () => {
-      const updated = tasks.update(request.params.automationId, request.body);
+      const { automationId } = request.params;
+      const { expectedRevision, triggerKind, triggerConfig } = request.body;
+      /** 部分更新沿用已保存的触发方式和配置，旧修订由仓库拒绝。 */
+      const current = tasks.getById(automationId);
+      if (current && current.revision === expectedRevision && (triggerKind === undefined ? current.triggerKind : triggerKind) === 'weekly') {
+        parseAutomationWeekdays((triggerConfig === undefined ? current.triggerConfig : triggerConfig)?.weekdays);
+      }
+      const updated = tasks.update(automationId, request.body);
       tasks.setNextRun(updated.id, computeNextRun(updated, new Date(options.now())));
       // 编辑后的回执携带重算结果，不能返回旧的下一次时间。
       return { statusCode: 200, body: { ...tasks.getById(updated.id)!, projectIds: tasks.listTargets(updated.id).map((target) => target.projectId) } };
