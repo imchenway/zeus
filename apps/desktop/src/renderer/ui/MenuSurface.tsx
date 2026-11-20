@@ -11,7 +11,13 @@ export interface MenuSubmenuAnchor {
 }
 
 /** 右键菜单与操作菜单共用定位、关闭、键盘和退出反馈。 */
-export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, toggleAnchor, ...props }: HTMLAttributes<HTMLDivElement> & { onClose: () => void; ref?: RefObject<HTMLDivElement | null>; submenuAnchor?: MenuSubmenuAnchor; toggleAnchor?: HTMLElement | null }) {
+export function MenuSurface({
+  onClose,
+  ref: forwardedRef,
+  submenuAnchor,
+  toggleAnchor,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { onClose: () => void; ref?: RefObject<HTMLDivElement | null>; submenuAnchor?: MenuSubmenuAnchor; toggleAnchor?: HTMLElement | null }) {
   /** 定位、焦点与动画共用真实表面。 */
   const localRef = useRef<HTMLDivElement>(null);
   const ref = forwardedRef ?? localRef;

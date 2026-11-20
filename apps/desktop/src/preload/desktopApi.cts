@@ -383,9 +383,7 @@ export function createDesktopApi(transport: DesktopTransport) {
     /** 可见刻度订阅只影响本窗口的采集生命周期，由 Electron 提供。 */
     subscribeConversationAudio: transport.kind === 'electron-ipc' ? (active: boolean) => transport.invoke('zeus:conversation-audio:subscribe', active) : undefined,
     /** 输入仅包含频谱能量和音量，不包含音频样本。 */
-    onConversationAudioFrame: transport.kind === 'electron-ipc'
-      ? (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => transport.subscribe('zeus:conversation-audio:frame', listener)
-      : undefined,
+    onConversationAudioFrame: transport.kind === 'electron-ipc' ? (listener: (frame: { hzPerBin: number; rms: number; powers: string }) => void) => transport.subscribe('zeus:conversation-audio:frame', listener) : undefined,
     /** 采集不可用时刻度恢复静态样式。 */
     onConversationAudioUnavailable: transport.kind === 'electron-ipc' ? (listener: () => void) => transport.subscribe('zeus:conversation-audio:unavailable', listener) : undefined,
     /** 在鼠标屏幕锚点旁显示独立透明费用明细窗口。 */

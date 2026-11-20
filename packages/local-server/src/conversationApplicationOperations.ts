@@ -1125,7 +1125,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       return {
         success: false,
         contentItems: [
-          { type: 'inputText', text: JSON.stringify({ code: 'ZEUS_AUTOMATION_DELEGATION_REQUIRED', model: preset.modelRef, message: '该能力已指定操作模型。请用 zeus_automation.delegate 委派完整任务，接纳后结束当前回复；结果会自动交回。' }) },
+          {
+            type: 'inputText',
+            text: JSON.stringify({ code: 'ZEUS_AUTOMATION_DELEGATION_REQUIRED', model: preset.modelRef, message: '该能力已指定操作模型。请用 zeus_automation.delegate 委派完整任务，接纳后结束当前回复；结果会自动交回。' }),
+          },
         ],
       };
     if (activeAutomationAgents(ownerId).some((agent) => agent.id !== input.conversationId)) throw new Error('该会话的操作控制权由其他智能体持有，请补充或停止现有任务。');

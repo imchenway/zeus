@@ -824,9 +824,19 @@ export class BrowserHost implements BrowserAutomationPort {
     }
     if (input.tool === 'clipboard') return this.invokeClipboardTool(input);
     if (input.tool === 'downloads') {
-      return toolJson(this.downloads.filter((download) => download.conversationId === input.conversationId).slice(-50).map(({ conversationId, tabId, fileName, path, state, canResume, createdAt }) => ({
-        conversationId, tabId, fileName, ...(path ? { path } : {}), state: legacyDownloadState(state, canResume), createdAt,
-      })));
+      return toolJson(
+        this.downloads
+          .filter((download) => download.conversationId === input.conversationId)
+          .slice(-50)
+          .map(({ conversationId, tabId, fileName, path, state, canResume, createdAt }) => ({
+            conversationId,
+            tabId,
+            fileName,
+            ...(path ? { path } : {}),
+            state: legacyDownloadState(state, canResume),
+            createdAt,
+          })),
+      );
     }
     if (input.tool === 'select_tab') {
       const selected = this.requireConversationTab(input.conversationId, requireNonEmptyString(args.tabId, 'tabId'));
@@ -1830,9 +1840,18 @@ export class BrowserHost implements BrowserAutomationPort {
       conversationId,
       tabs,
       activeTabId,
-      downloads: this.downloads.filter((download) => download.conversationId === conversationId).slice(-50).reverse().map(({ id, fileName, receivedBytes, totalBytes, state, canResume }) => ({
-        id, fileName, receivedBytes, totalBytes, state, canResume,
-      })),
+      downloads: this.downloads
+        .filter((download) => download.conversationId === conversationId)
+        .slice(-50)
+        .reverse()
+        .map(({ id, fileName, receivedBytes, totalBytes, state, canResume }) => ({
+          id,
+          fileName,
+          receivedBytes,
+          totalBytes,
+          state,
+          canResume,
+        })),
       pendingApprovals: [...this.pendingApprovals.values()].map(({ request }) => request).filter((request) => request.conversationId === conversationId),
       openRequested: this.pendingOpenRequests.has(conversationId),
     };

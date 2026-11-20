@@ -219,9 +219,7 @@ export class BrowserPasswordStore {
         updated: unambiguous.length - added - unchanged,
         unchanged: skipped + unchanged,
         invalidRows,
-        conflicts: candidates
-          .filter(hasPasswordConflict)
-          .map((group) => ({ id: group.id, origin: group.origin, username: group.username, rows: group.variants.map((variant) => variant.row), hasExisting: Boolean(group.existing) })),
+        conflicts: candidates.filter(hasPasswordConflict).map((group) => ({ id: group.id, origin: group.origin, username: group.username, rows: group.variants.map((variant) => variant.row), hasExisting: Boolean(group.existing) })),
       };
     });
   }

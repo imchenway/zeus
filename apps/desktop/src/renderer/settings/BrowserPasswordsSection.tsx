@@ -260,13 +260,7 @@ export function BrowserPasswordsSection({ language }: { language: 'zh-CN' | 'en-
                     <Trash size={16} aria-hidden="true" />
                   </Button>
                   {expanded ? (
-                    <div className="browser-password-revealed-value">
-                      {revealedPassword?.id === account.id ? (
-                        <code>{revealedPassword.value}</code>
-                      ) : (
-                        <span role="status">{zh ? '正在读取密码…' : 'Loading password…'}</span>
-                      )}
-                    </div>
+                    <div className="browser-password-revealed-value">{revealedPassword?.id === account.id ? <code>{revealedPassword.value}</code> : <span role="status">{zh ? '正在读取密码…' : 'Loading password…'}</span>}</div>
                   ) : null}
                 </li>
               );

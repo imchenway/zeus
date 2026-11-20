@@ -724,19 +724,35 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               </span>
             </Button>
             {nativeBrowser ? (
-              <Button unstyled type="button" className="browser-more-trigger" aria-label={extensionsLabel} aria-haspopup="menu" aria-expanded={Boolean(extensionsAnchor)}
-                data-icon-tooltip={extensionsLabel} onClick={(event) => {
+              <Button
+                unstyled
+                type="button"
+                className="browser-more-trigger"
+                aria-label={extensionsLabel}
+                aria-haspopup="menu"
+                aria-expanded={Boolean(extensionsAnchor)}
+                data-icon-tooltip={extensionsLabel}
+                onClick={(event) => {
                   event.currentTarget.focus();
                   const { left, bottom } = event.currentTarget.getBoundingClientRect();
                   setExtensionsAnchor(extensionsAnchor ? null : { left, top: bottom + 4, button: event.currentTarget });
-                }}>
+                }}
+              >
                 <PuzzlePiece aria-hidden="true" />
               </Button>
             ) : null}
-            <Button unstyled type="button" ref={downloadsTrigger} className="browser-more-trigger browser-downloads-trigger" aria-label={downloadsLabel}
-              aria-expanded={nativeBrowser ? undefined : downloadsOpen} aria-controls={downloadsOpen ? downloadsPanelId : undefined}
-              data-icon-tooltip={downloadsLabel} data-downloading={hasActiveDownloads || undefined}
-              onClick={() => nativeBrowser ? openNativePage('downloads') : setDownloadsOpen(!downloadsOpen)}>
+            <Button
+              unstyled
+              type="button"
+              ref={downloadsTrigger}
+              className="browser-more-trigger browser-downloads-trigger"
+              aria-label={downloadsLabel}
+              aria-expanded={nativeBrowser ? undefined : downloadsOpen}
+              aria-controls={downloadsOpen ? downloadsPanelId : undefined}
+              data-icon-tooltip={downloadsLabel}
+              data-downloading={hasActiveDownloads || undefined}
+              onClick={() => (nativeBrowser ? openNativePage('downloads') : setDownloadsOpen(!downloadsOpen))}
+            >
               <DownloadSimple aria-hidden="true" />
             </Button>
             <Button unstyled type="button" className="browser-more-trigger" aria-label={labels.more} data-icon-tooltip={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => openMoreMenu(event.currentTarget)}>
@@ -746,20 +762,26 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         </div>
       )}
 
-      {extensionsAnchor ? createPortal(
-        <MenuSurface aria-label={extensionsLabel} className="conversation-context-menu zeus-quiet-more-menu" style={{ left: extensionsAnchor.left, top: extensionsAnchor.top }} toggleAnchor={extensionsAnchor.button} onClose={() => setExtensionsAnchor(null)}>
-          <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('extensions')}>
-            <span>{chinese ? '管理扩展程序' : 'Manage extensions'}</span>
-          </Button>
-          <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('store')}>
-            <span>{chinese ? '访问 Chrome 网上应用店' : 'Visit Chrome Web Store'}</span>
-          </Button>
-        </MenuSurface>,
-        document.querySelector('.macos-ai-app.zeus-shell') ?? document.body,
-      ) : null}
-      {downloadsOpen && !nativeBrowser ? (
-        <BrowserDownloadsPanel id={downloadsPanelId} language={props.language} downloads={downloads} onClose={closeDownloads} onCommand={command} />
-      ) : null}
+      {extensionsAnchor
+        ? createPortal(
+            <MenuSurface
+              aria-label={extensionsLabel}
+              className="conversation-context-menu zeus-quiet-more-menu"
+              style={{ left: extensionsAnchor.left, top: extensionsAnchor.top }}
+              toggleAnchor={extensionsAnchor.button}
+              onClose={() => setExtensionsAnchor(null)}
+            >
+              <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('extensions')}>
+                <span>{chinese ? '管理扩展程序' : 'Manage extensions'}</span>
+              </Button>
+              <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('store')}>
+                <span>{chinese ? '访问 Chrome 网上应用店' : 'Visit Chrome Web Store'}</span>
+              </Button>
+            </MenuSurface>,
+            document.querySelector('.macos-ai-app.zeus-shell') ?? document.body,
+          )
+        : null}
+      {downloadsOpen && !nativeBrowser ? <BrowserDownloadsPanel id={downloadsPanelId} language={props.language} downloads={downloads} onClose={closeDownloads} onCommand={command} /> : null}
 
       {findOpen ? (
         <Form
