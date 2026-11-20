@@ -3223,6 +3223,10 @@ a {
   grid-template-columns: 1fr 1fr;
   padding: 2px 8px 6px 30px;
 }
+/* 只有一个操作时，按钮使用两列的宽度，避免被空列挤到换行。 */
+.project-git-common-branch-actions > button:only-child {
+  grid-column: 1 / -1;
+}
 .project-git-common-branch-actions button {
   background: var(--zeus-product-panel-muted);
   justify-content: center;
