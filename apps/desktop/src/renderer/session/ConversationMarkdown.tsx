@@ -438,10 +438,14 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
   const code = codeTruncated ? sourceCode.slice(0, MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS) : sourceCode;
   /** 只清理语言标记的首尾空白，其余语言名称保留原文。 */
   const codeLanguage = typeof props.node.language === 'string' ? props.node.language.trim() : '';
-  /** 常见纯文本别名不区分大小写，其余语言直接显示名称。 */
-  const title = ['', 'text', 'plain', 'plaintext'].includes(codeLanguage.toLowerCase()) ? languageLabels.plainText : codeLanguage;
-  /** 状态只属于当前块；流式追加不重置，重新挂载后默认关闭。 */
-  const [wrap, setWrap] = useState(false);
+  /** 无语言标记及不区分大小写的纯文本别名共用同一显示规则。 */
+  const isPlainText = ['', 'text', 'plain', 'plaintext'].includes(codeLanguage.toLowerCase());
+  /** 纯文本使用本地化标题，其他块显示原有语言名称。 */
+  const title = isPlainText ? languageLabels.plainText : codeLanguage;
+  /** 手动切换只作用于当前块，流式更新时保留选择。 */
+  const [wrapPreference, setWrapPreference] = useState<boolean>();
+  /** 手动切换前，纯文本按当前语言标记默认软换行。 */
+  const wrap = wrapPreference ?? isPlainText;
   /** 按钮与全局悬停提示共用下一步操作文案。 */
   const wrapLabel = wrap ? languageLabels.disableWordWrap : languageLabels.enableWordWrap;
   return (
@@ -451,7 +455,7 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
           <Code aria-hidden="true" weight="regular" />
           <span>{title}</span>
         </span>
-        <Button unstyled type="button" aria-label={wrapLabel} aria-pressed={wrap} data-icon-tooltip={wrapLabel} onClick={() => setWrap((current) => !current)}>
+        <Button unstyled type="button" aria-label={wrapLabel} aria-pressed={wrap} data-icon-tooltip={wrapLabel} onClick={() => setWrapPreference((current) => !(current ?? isPlainText))}>
           {wrap ? <ArrowElbowDownLeft aria-hidden="true" weight="regular" /> : <ArrowLineRight aria-hidden="true" weight="regular" />}
         </Button>
         <ConversationMarkdownCopyButton label={languageLabels.copyCode} copiedLabel={languageLabels.copied} text={code} />
