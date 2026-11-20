@@ -773,6 +773,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           text={visibleText}
           streamId={`thread-item:${props.item.key}`}
           phase={markdownPhase}
+          showMedia={role === 'assistant'}
           animateArrival={props.animateEntrance}
           language={props.language}
           resources={props.item.resources}
@@ -789,7 +790,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && role !== 'image' ? (
-        <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        <ConversationResourceCards resources={unplacedResources} language={props.language} showVideos={role === 'assistant' && markdownPhase === 'final'} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
       ) : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {remoteDeviceInput ? (

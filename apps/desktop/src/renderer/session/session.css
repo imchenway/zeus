@@ -2763,17 +2763,21 @@
   margin-block: 0 12px;
 }
 
-/* 图表只保留一层主题外壳，不依赖库内未定义的圆角变量或再套源码卡片。 */
+/* 预览和正文共享画布，查看源码或出现错误时才显示代码块边界。 */
 .session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block {
   --ms-radius: 8px;
   anchor-scope: --session-mermaid-zoom;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  margin-block: 16px;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block[data-source='true'] {
   background: var(--session-code);
   border: 1px solid var(--session-line);
   border-radius: 12px;
-  box-sizing: border-box;
-  margin-block: 12px;
-  overflow: hidden;
-  position: relative;
 }
 
 .session-codex-parity-v1 .session-mermaid-block .mermaid-block {
@@ -2786,20 +2790,27 @@
   overflow: visible;
 }
 
-/* 工具栏沿用会话操作的密度，标题让位给正文，操作集中在右侧。 */
+/* 图表操作集中在右侧，继续支持键盘聚焦和触屏。 */
 .session-codex-parity-v1 .session-mermaid-toolbar {
   align-items: center;
   color: var(--session-text-muted);
   display: flex;
   font-size: 12px;
   gap: 4px;
+  justify-content: flex-end;
   min-block-size: 34px;
-  padding: 4px 8px 4px 14px;
+  padding: 4px 8px;
 }
 
-.session-codex-parity-v1 .session-mermaid-toolbar > span:first-child {
-  flex: 1;
-  font-weight: 500;
+.session-codex-parity-v1 .session-mermaid-block:not([data-source]) > .session-mermaid-toolbar {
+  order: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session-codex-parity-v1 .session-mermaid-block:not([data-source], :hover, :focus-within) .session-mermaid-toolbar,
+  .session-codex-parity-v1 .session-mermaid-block:not([data-source], :hover, :focus-within) .session-mermaid-preview .mermaid-block .relative > .absolute:has(button) {
+    opacity: 0;
+  }
 }
 
 /* 锚点仅属于当前图表，缩放沿用组件状态并与源码、复制保持同行。 */
@@ -2841,9 +2852,10 @@
   inline-size: 16px;
 }
 
-/* 图形与边框留出稳定留白，缩放操作通过锚点放入顶部工具栏。 */
+/* 保留图形的纵横比，缩放操作通过锚点进入预览操作行。 */
 .session-codex-parity-v1 .session-mermaid-preview {
-  padding: 8px 14px 14px;
+  min-inline-size: 0;
+  padding: 8px 0 0;
 }
 
 /* 控件与锚点共用卡片定位容器，图形自身的拖动视口继续独立裁切。 */
@@ -2900,19 +2912,19 @@
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node :is(rect, path, polygon, circle, ellipse).label-container:not([style*='fill:']),
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node .label-container path:not([style*='fill:']),
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] rect:is(.actor, .note):not([style*='fill:']) {
-  fill: color-mix(in srgb, var(--session-canvas) 96%, var(--session-text) 4%) !important;
+  fill: color-mix(in srgb, var(--session-canvas) 87%, var(--session-accent)) !important;
 }
 
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node :is(rect, path, polygon, circle, ellipse).label-container:not([style*='stroke:']),
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node .label-container path:not([style*='stroke:']),
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster rect:not([style*='stroke:']),
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] rect:is(.actor, .note):not([style*='stroke:']) {
-  stroke: var(--session-text-muted) !important;
+  stroke: color-mix(in srgb, var(--session-accent) 55%, var(--session-line)) !important;
 }
 
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node rect.label-container:not([rx]) {
-  rx: 6px;
-  ry: 6px;
+  rx: 9px;
+  ry: 9px;
 }
 
 /* 分组保留透明背景与浅色细实线，只表达源码已有的范围。 */
@@ -2931,6 +2943,11 @@
 
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .flowchart-link:not([style*='stroke:']) {
   stroke: var(--session-text-muted) !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .edgeLabel rect:not([style*='fill:']) {
+  fill: var(--session-canvas) !important;
+  opacity: 1 !important;
 }
 
 .session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node text:not([style*='fill:']):not([style*='color:']),
@@ -8469,6 +8486,46 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
+/* 播放器和网页跟随正文阅读宽度，混合资源仍沿用原列表网格。 */
+.session-codex-parity-v1 .session-resource-card-list:not([data-compact]):has(> .session-resource-video, > [data-web-page]) {
+  max-inline-size: min(100%, var(--session-markdown-max));
+}
+
+.session-codex-parity-v1 .session-resource-video {
+  container-type: inline-size;
+  grid-column: 1 / -1;
+  inline-size: min(100%, var(--session-markdown-max));
+  margin-block: 12px;
+}
+
+.session-codex-parity-v1 .session-resource-card-list > .session-resource-video {
+  margin-block: 0;
+}
+
+.session-codex-parity-v1 .session-resource-video-loading {
+  background: var(--session-message-background);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  box-sizing: border-box;
+  display: grid;
+  block-size: calc(min(56.25cqi, 56vh) + 41px);
+  place-items: center;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-resource-card[data-web-page] {
+  max-inline-size: var(--session-markdown-max);
+  margin-block: 12px;
+}
+
+.session-codex-parity-v1 .session-resource-video-fallback {
+  align-items: baseline;
+  color: var(--session-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
 .session-codex-parity-v1 .session-resource-image {
   align-items: center;
   appearance: none;
@@ -8553,6 +8610,46 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-resource-card[data-error='true'] {
   background: color-mix(in srgb, var(--session-danger) 6%, var(--session-canvas));
+}
+
+/* 网页的标题区和打开方式共用一行，窄窗口只缩短文字和操作标签。 */
+.session-codex-parity-v1 .session-resource-card[data-web-page]:not([data-compact]) {
+  align-items: center;
+  border: 1px solid var(--session-line);
+  container-type: inline-size;
+  flex-wrap: nowrap;
+  min-block-size: 60px;
+  padding-inline: 10px;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-web-page] .session-resource-card-icon {
+  background: color-mix(in srgb, var(--session-canvas) 85%, var(--session-accent));
+  border-radius: 9px;
+  color: var(--zeus-brand-text);
+  flex-basis: 36px;
+  block-size: 36px;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-web-page] .session-resource-card-icon svg {
+  block-size: 22px;
+  inline-size: 22px;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-web-page] .session-open-with {
+  margin-inline-start: 0;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-web-page]:not([data-compact]) .session-open-with-trigger {
+  border-radius: 8px;
+  min-block-size: 32px;
+  padding-inline: 9px;
+  white-space: nowrap;
+}
+
+@container (max-width: 270px) {
+  .session-codex-parity-v1 .session-resource-card[data-web-page] .session-open-with-trigger > span {
+    display: none;
+  }
 }
 
 .session-codex-parity-v1 .session-resource-card-main {

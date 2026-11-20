@@ -1,5 +1,7 @@
 import { useWindowDocument } from '../ui/windowDocument.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
+import { prepareFilePreview } from '../code/preparedFilePreview.js';
+import { VideoPlayer } from '../code/VideoPlayer.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { type CSSProperties, type KeyboardEvent, type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -15,7 +17,7 @@ import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { fileIconForKind } from '../code/FileTypeIcon.js';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
-import { userFacingErrorCause } from '@zeus/shared';
+import { filePreviewKind, filePreviewMime, userFacingErrorCause } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -546,13 +548,63 @@ function ConversationImagePreview(
   );
 }
 
-/** 图片只显示缩略图；附件直接预览，项目文件保留打开方式。 */
+/** 正文视频使用短期文件预览令牌，离开虚拟行时归还授权。 */
+export function ConversationResourceVideo(props: ConversationResourceInteraction & { resource: ConversationResource; language: SessionUiLanguage }) {
+  /** 同一份资源修订对应一次读取，调用方以修订身份挂载播放器。 */
+  const { projectId, conversationId, id: resourceId } = props.resource;
+  /** 未收到文件地址时保留播放器位置，失败时恢复可打开的文件引用。 */
+  const [preview, setPreview] = useState<{ url: string } | { reason?: string } | null>(null);
+  /** 加载和解码失败使用会话语言，保留已有文件打开入口。 */
+  const zh = props.language === 'zh-CN';
+  const unavailable = zh ? '无法预览视频。' : 'Video preview is unavailable.';
+
+  useEffect(() => {
+    /** 挂载结束后，迟到的响应由共享预览读取器自动归还。 */
+    let active = true;
+    /** 只申请当前会话与资源编号对应的预览。 */
+    const file = prepareFilePreview({ kind: 'resource', projectId, conversationId, resourceId });
+    void file.read.then(
+      ([item]) => {
+        if (!active) return;
+        setPreview(item?.kind === 'video' && item.url ? { url: item.url } : { reason: item?.reason });
+      },
+      () => {
+        if (active) setPreview({});
+      },
+    );
+    return () => {
+      active = false;
+      file.dispose();
+    };
+  }, [projectId, conversationId, resourceId]);
+
+  return (
+    <div className="session-resource-video">
+      {preview && 'url' in preview ? (
+        <VideoPlayer key={preview.url} url={preview.url} name={props.resource.displayName} zh={zh} onError={() => setPreview({})} />
+      ) : preview ? (
+        <div className="session-resource-video-fallback">
+          <span role="status">{preview.reason || unavailable}</span>
+          <ConversationInlineResource {...props} label={props.resource.displayName} />
+        </div>
+      ) : (
+        <div className="session-resource-video-loading" aria-busy="true">
+          <ResourceLoading label={zh ? '正在读取视频' : 'Loading video'} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 图片只显示缩略图；助手交付的视频在会话内播放。 */
 export function ConversationResourceCards(
   props: ConversationResourceInteraction & {
     resources: ConversationResource[];
     language: SessionUiLanguage;
     /** 任务字段的附件列表避免大幅挤占正文空间。 */
     compact?: boolean;
+    /** 仅完整的助手消息允许资源卡展开播放器。 */
+    showVideos?: boolean;
   },
 ) {
   const resources = props.resources.filter((resource) => resource.presentation === 'card');
@@ -564,6 +616,8 @@ export function ConversationResourceCards(
       {resources.map((resource) =>
         isImageResource(resource) ? (
           <ConversationResourceImage key={resource.id} resource={resource} language={props.language} compact={props.compact} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+        ) : props.showVideos && props.onOpenResource && isVideoResource(resource) ? (
+          <ConversationResourceVideo key={`${resource.id}:${resource.updatedAt}`} resource={resource} language={props.language} onOpenResource={props.onOpenResource} />
         ) : (
           <ConversationResourceCard key={resource.id} resource={resource} language={props.language} compact={props.compact} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
         ),
@@ -595,7 +649,7 @@ function ConversationResourceImage(
 }
 
 /** 文件名保留完整悬停说明，自动转换的文本显示易读名称。 */
-function ConversationResourceCard(
+export function ConversationResourceCard(
   props: ConversationResourceInteraction & {
     resource: ConversationResource;
     language: SessionUiLanguage;
@@ -622,7 +676,7 @@ function ConversationResourceCard(
   }
 
   return (
-    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
+    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-web-page={isWebPageResource(props.resource) || undefined} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
       <Button unstyled type="button" className="session-resource-card-main" data-file-name={props.resource.displayName} data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => open()}>
         <span className="session-resource-card-icon">
           <ResourceIcon resource={props.resource} />
@@ -906,6 +960,18 @@ export function defaultOpenTarget(resource: ConversationResource): ConversationO
 
 export function isImageResource(resource: ConversationResource): boolean {
   return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
+}
+
+/** 视频类型沿用文件预览器的格式范围，项目文件以真实的相对路径为准。 */
+export function isVideoResource(resource: ConversationResource): boolean {
+  if (resource.kind === 'website') return false;
+  if (resource.kind === 'file') return filePreviewKind(filePreviewMime(resource.projectRelativePath)) === 'video';
+  return [resource.mimeType ?? '', filePreviewMime(resource.attachmentRef), filePreviewMime(resource.displayName)].some((mime) => filePreviewKind(mime) === 'video');
+}
+
+/** 浏览器可打开的网页资源共用卡片外观，邮件链接保持原入口。 */
+function isWebPageResource(resource: ConversationResource): boolean {
+  return resource.kind === 'website' ? !resource.url.startsWith('mailto:') : resource.kind === 'file' && resource.iconKind === 'html';
 }
 
 export function ResourceIcon(props: { resource: ConversationResource }) {
