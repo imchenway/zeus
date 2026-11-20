@@ -1,4 +1,5 @@
 import { browserCredentialPromptHtml } from './browserCredentialPrompt.js';
+import { showBrowserPasswordPicker } from './browserPasswordPicker.js';
 import {
   BrowserWindow,
   clipboard,
@@ -56,7 +57,7 @@ import { BrowserPasswordStore, browserPasswordOrigin } from './browserPasswords.
 import { BrowserCuaHost } from './browserCuaHost.js';
 import type { BrowserCuaSurface } from './browserCuaBridge.js';
 import type { ComputerHost } from './computerHost.js';
-import type { BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
+import type { BrowserPasswordFrameProbe, BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
 
 /** 仅保存长期设置与书签；标签、活动页和分组随本次应用运行结束。 */
 interface PersistedBrowserState {
@@ -69,6 +70,8 @@ interface PersistedBrowserState {
 interface LiveBrowserTab {
   /** 已填密码只用于清理工具返回和网页日志，关闭标签后释放。 */
   passwordValues?: Set<string>;
+  /** 各标签只允许一个填充选择，隐藏或离开页面时取消。 */
+  passwordPicker?: AbortController;
   snapshot: ZeusBrowserTabSnapshot;
   view?: WebContentsView;
   ownerWindowId?: number;
@@ -562,6 +565,18 @@ export class BrowserHost implements BrowserAutomationPort {
       this.requireRendererWindow(event);
       return this.options.passwords.list();
     });
+    /** 仅前台 Zeus 主界面的显式查看返回所选账号的密码。 */
+    ipcMain.handle('zeus:browser:reveal-password', async (event, origin: unknown, id: unknown) => {
+      const window = this.requireRendererWindow(event);
+      this.assertWritableBrowserCapability();
+      if (event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame || !window.isFocused()) {
+        throw new Error(this.text('请在前台设置窗口查看密码。', 'Open the settings window to view the password.'));
+      }
+      const credential = await this.options.passwords.credential(requireNonEmptyString(origin, 'origin'), requireNonEmptyString(id, 'id'));
+      if (!credential) throw new Error(this.text('该账号已不存在，请重新打开密码设置。', 'This account no longer exists. Reopen password settings.'));
+      if (window.isDestroyed() || !window.isFocused() || event.senderFrame !== event.sender.mainFrame) throw new Error(this.text('请在前台设置窗口查看密码。', 'Open the settings window to view the password.'));
+      return credential.password;
+    });
     ipcMain.handle('zeus:browser:prepare-password-import', async (event) => {
       const window = this.requireRendererWindow(event);
       this.assertWritableBrowserCapability();
@@ -617,7 +632,7 @@ export class BrowserHost implements BrowserAutomationPort {
         if (!(await this.options.passwords.list(origin)).length) return;
         await this.options.mainCommandLedger().execute(request, 'desktop.browser.autofill', async (_input, command) => {
           if (generation !== tab.documentGeneration || browserPasswordFrameOrigin(event.sender, frame) !== origin) return { completed: false };
-          await this.showPasswordMenu(window, tab, frame, () => command.markWriteStarted(), documentId);
+          await this.showPasswordPicker(window, tab, frame, () => command.markWriteStarted(), documentId);
           return { completed: true };
         });
       } catch (error) {
@@ -1144,6 +1159,7 @@ export class BrowserHost implements BrowserAutomationPort {
   private detachTab(tabId: string): void {
     void this.cua.hideTabCursor(tabId).catch((error) => console.warn('CUA browser visibility cleanup failed', error));
     const tab = this.tabs.get(tabId);
+    tab?.passwordPicker?.abort();
     if (!tab?.view || tab.ownerWindowId === undefined) return;
     const window = this.windows.get(tab.ownerWindowId);
     if (window && !window.isDestroyed()) {
@@ -1205,6 +1221,7 @@ export class BrowserHost implements BrowserAutomationPort {
     };
     view.webContents.on('did-start-loading', update);
     view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      tab.passwordPicker?.abort();
       if (!isMainFrame || isInPlace) return;
       void this.cua.hideTabCursor(tab.snapshot.id).catch((error) => console.warn('CUA browser navigation cursor cleanup failed', error));
       this.stopTranslation(tab);
@@ -1275,56 +1292,77 @@ export class BrowserHost implements BrowserAutomationPort {
     return view;
   }
 
-  /** 显式选择和焦点触发共用原生菜单，始终填回同一个 frame 文档。 */
-  private async showPasswordMenu(window: BrowserWindow, tab: LiveBrowserTab, frame: WebFrameMain, beforeFill?: () => Promise<void>, requestedDocumentId?: string): Promise<void> {
+  /** 工具栏和登录框共用填充弹层，选择后仍填回原 frame 文档。 */
+  private async showPasswordPicker(window: BrowserWindow, tab: LiveBrowserTab, frame: WebFrameMain, beforeFill?: () => Promise<void>, requestedDocumentId?: string): Promise<void> {
     this.assertWritableBrowserCapability();
-    const contents = this.ensureView(tab).webContents;
+    if (tab.passwordPicker) return;
+    const view = this.ensureView(tab);
+    const contents = view.webContents;
     const origin = browserPasswordFrameOrigin(contents, frame);
     const quiet = requestedDocumentId !== undefined;
     if (!origin) {
       if (quiet) return;
       throw new Error(this.text('当前页面不支持密码填充。', 'Password filling is unavailable on this page.'));
     }
+    /** 读取候选、显示弹层和填充期间共用同一次页面身份。 */
+    const controller = new AbortController();
+    tab.passwordPicker = controller;
     const generation = tab.documentGeneration;
-    /** 异步查询或等待选择期间，切页、换标签或关闭窗口都使请求失效。 */
     const isCurrent = (): boolean =>
-      this.settings.enabled && !window.isDestroyed() && this.visibleTabByWindow.get(window.id) === tab.snapshot.id && tab.documentGeneration === generation && browserPasswordFrameOrigin(contents, frame) === origin;
-    const accounts = await this.options.passwords.list(origin);
-    if (!isCurrent()) return;
-    if (!accounts.length && quiet) return;
-    let documentId: unknown;
-    if (accounts.length) {
-      const reply = (await requestBrowserPasswordFrame(frame, { action: 'probe', origin })) as { documentId?: unknown } | null;
-      documentId = reply?.documentId;
-      if (!isCurrent() || (quiet && documentId !== requestedDocumentId)) return;
-      if (typeof documentId !== 'string') {
+      !controller.signal.aborted &&
+      this.settings.enabled &&
+      !window.isDestroyed() &&
+      this.visibleTabByWindow.get(window.id) === tab.snapshot.id &&
+      tab.documentGeneration === generation &&
+      browserPasswordFrameOrigin(contents, frame) === origin;
+    try {
+      const accounts = await this.options.passwords.list(origin);
+      if (!isCurrent() || (!accounts.length && quiet)) return;
+      const probe = accounts.length ? ((await requestBrowserPasswordFrame(frame, { action: 'probe', origin })) as BrowserPasswordFrameProbe | null) : null;
+      if (!isCurrent() || (quiet && probe?.documentId !== requestedDocumentId)) return;
+      if (accounts.length && (typeof probe?.documentId !== 'string' || (!probe.username && !probe.password))) {
         if (quiet) return;
         throw new Error(this.text('自动填充尚未就绪，或页面没有可填充的登录框。', 'Autofill is not ready, or no supported sign-in field was found.'));
       }
+      /** 标题来自真实字段组合，分步登录时只描述当前可填的一项。 */
+      const title = !probe
+        ? this.text('填充已保存的密码', 'Fill saved password')
+        : probe.username && probe.password
+          ? this.text('填充用户名和密码', 'Fill username and password')
+          : probe.username
+            ? this.text('填充用户名', 'Fill username')
+            : this.text('填充密码', 'Fill password');
+      const index = await showBrowserPasswordPicker({
+        parent: window,
+        view,
+        anchor: probe?.anchor,
+        origin,
+        title,
+        labels: accounts.map((account) => (account.username || this.text('无用户名', 'No username')).slice(0, 240)),
+        emptyLabel: this.text('此站点没有已保存的密码', 'No saved passwords for this site'),
+        closeLabel: this.text('关闭', 'Close'),
+        language: this.options.language?.() ?? 'zh-CN',
+        signal: controller.signal,
+      });
+      const selected = index === null ? undefined : accounts[index];
+      if (!selected || typeof probe?.documentId !== 'string' || !isCurrent()) return;
+      const credential = await this.options.passwords.credential(origin, selected.id);
+      if (!isCurrent()) return;
+      if (!credential) throw new Error(this.text('该账号已删除，请重新选择。', 'This account was deleted. Select an account again.'));
+      await beforeFill?.();
+      if (!isCurrent()) return;
+      const { id, username, password } = credential;
+      (tab.passwordValues ??= new Set()).add(password);
+      const status = await requestBrowserPasswordFrame(frame, { action: 'fill', origin, documentId: probe.documentId, selection: { id, username, password } });
+      if (!isCurrent() || status === 'filled') return;
+      if (status === 'unavailable') throw new Error(this.text('自动填充组件尚未就绪，请在页面加载后重试。', 'Autofill is not ready. Try again after the page loads.'));
+      if (status === 'page_changed') throw new Error(this.text('页面已变化，请重新选择账号。', 'The page changed. Select an account again.'));
+      throw new Error(
+        status === 'multiple_forms' ? this.text('页面有多个登录表单，请先点击要填充的登录框。', 'Focus the sign-in field in the form you want to fill.') : this.text('未找到可填充的登录框。', 'No supported sign-in field was found.'),
+      );
+    } finally {
+      tab.passwordPicker = undefined;
     }
-    const selected = await new Promise<string | null>((resolveSelection) => {
-      const menu = new Menu();
-      if (accounts.length && origin !== contents.mainFrame.origin) menu.append(new MenuItem({ label: origin, enabled: false }));
-      for (const account of accounts) menu.append(new MenuItem({ label: (account.username || this.text('无用户名', 'No username')).replace(/&/gu, '&&').slice(0, 240), click: () => resolveSelection(account.id) }));
-      if (!accounts.length) menu.append(new MenuItem({ label: this.text('此站点没有已保存的密码', 'No saved passwords for this site'), enabled: false }));
-      menu.popup({ window, callback: () => resolveSelection(null) });
-    });
-    if (!selected || typeof documentId !== 'string' || !isCurrent()) return;
-    const credential = await this.options.passwords.credential(origin, selected);
-    if (!isCurrent()) return;
-    if (!credential) throw new Error(this.text('该账号已删除，请重新选择。', 'This account was deleted. Select an account again.'));
-    await beforeFill?.();
-    if (!isCurrent()) return;
-    const { id, username, password } = credential;
-    (tab.passwordValues ??= new Set()).add(password);
-    const status = await requestBrowserPasswordFrame(frame, { action: 'fill', origin, documentId, selection: { id, username, password } });
-    if (!isCurrent()) return;
-    if (status === 'filled') return;
-    if (status === 'unavailable') throw new Error(this.text('自动填充组件尚未就绪，请在页面加载后重试。', 'Autofill is not ready. Try again after the page loads.'));
-    if (status === 'page_changed') throw new Error(this.text('页面已变化，请重新选择账号。', 'The page changed. Select an account again.'));
-    throw new Error(
-      status === 'multiple_forms' ? this.text('页面有多个登录表单，请先点击要填充的登录框。', 'Focus the sign-in field in the form you want to fill.') : this.text('未找到可填充的登录框。', 'No supported sign-in field was found.'),
-    );
   }
 
   /** 已填密码从所有浏览器工具文字结果及网页控制台中移除。 */
@@ -1355,7 +1393,7 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!command || typeof command !== 'object' || typeof command.action !== 'string') throw new TypeError('Browser command is invalid.');
     switch (command.action) {
       case 'autofill':
-        await this.showPasswordMenu(window, tab, view.webContents.focusedFrame ?? view.webContents.mainFrame);
+        await this.showPasswordPicker(window, tab, view.webContents.focusedFrame ?? view.webContents.mainFrame);
         break;
       case 'navigate':
         await loadUserFacingBrowserUrl(view.webContents, normalizeBrowserUrl(command.url));

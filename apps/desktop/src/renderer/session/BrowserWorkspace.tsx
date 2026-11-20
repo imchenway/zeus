@@ -643,7 +643,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               className="browser-more-trigger"
               aria-label={props.language === 'zh-CN' ? '填充已保存的密码' : 'Fill saved password'}
               data-icon-tooltip={props.language === 'zh-CN' ? '填充已保存的密码' : 'Fill saved password'}
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               disabled={activeTab.loading || activeTab.crashed || !/^https?:/u.test(activeTab.url)}
               onClick={() => command({ action: 'autofill' })}
             >

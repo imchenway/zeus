@@ -59,9 +59,9 @@ function accountIdentity(origin: string, username: string): string {
   return JSON.stringify([origin, username]);
 }
 
-/** 判断是否需要用户在已有密码与 CSV 候选之间选择。 */
+/** 同一文件为一个账号提供多个不同密码时，仍需选择一条来源记录。 */
 function hasPasswordConflict(group: ImportGroup): boolean {
-  return group.variants.length > 1 || Boolean(group.existing && group.existing.password !== group.variants[0]?.password);
+  return group.variants.length > 1;
 }
 
 /** 本机密码库复用系统密钥与原子私有文件，不增加主密码或解锁状态。 */
@@ -206,21 +206,27 @@ export class BrowserPasswordStore {
       const token = randomUUID();
       const timer = setTimeout(() => this.cancel(owner, token), importLifetimeMs);
       timer.unref();
-      this.pending.set(owner, { token, revision: state.revision, groups: [...groups.values()], skipped, invalid: invalidRows.length, timer });
+      /** 单一候选按新增、覆盖或相同统计，多密码候选单独列出。 */
+      const candidates = [...groups.values()];
+      const unambiguous = candidates.filter((group) => !hasPasswordConflict(group));
+      const unchanged = unambiguous.filter((group) => group.existing?.password === group.variants[0]?.password).length;
+      const added = unambiguous.filter((group) => !group.existing).length;
+      this.pending.set(owner, { token, revision: state.revision, groups: candidates, skipped, invalid: invalidRows.length, timer });
       return {
         token,
         fileName: basename(filePath),
-        added: [...groups.values()].filter((group) => !group.existing && !hasPasswordConflict(group)).length,
-        unchanged: skipped + [...groups.values()].filter((group) => group.existing && !hasPasswordConflict(group)).length,
+        added,
+        updated: unambiguous.length - added - unchanged,
+        unchanged: skipped + unchanged,
         invalidRows,
-        conflicts: [...groups.values()]
+        conflicts: candidates
           .filter(hasPasswordConflict)
           .map((group) => ({ id: group.id, origin: group.origin, username: group.username, rows: group.variants.map((variant) => variant.row), hasExisting: Boolean(group.existing) })),
       };
     });
   }
 
-  /** 确认时重新核对修订和每项选择，不依据 CSV 顺序自动覆盖旧密码。 */
+  /** 确认时校验修订，单一候选自动更新，多个候选按用户的选择写入。 */
   commit(owner: number, token: string, choices: Record<string, number>, beforeWrite: () => Promise<void>): Promise<ZeusBrowserPasswordImportResult> {
     return this.serial(async () => {
       const plan = this.pending.get(owner);
