@@ -42,6 +42,7 @@ import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPrefer
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 import { browserProjectModelPreferenceStorage, readProjectModelPreferences, writeProjectModelPreferences } from '../session/projectModelPreferences.js';
 import { Form } from '../ui/Form.js';
+import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 
 export interface TaskModelPushForm {
   /** 缺省使用模型默认，具体数值仅用于本次工作。 */
@@ -862,7 +863,7 @@ export function TaskModelPushModal(props: {
   const modal = (
     <ModalPortal
       systemWindow="task-push"
-      windowTitle={`${props.language === 'zh-CN' ? '推送任务' : 'Push task'} · ${props.task?.taskCode ?? props.task?.title ?? 'Zeus'}`}
+      windowTitle={zh ? '推送任务' : 'Push task'}
       rootClassName="task-model-push-portal-root"
       backdropClassName="task-model-push-backdrop"
       dismissDisabled={busy}
@@ -890,7 +891,7 @@ export function TaskModelPushModal(props: {
             <small>{props.projectName ? `${props.projectName} · ${props.task.taskCode ?? props.task.id}` : (props.task.taskCode ?? props.task.id)}</small>
           </span>
           <Button unstyled type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
-            ×
+            <XIcon size={16} aria-hidden="true" />
           </Button>
         </header>
 

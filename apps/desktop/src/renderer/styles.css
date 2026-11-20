@@ -4200,13 +4200,17 @@ a {
   }
 }
 .project-git-update-dialog {
-  width: min(560px, calc(100vw - 40px));
+  width: min(396px, calc(100vw - 24px));
 }
 .project-git-update-dialog > header {
   text-align: center;
 }
 .project-git-update-dialog > main {
-  padding-block: 18px 24px;
+  padding: 3px 12px 2px;
+}
+/* 更新方式只有两项，操作栏紧跟内容；合入表单保留原有间距。 */
+.project-git-update-dialog .project-git-update-strategies {
+  gap: 6px;
 }
 .project-git-update-strategies {
   border: 0;
@@ -4222,11 +4226,16 @@ a {
   display: flex;
   gap: 10px;
   line-height: 1.5;
+  min-block-size: 24px;
 }
 .project-git-update-dialog input {
   accent-color: var(--zeus-product-accent);
   flex: 0 0 auto;
   margin: 0;
+}
+.macos-ai-app .project-git-update-dialog input:focus-visible {
+  outline: 2px solid var(--zeus-field-focus-line);
+  outline-offset: 2px;
 }
 /* 原生单选框覆盖全局文本框样式，保留方向键切换和系统选中状态。 */
 .macos-ai-app .project-git-update-strategies input[type='radio'] {
@@ -4247,22 +4256,23 @@ a {
   padding: 0;
   font-weight: 600;
 }
-.project-git-update-remember {
-  margin-inline-end: auto;
-}
 .project-git-update-dialog > footer {
+  flex-shrink: 0;
   flex-wrap: wrap;
+  justify-content: flex-start;
+  padding: 4px 12px 6px;
+}
+/* 空间不足时两个操作按钮共同换行，并保持靠右。 */
+.project-git-update-actions {
+  display: flex;
+  gap: 8px;
+  margin-inline-start: auto;
 }
 .project-git-reference-dialog main > label {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 4px;
-}
-@media (max-width: 440px) {
-  .project-git-update-remember {
-    flex-basis: 100%;
-  }
 }
 .project-git-reference-dialog {
   width: min(520px, calc(100vw - 48px));
@@ -4963,8 +4973,10 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   background: var(--zeus-page-background) !important;
   color: var(--zeus-product-text);
   height: 100vh;
-  /* 原生标题栏位于内容区之外，正文不再预留空白拖动区。 */
   padding-top: 0;
+}
+.project-git-diff-window > .zeus-system-window-titlebar {
+  border-block-end: 1px solid var(--zeus-product-line);
 }
 .project-git-diff-window-error,
 .project-git-diff-loading {
@@ -4974,8 +4986,9 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 }
 .project-git-diff-window-layout {
   display: grid;
+  flex: 1;
   grid-template-columns: minmax(0, clamp(160px, var(--git-diff-files, 24%), calc(100% - 286px))) 8px minmax(0, 1fr);
-  height: 100%;
+  min-block-size: 0;
   min-height: 0;
 }
 .project-git-diff-window-files {
@@ -16058,11 +16071,23 @@ body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[
 body[data-surface='task-git-delivery'] .task-git-merge-header {
   position: relative;
   box-sizing: border-box;
-  min-block-size: 52px;
+  min-block-size: calc(var(--zeus-system-titlebar-height) + 16px);
   justify-content: center;
-  padding-inline: 84px;
+  padding-inline: var(--zeus-system-titlebar-edge);
   text-align: center;
   -webkit-app-region: drag;
+}
+body[data-surface='task-git-delivery'] .task-git-merge-header > span {
+  min-inline-size: 0;
+}
+body[data-surface='task-git-delivery'] .task-git-merge-header > span > :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body[data-surface='task-git-delivery'] .task-git-merge-header > span > strong {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* 独立窗口的设置入口靠右，不改变原生标题的居中位置。 */
@@ -16075,7 +16100,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header {
 }
 body[data-surface='task-git-delivery'] .task-git-merge-header > .git-delivery-settings-host {
   position: absolute;
-  inset-inline-end: 16px;
+  inset-inline-end: max(16px, calc(100vw - env(titlebar-area-width, 100vw) + 8px));
   inset-block-start: 50%;
   transform: translateY(-50%);
 }

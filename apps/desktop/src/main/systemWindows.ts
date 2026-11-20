@@ -1,9 +1,10 @@
-import { BrowserWindow, ipcMain, nativeTheme, screen } from 'electron';
+import { BrowserWindow, ipcMain, nativeTheme, screen, type BrowserWindowConstructorOptions } from 'electron';
 import { createPersistentWindow } from './persistentWindow.js';
 
 /** 只允许已迁移的工作界面创建空白系统窗口，不接受任意地址或窗口配置。 */
 const windowSizes = {
   'git-push': { width: 1240, height: 780, minWidth: 520, minHeight: 420 },
+  'git-update': { width: 396, height: 136, minWidth: 350, minHeight: 136 },
   'git-commit': { width: 720, height: 580, minWidth: 440, minHeight: 360 },
   'task-push': { width: 1280, height: 820, minWidth: 560, minHeight: 480 },
   'file-preview': { width: 1120, height: 780, minWidth: 420, minHeight: 360 },
@@ -11,6 +12,31 @@ const windowSizes = {
 
 /** 子窗口只承载原工作区的 React 内容，业务授权仍属于创建它的窗口。 */
 const systemWindows = new Map<string, { owner: BrowserWindow; window: BrowserWindow; reveal: () => unknown; close: () => void }>();
+
+/** 独立工作窗口与门户窗口使用同一外观更新入口。 */
+const styledWindows = new Set<BrowserWindow>();
+
+/** 首帧底色与窗口按钮对比度跟随 Zeus 当前的明暗主题。 */
+function systemWindowPalette() {
+  return nativeTheme.shouldUseDarkColors ? { backgroundColor: '#181818', symbolColor: '#f4f4f5' } : { backgroundColor: '#f7f8fa', symbolColor: '#27272a' };
+}
+
+/** 内容标题栏与原生窗口按钮共享同一行。 */
+export function systemWindowChrome(): Pick<BrowserWindowConstructorOptions, 'titleBarStyle' | 'trafficLightPosition' | 'titleBarOverlay' | 'backgroundColor'> {
+  /** 原生覆盖层只绘制窗口按钮，底色由主题表面提供。 */
+  const { backgroundColor, symbolColor } = systemWindowPalette();
+  return {
+    titleBarStyle: 'hidden',
+    backgroundColor,
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 12 } } : { titleBarOverlay: { color: '#00000000', symbolColor, height: 36 } }),
+  };
+}
+
+/** 主题切换时同步原生控件，关闭后释放窗口引用。 */
+export function trackSystemWindowAppearance(window: BrowserWindow): void {
+  styledWindows.add(window);
+  window.once('closed', () => styledWindows.delete(window));
+}
 
 /** 查找当前工作区正在操作的系统窗口，文件选择和后续 diff 均跟随它。 */
 export function activeSystemWindow(owner: BrowserWindow): BrowserWindow {
@@ -29,12 +55,12 @@ export function ownedSystemWindow(owner: BrowserWindow, name: string): BrowserWi
 export function systemWindowOpenHandler(owner: BrowserWindow): Parameters<Electron.WebContents['setWindowOpenHandler']>[0] {
   return (details) => {
     /** 随机名称区分同类窗口，类型限定尺寸记忆与可打开的界面。 */
-    const match = /^zeus-system:(git-push|git-commit|task-push|file-preview):[0-9a-f-]{36}$/u.exec(details.frameName);
-    if (details.url !== 'about:blank' || !match || details.postBody || systemWindows.has(details.frameName)) return { action: 'deny' };
+    const match = /^zeus-system:([a-z-]+):[0-9a-f-]{36}$/u.exec(details.frameName);
+    /** 尺寸只来自主进程白名单。 */
+    const kind = match?.[1] as keyof typeof windowSizes | undefined;
+    if (details.url !== 'about:blank' || !kind || !Object.hasOwn(windowSizes, kind) || details.postBody || systemWindows.has(details.frameName)) return { action: 'deny' };
     /** 不允许失控页面无限创建隐藏窗口。 */
     if ([...systemWindows.values()].filter((entry) => entry.owner === owner).length >= 12) return { action: 'deny' };
-    /** 尺寸只来自主进程白名单。 */
-    const kind = match[1] as keyof typeof windowSizes;
     return {
       action: 'allow',
       createWindow: (options) => {
@@ -56,14 +82,14 @@ export function systemWindowOpenHandler(owner: BrowserWindow): Parameters<Electr
           modal: false,
           show: false,
           title: 'Zeus',
-          titleBarStyle: 'default',
-          backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
+          ...systemWindowChrome(),
           resizable: true,
           minimizable: true,
           maximizable: true,
           fullscreenable: true,
           webPreferences: { ...options.webPreferences, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, allowRunningInsecureContent: false },
         });
+        trackSystemWindowAppearance(window);
         /** 用户关闭先交回表单；确认卸载后才允许原生关闭并保存最终尺寸。 */
         let closing = false;
         /** 复用既有持久窗口的 close 事件，不用 destroy 绕过尺寸保存。 */
@@ -112,6 +138,15 @@ export function systemWindowOpenHandler(owner: BrowserWindow): Parameters<Electr
 
 /** 展示和销毁只接受原窗口主框架及其自己创建的窗口身份。 */
 export function registerSystemWindowIpc(): void {
+  nativeTheme.on('updated', () => {
+    /** 覆盖层透明底色、位置和尺寸沿用创建时的配置。 */
+    const { backgroundColor, symbolColor } = systemWindowPalette();
+    for (const window of styledWindows) {
+      if (window.isDestroyed()) continue;
+      window.setBackgroundColor(backgroundColor);
+      if (process.platform !== 'darwin') window.setTitleBarOverlay({ symbolColor });
+    }
+  });
   ipcMain.handle('zeus:system-window:update', (event, name: unknown, action: unknown) => {
     /** 页面不能通过猜测名称管理其他工作区窗口。 */
     const entry = typeof name === 'string' ? systemWindows.get(name) : undefined;

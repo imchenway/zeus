@@ -1,4 +1,32 @@
-/* 系统标题栏负责窗口边界，原表单占满客户区，不叠加网页阴影和留白。 */
+/* 标题、表面和原生窗口按钮使用同一行；标题避开两端的系统控制区。 */
+body:is([data-surface='system-window'], [data-surface='task-git-delivery'], [data-surface='project-git-diff']) {
+  --zeus-system-titlebar-height: 36px;
+  --zeus-system-titlebar-edge: max(84px, calc(100vw - env(titlebar-area-width, 100vw) + 8px));
+}
+
+.zeus-system-window-titlebar {
+  -webkit-app-region: drag;
+  align-items: center;
+  background: var(--zeus-solid-surface-bg);
+  box-sizing: border-box;
+  color: var(--zeus-product-text);
+  display: grid;
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  grid-template-columns: minmax(0, 1fr);
+  min-block-size: var(--zeus-system-titlebar-height);
+  padding-inline: var(--zeus-system-titlebar-edge);
+  text-align: center;
+  user-select: none;
+}
+.zeus-system-window-titlebar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 原表单占满客户区，窗口边界由系统绘制。 */
 body[data-surface='system-window'] {
   margin: 0;
   min-width: 0;
@@ -6,7 +34,7 @@ body[data-surface='system-window'] {
   width: 100vw;
   height: 100dvh;
   overflow: hidden;
-  background: var(--zeus-solid-surface-bg);
+  background: var(--zeus-solid-surface-bg, light-dark(oklch(98% 0.001 255), var(--zeus-dark-surface)));
 }
 body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'],
 body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop {
@@ -22,18 +50,26 @@ body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-ze
   transition: none;
   animation: none;
 }
+body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] {
+  display: flex;
+  flex-direction: column;
+}
 body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop {
   display: flex;
   align-items: stretch;
   justify-content: flex-start;
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  position: relative;
 }
 body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop > :first-child {
   box-sizing: border-box;
   flex: 1;
   width: 100%;
-  height: 100dvh;
+  height: 100%;
   inline-size: 100%;
-  block-size: 100dvh;
+  block-size: 100%;
   min-width: 0;
   max-width: none;
   max-height: none;
@@ -46,18 +82,40 @@ body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-ze
   transition: none;
   transform: none;
 }
-/* 提交说明随窗口增长，仓库列表和操作栏保持可达。 */
+/* 工作窗口正文使用剩余高度，操作栏在窄窗口时仍可换行。 */
 body[data-system-window='git-commit'] .project-git-commit-dialog > main {
   flex: 1;
   min-height: 0;
   max-height: none;
   overflow: auto;
 }
-/* 标题和关闭由系统外壳提供；任务的项目身份与提交说明仍保留在正文。 */
+/* 更新弹窗沿用产品配色，正文和操作使用紧凑尺寸。 */
+body[data-system-window='git-update'] .project-git-update-dialog {
+  font-size: 13px;
+}
+body[data-system-window='git-update'] .project-git-update-dialog > main {
+  min-block-size: 0;
+}
+body[data-system-window='git-update'] .project-git-update-actions > .zeus-button {
+  border-radius: 5px;
+  font-weight: 500;
+  min-inline-size: 68px;
+}
+body[data-system-window='git-update'] .project-git-update-actions > .zeus-button[data-button-variant='primary'] {
+  /* 键盘焦点与主按钮色块间隔 1px，边框变化不挤动布局。 */
+  --zeus-control-focus: 0 0 0 1px var(--zeus-solid-surface-bg), 0 0 0 3px var(--zeus-brand-text);
+}
+
+/* 系统窗口只显示一个标题，任务所属项目仍保留在正文。 */
 body[data-surface='system-window'] .zeus-system-window-root .git-push-heading,
+body[data-surface='system-window'] .zeus-system-window-root .project-git-update-dialog > header,
 body[data-surface='system-window'] .zeus-system-window-root .file-preview-dialog-header,
+body[data-surface='system-window'] .zeus-system-window-root .task-model-push-header strong,
 body[data-surface='system-window'] .zeus-system-window-root .task-model-push-header > button {
   display: none;
+}
+body[data-surface='system-window'] .zeus-system-window-root .task-model-push-header {
+  padding-block-start: 4px;
 }
 /* 创建失败保留明确退出入口，不静默退回旧弹窗。 */
 .system-window-error {

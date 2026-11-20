@@ -145,7 +145,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
   const [menuConfirmation, setMenuConfirmation] = useState<GitMenuConfirmation | null>(null);
-  const [updateOpen, setUpdateOpen] = useState(false);
+  /** 每次请求都可唤回系统窗口，保留尚未确认的策略和勾选状态。 */
+  const [updateOpen, setUpdateOpen] = useState(0);
   /** 同一快捷键请求只消费一次，加载期间保留最后一次请求。 */
   const handledUpdateRequest = useRef(0);
   /** 多仓库更新期间不接受第二轮更新。 */
@@ -198,9 +199,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       props.onOpenPanel?.();
       return;
     }
-    if (readSkipUpdateDialog(props.project.id)) void updateProject(readUpdateStrategy(props.project.id));
-    else setUpdateOpen(true);
-  }, [props.updateRequest, loadState]);
+    if (updateOpen || !readSkipUpdateDialog(props.project.id)) openUpdateDialog();
+    else void updateProject(readUpdateStrategy(props.project.id));
+  }, [props.updateRequest, loadState, updateOpen]);
   const stashRepository = repositories.find((repository) => repository.id === stashRepositoryId) ?? null;
   const remoteCheckoutRepository = repositories.find((repository) => repository.id === remoteCheckoutTarget?.repositoryId) ?? null;
   const activeStash = selectedRepository?.snapshot.stashes.find((stash) => stash.ref === selectedStashRef) ?? selectedRepository?.snapshot.stashes[0] ?? null;
@@ -346,11 +347,16 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     }
   }
 
+  /** 菜单显式请求始终允许再次选择更新方式。 */
+  function openUpdateDialog(): void {
+    setUpdateOpen((count) => count + 1);
+  }
+
   /** 更新当前项目的全部仓库；失败或冲突后停止，保留原执行链的恢复入口。 */
   async function updateProject(strategy: ProjectGitUpdateStrategy): Promise<void> {
     if (actionBusyRef.current || updatingProject.current) return;
     updatingProject.current = true;
-    setUpdateOpen(false);
+    setUpdateOpen(0);
     try {
       for (const repository of repositories) {
         if ((await execute(repository, { type: 'update', strategy, smart: true }, zh ? '更新项目' : 'Update project')) !== 'completed') break;
@@ -657,7 +663,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       onSelectRepository={setSelectedRepositoryId}
       onExecute={execute}
       onOpenDiff={openDiffWindow}
-      onOpenUpdate={() => setUpdateOpen(true)}
+      onOpenUpdate={openUpdateDialog}
       onOpenCommit={openCommit}
       onOpenPush={() => setPushOpen((count) => count + 1)}
       onOpenNewBranch={(baseRef) => {
@@ -902,7 +908,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 onClose={() => setOperationsOpen(false)}
                 onOpenCommit={openCommit}
                 onOpenPush={() => setPushOpen((count) => count + 1)}
-                onOpenUpdate={() => setUpdateOpen(true)}
+                onOpenUpdate={openUpdateDialog}
                 onOpenNewBranch={() => {
                   setNewBranchBase('');
                   setNewBranchOpen(true);
@@ -1146,9 +1152,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>{contextMenu ? <GitContextMenu {...contextMenu} onClose={() => setContextMenu(null)} onError={(reason) => setError(errorMessage(reason, zh))} /> : null}</MotionPresence>
       <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
       <MotionPresence>{stashRepository ? <StashDialog key={stashRepository.id} repository={stashRepository} zh={zh} busy={busy} onClose={() => setStashRepositoryId(null)} onExecute={execute} /> : null}</MotionPresence>
-      <MotionPresence>
-        {updateOpen ? <UpdateProjectDialog key={props.project.id} projectId={props.project.id} zh={zh} busy={busy} onClose={() => setUpdateOpen(false)} onUpdate={(strategy) => updateProject(strategy)} /> : null}
-      </MotionPresence>
+      <MotionPresence>{updateOpen ? <UpdateProjectDialog key={props.project.id} projectId={props.project.id} zh={zh} activation={updateOpen} busy={busy} onClose={() => setUpdateOpen(0)} onUpdate={updateProject} /> : null}</MotionPresence>
       <MotionPresence>
         {newBranchOpen ? (
           <NewBranchDialog open={newBranchOpen} zh={zh} repositories={repositories} selectedRepository={selectedRepository} baseRef={newBranchBase} busy={busy} onClose={() => setNewBranchOpen(false)} onExecute={execute} />
