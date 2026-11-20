@@ -1017,6 +1017,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
       zeusDb.execute(`UPDATE conversation_legacy_write_fence SET current_writer_open = 1 WHERE singleton = 1`);
     }
     migrateCoreSchema(zeusDb);
+    migrateRetiredEmptyStorageTables(zeusDb);
     migrateTaskReminders(zeusDb);
     migrateGitDelivery(zeusDb);
     migrateGitDeliveryCommands(zeusDb);
@@ -1644,16 +1645,6 @@ function migrateCoreSchema(db: ZeusDatabase): void {
   `);
 
   db.execute(`
-    CREATE TABLE IF NOT EXISTS event_log (
-      id TEXT PRIMARY KEY,
-      event_type TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      source TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `);
-
-  db.execute(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
@@ -1733,6 +1724,33 @@ function migrateCoreSchema(db: ZeusDatabase): void {
     migrationId: '20260613_0001_core_schema',
     description: '初始化 Zeus 核心表、索引和内置任务模板定义',
     checksumSource: 'projects,tasks,task_events,runtime_sessions,runtime_logs,terminal_events,conversations,conversation_messages,git_snapshots,git_changes,audit_logs,event_log,settings,task_templates,indexes,built_in_templates',
+  });
+}
+
+/** 已停用的日志和冷证据索引没有生产读取方。只移除空表，保留仍含旧数据的安装。 */
+function migrateRetiredEmptyStorageTables(db: ZeusDatabase): void {
+  /** 迁移账本保留原创建历史，为退役登记独立记录。 */
+  const migrationId = '20261120_retire_empty_storage_tables';
+  if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  /** 冷证据锚点引用来源表，应在同一事务中先移除锚点。 */
+  const retiredGroups = [['event_log'], ['cold_evidence_anchors', 'cold_evidence_sources']] as const;
+  db.transaction(() => {
+    let complete = true;
+    for (const group of retiredGroups) {
+      const present = group.filter((table) => db.get("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?", [table]));
+      if (present.some((table) => db.get(`SELECT 1 FROM ${table} LIMIT 1`))) {
+        complete = false;
+        continue;
+      }
+      for (const table of present) db.execute(`DROP TABLE ${table}`);
+    }
+    if (complete) {
+      recordSchemaMigration(db, {
+        migrationId,
+        description: '移除已停用的空事件日志和冷证据索引表',
+        checksumSource: retiredGroups.flat().join(','),
+      });
+    }
   });
 }
 

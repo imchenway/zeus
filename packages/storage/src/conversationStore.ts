@@ -390,10 +390,6 @@ export interface CodexRateLimitsState {
 export interface CodexRateLimitsSnapshot extends ProviderSequenceSnapshot {
   value: CodexRateLimitsState;
 }
-export type CodexMcpServerStartupState = string | { status: string; error?: string | null };
-export interface CodexMcpStartupStatusSnapshot extends ProviderSequenceSnapshot {
-  value: Record<string, CodexMcpServerStartupState>;
-}
 
 export type ConversationTurnStatus = 'queued' | 'dispatching' | 'running' | 'waiting' | 'paused' | 'completed' | 'interrupted' | 'failed';
 export interface ZeusConversationTurnRecord {
@@ -3281,23 +3277,6 @@ export function validateRateLimitsSnapshot(snapshot: unknown): asserts snapshot 
     if (window.remaining !== undefined && (typeof window.remaining !== 'number' || !Number.isFinite(window.remaining))) throw new Error('Invalid Codex rate limits snapshot');
     if (window.usedPercent !== undefined && (typeof window.usedPercent !== 'number' || !Number.isFinite(window.usedPercent))) throw new Error('Invalid Codex rate limits snapshot');
     if (window.resetsAt !== undefined && window.resetsAt !== null && typeof window.resetsAt !== 'number' && typeof window.resetsAt !== 'string') throw new Error('Invalid Codex rate limits snapshot');
-  }
-}
-
-export function validateMcpStartupStatusSnapshot(snapshot: unknown): asserts snapshot is CodexMcpStartupStatusSnapshot {
-  assertProviderSequenceSnapshot(snapshot);
-  const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
-  assertOnlyKeys(candidate, ['generationId', 'sequence', 'value'], 'Codex MCP startup snapshot');
-  assertProviderVisibleJson(candidate.value, 'MCP startup status');
-  if (!isPlainRecord(candidate.value)) throw new Error('Invalid Codex MCP startup snapshot');
-  for (const [serverId, state] of Object.entries(candidate.value)) {
-    if (!serverId.trim()) throw new Error('Invalid Codex MCP startup snapshot');
-    // 顶层键是 MCP 服务标识而非负载字段；密钥规则继续应用于每个服务的状态内容。
-    assertNoSecretLikeProviderKeys(state, new Set<string>(), `snapshot.${serverId}`);
-    if (typeof state === 'string') continue;
-    if (!isPlainRecord(state) || typeof state.status !== 'string') throw new Error('Invalid Codex MCP startup snapshot');
-    assertOnlyKeys(state, ['status', 'error'], 'Codex MCP server startup state');
-    if (state.error !== undefined && state.error !== null && typeof state.error !== 'string') throw new Error('Invalid Codex MCP startup snapshot');
   }
 }
 

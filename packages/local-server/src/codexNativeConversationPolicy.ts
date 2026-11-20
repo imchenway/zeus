@@ -7,7 +7,6 @@ import { type CodexAppServerEvent, type CodexCommandApprovalDecision, type Codex
 import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type TokenUsageBreakdown } from '@zeus/shared';
 import { currentDatabasePerformanceTraceId } from '@zeus/storage';
 import type {
-  CodexMcpServerStartupState,
   CommandDeliveryRepository,
   ConversationCollaborationMode,
   ConversationItemPhase,
@@ -1249,34 +1248,6 @@ export function tokenUsageBreakdown(value: Record<string, unknown>): TokenUsageB
 export function requireSafeInteger(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid ${label}.`);
   return value;
-}
-
-export function normalizeMcpStartupStatusMap(value: Record<string, unknown>): Record<string, CodexMcpServerStartupState> {
-  return Object.fromEntries(
-    Object.entries(value).map(([serverId, state]) => {
-      if (typeof state === 'string') return [serverId, state];
-      if (isRecord(state) && typeof state.status === 'string' && (state.error === undefined || state.error === null || typeof state.error === 'string')) {
-        return [serverId, { status: state.status, ...(state.error === undefined ? {} : { error: state.error as string | null }) } satisfies CodexMcpServerStartupState];
-      }
-      throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid MCP startup status for ${serverId}.`);
-    }),
-  );
-}
-
-export function normalizeSingleMcpStartupStatus(params: Record<string, unknown>): { serverId: string; state: CodexMcpServerStartupState } {
-  const serverId = requireString(params.name, 'MCP server name');
-  const status = requireString(params.status, `MCP startup status for ${serverId}`);
-  if (params.error !== undefined && params.error !== null && typeof params.error !== 'string') {
-    throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid MCP startup error for ${serverId}.`);
-  }
-  if (params.failureReason !== undefined && params.failureReason !== null && typeof params.failureReason !== 'string') {
-    throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', `Invalid MCP startup failure reason for ${serverId}.`);
-  }
-  const error = typeof params.error === 'string' ? params.error : typeof params.failureReason === 'string' ? params.failureReason : params.error === null || params.failureReason === null ? null : undefined;
-  return {
-    serverId,
-    state: { status, ...(error === undefined ? {} : { error }) },
-  };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

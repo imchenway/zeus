@@ -18,7 +18,7 @@ import {
   type TaskType,
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { canonicalJson, type CodexMcpStartupStatusSnapshot, type CodexRateLimitsSnapshot, shouldAcceptProviderSnapshot, validateMcpStartupStatusSnapshot, validateRateLimitsSnapshot } from './conversationStore.js';
+import { canonicalJson, type CodexRateLimitsSnapshot, shouldAcceptProviderSnapshot, validateRateLimitsSnapshot } from './conversationStore.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType } from '@zeus/shared';
 export type { TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
@@ -670,29 +670,17 @@ export class SettingRepository {
     return record;
   }
 
+  /** 只有来源代次与序号更新的限流快照才能覆盖旧值。 */
   upsertCodexRateLimitsSnapshot(snapshot: CodexRateLimitsSnapshot): CodexRateLimitsSnapshot | undefined {
-    return this.upsertSequencedSnapshot('codex.native.rate_limits', snapshot);
+    validateRateLimitsSnapshot(snapshot);
+    const current = this.getCodexRateLimitsSnapshot();
+    if (!shouldAcceptProviderSnapshot(this.db, snapshot, current)) return current;
+    this.setJson('codex.native.rate_limits', snapshot);
+    return snapshot;
   }
 
   getCodexRateLimitsSnapshot(): CodexRateLimitsSnapshot | undefined {
     return this.getJson<CodexRateLimitsSnapshot>('codex.native.rate_limits');
-  }
-
-  upsertCodexMcpStartupStatusSnapshot(snapshot: CodexMcpStartupStatusSnapshot): CodexMcpStartupStatusSnapshot | undefined {
-    return this.upsertSequencedSnapshot('codex.native.mcp_startup_status', snapshot);
-  }
-
-  getCodexMcpStartupStatusSnapshot(): CodexMcpStartupStatusSnapshot | undefined {
-    return this.getJson<CodexMcpStartupStatusSnapshot>('codex.native.mcp_startup_status');
-  }
-
-  private upsertSequencedSnapshot<T extends CodexRateLimitsSnapshot | CodexMcpStartupStatusSnapshot>(key: 'codex.native.rate_limits' | 'codex.native.mcp_startup_status', snapshot: T): T | undefined {
-    if (key === 'codex.native.rate_limits') validateRateLimitsSnapshot(snapshot);
-    else validateMcpStartupStatusSnapshot(snapshot);
-    const current = this.getJson<T>(key);
-    if (!shouldAcceptProviderSnapshot(this.db, snapshot, current)) return current;
-    this.setJson(key, snapshot);
-    return snapshot;
   }
 }
 
