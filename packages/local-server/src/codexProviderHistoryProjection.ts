@@ -817,6 +817,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     /** 只写入此原生会话已确认的运行分段，不为历史内容建立新的执行权限。 */
     const segment = options.execution.segmentByNativeSession(item.providerThreadId, conversation.id);
     if (!segment) return;
+    /** 已完成条目的归档引用随历史补拉复用，避免把同一原生输出重新写回过程表。 */
+    const storedPayload = item.itemType === 'commandExecution' ? parseJsonRecord(item.payloadJson) : undefined;
     processProjector.projectNativeItem({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -824,7 +826,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       providerItemId: item.providerItemId,
       itemType: item.itemType,
       status: item.status,
-      payload: projection.payload,
+      payload: storedPayload?.archivedCommandOutputFormat ? storedPayload : projection.payload,
       text: projection.textContent,
       occurredAt: item.completedAt ?? item.startedAt ?? timestamp,
     });

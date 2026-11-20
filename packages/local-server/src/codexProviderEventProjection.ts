@@ -43,8 +43,6 @@ import {
   itemTypeFromValue,
   liveProgressProjection,
   nativePendingRequestProjection,
-  normalizeMcpStartupStatusMap,
-  normalizeSingleMcpStartupStatus,
   normalizeTurnPlan,
   parseJsonRecord,
   phaseFromItem,
@@ -64,6 +62,7 @@ import {
   serializeError,
   tokenUsageBreakdown,
 } from './codexNativeConversationPolicy.js';
+import { codexMcpStartupNotification, compactNewCommandOutput } from './conversationStorageCompaction.js';
 
 export interface CodexProviderEventProjectionDependencies {
   options: CreateCodexNativeConversationCoordinatorOptions;
@@ -228,7 +227,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     submissionPresentation,
     syncItemResources,
   } = dependencies;
-  if (closed) return;
+  /** MCP 启动通知是初始化诊断，不产生会话事实或补拉事件。 */
+  if (closed || event.method === codexMcpStartupNotification) return;
   const identity = codexProviderEventIdentity(event);
   if (hasProcessedProviderEvent(event, identity)) return;
   const params: Record<string, unknown> = isRecord(event.params) ? event.params : {};
@@ -1073,6 +1073,24 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
+    /** 先持久化原件，再将可从该原件恢复的命令输出替换为句柄。 */
+    const executionSegment = options.execution.segmentByNativeSession(threadId, conversation.id);
+    const rawCommandResult = completedProjection.textContent || (itemType === 'commandExecution' ? JSON.stringify(completedProjection.payload) : '');
+    const archivedCommand =
+      itemType === 'commandExecution' && executionSegment && executionSegment.state !== 'sealed' && typeof completedProjection.payload.aggregatedOutput === 'string'
+        ? await options.toolResults.store({
+            conversationId: conversation.id,
+            turnId: turn.id,
+            segmentId: executionSegment.id,
+            toolPairId: providerItemId,
+            toolKind: 'command',
+            text: rawCommandResult,
+            createdAt: event.receivedAt,
+          })
+        : undefined;
+    const storedPayload = archivedCommand ? compactNewCommandOutput(completedProjection.payload, archivedCommand.record, rawCommandResult) : completedProjection.payload;
+    /** Provider 预览与归档正文相同也只保留一份。 */
+    const storedText = storedPayload !== completedProjection.payload && completedProjection.textContent === completedProjection.payload.aggregatedOutput ? '' : completedProjection.textContent;
     const item = options.providerItems.upsertCompleted({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -1081,9 +1099,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerItemId,
       itemType,
       // 完成事件省略阶段时保留已知分类，避免把过程说明误判成正文。
-      phase: phaseFromItem(completedProjection.payload),
-      payload: completedProjection.payload,
-      textContent: completedProjection.textContent,
+      phase: phaseFromItem(storedPayload),
+      payload: storedPayload,
+      textContent: storedText,
       status: itemPayload.status === 'failed' ? 'failed' : 'completed',
       startedAt: typeof itemPayload.startedAt === 'string' ? itemPayload.startedAt : null,
       completedAt: event.receivedAt,
@@ -1101,12 +1119,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerItemId,
       itemType: item.itemType,
       status: item.status === 'failed' ? 'failed' : 'completed',
-      payload: completedProjection.payload,
+      payload: storedPayload,
       text: item.textContent,
       occurredAt: event.receivedAt,
     });
     if (isToolResultItem(item.itemType)) sessionMetricsChanged = true;
-    const executionSegment = options.execution.segmentByNativeSession(threadId, conversation.id);
     if (executionSegment && executionSegment.state !== 'sealed') {
       if (item.itemType === 'agentMessage' && !options.execution.modelHistoryByProviderItem(conversation.id, providerItemId, 'agentMessage')) {
         options.execution.appendModelHistory({
@@ -1147,21 +1164,23 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       } else if (isToolResultItem(item.itemType)) {
         const rawText = item.textContent || JSON.stringify(completedProjection.payload);
         const toolKind = item.itemType === 'commandExecution' ? 'command' : /search/i.test(item.itemType) ? 'search' : 'other';
-        const stored = await options.toolResults.store({
-          conversationId: conversation.id,
-          turnId: turn.id,
-          segmentId: executionSegment.id,
-          toolPairId: providerItemId,
-          toolKind,
-          text: rawText,
-          createdAt: event.receivedAt,
-        });
+        const stored =
+          archivedCommand ??
+          (await options.toolResults.store({
+            conversationId: conversation.id,
+            turnId: turn.id,
+            segmentId: executionSegment.id,
+            toolPairId: providerItemId,
+            toolKind,
+            text: rawText,
+            createdAt: event.receivedAt,
+          }));
         options.execution.appendModelHistory({
           conversationId: conversation.id,
           turnId: turn.id,
           segmentId: executionSegment.id,
           role: 'assistant',
-          content: { type: 'tool_call', itemType: item.itemType, payload: completedProjection.payload },
+          content: { type: 'tool_call', itemType: item.itemType, payload: storedPayload },
           submissionId: turn.clientSubmissionId,
           toolPairId: providerItemId,
           confirmedAt: event.receivedAt,
@@ -1501,16 +1520,6 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     options.usage.handleSparseRateLimitUpdate();
   } else if (event.method === 'account/updated') {
     options.usage.handleAccountChanged();
-  } else if (event.method === 'mcpServer/startupStatus/updated') {
-    const legacyStatuses = isRecord(params.statuses) ? normalizeMcpStartupStatusMap(params.statuses) : null;
-    const currentStatus = legacyStatuses ? null : normalizeSingleMcpStartupStatus(params);
-    const currentSnapshot = options.settings.getCodexMcpStartupStatusSnapshot();
-    const value = legacyStatuses ?? Object.fromEntries([...(currentSnapshot?.generationId === event.generationId ? Object.entries(currentSnapshot.value) : []), [currentStatus!.serverId, currentStatus!.state]]);
-    const snapshot = { generationId: event.generationId, sequence: event.sequence, value };
-    const stored = options.settings.upsertCodexMcpStartupStatusSnapshot(snapshot);
-    if (stored?.generationId === snapshot.generationId && stored.sequence === snapshot.sequence) {
-      broadcast = { type: 'codex.mcp_startup_status.updated', payload: snapshot };
-    }
   } else if (event.requestId !== undefined && conversation && threadId) {
     const requestKind = requestKindFromMethod(event.method);
     if (requestKind) {

@@ -1106,7 +1106,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           mutateBusinessState: () => {
             assertCurrentWorkToolTurn(options, call.conversationId, turn.id);
             if (options.readOnlyValidation || options.isTaskTerminal(requireTaskOrThrow(options, item.taskId))) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DEPLOYMENT_CLOSED', '任务已结束或处于只读检查。');
-            const commands = captureDeploymentCommands(run, options.providerItems, input);
+            const commands = captureDeploymentCommands(run, options.providerItems, input, options.artifacts);
             return options.deployments.record({ environment: input.environment, revision: input.revision, url: input.url, outcome: input.outcome, summary: input.summary, id: identity, runId: run.id, commands });
           },
         }).result;
@@ -2036,6 +2036,7 @@ async function prepareAgentDeliverable(options: TaskWorkManagementOptions, run: 
     message,
     changes: options.turnChanges,
     providerItems: options.providerItems,
+    artifacts: options.artifacts,
     deployments: options.deployments.list(run.id),
     requiredKinds: options.items.getById(run.workItemId)?.arrangement?.outputKinds,
   });
@@ -2144,6 +2145,7 @@ async function freezeWorkflowDeliverable(
     statement: input.summary,
     changes: options.turnChanges,
     providerItems: options.providerItems,
+    artifacts: options.artifacts,
     deployments: options.deployments.list(run.id),
     requiredKinds: item.arrangement?.outputKinds,
   });

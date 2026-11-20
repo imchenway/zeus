@@ -72,7 +72,6 @@ function normalizedConversationEventType(type: string, payload: Record<string, u
   if (type === 'conversation.provider.settings.updated') return 'conversation.settings.changed';
   if (type === 'conversation.provider.token_usage.updated') return 'conversation.tokenUsage.changed';
   if (type === 'codex.rate_limits.updated') return 'conversation.rateLimits.changed';
-  if (type === 'codex.mcp_startup_status.updated') return 'conversation.mcpStartup.changed';
   if (type === 'conversation.submission.steered') return 'conversation.queue.changed';
   return type;
 }
