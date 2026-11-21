@@ -510,16 +510,13 @@ function RendererBootstrapReady(): null {
   return null;
 }
 
-/** 进度由已经完成的启动步骤推进，运行时间只显示在进度条下方。 */
+/** 显示当前启动阶段和步数，光带在整个启动期间持续播放。 */
 function showStartupStep(step: 1 | 2 | 3, label: string): void {
   const loader = document.querySelector('.zeus-startup-loader');
   const stage = loader?.querySelector('#zeus-startup-stage');
   const stepLabel = loader?.querySelector('[data-startup-step]');
   if (stage) stage.textContent = label;
   if (stepLabel) stepLabel.textContent = startupLanguage === 'zh-CN' ? `第 ${step} 步，共 3 步` : `Step ${step} of 3`;
-  loader?.querySelectorAll<HTMLElement>('.zeus-startup-progress span').forEach((segment, index) => {
-    segment.dataset.state = index + 1 === step ? 'active' : index + 1 < step ? 'done' : 'pending';
-  });
 }
 
 function gitOperationReason(operation: string): string {

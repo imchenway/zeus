@@ -78,31 +78,17 @@
         font-variant-numeric: tabular-nums;
       }
 
-      /* 每段对应一个真实步骤；移动部分只表示该步骤仍在处理。 */
+      /* 启动耗时未知，使用贯穿整条轨道的光带表示仍在处理。 */
       .zeus-startup-progress {
         --startup-accent: light-dark(#5747d0, #a89dff);
         --startup-highlight: light-dark(#4374e9, #79baff);
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 4px;
-      }
-
-      .zeus-startup-progress span {
         block-size: 5px;
         border-radius: 5px;
         background: light-dark(#d9dae2, #45444c);
         overflow: hidden;
       }
 
-      .zeus-startup-progress [data-state='done'] {
-        background: linear-gradient(90deg, var(--startup-accent), var(--startup-highlight));
-      }
-
-      .zeus-startup-progress [data-state='active'] {
-        background: color-mix(in srgb, var(--startup-accent) 27%, transparent);
-      }
-
-      .zeus-startup-progress [data-state='active']::after {
+      .zeus-startup-progress::after {
         content: '';
         display: block;
         inline-size: 100%;
@@ -111,7 +97,7 @@
         background: linear-gradient(90deg, transparent, var(--startup-accent) 42%, var(--startup-highlight) 62%, transparent);
         transform: translate3d(-100%, 0, 0);
         will-change: transform;
-        animation: zeus-startup-working 1.2s linear infinite;
+        animation: zeus-startup-working 1.8s linear infinite;
       }
 
       @keyframes zeus-startup-working {
@@ -121,7 +107,7 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .zeus-startup-progress [data-state='active']::after {
+        .zeus-startup-progress::after {
           animation: none;
           transform: none;
           will-change: auto;
@@ -135,7 +121,7 @@
         <section class="zeus-startup-content" aria-labelledby="zeus-startup-title">
           <h1 id="zeus-startup-title">正在启动 Zeus</h1>
           <p class="zeus-startup-stage" role="status"><span id="zeus-startup-stage">正在检查本机数据</span><span data-startup-step>第 1 步，共 3 步</span></p>
-          <div class="zeus-startup-progress" role="progressbar" aria-labelledby="zeus-startup-stage"><span data-state="active"></span><span></span><span></span></div>
+          <div class="zeus-startup-progress" role="progressbar" aria-labelledby="zeus-startup-stage"></div>
           <p data-startup-elapsed>已等待 0 秒</p>
         </section>
       </div>
