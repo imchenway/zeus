@@ -513,7 +513,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       }
       try {
         const document = await sourceBridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
-        if (active) setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, document, draft: document.content, externalChange: false } : candidate)));
+        if (active) setTabs((current) => current.map((candidate) => applySourceFileRead(candidate, tab, document)));
       } catch {
         if (active) {
           // 外部删除、重命名或暂时不可访问只更新标签状态，保留内容，不弹出操作失败提示。
@@ -1399,13 +1399,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     if (activeTab.dirty && !window.confirm(zh ? '重新加载会放弃当前未保存内容，是否继续？' : 'Reloading discards the unsaved draft. Continue?')) return;
     try {
       const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath: activeTab.document.relativePath });
-      setTabs((current) => current.map((tab) => (tab.document.relativePath === document.relativePath ? { ...tab, document, draft: document.content, dirty: false, externalChange: false } : tab)));
+      setTabs((current) => current.map((tab) => applySourceFileRead(tab, activeTab, document)));
       setError(null);
     } catch (reloadError) {
       setError(reloadError);
     }
   }
 });
+
+/** 读盘期间的新草稿仍用原磁盘版本作为保存基线，避免绕过外部修改检查。 */
+function applySourceFileRead(current: SourceTab, beforeRead: SourceTab, document: ProjectSourceDocument): SourceTab {
+  if (current.document !== beforeRead.document || current.saving) return current;
+  if (current.draft !== beforeRead.draft) return { ...current, externalChange: true };
+  return { ...current, document, draft: document.content, dirty: false, externalChange: false };
+}
 
 /** 目录分支共用磁盘快照、展开状态和文件动作。 */
 interface SourceTreeRowsProps {
