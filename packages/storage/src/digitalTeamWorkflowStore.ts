@@ -209,7 +209,6 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
   if (!db.select<{ name: string }>('PRAGMA table_info(digital_team_workflow_runs)').some((column) => column.name === 'runtime_state_json'))
     db.execute("ALTER TABLE digital_team_workflow_runs ADD COLUMN runtime_state_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(runtime_state_json))");
   migrateWorkflowPrimitiveAttempts(db);
-  db.execute('CREATE TABLE IF NOT EXISTS digital_team_project_workflows (project_id TEXT PRIMARY KEY REFERENCES projects(id), template_id TEXT NOT NULL REFERENCES digital_team_workflow_templates(id), updated_at TEXT NOT NULL)');
 }
 
 /** 扩展原尝试账本的节点和状态约束，保留全部身份、关联与历史数据。 */

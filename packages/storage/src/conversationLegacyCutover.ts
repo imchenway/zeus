@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as yieldToCore } from 'node:timers/promises';
+import { assistantMessageMetadata } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { ConversationExecutionRepository } from './conversationExecutionStore.js';
 import { ConversationProviderItemRepository, conversationProviderItemStoreGeneration } from './conversationProviderItemStore.js';
 import type { ConversationAgentKind, ConversationItemPhase, ConversationItemStatus, ConversationItemType } from './conversationItemTypes.js';
 
@@ -39,6 +42,199 @@ interface LegacyItemRow {
 }
 
 const legacyItemBatchSize = 1_000;
+/** 存量迁移逐批释放写锁，避免几十万条历史阻塞正常会话。 */
+const retirementBatchSize = 128;
+
+/** 旧库仍有源表时才允许迁移或安装兼容读取。 */
+export function hasLegacyConversationItems(db: ZeusDatabasePort): boolean {
+  return Boolean(db.get("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'conversation_items'"));
+}
+
+/** 一行旧历史在时间线中保留完整身份和可重建的原始内容。 */
+type LegacyItemEvidence = {
+  source: Omit<LegacyItemRow, 'text_content' | 'payload_json'>;
+  sourceHash: string;
+  processId?: string;
+  textContent?: string;
+  payloadJson?: string;
+};
+
+/** 迁移旧条目、核对真实目标内容，再在原库内原子删表。源表保留到最后一笔提交。 */
+export async function retireLegacyConversationItems(db: ZeusDatabasePort, shouldStop: () => boolean): Promise<{ sourceRows: number; copiedMessages: number; reusedProcessRows: number; sourceDigest: string } | undefined> {
+  if (!hasLegacyConversationItems(db) || shouldStop()) return;
+  assertLegacyWriteFenceClosed(db);
+  /** 旧安装可能重建过空表。已经写好的逐条对账回执保持原样。 */
+  if (!db.get('SELECT 1 FROM conversation_items LIMIT 1')) {
+    db.durableTransactionSync(() => db.execute('DROP TABLE conversation_items'));
+    return;
+  }
+  /** 未安装延后索引的旧库也按范围分页；源表删除时一并移除该索引。 */
+  if (!db.get("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_conversation_items_timeline'")) {
+    db.durableTransactionSync(() => db.execute('CREATE INDEX idx_conversation_items_timeline ON conversation_items(conversation_id, updated_at, id)'));
+  }
+  const mappedAt = new Date().toISOString();
+  /** 正式模型和 Provider 仓储同时维护可见历史及其位置索引。 */
+  const history = new ConversationExecutionRepository(db);
+  const providerItems = new ConversationProviderItemRepository(db);
+  const sourceHash = createHash('sha256');
+  let sourceRows = 0;
+  let copiedMessages = 0;
+  let reusedProcessRows = 0;
+  for await (const rows of readRetirementBatches(db, shouldStop)) {
+    db.durableTransactionSync(() => {
+      for (const row of rows) {
+        /** 已提交的时间线身份也是可重入边界。 */
+        const timelineId = ensureUnifiedTimelineIdentity(db, row, mappedAt);
+        const prior = readLegacyItemEvidence(db, timelineId);
+        if (prior) {
+          if (prior.processId) reusedProcessRows++;
+        } else {
+          const process = legacyProcessCopy(db, row);
+          if (process && process.payloadJson === row.payload_json && process.textContent === row.text_content) {
+            reusedProcessRows++;
+            saveLegacyItemEvidence(db, timelineId, row, process.id);
+          } else {
+            saveLegacyItemEvidence(db, timelineId, row);
+          }
+          if (row.item_type === 'agentMessage' || row.item_type === 'userMessage') {
+            if (restoreMissingLegacyMessage(db, history, row, mappedAt)) copiedMessages++;
+          } else if (!process && !providerItems.getByProvider(row.provider_thread_id, row.provider_item_id)) {
+            /** 执行器已经停写，归档中的旧进行中状态不重启任务。原始状态保留在时间线。 */
+            migrateProviderState(providerItems, row.status === 'in_progress' ? { ...row, status: 'failed' } : row);
+          }
+        }
+        sourceHash.update(canonicalLegacyIdentity(row));
+        sourceRows++;
+      }
+    });
+  }
+  if (shouldStop()) return;
+
+  /** 独立读回已提交的目标，比较包括全部旧标识和字段的完整摘要。 */
+  const verifiedHash = createHash('sha256');
+  let verifiedRows = 0;
+  for await (const rows of readRetirementBatches(db, shouldStop)) {
+    for (const row of rows) {
+      const evidence = readLegacyItemEvidence(db, `conversation_timeline_legacy_item_${identityHash(row.id)}`);
+      if (!evidence || evidence.sourceHash !== legacyRowHash(row)) throw new Error(`旧会话切换缺少来源证据：${row.id}`);
+      const content = evidence.processId ? readLegacyProcessCopy(db, evidence.processId, row) : evidence;
+      if (!content || typeof content.payloadJson !== 'string' || typeof content.textContent !== 'string') throw new Error(`旧会话切换缺少原始内容：${row.id}`);
+      const restored = { ...evidence.source, text_content: content.textContent, payload_json: content.payloadJson };
+      if (legacyRowHash(restored) !== evidence.sourceHash) throw new Error(`旧会话切换对账失败：${row.id}`);
+      verifiedHash.update(canonicalLegacyIdentity(restored));
+      verifiedRows++;
+    }
+  }
+  if (shouldStop()) return;
+  const sourceDigest = sourceHash.digest('hex');
+  const targetDigest = verifiedHash.digest('hex');
+  db.durableTransactionSync(() => {
+    assertLegacyWriteFenceClosed(db);
+    if (sourceRows !== verifiedRows || sourceDigest !== targetDigest || sourceRows !== db.countRows('conversation_items')) {
+      throw new Error(`旧会话切换对账失败：来源 ${sourceRows}，目标 ${verifiedRows}。`);
+    }
+    db.execute(
+      `UPDATE conversation_legacy_cutover_metadata
+        SET state = 'ready', source_rows = ?, mapped_rows = ?, source_digest = ?, mapping_digest = ?,
+              completed_at = ?, rollback_database_identity = NULL, failure_json = NULL
+        WHERE singleton = 1`,
+      [sourceRows, verifiedRows, sourceDigest, targetDigest, new Date().toISOString()],
+    );
+    db.execute('DROP TABLE conversation_items');
+  });
+  return { sourceRows, copiedMessages, reusedProcessRows, sourceDigest };
+}
+
+/** 按旧库已有的会话时间索引扫描，跨批次保持原有顺序。 */
+async function* readRetirementBatches(db: ZeusDatabasePort, shouldStop: () => boolean): AsyncGenerator<LegacyItemRow[]> {
+  let cursor: [string, string, string] = ['', '', ''];
+  while (!shouldStop()) {
+    await yieldToCore();
+    if (shouldStop()) return;
+    const rows = readLegacyBatch(db, ...cursor, retirementBatchSize);
+    const tail = rows.at(-1);
+    if (!tail) return;
+    yield rows;
+    cursor = [tail.conversation_id, tail.updated_at, tail.id];
+  }
+}
+
+/** 按同一会话、轮次和旧条目来源寻找不可变的过程副本。 */
+function legacyProcessCopy(db: ZeusDatabasePort, row: LegacyItemRow): { id: string; payloadJson: string; textContent: string } | undefined {
+  const match = db.get<{ id: string }>(
+    `SELECT p.id FROM conversation_runtime_segments AS s
+      JOIN conversation_process_items AS p ON p.segment_id = s.id AND p.source_event_id = ?
+      WHERE s.conversation_id = ? AND p.conversation_id = ? AND p.turn_id = ? AND p.status IN ('completed', 'failed')
+      ORDER BY p.process_sequence LIMIT 1`,
+    [`migration:item:${row.id}`, row.conversation_id, row.conversation_id, row.turn_id],
+  );
+  return match ? readLegacyProcessCopy(db, match.id, row) : undefined;
+}
+
+/** 读回过程正文时固定来源身份，避免引用另一条命令或另一会话。 */
+function readLegacyProcessCopy(db: ZeusDatabasePort, id: string, row: Pick<LegacyItemRow, 'id' | 'conversation_id' | 'turn_id'>): { id: string; payloadJson: string; textContent: string } | undefined {
+  const record = db.get<{ detail_json: string }>('SELECT detail_json FROM conversation_process_items WHERE id = ? AND conversation_id = ? AND turn_id = ? AND source_event_id = ?', [
+    id,
+    row.conversation_id,
+    row.turn_id,
+    `migration:item:${row.id}`,
+  ]);
+  const detail = record ? (JSON.parse(record.detail_json) as { payload?: unknown; text?: unknown }) : undefined;
+  if (!detail || typeof detail.text !== 'string' || detail.payload === undefined) return;
+  return { id, payloadJson: JSON.stringify(detail.payload), textContent: detail.text };
+}
+
+/** 时间线只保留需要迁入的源字段。已有逐字相同的过程正文按身份引用。 */
+function saveLegacyItemEvidence(db: ZeusDatabasePort, timelineId: string, row: LegacyItemRow, processId?: string): void {
+  const { text_content, payload_json, ...source } = row;
+  const evidence: LegacyItemEvidence = { source, sourceHash: legacyRowHash(row), ...(processId ? { processId } : { textContent: text_content, payloadJson: payload_json }) };
+  db.execute('UPDATE conversation_timeline_events SET payload_json = ? WHERE id = ?', [JSON.stringify(evidence), timelineId]);
+}
+
+/** 区分已迁入的完整证据和旧候选工具只写过的摘要。 */
+function readLegacyItemEvidence(db: ZeusDatabasePort, timelineId: string): LegacyItemEvidence | undefined {
+  const row = db.get<{ payload_json: string }>("SELECT payload_json FROM conversation_timeline_events WHERE id = ? AND event_kind = 'legacy_item_migrated'", [timelineId]);
+  const value = row ? (JSON.parse(row.payload_json) as Partial<LegacyItemEvidence>) : undefined;
+  return value?.source && typeof value.sourceHash === 'string' ? (value as LegacyItemEvidence) : undefined;
+}
+
+/** 只补当前正文账本缺失的旧用户或助手消息，不重复生成同轮正文。 */
+function restoreMissingLegacyMessage(db: ZeusDatabasePort, history: ConversationExecutionRepository, row: LegacyItemRow, mappedAt: string): boolean {
+  if (!row.text_content) return false;
+  const role = row.item_type === 'userMessage' ? 'user' : 'assistant';
+  if (
+    db.get(
+      `SELECT 1 FROM conversation_model_history
+      WHERE conversation_id = ? AND turn_id = ? AND role = ? AND tool_pair_id IS NULL
+        AND CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.text') END = ?
+      LIMIT 1`,
+      [row.conversation_id, row.turn_id, role, row.text_content],
+    )
+  )
+    return false;
+  if (
+    db.get(
+      `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = ? AND provider_thread_id = ? AND provider_item_id = ? AND role = ? AND content = ? LIMIT 1`,
+      [row.conversation_id, row.provider_thread_id, row.provider_item_id, role, row.text_content],
+    )
+  )
+    return false;
+  const payload = parseJson(row.payload_json);
+  history.appendModelHistory({
+    conversationId: row.conversation_id,
+    turnId: row.turn_id,
+    segmentId: ensureMigrationSegment(db, row, mappedAt),
+    role,
+    content: {
+      text: row.text_content,
+      legacySourceItemId: row.id,
+      ...(role === 'assistant' ? { assistantMessage: assistantMessageMetadata(typeof payload === 'object' && payload && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {}, row.phase) } : {}),
+    },
+    confirmedAt: row.completed_at ?? row.updated_at,
+  });
+  return true;
+}
 
 export function migrateConversationLegacyCutoverSchema(db: ZeusDatabasePort): void {
   db.execute(`
@@ -143,18 +339,16 @@ export function migrateLegacyConversationItemsCandidate(db: ZeusDatabasePort, in
   }
 }
 
-function readLegacyBatch(db: ZeusDatabasePort, conversationId: string, updatedAt: string, id: string): LegacyItemRow[] {
+function readLegacyBatch(db: ZeusDatabasePort, conversationId: string, updatedAt: string, id: string, limit = legacyItemBatchSize): LegacyItemRow[] {
   return db.select<LegacyItemRow>(
     `SELECT id, conversation_id, turn_id, provider_thread_id, provider_turn_id, provider_item_id,
             item_type, status, phase, text_content, payload_json, started_at, completed_at,
             updated_at, agent_kind, native_item_id
        FROM conversation_items
-      WHERE conversation_id > ?
-         OR (conversation_id = ? AND updated_at > ?)
-         OR (conversation_id = ? AND updated_at = ? AND id > ?)
+      WHERE (conversation_id, updated_at, id) > (?, ?, ?)
       ORDER BY conversation_id, updated_at, id
       LIMIT ?`,
-    [conversationId, conversationId, updatedAt, conversationId, updatedAt, id, legacyItemBatchSize],
+    [conversationId, updatedAt, id, limit],
   );
 }
 
