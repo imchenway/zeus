@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { GitDeliveryCombinationContext } from './gitDeliverySettings.js';
+import { GitDeliveryCombinationContext, writeGitDeliveryFollowUps, writeGitDeliverySettings, type GitDeliveryFollowUpPreferences } from './gitDeliverySettings.js';
 import { formatTaskManagementStatusLabel, type CommandDefinition, type GitDeliveryInput, type GitDeliveryRun, type GitDeliverySettings, type GitDeliveryStep, type TaskManagementStatusDefinition } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
@@ -166,6 +166,16 @@ export function GitDeliveryRunControl(props: {
     return () => setRunning(false);
   }, [busy, running, setRunning]);
 
+  /** 选择或勾选改变时立即记住，当前窗口始终采用用户刚修改的值。 */
+  function changeFollowUps(changes: Partial<GitDeliveryFollowUpPreferences>): void {
+    setFollowUps((current) => ({ ...current, ...changes }));
+    try {
+      writeGitDeliveryFollowUps(props.projectId, changes);
+    } catch {
+      setError(props.zh ? '收尾选项已更新，但项目偏好保存失败。' : 'Follow-up options changed, but the project preference could not be saved.');
+    }
+  }
+
   /** 立即隐藏窗口，将固定快照交给后台；接纳失败时恢复原窗口。 */
   async function start(): Promise<void> {
     if (pending.current) return;
@@ -205,11 +215,11 @@ export function GitDeliveryRunControl(props: {
       /** 接纳结果立即进入本地运行列表，偏好写入失败也不会允许重复启动。 */
       const acceptedRun = await props.client.startGitDeliveryRun(props.projectId, JSON.parse(request.current.json) as GitDeliveryInput, request.current.key);
       acceptRun(acceptedRun);
-      /** 只记录后台实际接纳的固定组合，失败请求和临时勾选不覆盖上次运行。 */
+      /** 单独记录后台实际接纳的组合参数。 */
       const acceptedSettings = (JSON.parse(request.current.json) as GitDeliveryInput).settings;
       request.current = null;
       try {
-        localStorage.setItem(`zeus.git-delivery.settings:${props.projectId}`, JSON.stringify(acceptedSettings));
+        writeGitDeliverySettings(props.projectId, acceptedSettings);
       } catch {
         setError(props.zh ? '组合已开始运行，但项目偏好保存失败。' : 'The combination started, but its project preference could not be saved.');
         return;
@@ -313,30 +323,30 @@ export function GitDeliveryRunControl(props: {
       <div className="git-delivery-follow-up-fields">
         <div className="task-git-delivery-field-row">
           <label className="git-delivery-checkbox" aria-disabled={commandToggleDisabled || undefined}>
-            <input type="checkbox" checked={followUps.commands} disabled={commandToggleDisabled} onChange={(event) => setFollowUps((current) => ({ ...current, commands: event.target.checked }))} />
+            <input type="checkbox" checked={followUps.commands} disabled={commandToggleDisabled} onChange={(event) => changeFollowUps({ commands: event.target.checked })} />
             {props.zh ? '推送后执行命令' : 'Run after push'}
           </label>
           <GitDeliveryCommandSelect
             commands={commands}
-            selectedIds={settings.postPushCommandIds ?? []}
+            selectedIds={followUps.postPushCommandIds}
             disabled={commandToggleDisabled || !followUps.commands || !commandsLoaded}
             zh={props.zh}
-            onChange={(ids) => setSettings((current) => ({ ...current, postPushCommandIds: ids }))}
+            onChange={(ids) => changeFollowUps({ postPushCommandIds: ids })}
           />
         </div>
         {taskId ? (
           <div className="task-git-delivery-field-row">
             <label className="git-delivery-checkbox" aria-disabled={controlsDisabled || undefined}>
-              <input type="checkbox" checked={followUps.taskStatus} disabled={controlsDisabled} onChange={(event) => setFollowUps((current) => ({ ...current, taskStatus: event.target.checked }))} />
+              <input type="checkbox" checked={followUps.taskStatus} disabled={controlsDisabled} onChange={(event) => changeFollowUps({ taskStatus: event.target.checked })} />
               {props.zh ? '修改任务状态' : 'Set task status'}
             </label>
             <TaskManagementStatusSelect
               size="compact"
               disabled={controlsDisabled || !followUps.taskStatus}
-              value={settings.finalTaskStatus ?? ''}
-              triggerLabel={settings.finalTaskStatus ? undefined : props.zh ? '选择状态' : 'Select status'}
+              value={followUps.finalTaskStatus ?? ''}
+              triggerLabel={followUps.finalTaskStatus ? undefined : props.zh ? '选择状态' : 'Select status'}
               options={statusOptions}
-              onChange={(value) => setSettings((current) => ({ ...current, finalTaskStatus: value }))}
+              onChange={(value) => changeFollowUps({ finalTaskStatus: value })}
               ariaLabel={props.zh ? '交付成功后修改任务状态' : 'Task status after delivery succeeds'}
             />
           </div>

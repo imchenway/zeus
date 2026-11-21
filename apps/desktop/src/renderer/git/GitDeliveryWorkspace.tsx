@@ -1,7 +1,7 @@
 import { useDeliveryFileMenu } from './DeliveryFileMenu.js';
 import type { FilePreviewRequest, GitDeliverySettings } from '@zeus/shared';
 import { groupRepositoriesByBranch } from './repositoryBranchGroups.js';
-import { GitDeliveryCombinationContext, readGitDeliverySettings } from './gitDeliverySettings.js';
+import { GitDeliveryCombinationContext, readGitDeliveryFollowUps, readGitDeliverySettings } from './gitDeliverySettings.js';
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
 import type { TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
@@ -819,13 +819,10 @@ export function GitDeliveryActions(props: {
   /** 两种交付入口共用后台运行入口。 */
   combination?: ReactNode;
 }) {
-  /** 每个项目恢复最近一次被后台接纳的组合，临时勾选仅属于当前操作栏。 */
+  /** 每个项目恢复最近一次被后台接纳的组合步骤。 */
   const [preferences, setSettings] = useState(() => readGitDeliverySettings(props.projectId, props.currentDirectory));
-  /** 已保存的命令和任务状态默认勾选，本次关闭开关时保留选择值。 */
-  const [followUps, setFollowUps] = useState(() => ({
-    commands: Boolean(preferences.postPushCommandIds?.length),
-    taskStatus: Boolean(preferences.finalTaskStatus),
-  }));
+  /** 收尾选项独立恢复项目中上次的选择和勾选。 */
+  const [followUps, setFollowUps] = useState(() => readGitDeliveryFollowUps(props.projectId, preferences));
   /** 每个仓库都选择有效本地目标后才允许整次合入。 */
   const canMerge = props.mergeTargets.length > 0 && props.mergeTargets.every((target) => target.value && target.branches.includes(target.value)) && !props.mergeDisabled;
   /** 表单显示当前选择，并限制无法执行的合入。 */
@@ -833,8 +830,8 @@ export function GitDeliveryActions(props: {
   /** 单步合入和组合交付只携带本入口允许且已勾选的收尾选项。 */
   const executionSettings: GitDeliverySettings = {
     ...settings,
-    postPushCommandIds: followUps.commands ? (settings.postPushCommandIds ?? []) : [],
-    finalTaskStatus: props.hasTask && followUps.taskStatus ? settings.finalTaskStatus : null,
+    postPushCommandIds: settings.push && followUps.commands ? followUps.postPushCommandIds : [],
+    finalTaskStatus: props.hasTask && followUps.taskStatus ? followUps.finalTaskStatus : null,
     archiveConversation: !props.hasTask && settings.archiveConversation === true,
   };
   /** 复制成功才显示确认图标，目标变化后旧回执不再匹配。 */
@@ -846,10 +843,10 @@ export function GitDeliveryActions(props: {
   /** 提供右侧操作栏中独立于表单滚动的按钮位置。 */
   const [footerHost, setFooterHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    /** 同时恢复当前项目最近接纳的收尾选项和对应勾选。 */
+    /** 项目或交付入口变化时读取该项目的组合与收尾偏好。 */
     const restored = readGitDeliverySettings(props.projectId, props.currentDirectory);
     setSettings(restored);
-    setFollowUps({ commands: Boolean(restored.postPushCommandIds?.length), taskStatus: Boolean(restored.finalTaskStatus) });
+    setFollowUps(readGitDeliveryFollowUps(props.projectId, restored));
     setSettingsOpen(false);
   }, [props.projectId, props.currentDirectory]);
   /** 两种入口都在操作期间锁定文件选择。 */
