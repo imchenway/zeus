@@ -43,7 +43,9 @@ export function FileTreeRow({ name, path, depth, kind, fileStatus, trailing, but
           <Folder className="file-tree-row-folder-closed" weight="regular" aria-hidden="true" />
           <FolderOpen className="file-tree-row-folder-open" weight="regular" aria-hidden="true" />
         </>
-      ) : <FileTypeIcon name={name} />}
+      ) : (
+        <FileTypeIcon name={name} />
+      )}
       <span data-file-status={fileStatus}>{name}</span>
       {kind === 'symlink' ? <small>↗</small> : null}
       {trailing}

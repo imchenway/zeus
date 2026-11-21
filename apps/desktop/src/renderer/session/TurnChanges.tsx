@@ -450,9 +450,9 @@ export function TurnDiffWorkspace(props: {
   );
 
   /** 切换按钮说明当前可用的布局，窄窗口固定使用全宽。 */
-  const widthAction = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : (zh ? '扩展为全宽' : 'Expand full width');
+  const widthAction = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width';
   /** 文件栏开关提示下一步操作。 */
-  const filesAction = filesOpen ? (zh ? '收起变更文件栏' : 'Hide changed files') : (zh ? '展开变更文件栏' : 'Show changed files');
+  const filesAction = filesOpen ? (zh ? '收起变更文件栏' : 'Hide changed files') : zh ? '展开变更文件栏' : 'Show changed files';
   /** 标题、文件总数与操作在同一行，目录和差异正文从下一行开始。 */
   const header = (
     <header className="session-context-workspace-header session-turn-diff-header">
@@ -468,15 +468,7 @@ export function TurnDiffWorkspace(props: {
         </span>
       </span>
       <nav aria-label={zh ? '变更审核操作' : 'Change review actions'}>
-        <Button
-          unstyled
-          type="button"
-          aria-controls={filesId}
-          aria-expanded={filesOpen}
-          aria-label={filesAction}
-          data-icon-tooltip={filesAction}
-          onClick={() => props.onFilesOpenChange(!filesOpen)}
-        >
+        <Button unstyled type="button" aria-controls={filesId} aria-expanded={filesOpen} aria-label={filesAction} data-icon-tooltip={filesAction} onClick={() => props.onFilesOpenChange(!filesOpen)}>
           <SidebarSimple weight={filesOpen ? 'fill' : 'regular'} aria-hidden="true" />
         </Button>
         {action ? (
@@ -490,7 +482,7 @@ export function TurnDiffWorkspace(props: {
           type="button"
           disabled={!props.canSplit}
           aria-label={widthAction}
-          data-icon-tooltip={props.canSplit ? widthAction : (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view')}
+          data-icon-tooltip={props.canSplit ? widthAction : zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view'}
           onClick={() => props.onFullWidthChange(!props.fullWidth)}
         >
           {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
@@ -548,14 +540,7 @@ export function TurnDiffWorkspace(props: {
           {activeFile ? (
             <>
               <header>
-                <div
-                  className="session-turn-diff-path"
-                  tabIndex={0}
-                  data-file-path={activeFile.newPath ?? activeFile.oldPath ?? undefined}
-                  data-icon-tooltip={displayPath(activeFile)}
-                  role="group"
-                  aria-label={displayPath(activeFile)}
-                >
+                <div className="session-turn-diff-path" tabIndex={0} data-file-path={activeFile.newPath ?? activeFile.oldPath ?? undefined} data-icon-tooltip={displayPath(activeFile)} role="group" aria-label={displayPath(activeFile)}>
                   <strong data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>{activeName}</strong>
                   {activeDirectory ? <small>{activeDirectory}</small> : null}
                 </div>
@@ -661,12 +646,14 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
                   'aria-current': file.id === props.activeFileId ? 'true' : undefined,
                   onClick: () => props.onSelect(file.id),
                 }}
-                trailing={file.addedLines || file.deletedLines ? (
-                  <span className="session-turn-diff-line-counts">
-                    {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
-                    {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
-                  </span>
-                ) : null}
+                trailing={
+                  file.addedLines || file.deletedLines ? (
+                    <span className="session-turn-diff-line-counts">
+                      {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
+                      {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
+                    </span>
+                  ) : null
+                }
               />
             ))
           )}

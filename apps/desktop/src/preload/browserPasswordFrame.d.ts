@@ -23,6 +23,4 @@ export interface BrowserPasswordFrameProbe {
 
 /** anchor 只在父 frame 换算几何，fill 只接受 probe 确认的文档。 */
 export type BrowserPasswordFrameRequest =
-  | { action: 'probe'; origin: string }
-  | { action: 'anchor'; childIndex: number; childCount: number; anchor: BrowserPasswordAnchor }
-  | { action: 'fill'; origin: string; documentId: string; selection: BrowserPasswordSelection };
+  { action: 'probe'; origin: string } | { action: 'anchor'; childIndex: number; childCount: number; anchor: BrowserPasswordAnchor } | { action: 'fill'; origin: string; documentId: string; selection: BrowserPasswordSelection };

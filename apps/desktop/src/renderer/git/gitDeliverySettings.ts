@@ -15,12 +15,7 @@ export interface GitDeliveryFollowUpPreferences {
 
 /** 校验本地命令列表的数量、身份格式和唯一性。 */
 function isPostPushCommandIds(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length <= 50 &&
-    value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 256) &&
-    new Set(value).size === value.length
-  );
+  return Array.isArray(value) && value.length <= 50 && value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 256) && new Set(value).size === value.length;
 }
 
 /** 已保存的项目组合优先，当前目录首次交付默认生成说明、提交并推送。 */
@@ -56,13 +51,7 @@ function readSavedFollowUpPreferences(projectId: string): GitDeliveryFollowUpPre
   try {
     /** 本地记录可能缺失或损坏，只有完整的选值和开关可恢复。 */
     const value = JSON.parse(localStorage.getItem(followUpPreferencesKey(projectId)) ?? 'null') as GitDeliveryFollowUpPreferences | null;
-    if (
-      !value ||
-      typeof value.commands !== 'boolean' ||
-      typeof value.taskStatus !== 'boolean' ||
-      !isPostPushCommandIds(value.postPushCommandIds) ||
-      (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')
-    ) {
+    if (!value || typeof value.commands !== 'boolean' || typeof value.taskStatus !== 'boolean' || !isPostPushCommandIds(value.postPushCommandIds) || (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')) {
       return null;
     }
     return value;
