@@ -20,7 +20,7 @@ import usernameFieldSource from '../../assets/keepassxc-browser/content/username
 import defaultsSource from '../../assets/keepassxc-browser/background/page.js.txt?raw';
 import englishSource from '../../assets/keepassxc-browser/_locales/en/messages.json.txt?raw';
 import chineseSource from '../../assets/keepassxc-browser/_locales/zh_CN/messages.json.txt?raw';
-import type { BrowserPasswordFrameRequest, BrowserPasswordSelection } from './browserPasswordFrame.js';
+import type { BrowserPasswordAnchor, BrowserPasswordFrameRequest, BrowserPasswordSelection } from './browserPasswordFrame.js';
 
 /** 与网页及普通页面 preload 分开的内容脚本世界，网页不能调用凭据接口。 */
 const autofillWorld = 1001;
@@ -145,7 +145,7 @@ function autofillScript(context: AutofillContext): string {
       return active;
     };
     // 通过上游识别结果把菜单绑定到触发它的登录框。
-    const zeusCombination = (input) => kpxc.combinations.find((item) => item.username === input || item.password === input);
+    const zeusCombination = (input) => input && kpxc.combinations.find((item) => item.username === input || item.password === input);
     // 点击登录框与工具栏入口沿用相同的表单选择规则。
     const zeusTarget = () => zeusMenuInput ? zeusCombination(zeusMenuInput) : zeusCombination(zeusActiveInput()) ?? kpxcFields.getCombinationFromAllInputs();
     globalThis.zeusAutofill = {
@@ -158,13 +158,15 @@ function autofillScript(context: AutofillContext): string {
         const password = Boolean(combination.password);
         if (!username && !password) return null;
         zeusProbedFields = { username: combination.username, password: combination.password };
-        // 子 frame 的相对坐标不能直接定位到外层窗口。
+        // 先裁掉当前 frame 视口之外的部分，宿主再逐层换算。
         const active = zeusMenuInput ?? zeusActiveInput();
         const input = zeusCombination(active) === combination ? active : combination.password ?? combination.username;
-        const rect = window === window.top ? input?.getBoundingClientRect() : null;
-        const anchor = rect && rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth
-          ? { x: rect.x, y: rect.y, height: rect.height }
-          : undefined;
+        const rect = input.getBoundingClientRect();
+        const x = Math.max(0, rect.left);
+        const y = Math.max(0, rect.top);
+        const width = Math.min(innerWidth, rect.right) - x;
+        const height = Math.min(innerHeight, rect.bottom) - y;
+        const anchor = width > 0 && height > 0 ? { x, y, width, height } : undefined;
         return { documentId: zeusContext.documentId, username, password, anchor };
       },
       fill: async (origin, documentId) => {
@@ -212,8 +214,49 @@ function autofillScript(context: AutofillContext): string {
   return `(async () => { 'use strict';\n${transport}\n${source}\n${entry}\n})()`;
 }
 
+/** 根据浏览器子 frame 顺序找到实际嵌入元素，并把登录框换算到本层视口。 */
+function projectPasswordAnchor({ childIndex, childCount, anchor }: Extract<BrowserPasswordFrameRequest, { action: 'anchor' }>): BrowserPasswordAnchor | undefined {
+  if (window.length !== childCount) return undefined;
+  const child = window.frames[childIndex];
+  if (!child) return undefined;
+  /** 焦点路径可以找到开放 Shadow DOM 中的嵌入元素。 */
+  let focused = document.activeElement;
+  while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+  const owner =
+    (focused instanceof HTMLIFrameElement || focused instanceof HTMLFrameElement) && focused.contentWindow === child
+      ? focused
+      : Array.from(document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe, frame')).find((element) => element.contentWindow === child);
+  if (!owner || !owner.offsetWidth || !owner.offsetHeight) return undefined;
+
+  /** 子文档原点在嵌入元素的内容盒中，边框、内边距和缩放属于父文档。 */
+  const rect = owner.getBoundingClientRect();
+  const style = getComputedStyle(owner);
+  if (style.visibility !== 'visible') return undefined;
+  /** ponytail: 按轴对齐的矩形换算，旋转或倾斜的嵌入元素需要内容四边形投影。 */
+  const scaleX = rect.width / owner.offsetWidth;
+  const scaleY = rect.height / owner.offsetHeight;
+  const left = rect.left + (owner.clientLeft + Number.parseFloat(style.paddingLeft) + anchor.x) * scaleX;
+  const top = rect.top + (owner.clientTop + Number.parseFloat(style.paddingTop) + anchor.y) * scaleY;
+  const x = Math.max(0, left);
+  const y = Math.max(0, top);
+  const width = Math.min(innerWidth, rect.right, left + anchor.width * scaleX) - x;
+  const height = Math.min(innerHeight, rect.bottom, top + anchor.height * scaleY) - y;
+  return width > 0 && height > 0 ? { x, y, width, height } : undefined;
+}
+
 /** 在专属隔离世界启动完整上游脚本，普通网页拿不到 IPC 或凭据对象。 */
 export function installBrowserPasswordAutofill(showPasswords: (documentId: string) => Promise<unknown>): void {
+  /** 父 frame 可能没有凭据运行环境，几何查询仍可在其 preload 中处理。 */
+  let handleCredentials: ((request: Exclude<BrowserPasswordFrameRequest, { action: 'anchor' }>) => Promise<unknown>) | undefined;
+  ipcRenderer.on('zeus:browser-page:password-frame', async ({ ports: [reply] }, request: BrowserPasswordFrameRequest) => {
+    if (!reply) return;
+    try {
+      const result = request.action === 'anchor' ? projectPasswordAnchor(request) : await (handleCredentials?.(request) ?? 'unavailable');
+      reply.postMessage(result);
+    } catch {
+      reply.postMessage('unavailable');
+    }
+  });
   if (!['https:', 'http:'].includes(location.protocol) || self.origin !== location.origin) return;
   /** 等待正文创建，保持上游 document_idle 的启动时机。 */
   const start = async (): Promise<void> => {
@@ -233,23 +276,17 @@ export function installBrowserPasswordAutofill(showPasswords: (documentId: strin
       showPasswords: () => showPasswords(context.documentId),
     });
     await webFrame.executeJavaScriptInIsolatedWorld(autofillWorld, [{ code: autofillScript(context) }]);
-    ipcRenderer.on('zeus:browser-page:password-frame', async ({ ports: [reply] }, request: BrowserPasswordFrameRequest) => {
-      if (!reply) return;
-      if (request.origin !== self.origin || (request.action === 'fill' && request.documentId !== context.documentId)) {
-        reply.postMessage('page_changed');
-        return;
-      }
+    handleCredentials = async (request) => {
+      if (request.origin !== self.origin || (request.action === 'fill' && request.documentId !== context.documentId)) return 'page_changed';
       const origin = JSON.stringify(request.origin);
       const code = request.action === 'probe' ? `globalThis.zeusAutofill.probe(${origin})` : `globalThis.zeusAutofill.fill(${origin},${JSON.stringify(context.documentId)})`;
       try {
         if (request.action === 'fill') selection = request.selection;
-        reply.postMessage(await webFrame.executeJavaScriptInIsolatedWorld(autofillWorld, [{ code }], request.action === 'fill'));
-      } catch {
-        reply.postMessage('unavailable');
+        return await webFrame.executeJavaScriptInIsolatedWorld(autofillWorld, [{ code }], request.action === 'fill');
       } finally {
         if (request.action === 'fill') selection = undefined;
       }
-    });
+    };
   };
   /** 初始化诊断不包含源码、凭据或库内容；显式填充入口会报告实际不可用。 */
   const initialize = (): void => {
