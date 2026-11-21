@@ -31,11 +31,10 @@ import {
 } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { FileTreeRow } from './FileTreeRow.js';
 import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
-import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
@@ -1482,29 +1481,22 @@ const SourceTreeRow = memo(function SourceTreeRow(
   /** 只有目录行参与展开，普通文件和符号链接维持打开行为。 */
   const directory = props.entry.kind === 'directory';
   return (
-    <Button
-      data-busy-behavior="background"
-      unstyled
-      type="button"
-      role="treeitem"
-      aria-selected={props.selected}
-      aria-expanded={directory ? props.expanded : undefined}
-      className={props.selected ? 'selected' : ''}
-      style={{ paddingInlineStart: `${10 + props.depth * 14}px` }}
-      disabled={props.disabled}
-      onClick={() => props.onAction(props.entry.relativePath)}
-      onContextMenu={(event) => props.onContextMenu(props.entry, event)}
-      data-file-path={props.entry.relativePath}
-      data-icon-tooltip={props.entry.name}
-      onKeyDown={(event) => props.onShortcut(props.entry, event)}
-    >
-      <span className="project-source-disclosure" aria-hidden="true">
-        {directory ? props.expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
-      </span>
-      {directory ? props.expanded ? <FolderOpen weight="regular" aria-hidden="true" /> : <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={props.entry.name} />}
-      <span data-file-status={props.fileStatus}>{props.entry.name}</span>
-      {props.entry.kind === 'symlink' ? <small>↗</small> : null}
-    </Button>
+    <FileTreeRow
+      name={props.entry.name}
+      path={props.entry.relativePath}
+      kind={props.entry.kind}
+      depth={props.depth}
+      fileStatus={props.fileStatus}
+      button={{
+        role: 'treeitem',
+        'aria-selected': props.selected,
+        'aria-expanded': directory ? props.expanded : undefined,
+        disabled: props.disabled,
+        onClick: () => props.onAction(props.entry.relativePath),
+        onContextMenu: (event) => props.onContextMenu(props.entry, event),
+        onKeyDown: (event) => props.onShortcut(props.entry, event),
+      }}
+    />
   );
 });
 

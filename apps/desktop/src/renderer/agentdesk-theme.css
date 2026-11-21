@@ -3451,24 +3451,6 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-source-tree-scroll {
   padding: 4px 0 20px;
 }
-.macos-ai-app.zeus-shell .project-source-tree-scroll button {
-  min-height: 24px;
-  margin-block: 0;
-  padding-block: 2px;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 20px;
-  background: transparent !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.macos-ai-app.zeus-shell .project-source-tree-scroll button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent) !important;
-}
-.macos-ai-app.zeus-shell .project-source-tree-scroll button.selected {
-  background: color-mix(in srgb, var(--zeus-control-text) 10%, var(--zeus-code-editor-bg)) !important;
-}
 .macos-ai-app.zeus-shell .project-source-search {
   margin: 0;
   min-height: 32px;

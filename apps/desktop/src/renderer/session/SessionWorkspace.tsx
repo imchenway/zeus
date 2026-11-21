@@ -2199,7 +2199,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 关闭全宽面板时立即恢复正文的交互。 */
   const contextCoversConversation = contextOpen && (contextFullWidth || browserLayoutWidth <= 840);
   /** 支持顶栏挂载的工作面在退出期间继续显示标签及标题。 */
-  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question', 'subagents', 'plan'].includes(contextWorkspace.kind);
+  const contextToolbarPresent = contextPresent && ['browser', 'source', 'file', 'question', 'subagents', 'plan', 'turn_diff'].includes(contextWorkspace.kind);
   /** 阅读回执使用持久项目身份，不使用面板导航身份。 */
   const contentProjectId = props.conversation?.projectId;
   /** 正文会话身份在提醒字段刷新时保持稳定。 */
@@ -3519,11 +3519,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       transcriptReadActionsEnabled
                         ? (changeSet, fileId) => {
                             contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-                            setContextFullWidth(false);
+                            // 首次进入审阅使用全宽，已打开时保留用户选择的分栏模式。
+                            if (!contextOpen || contextWorkspace.kind !== 'turn_diff') setContextFullWidth(true);
                             setContextWorkspace({
                               kind: 'turn_diff',
                               turnId: changeSet.providerTurnId,
-                              ...(fileId ? { initialFileId: fileId } : {}),
+                              filesOpen: fileId === undefined,
+                              fileRequest: fileId === undefined ? undefined : { id: fileId },
                             });
                             // 审阅入口也负责重试尚未补齐的正文，不能只打开空白摘要。
                             if (changeSet.contentProjection === 'summary') void actions.onLoadTurnArtifacts?.(changeSet.providerTurnId);
@@ -3714,8 +3716,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         ) : null}
                         {contextWorkspace.kind === 'turn_diff' && turnDiffChangeSet ? (
                           <TurnDiffWorkspace
+                            toolbarHost={contextToolbarHost}
+                            canSplit={browserLayoutWidth > 840}
                             changeSet={turnDiffChangeSet}
-                            initialFileId={contextWorkspace.initialFileId}
+                            fileRequest={contextWorkspace.fileRequest}
+                            filesOpen={contextWorkspace.filesOpen}
+                            onFilesOpenChange={(filesOpen) => setContextWorkspace((current) => (current.kind === 'turn_diff' ? { ...current, filesOpen } : current))}
                             language={props.language}
                             fullWidth={contextFullWidth}
                             onFullWidthChange={setContextFullWidth}
