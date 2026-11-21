@@ -60,7 +60,7 @@ import { BrowserPasswordStore, browserPasswordOrigin } from './browserPasswords.
 import { BrowserCuaHost } from './browserCuaHost.js';
 import type { BrowserCuaSurface } from './browserCuaBridge.js';
 import type { ComputerHost } from './computerHost.js';
-import type { BrowserPasswordFrameProbe, BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
+import type { BrowserPasswordAnchor, BrowserPasswordFrameProbe, BrowserPasswordFrameRequest } from '../preload/browserPasswordFrame.js';
 
 /** 保存浏览器偏好、书签和近期下载；标签随本次应用运行结束。 */
 interface PersistedBrowserState {
@@ -1371,6 +1371,11 @@ export class BrowserHost implements BrowserAutomationPort {
     /** 读取候选、显示弹层和填充期间共用同一次页面身份。 */
     const controller = new AbortController();
     tab.passwordPicker = controller;
+    /** 手动按键可取消尚在读取的自动候选或填充，并继续交给网页。 */
+    const cancelOnKeyDown = (_event: unknown, input: { type: string }): void => {
+      if (input.type === 'keyDown') controller.abort();
+    };
+    if (quiet) contents.on('before-input-event', cancelOnKeyDown);
     const generation = tab.documentGeneration;
     const isCurrent = (): boolean =>
       !controller.signal.aborted &&
@@ -1388,6 +1393,9 @@ export class BrowserHost implements BrowserAutomationPort {
         if (quiet) return;
         throw new Error(this.text('自动填充尚未就绪，或页面没有可填充的登录框。', 'Autofill is not ready, or no supported sign-in field was found.'));
       }
+      /** 自动建议只在登录框有可见位置时打开。 */
+      const anchor = probe?.anchor && (await browserPasswordViewportAnchor(frame, probe.anchor));
+      if (!isCurrent() || (quiet && !anchor)) return;
       /** 标题来自真实字段组合，分步登录时只描述当前可填的一项。 */
       const title = !probe
         ? this.text('填充已保存的密码', 'Fill saved password')
@@ -1399,7 +1407,9 @@ export class BrowserHost implements BrowserAutomationPort {
       const index = await showBrowserPasswordPicker({
         parent: window,
         view,
-        anchor: probe?.anchor,
+        anchor,
+        automatic: quiet,
+        preloadPath: this.options.preloadPath,
         origin,
         title,
         labels: accounts.map((account) => (account.username || this.text('无用户名', 'No username')).slice(0, 240)),
@@ -1425,6 +1435,7 @@ export class BrowserHost implements BrowserAutomationPort {
         status === 'multiple_forms' ? this.text('页面有多个登录表单，请先点击要填充的登录框。', 'Focus the sign-in field in the form you want to fill.') : this.text('未找到可填充的登录框。', 'No supported sign-in field was found.'),
       );
     } finally {
+      if (quiet) contents.off('before-input-event', cancelOnKeyDown);
       tab.passwordPicker = undefined;
     }
   }
@@ -3466,6 +3477,22 @@ function browserPasswordFrameOrigin(contents: WebContents, frame: WebFrameMain |
   } catch {
     return undefined;
   }
+}
+
+/** 将原登录框的坐标逐层换算到网页顶层，填充目标仍由原 frame 决定。 */
+async function browserPasswordViewportAnchor(frame: WebFrameMain, anchor: BrowserPasswordAnchor): Promise<BrowserPasswordAnchor | undefined> {
+  for (let parent = frame.parent; parent; parent = frame.parent) {
+    /** 主进程和 window.frames 按同一子树顺序定位嵌入元素，避免按 URL 猜测重复的 iframe。 */
+    const children = parent.frames;
+    const childIndex = children.findIndex((child) => child.frameTreeNodeId === frame.frameTreeNodeId);
+    if (childIndex < 0) return undefined;
+    const projected = (await requestBrowserPasswordFrame(parent, { action: 'anchor', childIndex, childCount: children.length, anchor })) as BrowserPasswordAnchor | undefined;
+    if (!projected || ![projected.x, projected.y, projected.width, projected.height].every(Number.isFinite) || projected.width <= 0 || projected.height <= 0) return undefined;
+    if (parent.isDestroyed() || parent.detached || parent.frames[childIndex]?.frameTreeNodeId !== frame.frameTreeNodeId) return undefined;
+    frame = parent;
+    anchor = projected;
+  }
+  return anchor;
 }
 
 /** 单次消息端口把命令定位到目标 preload，并在 frame 离开或失去响应时结束等待。 */

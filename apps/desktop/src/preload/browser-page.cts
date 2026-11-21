@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 import { installIconTooltips } from './iconTooltip.js';
 import { installMarkdownListInput } from './markdownListInput.js';
 import { selectionCommentIcons } from './selectionCommentIcons.js';
@@ -25,8 +25,16 @@ function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 
   return ipcRenderer.invoke(channel, Object.freeze({ envelope, body }));
 }
 
-/** 各 frame 独立识别自己的登录框。 */
-installBrowserPasswordAutofill((documentId) => invokeBrowserPageCommand('desktop.browser.autofill', { documentId }, 'zeus:browser-page:show-passwords'));
+/** 密码弹层复用沙箱 preload，只在宿主创建的本地文档中安装选择接口。 */
+const isPasswordPicker = process.isMainFrame && location.protocol === 'data:' && process.argv.includes('--zeus-browser-password-picker');
+if (isPasswordPicker) {
+  contextBridge.exposeInMainWorld('zeusPasswordPicker', {
+    /** 回传候选序号，关闭弹层时回传空选择。 */
+    choose: (index: number | null) => ipcRenderer.send('zeus:browser-password-picker:choose', index),
+  });
+} else {
+  installBrowserPasswordAutofill((documentId) => invokeBrowserPageCommand('desktop.browser.autofill', { documentId }, 'zeus:browser-page:show-passwords'));
+}
 
 type Rect = { x: number; y: number; width: number; height: number };
 type DesignChange = { kind: 'text' | 'style'; selector?: string; property?: string; previous: string; next: string };
@@ -884,7 +892,7 @@ function handleBrowserPageCommand(_event: unknown, message: unknown): void {
   }
 }
 
-if (process.isMainFrame) {
+if (process.isMainFrame && !isPasswordPicker) {
   window.addEventListener('pagehide', () => pageTranslation.stop(), { once: true });
   ipcRenderer.on('zeus-browser-page:command', handleBrowserPageCommand);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });

@@ -6,6 +6,10 @@ interface BrowserPasswordPickerOptions {
   parent: BrowserWindow;
   view: WebContentsView;
   anchor: BrowserPasswordFrameProbe['anchor'];
+  /** 输入框触发的候选须保留网页焦点，工具栏入口支持键盘选账号。 */
+  automatic: boolean;
+  /** 复用打包后的沙箱 preload，仅开启本地弹层的选择接口。 */
+  preloadPath: string;
   /** 展示文字由宿主根据语言和已识别的登录字段提供。 */
   title: string;
   origin: string;
@@ -19,19 +23,20 @@ interface BrowserPasswordPickerOptions {
 /** 在网页内容之上选账号，关闭、换页或失焦时返回空选择。 */
 export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions): Promise<number | null> {
   /** 窗口与嵌入视图的边界使用设备无关像素，表单坐标还需乘网页缩放比例。 */
-  const { parent, view, signal } = options;
+  const { parent, view, signal, automatic } = options;
   const page = view.webContents;
   if (parent.isDestroyed() || !parent.isFocused() || page.isDestroyed() || signal.aborted) return Promise.resolve(null);
   const content = parent.getContentBounds();
   const viewport = view.getBounds();
   const zoom = page.getZoomFactor();
   /** 关闭已聚焦的弹层后，把键盘交回打开它的工作面。 */
-  const previousFocus = page.isFocused() ? page : parent.webContents;
+  const shell = parent.webContents;
+  const previousFocus = page.isFocused() ? page : shell;
   const viewX = content.x + viewport.x;
   const viewY = content.y + viewport.y;
-  /** 没有可用坐标时靠网页左上侧显示，例如从子 frame 发起。 */
+  /** 工具栏主动打开且没有可见登录框时，弹层靠近右侧工具栏。 */
   const anchor = options.anchor;
-  const anchorX = viewX + (anchor ? Math.round(anchor.x * zoom) : 12);
+  const anchorX = viewX + (anchor ? Math.round(anchor.x * zoom) : viewport.width - 1);
   const anchorY = viewY + (anchor ? Math.round((anchor.y + anchor.height) * zoom) : 8);
   const work = screen.getDisplayNearestPoint({ x: anchorX, y: anchorY }).workArea;
   const left = Math.max(viewX, work.x);
@@ -41,7 +46,7 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
   const width = Math.min(340, right - left);
   const height = Math.min(320, 76 + Math.max(1, options.labels.length) * 38, bottom - top);
   if (width <= 0 || height <= 0) return Promise.resolve(null);
-  const x = Math.max(left, Math.min(anchorX, right - width));
+  const x = Math.max(left, Math.min(anchorX, right - width - (anchor ? 0 : 8)));
   const below = anchorY + 6;
   const above = anchor ? viewY + Math.round(anchor.y * zoom) - height - 6 : below;
   const y = Math.max(top, Math.min(below + height <= bottom || above < top ? below : above, bottom - height));
@@ -59,21 +64,34 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
+    focusable: !automatic,
+    acceptFirstMouse: true,
     skipTaskbar: true,
     title: options.title,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#242529' : '#ffffff',
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: false,
+      preload: options.preloadPath,
+      additionalArguments: ['--zeus-browser-password-picker'],
+    },
   });
   const contents = picker.webContents;
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   contents.on('will-navigate', (event) => event.preventDefault());
-  /** 页面只渲染候选标签，本地片段导航回传所选行的序号。 */
+  /** 页面只渲染候选标签，选择通过当前窗口的 IPC 返回。 */
   const html = browserPasswordPickerHtml(options);
   return new Promise((resolve) => {
     /** 单次选择、窗口事件或加载失败共用清理。 */
     let finished = false;
     /** 窗口或页面失去交互条件时取消选择。 */
     const close = (): void => finish(null);
+    /** 点击弹层外先收起候选，原点击仍交给网页或 Zeus 工作区。 */
+    const closeOnOutsideClick = (_event: unknown, input: { type: string }): void => {
+      if (input.type === 'mouseDown') close();
+    };
     /** 只在原弹层仍有焦点时恢复键盘焦点，点击窗口之外时保留新的焦点。 */
     const finish = (index: number | null): void => {
       if (finished) return;
@@ -82,6 +100,11 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
       parent.off('move', close);
       parent.off('resize', close);
       page.off('destroyed', close);
+      if (automatic) {
+        parent.off('blur', close);
+        page.off('before-mouse-event', closeOnOutsideClick);
+        shell.off('before-mouse-event', closeOnOutsideClick);
+      }
       const restoreFocus = !signal.aborted && !picker.isDestroyed() && picker.isFocused();
       if (!picker.isDestroyed()) picker.destroy();
       if (restoreFocus && !parent.isDestroyed() && !previousFocus.isDestroyed()) {
@@ -94,29 +117,34 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
     parent.on('move', close);
     parent.on('resize', close);
     page.once('destroyed', close);
+    if (automatic) {
+      parent.once('blur', close);
+      page.on('before-mouse-event', closeOnOutsideClick);
+      shell.on('before-mouse-event', closeOnOutsideClick);
+    }
     picker.once('blur', close);
     picker.once('closed', close);
-    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (!isMainFrame) return;
-      const value = url.slice(url.lastIndexOf('#') + 1);
-      if (value === 'close') {
+    contents.ipc.on('zeus:browser-password-picker:choose', (event, index: unknown) => {
+      if (event.senderFrame !== contents.mainFrame) return;
+      if (index === null) {
         close();
-      } else if (/^[1-9]\d*$/u.test(value) && Number(value) <= options.labels.length) {
-        finish(Number(value) - 1);
+      } else if (typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < options.labels.length) {
+        finish(index);
       }
     });
     void picker.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).then(() => {
       if (picker.isDestroyed()) return;
       if (parent.isDestroyed() || !parent.isFocused()) close();
+      else if (automatic) picker.showInactive();
       else picker.show();
     }, close);
   });
 }
 
 /** 使用 DOM 文本渲染来源和用户名，候选文档不包含网络权限或账号密码。 */
-function browserPasswordPickerHtml({ title, origin, labels, emptyLabel, closeLabel, language }: BrowserPasswordPickerOptions): string {
+function browserPasswordPickerHtml({ title, origin, labels, emptyLabel, closeLabel, language, automatic }: BrowserPasswordPickerOptions): string {
   /** 编码控制字符和标签起始符，避免用户名改变脚本结构。 */
-  const data = JSON.stringify({ title, origin, labels, emptyLabel, closeLabel }).replaceAll('<', '\\u003c');
+  const data = JSON.stringify({ title, origin, labels, emptyLabel, closeLabel, automatic }).replaceAll('<', '\\u003c');
   return `<!doctype html>
 <html lang="${language === 'en-US' ? 'en-US' : 'zh-CN'}">
 <meta charset="utf-8">
@@ -161,13 +189,13 @@ function browserPasswordPickerHtml({ title, origin, labels, emptyLabel, closeLab
   const list = document.getElementById('accounts');
   const close = document.getElementById('close');
   close.setAttribute('aria-label', data.closeLabel);
-  close.onclick = () => { location.hash = 'close'; };
+  close.onclick = () => window.zeusPasswordPicker.choose(null);
   const choices = data.labels.map((label, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'account';
     button.textContent = label;
-    button.onclick = () => { location.hash = String(index + 1); };
+    button.onclick = () => window.zeusPasswordPicker.choose(index);
     list.append(button);
     return button;
   });
@@ -188,7 +216,7 @@ function browserPasswordPickerHtml({ title, origin, labels, emptyLabel, closeLab
       choices[next].focus();
     }
   });
-  (choices[0] || close).focus();
+  if (!data.automatic) (choices[0] || close).focus();
 </script>
 </html>`;
 }
