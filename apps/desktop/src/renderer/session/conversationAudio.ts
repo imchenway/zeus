@@ -75,7 +75,8 @@ export function useConversationAudio(railRef: RefObject<HTMLElement | null>, but
     /** Map one distinct frequency range to each tick and write only visible widths. */
     function update(frame: Spectrum | null): void {
       if (!rail) return;
-      const volume = frame ? Math.min(1, Math.max(0, (frame.rms - 0.008) * 6.4)) : 0;
+      // Keep the silence threshold and give quiet playback more of the width range.
+      const volume = frame ? Math.sqrt(Math.min(1, Math.max(0, (frame.rms - 0.008) * 16))) : 0;
       if (!frame || volume === 0) return reset();
       const bytes = Uint8Array.from(atob(frame.powers), (character) => character.charCodeAt(0));
       if (bytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) return reset();
@@ -91,7 +92,9 @@ export function useConversationAudio(railRef: RefObject<HTMLElement | null>, but
       rail.setAttribute('data-audio-playing', '');
       for (let index = start; index < end; index += 1) {
         const energy = powerAt(prefix, upper * edges[index]!) - powerAt(prefix, upper * edges[index + 1]!);
-        const target = volume * Math.max(0, energy / total) ** 0.32;
+        // Give dominant bands room to stand out even when many ticks share the spectrum.
+        const bandLevel = Math.min(1, Math.max(0, (8 * energy) / total) ** 0.32);
+        const target = volume * bandLevel;
         const previous = levels[index]!;
         const next = previous + (target - previous) * (target > previous ? 0.62 : 0.28);
         levels[index] = next;
