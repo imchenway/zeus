@@ -4,6 +4,7 @@ import { temporaryWorkspaceId, type ConversationWorktreeBranchOptions, type Conv
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CachedQuery } from '../cachedQuery.js';
 import { projectGitQueryEntries, type ProjectGitQueryClient } from '../git/projectGitWorkbenchState.js';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
@@ -11,7 +12,7 @@ import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSna
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { BranchSwitcher } from '../git/GitRepositoryControls.js';
+import { BranchSwitcher, currentRepositoryRefLabel } from '../git/GitRepositoryControls.js';
 import { Button } from '../ui/Button.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -54,6 +55,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const [projectBusy, setProjectBusy] = useState(false);
 
   const temporary = props.projectId === temporaryWorkspaceId;
+  /** 工作树模式编辑来源，直接模式显示并切换实际 HEAD。 */
+  const sourceMode = props.workspaceMode === 'worktree';
   /** 当前分支供默认来源使用，候选引用只供展开后的菜单使用。 */
   const gitQueries = useMemo(() => (!temporary && props.projectGitClient ? projectGitQueryEntries(props.projectGitClient, props.projectId) : null), [temporary, props.projectGitClient, props.projectId]);
   const heads = useBranchQuery(gitQueries?.heads ?? null);
@@ -64,8 +67,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const headsReady = confirmedHeads !== null && confirmedHeads === gitQueries?.heads;
   /** 复用已经读取的项目快照，首读只发 HEAD 查询。 */
   const branchSnapshot = heads?.value ?? gitQueries?.workbench.getSnapshot().value ?? null;
-  /** 仅本项目的成功读取可以成为可选的分支菜单。 */
-  const branchList = references?.value?.projectId === props.projectId ? references.value : null;
+  /** 展开时重新扫描磁盘，旧快照在这次读取成功前不能成为可选项。 */
+  const branchList = references?.value?.projectId === props.projectId && !references.refreshing && references.error === null ? references.value : null;
   const readError = temporary ? null : gitQueries?.heads ? (!branchSnapshot || (props.workspaceMode === 'worktree' && !headsReady) ? heads?.error : null) : zh ? '当前无法读取项目分支。' : 'Project branches are unavailable.';
   const loadState = temporary || branchSnapshot ? 'ready' : readError ? 'error' : 'loading';
   const error = actionError ?? readError;
@@ -74,14 +77,19 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const repositories = useMemo(() => (branchSnapshot?.projectId === props.projectId ? branchSnapshot.repositories : []), [branchSnapshot, props.projectId]);
   /** 明确选中的仓库身份不随批量切换后的分组变化而扩大或缩小。空数组表示全部仓库。 */
   const [scopeIds, setScopeIds] = useState<string[]>([]);
-  /** 选择范围限定为当前项目仍存在的仓库。 */
-  const scopedRepositories = useMemo(() => (scopeIds.length ? repositories.filter((repository) => scopeIds.includes(repository.id)) : repositories), [repositories, scopeIds]);
+  /** 仓库被移除时，编辑范围回到仍可用的仓库列表。 */
+  const scopedRepositories = useMemo(() => {
+    const matching = repositories.filter((repository) => scopeIds.includes(repository.id));
+    return matching.length ? matching : repositories;
+  }, [repositories, scopeIds]);
+  /** 范围选择和刷新提示共用同一组仓库。 */
+  const scopeIsAll = scopedRepositories.length === repositories.length;
   /** 只用第一仓读取共同字段，不把它作为批量操作的唯一目标。 */
   const selectedRepository = scopedRepositories[0] ?? null;
   /** 非根仓即使只有一个成员，也需要保留项目容器目录。 */
   const projectWorktree = repositories.length > 1 || Boolean(repositories[0] && !['', '.'].includes(repositories[0].relativePath));
   /** 单仓范围由分支菜单中的仓库行选择，空身份集合表示全部仓库。 */
-  const scopeLabel = scopeIds.length ? (selectedRepository?.name ?? '') : zh ? `全部仓库（${repositories.length}）` : `All repositories (${repositories.length})`;
+  const scopeLabel = scopeIsAll && repositories.length > 1 ? (zh ? '全部仓库' : 'All repositories') : (selectedRepository?.name ?? '');
   /** 单仓与多仓草稿共用同一来源查询。 */
   function selectionForRepository(repository: ProjectGitBranchRepository): ConversationWorktreeBranchOptions | undefined {
     return props.worktree && 'repositories' in props.worktree ? props.worktree.repositories.find((entry) => entry.repositoryId === repository.id) : projectWorktree ? undefined : props.worktree;
@@ -90,17 +98,34 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const selections = scopedRepositories.map(selectionForRepository);
   /** 首个配置只用于比较，不代表混合范围具有统一来源。 */
   const selection = selections[0];
-  /** 混合来源时保持空选中态，允许统一选择共同来源。 */
-  const commonSource = selection && selections.every((entry) => entry?.sourceKind === selection.sourceKind && entry?.sourceRef === selection.sourceRef) ? selection : undefined;
   /** 输入空值表示来源仓库使用不同的新分支名，编辑后统一为输入值。 */
   const commonBranchName = selection && selections.every((entry) => entry?.branchName === selection.branchName) ? selection.branchName : '';
-  const snapshot = selectedRepository?.snapshot;
-  /** 缓存中的当前分支可立即显示，已保存的选择优先。 */
-  const shownSource =
-    commonSource ??
-    (!selection && snapshot && !snapshot.detached && scopedRepositories.every((repository) => !repository.snapshot.detached && repository.snapshot.branch === snapshot.branch)
-      ? { sourceKind: 'local' as const, sourceRef: snapshot.branch }
-      : undefined);
+  /** 收起时总结所有工作树来源，逐仓浏览不会改变会话使用的仓库。 */
+  const sources = sourceMode ? repositories.map((repository) => selectionForRepository(repository) ?? (!repository.snapshot.detached ? { sourceKind: 'local' as const, sourceRef: repository.snapshot.branch } : undefined)) : [];
+  /** 同名来源合并显示，分支顺序沿用项目仓库顺序。 */
+  const resolvedRefs = sourceMode ? sources.map((source) => source?.sourceRef ?? '') : scopedRepositories.map((repository) => currentRepositoryRefLabel(repository, zh));
+  const branchRefs = resolvedRefs.every(Boolean) ? [...new Set(resolvedRefs)] : [];
+  /** 只有引用名称和类型都一致时，入口才显示统一的类型标签。 */
+  const uniformSourceKind = sources.every((source) => source?.sourceKind === sources[0]?.sourceKind) ? sources[0]?.sourceKind : undefined;
+  const currentBranchKind = scopedRepositories.every((repository) => !repository.snapshot.detached) ? 'local' : undefined;
+  const triggerKind = branchRefs.length === 1 ? (sourceMode ? uniformSourceKind : currentBranchKind) : undefined;
+  /** 来源标题与完整引用用于收起按钮的可访问名称和提示。 */
+  const sourceLabel = zh ? '来源分支' : branchRefs.length > 1 ? 'Source branches' : 'Source branch';
+  const branchLabel = branchRefs.length
+    ? `${sourceMode ? `${sourceLabel}${zh ? '：' : ': '}` : ''}${branchRefs.join(' · ')}`
+    : sourceMode && repositories.length
+      ? zh
+        ? '选择来源分支'
+        : 'Choose source branch'
+      : loadState === 'loading'
+        ? zh
+          ? '正在读取'
+          : 'Loading'
+        : zh
+          ? '非 Git 目录'
+          : 'Not a Git repository';
+  /** 刷新只抓取当前范围内配置了远程的仓库。 */
+  const refreshLabel = zh ? `刷新远程分支 · ${scopeLabel}` : `Refresh remote branches · ${scopeLabel}`;
   /** 游离 HEAD 仓库仍能打开来源菜单，等候选可用后再确定源。 */
   const worktreeAvailable = repositories.length > 0 && repositories.every(({ snapshot }) => snapshot.localBranches === undefined || defaultWorktreeSource(snapshot) !== undefined);
   const sourceAvailable = scopedRepositories.every((repository, index) => {
@@ -119,15 +144,6 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
       const options = selectionForRepository(repository);
       return Boolean(options && (props.createTask || (options.branchName.trim().startsWith(branchNamespace) && options.branchName.trim().length > branchNamespace.length)) && isSourceAvailable(repository.snapshot, options));
     });
-  const branchLabel = scopedRepositories.some((repository) => repository.snapshot.branch !== snapshot?.branch || repository.snapshot.detached !== snapshot?.detached)
-    ? zh
-      ? '多个分支'
-      : 'Multiple branches'
-    : snapshot?.detached
-      ? zh
-        ? '游离 HEAD'
-        : 'Detached HEAD'
-      : snapshot?.branch || (loadState === 'loading' ? (zh ? '正在读取' : 'Loading') : zh ? '非 Git 目录' : 'Not a Git repository');
   const projectOptions = useMemo(
     () => [
       { value: temporaryWorkspaceId, label: zh ? '临时会话 · 默认目录' : 'Temporary conversation · Default folder', group: zh ? '无项目' : 'Without a project', searchText: '临时 默认 temporary default' },
@@ -222,7 +238,10 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     const resolved = query.getSnapshot();
     if (resolved.value === result && result.projectId === props.projectId && resolved.updatedAt >= (heads?.getSnapshot().updatedAt ?? 0)) {
       heads?.set(result);
-      if (version === loadVersionRef.current) setConfirmedHeads(heads);
+      if (version === loadVersionRef.current) {
+        setConfirmedHeads(heads);
+        setScopeIds((ids) => ids.filter((id) => result.repositories.some((repository) => repository.id === id)));
+      }
     }
   }
 
@@ -273,6 +292,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           return null;
         }
       });
+      /** 抓取只返回被操作仓库的快照，列表仍须重新核对是否有仓库移除。 */
+      if (action.type === 'fetch' && version === loadVersionRef.current) await readBranchList().catch(() => undefined);
       if (version !== loadVersionRef.current) return false;
       if (result.stopped) {
         /** 已成功切换不回滚，剩余仓库保留原分支；失败结果不能显示为全部成功。 */
@@ -356,28 +377,16 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           <span className="session-new-conversation-context-control session-new-conversation-context-branch">
             <BranchSwitcher
               key={`${props.projectId}:${props.workspaceMode}`}
-              cascadeRepositories={repositories.length > 1 || props.workspaceMode === 'direct'}
+              cascadeRepositories={!sourceMode}
               zh={zh}
               repositories={branchList?.repositories ?? []}
-              selectedRepository={branchList?.repositories.find((repository) => repository.id === selectedRepository?.id) ?? selectedRepository}
+              selectedRepository={sourceMode && scopeIsAll && repositories.length > 1 ? null : (branchList?.repositories.find((repository) => repository.id === selectedRepository?.id) ?? null)}
               triggerRef={branchTriggerRef}
-              triggerLabel={
-                props.workspaceMode === 'direct'
-                  ? branchLabel
-                  : shownSource
-                    ? zh
-                      ? `来源分支：${shownSource.sourceRef}`
-                      : `Source branch: ${shownSource.sourceRef}`
-                    : selection
-                      ? zh
-                        ? '多个来源分支'
-                        : 'Multiple source branches'
-                      : zh
-                        ? '选择来源分支'
-                        : 'Choose source branch'
-              }
-              triggerKind={props.workspaceMode === 'worktree' ? shownSource?.sourceKind : snapshot && !snapshot.detached && branchLabel === snapshot.branch ? 'local' : undefined}
-              disabled={props.disabled || refreshing || branchBusy || projectBusy || (!selectedRepository && loadState !== 'error') || !gitQueries?.references || (props.workspaceMode === 'direct' && !props.onExecuteProjectGit)}
+              triggerLabel={branchLabel}
+              triggerRefs={branchRefs.length > 1 ? branchRefs : undefined}
+              triggerPrefix={sourceMode ? sourceLabel : undefined}
+              triggerKind={triggerKind}
+              disabled={props.disabled || projectBusy || loadState === 'loading' || !gitQueries?.references || (!sourceMode && !props.onExecuteProjectGit)}
               onOpen={() => void readBranchList().catch(() => undefined)}
               menuStatus={
                 branchList ? undefined : references?.error ? (
@@ -396,15 +405,37 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                   </div>
                 )
               }
-              busy={branchBusy ? { repositoryId: selectedRepository?.id ?? '', action: 'checkout' } : null}
+              searchAction={
+                sourceMode ? (
+                  <Button
+                    unstyled
+                    type="button"
+                    className="session-new-branch-refresh"
+                    aria-label={refreshLabel}
+                    data-icon-tooltip={refreshLabel}
+                    data-busy-behavior="background"
+                    busy={refreshing}
+                    aria-disabled={refreshing || undefined}
+                    disabled={props.disabled || projectBusy || (branchBusy && !refreshing) || (!branchList && !refreshing) || !scopedRepositories.some((repository) => repository.snapshot.remotes?.length) || !props.onExecuteProjectGit}
+                    onClick={() => {
+                      if (!refreshing) void executeBranchAction({ type: 'fetch' });
+                    }}
+                  >
+                    {refreshing ? <CircleNotch aria-hidden="true" className="project-git-spinner" /> : <ArrowsClockwise aria-hidden="true" />}
+                  </Button>
+                ) : undefined
+              }
+              busy={branchBusy ? { repositoryId: selectedRepository?.id ?? '', action: refreshing ? 'fetch' : 'checkout' } : null}
               onSelectRepository={(repositoryId) => setScopeIds([repositoryId])}
+              onSelectAllRepositories={sourceMode ? () => setScopeIds([]) : undefined}
               referenceSelection={{
-                mode: props.workspaceMode === 'direct' ? 'checkout' : 'source',
+                mode: sourceMode ? 'source' : 'checkout',
                 selectedSource: selectionForRepository,
                 onSelect: async (targets, ref, kind) => {
-                  if (props.workspaceMode === 'worktree' && !updateSelection({ sourceKind: kind, sourceRef: ref }, targets)) return false;
+                  if (props.disabled || projectBusy || branchBusyRef.current) return false;
+                  if (sourceMode && !updateSelection({ sourceKind: kind, sourceRef: ref }, targets)) return false;
                   setScopeIds(targets.length === repositories.length ? [] : targets.map((repository) => repository.id));
-                  return props.workspaceMode === 'direct' ? executeBranchAction({ type: 'checkout', branchName: ref }, targets) : true;
+                  return sourceMode ? true : executeBranchAction({ type: 'checkout', branchName: ref }, targets);
                 },
               }}
               onOpenNewBranch={
@@ -416,13 +447,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                   : undefined
               }
               footer={
-                props.workspaceMode === 'worktree' ? (
+                sourceMode && ((!props.createTask && selectedRepository) || (selection && !sourceAvailable)) ? (
                   <span className="session-new-worktree-fields">
-                    {scopeIds.length > 0 ? (
-                      <Button variant="secondary" size="compact" disabled={props.disabled || refreshing || branchBusy || projectBusy} onClick={() => setScopeIds([])}>
-                        {zh ? '配置全部仓库' : 'Configure all repositories'}
-                      </Button>
-                    ) : null}
                     {!props.createTask ? (
                       <>
                         <label>
@@ -452,15 +478,6 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                       </>
                     ) : null}
                     {selection && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
-                    <Button
-                      variant="secondary"
-                      size="compact"
-                      busy={refreshing}
-                      disabled={props.disabled || projectBusy || branchBusy || !scopedRepositories.some((repository) => repository.snapshot.remotes?.length) || !props.onExecuteProjectGit}
-                      onClick={() => executeBranchAction({ type: 'fetch' })}
-                    >
-                      {zh ? '刷新远程分支' : 'Refresh remote branches'}
-                    </Button>
                   </span>
                 ) : undefined
               }

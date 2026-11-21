@@ -3058,6 +3058,10 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.project-git-branch-trigger > :is(.project-git-branch-trigger-prefix, .project-git-branch-trigger-divider) {
+  color: var(--zeus-product-muted);
+  flex: 0 0 auto;
+}
 .project-git-branch-trigger > svg {
   flex: 0 0 auto;
   height: 14px;
@@ -3087,12 +3091,28 @@ a {
   width: min(520px, calc(100vw - 16px));
   z-index: 120;
 }
+.project-git-branch-search-row {
+  display: flex;
+  align-items: center;
+}
+.project-git-branch-search-row[data-with-action='true'] {
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
 .project-git-branch-search {
   align-items: center;
   border-bottom: 0;
   display: flex;
+  flex: 1;
   gap: 8px;
+  min-width: 0;
   padding: 10px 12px;
+}
+.project-git-branch-search-row[data-with-action='true'] .project-git-branch-search {
+  background: var(--zeus-control-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 .project-git-branch-search svg {
   color: var(--zeus-product-muted);
@@ -3121,6 +3141,10 @@ a {
 .project-git-branch-popover-scroll {
   overflow: auto;
   padding: 6px;
+}
+.project-git-branch-search-row[data-with-action='true'] + .project-git-branch-popover-scroll > .git-branch-repositories {
+  border-block-start: 0;
+  padding-block-start: 0;
 }
 .project-git-branch-actions,
 .project-git-branch-repository {
@@ -3183,6 +3207,13 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.project-git-branch-repository > .project-git-source-repository-head {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.project-git-branch-repository > .project-git-source-repository-head small {
+  max-width: 100%;
 }
 /* 批量选择只有一个操作时占满行，窄窗口允许两项操作换行。 */
 .project-git-common-branch-actions {

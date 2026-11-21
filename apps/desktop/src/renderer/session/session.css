@@ -12234,6 +12234,30 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font-size: 13px;
   font-weight: 400;
 }
+.session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger > .project-git-branch-trigger-ref {
+  min-inline-size: min(5ch, 22%);
+}
+.session-new-branch-refresh {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  block-size: 28px;
+  color: var(--zeus-product-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+}
+.session-new-branch-refresh:hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
+.session-new-branch-refresh:disabled {
+  opacity: 0.5;
+}
+.session-new-branch-refresh svg {
+  inline-size: 15px;
+  block-size: 15px;
+}
 /* 读取提示只占用下拉列表区域，收起时保留已选来源。 */
 .session-new-branch-menu-status {
   display: flex;
@@ -12272,6 +12296,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
     max-inline-size: none;
   }
   .session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger:has(.git-branch-kind) > svg:first-child {
+    display: none;
+  }
+  .session-codex-parity-v1 .session-new-conversation-context-branch > .project-git-branch-trigger > .project-git-branch-trigger-prefix {
     display: none;
   }
   .session-codex-parity-v1 .session-new-conversation-create-task {
@@ -13909,11 +13936,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   padding: 12px 8px 4px;
   margin-block-start: 6px;
   border-block-start: 1px solid var(--zeus-product-border);
-}
-
-.session-worktree-branch-popover .session-new-worktree-fields > button,
-.project-git-branch-popover .session-new-worktree-fields > button {
-  justify-self: start;
 }
 
 .session-new-worktree-fields > label {
