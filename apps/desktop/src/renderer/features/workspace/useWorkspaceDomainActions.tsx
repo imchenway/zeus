@@ -1918,10 +1918,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 从抽屉或任务入口进入同一会话的完整页面，保留现有的实时呈现方式。 */
-  async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<void> {
+  async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<boolean> {
     /** 已打开的会话不因切换展示容器退回历史模式。 */
     const presentation = state.selectedNativeConversation?.projectId === conversation.projectId && state.selectedNativeConversation.id === conversation.id ? state.selectedNativeConversationPresentation : undefined;
-    if (!(await selectNativeConversation(conversation, 'page', presentation))) return;
+    if (!(await selectNativeConversation(conversation, 'page', presentation))) return false;
     setTaskDetailPaneTaskId(undefined);
     setSessionDrawerTarget(undefined);
     setConversationDrawer(undefined);
@@ -1929,13 +1929,16 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       window.history.replaceState(null, '', '#project-sessions');
     }
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    return true;
   }
 
   /** 任务入口沿用统一的完整会话页跳转。 */
-  async function openTaskConversation(taskId: string, conversationId: string): Promise<void> {
-    /** 仅打开该任务实际存在的会话。 */
-    const conversation = nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId);
-    if (conversation) await openNativeConversationPage(conversation);
+  async function openTaskConversation(taskId: string, conversationId: string): Promise<boolean> {
+    /** 工作待办可能先于关联会话列表刷新，按原会话身份补读当前任务。 */
+    const conversation =
+      nativeConversationChoicesByTask[taskId]?.choices.find((candidate) => candidate.id === conversationId) ?? (await refreshNativeConversationChoices(taskId))?.choices.find((candidate) => candidate.id === conversationId);
+    if (!conversation) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '原会话已不可用。' : 'The original conversation is unavailable.');
+    return openNativeConversationPage(conversation);
   }
 
   async function openTaskConflictAiConversation(taskId: string, conversationId: string): Promise<void> {
