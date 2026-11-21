@@ -626,6 +626,8 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
   ]);
   db.execute(`CREATE TABLE IF NOT EXISTS conversation_legacy_write_fence (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), current_writer_open INTEGER NOT NULL CHECK (current_writer_open IN (0, 1)))`);
   db.execute(`INSERT OR IGNORE INTO conversation_legacy_write_fence (singleton, current_writer_open) VALUES (1, 1)`);
+  /** 只有尚未迁移的库需要保护旧条目；账本围栏继续保护当前库。 */
+  const legacyItemsPresent = db.get("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'conversation_items'");
   for (const action of ['INSERT', 'UPDATE', 'DELETE'] as const) {
     db.execute(`
       CREATE TRIGGER IF NOT EXISTS reject_legacy_schema_migrations_${action.toLowerCase()}
@@ -635,7 +637,8 @@ export function migrateUnifiedConversationStoreSchema(db: ZeusDatabasePort): voi
         SELECT RAISE(ABORT, 'ZEUS_DOWNGRADE_REQUIRES_SAFE_ROLLBACK_DATABASE');
       END
     `);
-    db.execute(`
+    if (legacyItemsPresent)
+      db.execute(`
       CREATE TRIGGER IF NOT EXISTS reject_legacy_conversation_items_${action.toLowerCase()}
       BEFORE ${action} ON conversation_items
       WHEN (SELECT current_writer_open FROM conversation_legacy_write_fence WHERE singleton = 1) = 0
@@ -2100,6 +2103,7 @@ function migrateLegacyConversationHistory(db: ZeusDatabasePort, migratedAt: stri
     );
   }
 
+  if (!db.get("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'conversation_items'")) return;
   const items = db.select<{
     id: string;
     conversation_id: string;

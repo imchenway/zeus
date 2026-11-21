@@ -242,27 +242,6 @@ export function migratePluginStoreSchema(db: ZeusDatabasePort): void {
         FOREIGN KEY (plugin_id) REFERENCES plugin_registrations(id)
       )
     `);
-    db.execute(`
-      CREATE TABLE IF NOT EXISTS conversation_plugin_activations (
-        conversation_id TEXT NOT NULL,
-        plugin_id TEXT NOT NULL,
-        plugin_revision_id TEXT NOT NULL,
-        snapshot_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (conversation_id, plugin_id),
-        FOREIGN KEY (conversation_id) REFERENCES conversations(id),
-        FOREIGN KEY (plugin_id) REFERENCES plugin_registrations(id),
-        FOREIGN KEY (plugin_revision_id) REFERENCES plugin_revisions(id)
-      )
-    `);
-    db.execute(`CREATE INDEX IF NOT EXISTS idx_conversation_plugin_activations_revision ON conversation_plugin_activations(plugin_revision_id)`);
-    db.execute(`
-      CREATE TABLE IF NOT EXISTS conversation_plugin_activation_sets (
-        conversation_id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-      )
-    `);
     if (!existing) {
       db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
         pluginStoreSchemaMigrationId,
@@ -300,14 +279,14 @@ export function migratePluginStoreSchema(db: ZeusDatabasePort): void {
       ]);
     }
   });
-  /** 旧表保留以兼容既有数据库结构，但其中的执行副本必须一次性清空。 */
+  /** 插件执行读取当前状态，旧会话快照及索引随表退役。 */
   const currentActivationChecksum = `sha256:${createHash('sha256').update('conversation-plugin-activations:current-state-only').digest('hex')}`;
   db.transaction(() => {
     const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [pluginStoreCurrentActivationMigrationId]);
     if (existing && existing.checksum !== currentActivationChecksum) throw new Error('Plugin 当前态迁移账本与定义不一致。');
+    db.execute('DROP TABLE IF EXISTS conversation_plugin_activations');
+    db.execute('DROP TABLE IF EXISTS conversation_plugin_activation_sets');
     if (existing) return;
-    db.execute(`DELETE FROM conversation_plugin_activations`);
-    db.execute(`DELETE FROM conversation_plugin_activation_sets`);
     db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
       pluginStoreCurrentActivationMigrationId,
       '移除会话级 Plugin 执行快照并改用当前启用状态',

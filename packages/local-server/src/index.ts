@@ -116,6 +116,7 @@ import {
   type ZeusProjectRecord,
   type ZeusTaskRecord,
   providerFacet,
+  retireLegacyConversationItems,
 } from '@zeus/storage';
 import { type TaskStatus } from './taskCore.js';
 import { type TelegramMessageSender, type TelegramPollingService, type TelegramUpdate } from './telegramAdapter.js';
@@ -4344,7 +4345,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         scheduleConversationSyncRetention(60_000);
         storageCompaction = clearMcpStartupHistory(db, () => startupRecoveryStopping)
           .then(() => compactStoredCommandOutputs(db, artifactStore, () => startupRecoveryStopping))
-          .catch((error: unknown) => console.error('Zeus 历史会话去重中断。', error));
+          .then(async () => {
+            await retireLegacyConversationItems(db, () => startupRecoveryStopping);
+          })
+          .catch((error: unknown) => console.error('Zeus 历史会话迁移中断。', error));
       }
     });
   }

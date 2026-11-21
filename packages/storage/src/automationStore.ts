@@ -551,14 +551,6 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
         granted_at TEXT, revoked_at TEXT, updated_at TEXT NOT NULL, FOREIGN KEY (automation_id) REFERENCES automation_tasks(id)
       )
     `);
-    db.execute(`
-      CREATE TABLE IF NOT EXISTS automation_notification_outbox (
-        id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, payload_json TEXT NOT NULL,
-        status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0, available_at TEXT NOT NULL,
-        delivered_at TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        FOREIGN KEY (run_id) REFERENCES automation_runs(id)
-      )
-    `);
     const timestamp = nowIso();
     db.execute(`INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
       automationSchemaMigrationId,
@@ -1430,27 +1422,6 @@ export class AutomationRunRepository {
         id,
         id,
       ]);
-      const task = this.db.get<{ notification_json: string }>(`SELECT notification_json FROM automation_tasks WHERE id = (SELECT automation_id FROM automation_runs WHERE id = ?)`, [id]);
-      const notifications = parseJson<AutomationNotificationConfig>(task?.notification_json ?? '{}', { success: true, failure: true, blocked: true });
-      const notificationEnabled = status === 'succeeded' ? notifications.success : status === 'blocked' || status === 'outcome_unknown' ? notifications.blocked : notifications.failure;
-      if (notificationEnabled) {
-        this.db.execute(
-          `INSERT OR IGNORE INTO automation_notification_outbox (id, run_id, kind, payload_json, status, attempt, available_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
-          [
-            `automation_notification_${randomId(12)}`,
-            id,
-            status,
-            JSON.stringify({
-              runId: id,
-              status,
-            }),
-            timestamp,
-            timestamp,
-            timestamp,
-          ],
-        );
-      }
       this.promoteNext(id);
     });
     const updated = this.getById(id);

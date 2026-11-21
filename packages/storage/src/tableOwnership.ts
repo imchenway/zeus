@@ -112,7 +112,6 @@ const ownershipGroups = [
       // 扩展节点与状态约束时使用的迁移中间表，事务完成后改回正式尝试表名。
       'digital_team_node_attempts_next',
       // 项目流程、正式缺陷与可重建资料目录均由工作管理维护耐久关系。
-      'digital_team_project_workflows',
       'digital_team_task_repair_budgets',
       // 同一父验收轮只接纳一次修复预算，重启与重复事件沿用耐久回执。
       'digital_team_repair_round_receipts',
@@ -135,7 +134,6 @@ const ownershipGroups = [
       'automation_trigger_receipts',
       'automation_causal_chain_members',
       'automation_full_access_grants',
-      'automation_notification_outbox',
       'automation_notifications',
     ],
   },
@@ -167,12 +165,9 @@ const ownershipGroups = [
       'conversation_config_evidence',
       'conversation_persistent_warnings',
       'conversation_recovery_events',
-      'conversation_plugin_activations',
-      'conversation_plugin_activation_sets',
       'conversation_sequence_counters',
       'conversation_server_requests',
       'conversation_provider_sync_checkpoints',
-      'conversation_items',
       'conversation_messages',
       'conversation_message_provider_aliases',
       // 会话消息的稳定身份、展示顺序及初始化事实由会话编排统一维护。

@@ -17,22 +17,6 @@ export interface ConversationHotQueryIndexDefinition {
  */
 export const conversationHotQueryIndexes: readonly ConversationHotQueryIndexDefinition[] = [
   {
-    name: 'idx_conversation_items_timeline',
-    table: 'conversation_items',
-    columns: ['conversation_id', 'updated_at', 'id'],
-    predicate: null,
-    createSql: 'CREATE INDEX IF NOT EXISTS idx_conversation_items_timeline ON conversation_items(conversation_id, updated_at, id)',
-    dropSql: 'DROP INDEX IF EXISTS idx_conversation_items_timeline',
-  },
-  {
-    name: 'idx_conversation_items_completed_plan',
-    table: 'conversation_items',
-    columns: ['turn_id', 'updated_at DESC', 'id DESC'],
-    predicate: "item_type = 'plan' AND status = 'completed'",
-    createSql: "CREATE INDEX IF NOT EXISTS idx_conversation_items_completed_plan ON conversation_items(turn_id, updated_at DESC, id DESC) WHERE item_type = 'plan' AND status = 'completed'",
-    dropSql: 'DROP INDEX IF EXISTS idx_conversation_items_completed_plan',
-  },
-  {
     name: 'idx_conversation_turns_timeline',
     table: 'conversation_turns',
     columns: ['conversation_id', 'created_at', 'id'],
@@ -96,24 +80,6 @@ export interface ConversationQueryPlanDefinition {
 
 /** 首屏与恢复 SQL 的静态预算；验证器同时禁止临时排序和无索引目标表扫描。 */
 export const conversationQueryPlanDefinitions: readonly ConversationQueryPlanDefinition[] = [
-  {
-    id: 'conversation-items-timeline',
-    description: '会话旧 item 时间线',
-    sql: 'SELECT * FROM conversation_items WHERE conversation_id = ? ORDER BY updated_at, id',
-    params: ['conversation-plan-check'],
-    expectedIndex: 'idx_conversation_items_timeline',
-    scannedTable: 'conversation_items',
-    scanBudgetRows: 0,
-  },
-  {
-    id: 'latest-completed-plan',
-    description: '当前轮次最后一份有效计划',
-    sql: "SELECT * FROM conversation_items WHERE turn_id = ? AND item_type = 'plan' AND status = 'completed' AND trim(text_content) <> '' ORDER BY updated_at DESC, id DESC LIMIT 1",
-    params: ['turn-plan-check'],
-    expectedIndex: 'idx_conversation_items_completed_plan',
-    scannedTable: 'conversation_items',
-    scanBudgetRows: 0,
-  },
   {
     id: 'conversation-turns-timeline',
     description: '会话 turn 时间线',
