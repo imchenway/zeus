@@ -981,6 +981,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return projects.getById(projectRef) ?? projects.list().find((project: ZeusProjectRecord) => project.name === projectRef || project.localPath === projectRef);
   }
 
+  /** 将任务推进到运行态，提交后通知桌面端读取新的任务版本。 */
   function moveTaskTowardRunning(taskId: string, eventType = 'telegram.status.changed'): ZeusTaskRecord {
     const found: ZeusTaskRecord | undefined = tasks.getById(taskId);
     if (!found) throw new Error(`Task not found: ${taskId}`);
@@ -1003,6 +1004,11 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
         eventType,
         title: taskStatusEventTitle(nextStatus),
         payload: { to: nextStatus },
+      });
+    }
+    if (current.updatedAt !== found.updatedAt) {
+      db.afterCommit(() => {
+        publishRealtimeEvent('task.updated', { taskId: current.id, projectId: current.projectId, changedFields: ['status'], updatedAt: current.updatedAt });
       });
     }
     return current;

@@ -2378,7 +2378,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     status: TaskManagementStatus,
     options: { expectedUpdatedAt?: string; reopenConversationId?: string; /** 本次批量操作已经取得清理确认。 */ confirmWorktreeCleanup?: boolean } = {},
   ): Promise<TaskEditResult | undefined> {
-    const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
+    /** 会话和列表的状态下拉以目录快照为准，详情编辑以传入的版本为准。 */
+    const snapshotTask = snapshot.tasks.find((task) => task.id === taskId);
+    const currentTask = (options.expectedUpdatedAt === undefined ? snapshotTask : undefined) ?? (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshotTask;
     // 前一次写入未结束时，改回原状态也必须排队，不能当作无变化丢弃。
     if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !options.reopenConversationId && !taskMutationQueuesRef.current.has(taskId))) return;
     /** 每次选择持有独立身份，较早的请求结束不能清除较晚选择的加载反馈。 */
@@ -2397,9 +2399,24 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       });
     if (terminalStatus) setOptimisticTerminalTaskStatuses((current) => (current[taskId] === status ? current : { ...current, [taskId]: status }));
     return enqueueTaskMutation<TaskEditResult | undefined>(taskId, async () => {
-      const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
+      /** 保存和终态清理确认使用提交前核对的同一任务版本。 */
+      let expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
       try {
+        /** 状态下拉直接提交，先补齐后台启动可能已更新的执行状态版本。 */
+        if (options.expectedUpdatedAt === undefined && props.onLoadTask) {
+          /** Core 已保存的最新任务和版本。 */
+          const latest = await props.onLoadTask(taskId);
+          if (latest.updatedAt && latest.updatedAt !== expectedUpdatedAt) {
+            mergeTaskRecord(latest);
+            if (latest.projectId !== currentTask.projectId || latest.status === currentTask.status || resolveTaskManagementStatus(latest) !== resolveTaskManagementStatus(currentTask)) {
+              clearOptimisticTerminalStatus();
+              setActionState('idle');
+              return { kind: 'conflict', latest };
+            }
+            expectedUpdatedAt = latest.updatedAt;
+          }
+        }
         let nextSnapshot: WorkspaceSnapshot;
         try {
           nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, options.confirmWorktreeCleanup, options.reopenConversationId);
