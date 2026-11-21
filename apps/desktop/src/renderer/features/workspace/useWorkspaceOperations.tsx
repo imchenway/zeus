@@ -1989,11 +1989,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
 
   function renderTaskDetailPaneContent(): ReactNode {
     if (!taskDetailPaneTask) return null;
+    /** 状态标识来自当前任务配置，工作和会话入口共用终态限制。 */
+    const taskStatus = resolveTaskManagementStatus(taskDetailPaneTask);
     return (
       <TaskDetailPaneContent
         key={taskDetailPaneTask.id}
         zentaoClient={props.commandClient}
         deliverableClient={props.commandClient}
+        subscribeTaskWork={props.onSubscribeRealtimeEvents}
         onZentaoTaskUpdated={mergeTaskRecord}
         language={appShellSettings.appLanguage}
         task={taskDetailPaneTask}
@@ -2007,12 +2010,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
         busy={updatingTaskBusy}
         pushState={state.taskModelPushTaskId === taskDetailPaneTask.id && (state.taskModelPushEntry === 'checking' || state.taskModelPushEntry === 'error') ? state.taskModelPushEntry : undefined}
-        pushDisabled={taskDetailPaneTask.managementStatus === activeTaskManagementStatusConfig.roles.completedStatusId || taskDetailPaneTask.managementStatus === activeTaskManagementStatusConfig.roles.cancelledStatusId}
+        terminalReadOnly={
+          Boolean(state.optimisticTerminalTaskStatuses[taskDetailPaneTask.id]) || taskStatus === activeTaskManagementStatusConfig.roles.completedStatusId || taskStatus === activeTaskManagementStatusConfig.roles.cancelledStatusId
+        }
         onPushNewConversation={(taskId) => void domainActions.openTaskModelPush(taskId)}
         conversations={state.nativeConversationChoicesByTask[taskDetailPaneTask.id]?.choices ?? []}
         conversationsLoading={state.nativeConversationChoiceTaskStates[taskDetailPaneTask.id]?.status === 'loading'}
         conversationsError={state.nativeConversationChoiceTaskStates[taskDetailPaneTask.id]?.error}
-        onOpenConversation={(taskId, conversationId) => void domainActions.openTaskConversation(taskId, conversationId)}
+        onOpenConversation={domainActions.openTaskConversation}
         onReloadConversations={(taskId) => void domainActions.refreshNativeConversationChoices(taskId).catch((error: unknown) => recordLocalError('task-conversation-refresh', error))}
         onOpenCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
         onUpdateTaskContent={updateTaskContent}

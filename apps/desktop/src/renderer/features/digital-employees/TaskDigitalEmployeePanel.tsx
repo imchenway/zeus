@@ -412,7 +412,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
             <WorkItemBoard
               items={projection.workItems.filter((item) => !item.arrangement || item.currentRunId)}
               employees={props.management.employees}
-              relationships={projection?.relationships ?? []}
               busy={busy}
               readOnly={props.terminalReadOnly}
               language={props.language}
@@ -496,17 +495,19 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
 }
 
 /** 连续列表先展示工作目标，再展示执行者、状态与原有操作。 */
-function WorkItemBoard(props: {
+export function WorkItemBoard(props: {
   items: TaskWorkItemRecord[];
   /** 项目员工身份与顶部头像保持一致，停用员工仍可追溯。 */
-  employees: DigitalEmployeeRecord[];
-  relationships: Array<Record<string, unknown>>;
+  employees?: DigitalEmployeeRecord[];
   busy: string | null;
   readOnly: boolean;
   language: DigitalEmployeeLanguage;
   onOpenConversation?: (conversationId: string) => void;
   onRetry(item: TaskWorkItemRecord): void;
-  onCancel(item: TaskWorkItemRecord): void;
+  onCancel?(item: TaskWorkItemRecord): void;
+  /** 结果核对和命令恢复必须针对当前运行的待办。 */
+  recoveryDecisions?: readonly TaskWorkDecisionRecord[];
+  onOpenDecision?(decision: TaskWorkDecisionRecord): void;
 }) {
   /** 工作标题和操作名称跟随应用语言。 */
   const zh = props.language === 'zh-CN';
@@ -515,16 +516,16 @@ function WorkItemBoard(props: {
       <header>
         <span>
           <strong>{zh ? '工作项' : 'Work items'}</strong>
-          <small>{zh ? '每次指派与运行记录均保留在这里' : 'Every assignment and run remains available here'}</small>
         </span>
       </header>
-      {props.relationships.length === 0 && props.items.length > 1 ? <p className="task-work-relationship-note">{zh ? '这些是独立指派，当前没有依赖关系。' : 'These are independent assignments with no dependencies.'}</p> : null}
       <div className="task-work-item-list">
         {props.items.map((item) => {
           /** 采用当前运行，旧记录缺少指针时沿用最后一次运行。 */
           const current = item.runs.find((run) => run.id === item.currentRunId) ?? item.runs.at(-1);
           /** 使用真实员工头像，命令与没有员工身份的历史保留类型图标。 */
-          const employee = props.employees.find((candidate) => candidate.id === current?.employeeId);
+          const employee = props.employees?.find((candidate) => candidate.id === current?.employeeId);
+          /** 旧运行的待办保留为历史，不能作为当前运行的恢复入口。 */
+          const recovery = props.recoveryDecisions?.find((decision) => decision.workItemId === item.id && decision.runId === current?.id);
           return (
             <article key={item.id} className={`task-work-item is-${item.status}`}>
               <span className="task-work-entry-icon" aria-hidden="true">
@@ -543,7 +544,6 @@ function WorkItemBoard(props: {
                     </span>
                   ) : null}
                 </small>
-                {item.description ? <p>{item.description}</p> : null}
                 {current?.goal ? (
                   <p>
                     自主目标 · {({ active: '推进中', paused: '已暂停', blocked: '等待处理', complete: '已完成' } as Record<string, string>)[current.goal.status] ?? current.goal.status}：{current.goal.objective}
@@ -564,13 +564,23 @@ function WorkItemBoard(props: {
                     {zh ? '打开会话' : 'Open conversation'}
                   </Button>
                 ) : null}
-                {(item.status === 'failed' || item.status === 'blocked') && item.entrypointKind === 'agent' ? (
-                  <Button variant="secondary" size="compact" busy={props.busy === `retry:${item.id}`} disabled={props.readOnly || current?.status === 'outcome_unknown'} onClick={() => props.onRetry(item)}>
+                {recovery && props.onOpenDecision ? (
+                  <Button variant="secondary" size="compact" disabled={Boolean(props.busy)} onClick={() => props.onOpenDecision?.(recovery)}>
+                    {recovery.kind === 'outcome_unknown' ? (zh ? '核对结果' : 'Check outcome') : zh ? '处理失败' : 'Resolve failure'}
+                  </Button>
+                ) : (item.status === 'failed' || item.status === 'blocked') && item.entrypointKind === 'agent' ? (
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    busy={props.busy === `retry:${item.id}`}
+                    disabled={props.readOnly || !current || current.id !== item.currentRunId || current.status === 'outcome_unknown'}
+                    onClick={() => props.onRetry(item)}
+                  >
                     {zh ? '重试' : 'Retry'}
                   </Button>
                 ) : null}
-                {['queued', 'active', 'waiting_manager', 'blocked'].includes(item.status) ? (
-                  <Button variant="secondary" size="compact" busy={props.busy === `cancel:${item.id}`} disabled={props.readOnly} onClick={() => props.onCancel(item)}>
+                {props.onCancel && ['queued', 'active', 'waiting_manager', 'blocked'].includes(item.status) ? (
+                  <Button variant="secondary" size="compact" busy={props.busy === `cancel:${item.id}`} disabled={props.readOnly || current?.status === 'outcome_unknown'} onClick={() => props.onCancel?.(item)}>
                     {zh ? '取消' : 'Cancel'}
                   </Button>
                 ) : null}
@@ -1405,7 +1415,7 @@ function CommandEvidenceDialog(props: { runId: string; client: DigitalEmployeeAp
   );
 }
 
-function DecisionDialog(props: {
+export function DecisionDialog(props: {
   decision: TaskWorkDecisionRecord;
   projection: TaskWorkManagementProjection | null;
   client: DigitalEmployeeApiClient;
@@ -1414,9 +1424,13 @@ function DecisionDialog(props: {
   busy: boolean;
   /** 结束的任务保留阅读，重新打开后再处理未决事项。 */
   readOnly: boolean;
+  /** 待办失效或工作状态读取失败时，保留弹窗和已填写的意见。 */
+  actionsDisabled?: boolean;
   /** 写入失败必须出现在当前弹窗内，不能藏在背后的工作区。 */
   operationError: string | null;
   onDismiss(): void;
+  /** 核对 Agent 结果时可进入待办绑定的原会话。 */
+  onOpenConversation?(conversationId: string): void | Promise<void>;
   onAccept(deliverable: TaskWorkDeliverableRecord): Promise<void>;
   onRequestChanges(deliverable: TaskWorkDeliverableRecord, reason: string): Promise<void>;
   onRespond(response: Record<string, unknown>): Promise<void>;
@@ -1437,6 +1451,12 @@ function DecisionDialog(props: {
   /** 读取失败可在原审查空间重试，不丢失修改意见。 */
   const [contentRetry, setContentRetry] = useState(0);
   const deliverable = props.decision.deliverableId ? (props.projection?.deliverables.find((candidate) => candidate.id === props.decision.deliverableId) ?? null) : null;
+  /** 核对待办绑定运行身份，工作项的新运行不能替代原会话。 */
+  const outcomeRun = props.decision.kind === 'outcome_unknown' ? props.projection?.workItems.find((item) => item.id === props.decision.workItemId)?.runs.find((run) => run.id === props.decision.runId) : undefined;
+  /** Agent 确认完成后恢复成果收集，命令按核对结论收口。 */
+  const agentOutcome = outcomeRun?.entrypointKind === 'agent';
+  /** 原会话可能尚未接纳，只有已记录会话身份时提供导航。 */
+  const outcomeConversationId = agentOutcome ? outcomeRun.conversationId : null;
   const command = isRecord(props.decision.requestPayload.command) ? props.decision.requestPayload.command : null;
   const commandParametersSchema = command && Array.isArray(command.parameters) ? command.parameters.filter(isRecord) : [];
   useEffect(() => {
@@ -1489,7 +1509,7 @@ function DecisionDialog(props: {
                   ) : null}
                 </div>
               )}
-              <TaskWorkReviewPanel key={deliverable.id} taskId={props.taskId} deliverable={deliverable} client={props.client} readOnly={props.readOnly} onReady={setReviewReady} />
+              <TaskWorkReviewPanel key={deliverable.id} taskId={props.taskId} deliverable={deliverable} client={props.client} readOnly={props.readOnly || Boolean(props.actionsDisabled)} onReady={setReviewReady} />
               {!props.readOnly ? (
                 <label>
                   <span>{zh ? '修改意见' : 'Review feedback'}</span>
@@ -1555,7 +1575,12 @@ function DecisionDialog(props: {
               {commandParametersSchema.length === 0 ? <p>{zh ? '该命令没有运行时参数。' : 'This command has no runtime parameters.'}</p> : null}
             </fieldset>
           ) : null}
-          {props.decision.kind === 'outcome_unknown' ? (
+          {outcomeConversationId && props.onOpenConversation ? (
+            <Button variant="secondary" size="compact" disabled={props.busy} onClick={() => props.onOpenConversation?.(outcomeConversationId)}>
+              {zh ? '打开原会话' : 'Open original conversation'}
+            </Button>
+          ) : null}
+          {props.decision.kind === 'outcome_unknown' && !agentOutcome ? (
             <p className="digital-employee-feedback is-error">
               <WarningCircle size={18} />
               {zh
@@ -1577,7 +1602,7 @@ function DecisionDialog(props: {
         ) : null}
         {props.readOnly ? (
           <p className="task-conversation-feedback">{zh ? '任务已结束，当前仅查看记录。重新打开任务后可继续处理。' : 'This task is closed. Reopen it to resolve this item.'}</p>
-        ) : (
+        ) : props.actionsDisabled ? null : (
           <footer>
             {deliverable ? (
               <>
@@ -1613,8 +1638,8 @@ function DecisionDialog(props: {
                 <Button variant="secondary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'mark_failed' })}>
                   {zh ? '确认失败' : 'Mark failed'}
                 </Button>
-                <Button variant="primary" size="compact" busy={props.busy} onClick={() => props.onRespond({ action: 'mark_succeeded' })}>
-                  {zh ? '确认成功' : 'Mark succeeded'}
+                <Button variant="primary" size="compact" busy={props.busy} disabled={Boolean(agentOutcome && !outcomeConversationId)} onClick={() => props.onRespond({ action: 'mark_succeeded' })}>
+                  {agentOutcome ? (zh ? '恢复成果收集' : 'Resume collecting results') : zh ? '确认成功' : 'Mark succeeded'}
                 </Button>
               </>
             ) : null}

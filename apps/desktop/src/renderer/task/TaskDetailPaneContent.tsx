@@ -35,6 +35,7 @@ import {
 import { formatTaskEventTitle, formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
 import type { DashboardClient } from '../dashboardClient.js';
+import type { WorkspacePageProps } from '../features/workspace/workspaceContracts.js';
 import { readTaskZentaoLink, ZentaoPushModal } from './ZentaoSyncModal.js';
 import { ZentaoEffortModal } from './ZentaoEffortModal.js';
 import { useZentaoInstances } from './useZentaoInstances.js';
@@ -83,8 +84,10 @@ export interface TaskDetailPaneCopy {
 export interface TaskDetailPaneContentProps {
   /** 各种详情呈现方式共用同一禅道客户端。 */
   zentaoClient?: DashboardClient;
-  /** 限定当前任务的交付物列表和正文接口。 */
+  /** 限定当前任务的工作记录、交付物和处理命令。 */
   deliverableClient?: DashboardClient;
+  /** 任务详情打开期间接收本任务的工作和交付物变化。 */
+  subscribeTaskWork?: WorkspacePageProps['onSubscribeRealtimeEvents'];
   /** 同步后合并完整任务到现有共享缓存。 */
   onZentaoTaskUpdated?: (task: TaskRecord) => void;
   /** 可选择的项目来自当前工作区快照。 */
@@ -102,13 +105,15 @@ export interface TaskDetailPaneContentProps {
   busy: boolean;
   /** 与任务表格一致的推送检查状态及终态限制。 */
   pushState?: 'checking' | 'error';
-  pushDisabled: boolean;
+  /** 终态任务的工作项只读，也不能推送新会话。 */
+  terminalReadOnly: boolean;
   onPushNewConversation: (taskId: string) => void;
   /** 服务端返回的原会话记录，含可阅读的归档会话。 */
   conversations: readonly NativeConversationChoice[];
   conversationsLoading: boolean;
   conversationsError?: string | null;
-  onOpenConversation: (taskId: string, conversationId: string) => void;
+  /** 成功导航后关闭任务详情，用户取消离开时保留当前界面。 */
+  onOpenConversation: (taskId: string, conversationId: string) => Promise<boolean>;
   onReloadConversations: (taskId: string) => void;
   onOpenCodeDelivery?: (taskId: string) => void;
   onUpdateTaskContent: (taskId: string, input: UpdateTaskRequest) => Promise<TaskEditResult>;
@@ -1244,8 +1249,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               variant="primary"
               size="compact"
               busy={props.pushState === 'checking'}
-              disabled={props.busy || props.pushDisabled}
-              title={props.pushDisabled ? props.copy.taskActionTerminalHelp : undefined}
+              disabled={props.busy || props.terminalReadOnly}
+              title={props.terminalReadOnly ? props.copy.taskActionTerminalHelp : undefined}
               onClick={() => props.onPushNewConversation(props.task.id)}
             >
               {pushLabel}
@@ -1352,7 +1357,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           <section className="task-detail-requirements" aria-label={zh ? '任务说明' : 'Requirements'}>
             {taskOverview}
           </section>
-          {props.deliverableClient ? <TaskDetailDeliverables key={props.task.id} taskId={props.task.id} client={props.deliverableClient} language={props.language} revision={props.events[0]?.id ?? props.task.updatedAt} /> : null}
+          {props.deliverableClient ? (
+            <TaskDetailDeliverables
+              key={props.task.id}
+              taskId={props.task.id}
+              client={props.deliverableClient}
+              language={props.language}
+              revision={props.events[0]?.id ?? props.task.updatedAt}
+              readOnly={props.terminalReadOnly}
+              subscribe={props.subscribeTaskWork}
+              onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+            />
+          ) : null}
           <section className="task-detail-block" aria-label={props.copy.conversationsTitle} aria-busy={props.conversationsLoading}>
             <h2 className="task-detail-section-heading">{props.copy.conversationsTitle}</h2>
             {props.conversationsError ? (
