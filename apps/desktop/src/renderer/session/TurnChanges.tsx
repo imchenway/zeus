@@ -1,9 +1,11 @@
 import { FilePreview } from '../code/FilePreview.js';
-import { useReadingState } from '../ui/readingState.js';
+import { useReadingSnapshot, useReadingState } from '../ui/readingState.js';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { FileTreeRow } from '../code/FileTreeRow.js';
 import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -11,8 +13,8 @@ import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/Arrow
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
+import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   type ConversationCodeComment,
@@ -167,11 +169,22 @@ export function TurnChangeCard(props: {
   );
 }
 
+/** 审阅树默认宽度为 240 px，可同时显示文件名和增删统计。 */
+const defaultTurnDiffTreeWidth = 240;
+
 /** 审阅只依赖差异正文，恢复快照不可用时仍显示变更和评论入口。 */
 export function TurnDiffWorkspace(props: {
   changeSet: TurnChangeSet;
-  initialFileId?: string;
+  /** 每次从卡片点文件都创建新的请求，重复点击也会选回该文件。 */
+  fileRequest?: { id: string };
+  /** 打开入口决定初始状态，顶栏按钮更新当前会话的文件栏。 */
+  filesOpen: boolean;
+  onFilesOpenChange: (open: boolean) => void;
   language: SessionUiLanguage;
+  /** 会话共享顶栏已挂载时，审阅标题和操作进入同一行。 */
+  toolbarHost: HTMLElement | null;
+  /** 容器较窄时与源码页一样使用全宽。 */
+  canSplit: boolean;
   fullWidth: boolean;
   onFullWidthChange: (fullWidth: boolean) => void;
   onClose: () => void;
@@ -195,9 +208,9 @@ export function TurnDiffWorkspace(props: {
   const canComment = Boolean(props.onCommentsChange);
   const canOpen = Boolean(props.onOpenFile);
   const zh = props.language === 'zh-CN';
-  const [activeFileId, setActiveFileId] = useReadingState(`diff-file:${props.changeSet.id}`, props.initialFileId ?? props.changeSet.files[0]?.id ?? null);
-  /** 相同打开请求的重新挂载不覆盖用户在目录中的选择。 */
-  const initialOpenRequest = useRef({ changeSetId: props.changeSet.id, fileId: props.initialFileId });
+  const [activeFileId, setActiveFileId] = useReadingState(`diff-file:${props.changeSet.id}`, props.fileRequest?.id ?? props.changeSet.files[0]?.id ?? null);
+  /** 同一打开请求只应用一次，重新挂载时保留目录内的选择。 */
+  const appliedFileRequest = useReadingSnapshot<typeof props.fileRequest>(`diff-file-request:${props.changeSet.id}`);
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -211,10 +224,18 @@ export function TurnDiffWorkspace(props: {
   /** 将本轮补丁转换为交付页共用的双栏数据，避免重复维护布局与高亮。 */
   const diff = useMemo(() => turnFileDiff(activeFile), [activeFile]);
   const activePath = activeFile ? commentPath(activeFile) : null;
+  /** 文件名优先显示，父目录在可用空间不足时截断。 */
+  const activeName = activePath?.split('/').at(-1);
+  /** 根目录下的文件无需显示父目录。 */
+  const activeDirectory = activePath?.slice(0, activePath.lastIndexOf('/') + 1);
   /** 目录展示只投影本轮文件，选择与预览继续使用原文件身份。 */
   const directoryFiles = useMemo(() => changeSet.files.map((file) => ({ path: commentPath(file), file })), [changeSet.files]);
-  /** 目录宽度沿用源码页默认值，并随所在面板限制上限。 */
-  const [treeWidth, setTreeWidth] = useState(260);
+  /** 文件栏隐藏时仍保留目录、滚动位置和当前文件。 */
+  const filesOpen = props.filesOpen;
+  /** 将顶栏按钮与它控制的文件栏关联。 */
+  const filesId = useId();
+  /** 窗口缩小后仍保留用户拖动选定的宽度。 */
+  const [treeWidth, setTreeWidth] = useState(defaultTurnDiffTreeWidth);
   /** 面板尺寸由实际布局测量，窄面板仍为差异正文留出空间。 */
   const [layoutWidth, setLayoutWidth] = useState(0);
   /** 拖拽和布局测量只操作本审阅面板。 */
@@ -276,15 +297,14 @@ export function TurnDiffWorkspace(props: {
   }
 
   useEffect(() => {
-    titleRef.current?.focus();
-  }, [props.changeSet.id]);
+    titleRef.current?.focus({ preventScroll: true });
+  }, [props.changeSet.id, props.toolbarHost]);
 
-  useEffect(() => {
-    // 外部打开意图只在目标改变时生效，不能覆盖用户随后在目录中的选择。
-    if (initialOpenRequest.current.changeSetId === props.changeSet.id && initialOpenRequest.current.fileId === props.initialFileId) return;
-    initialOpenRequest.current = { changeSetId: props.changeSet.id, fileId: props.initialFileId };
-    setActiveFileId(props.initialFileId ?? callbacksRef.current.changeSet.files[0]?.id ?? null);
-  }, [props.changeSet.id, props.initialFileId]);
+  useLayoutEffect(() => {
+    if (!props.fileRequest || appliedFileRequest.current === props.fileRequest) return;
+    appliedFileRequest.current = props.fileRequest;
+    setActiveFileId(props.fileRequest.id);
+  }, [appliedFileRequest, props.fileRequest, setActiveFileId]);
 
   useEffect(() => {
     // 正文刷新保留仍存在的当前文件；文件被移除时才回退到第一项。
@@ -429,37 +449,62 @@ export function TurnDiffWorkspace(props: {
     [comments, draftPosition, activePath, editingCommentId, props.language, zh, saveComment],
   );
 
-  return (
-    <section className="session-context-workspace session-turn-diff-workspace" aria-label={zh ? '变更审核' : 'Change review'}>
-      <header className="session-context-workspace-header">
-        <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
-          <GitDiff aria-hidden="true" weight="regular" />
-          <span>
-            <strong>{zh ? '审核变更' : 'Review changes'}</strong>
-            <small>{zh ? `${changeSet.fileCount} 个文件` : `${changeSet.fileCount} files`}</small>
-          </span>
+  /** 切换按钮说明当前可用的布局，窄窗口固定使用全宽。 */
+  const widthAction = props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : (zh ? '扩展为全宽' : 'Expand full width');
+  /** 文件栏开关提示下一步操作。 */
+  const filesAction = filesOpen ? (zh ? '收起变更文件栏' : 'Hide changed files') : (zh ? '展开变更文件栏' : 'Show changed files');
+  /** 标题、文件总数与操作在同一行，目录和差异正文从下一行开始。 */
+  const header = (
+    <header className="session-context-workspace-header session-turn-diff-header">
+      <span className="session-context-workspace-title" ref={titleRef} tabIndex={-1}>
+        <GitDiff aria-hidden="true" weight="regular" />
+        <span>
+          <strong>{zh ? '审核变更' : 'Review changes'}</strong>
+          <small className="session-turn-diff-summary">
+            {zh ? `${changeSet.fileCount} 个文件` : `${changeSet.fileCount} files`}
+            {changeSet.addedLines ? <span className="session-change-added">+{changeSet.addedLines}</span> : null}
+            {changeSet.deletedLines ? <span className="session-change-deleted">-{changeSet.deletedLines}</span> : null}
+          </small>
         </span>
-        <nav aria-label={zh ? '变更审核操作' : 'Change review actions'}>
-          {action ? (
-            <Button unstyled type="button" className="session-context-text-action" disabled={Boolean(busy) || !props.onOperate} onClick={() => operate()}>
-              {action === 'undo' ? <ArrowCounterClockwise aria-hidden="true" /> : <ArrowClockwise aria-hidden="true" />}
-              <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
-            </Button>
-          ) : null}
-          <Button
-            unstyled
-            type="button"
-            aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
-            data-icon-tooltip={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
-            onClick={() => props.onFullWidthChange(!props.fullWidth)}
-          >
-            {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
+      </span>
+      <nav aria-label={zh ? '变更审核操作' : 'Change review actions'}>
+        <Button
+          unstyled
+          type="button"
+          aria-controls={filesId}
+          aria-expanded={filesOpen}
+          aria-label={filesAction}
+          data-icon-tooltip={filesAction}
+          onClick={() => props.onFilesOpenChange(!filesOpen)}
+        >
+          <SidebarSimple weight={filesOpen ? 'fill' : 'regular'} aria-hidden="true" />
+        </Button>
+        {action ? (
+          <Button unstyled type="button" className="session-context-text-action" disabled={Boolean(busy) || !props.onOperate} onClick={() => operate()}>
+            {action === 'undo' ? <ArrowCounterClockwise aria-hidden="true" /> : <ArrowClockwise aria-hidden="true" />}
+            <span>{busy ? (zh ? '处理中…' : 'Working…') : action === 'undo' ? (zh ? '撤销' : 'Undo') : zh ? '重新应用' : 'Reapply'}</span>
           </Button>
-          <Button unstyled type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <X aria-hidden="true" />
-          </Button>
-        </nav>
-      </header>
+        ) : null}
+        <Button
+          unstyled
+          type="button"
+          disabled={!props.canSplit}
+          aria-label={widthAction}
+          data-icon-tooltip={props.canSplit ? widthAction : (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view')}
+          onClick={() => props.onFullWidthChange(!props.fullWidth)}
+        >
+          {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
+        </Button>
+        <Button unstyled type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <X aria-hidden="true" />
+        </Button>
+      </nav>
+    </header>
+  );
+
+  return (
+    <section className="session-context-workspace" aria-label={zh ? '变更审核' : 'Change review'}>
+      {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
       {/* 审核不展示撤销资格提示，实际操作冲突继续显示错误。 */}
       {changeSet.conflict && changeSet.state !== 'unavailable' ? (
         <p className="session-turn-change-error session-turn-diff-error" role="alert">
@@ -471,16 +516,13 @@ export function TurnDiffWorkspace(props: {
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <div className="session-turn-diff-layout" ref={layoutRef} style={{ gridTemplateColumns: `${visibleTreeWidth}px 8px minmax(0, 1fr)` }}>
-        <nav className="session-turn-diff-files" ref={filesRef} aria-label={zh ? '变更文件' : 'Changed files'}>
-          <div className="session-turn-diff-totals">
-            <span className="session-change-added">+{changeSet.addedLines}</span>
-            <span className="session-change-deleted">-{changeSet.deletedLines}</span>
-          </div>
+      <div className="session-turn-diff-layout" ref={layoutRef} style={{ gridTemplateColumns: filesOpen ? `${visibleTreeWidth}px 8px minmax(0, 1fr)` : 'minmax(0, 1fr)' }}>
+        <nav id={filesId} className="session-turn-diff-files" ref={filesRef} hidden={!filesOpen} aria-label={zh ? '变更文件' : 'Changed files'}>
           <TurnDiffDirectory files={directoryFiles} prefix="" depth={0} activeFileId={activeFile?.id} language={props.language} onSelect={setActiveFileId} />
         </nav>
         <div
           className="session-turn-diff-resizer"
+          hidden={!filesOpen}
           role="separator"
           aria-orientation="vertical"
           aria-label={zh ? '调整变更目录宽度' : 'Resize changed files'}
@@ -488,7 +530,7 @@ export function TurnDiffWorkspace(props: {
           aria-valuemax={maximumTreeWidth}
           aria-valuenow={visibleTreeWidth}
           tabIndex={0}
-          onDoubleClick={() => resizeTree(260)}
+          onDoubleClick={() => resizeTree(defaultTurnDiffTreeWidth)}
           onPointerDown={startTreeResize}
           onPointerMove={(event) => {
             if (treeResize.current && event.currentTarget.hasPointerCapture(event.pointerId)) resizeTree(treeResize.current.width + event.clientX - treeResize.current.x);
@@ -499,29 +541,37 @@ export function TurnDiffWorkspace(props: {
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
             event.preventDefault();
-            resizeTree(event.key === 'Home' ? 260 : visibleTreeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8));
+            resizeTree(event.key === 'Home' ? defaultTurnDiffTreeWidth : visibleTreeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8));
           }}
         />
         <section className="session-turn-diff-content" aria-label={activeFile ? displayPath(activeFile) : undefined}>
           {activeFile ? (
             <>
               <header>
-                <strong
+                <div
+                  className="session-turn-diff-path"
                   tabIndex={0}
                   data-file-path={activeFile.newPath ?? activeFile.oldPath ?? undefined}
                   data-icon-tooltip={displayPath(activeFile)}
-                  data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}
+                  role="group"
+                  aria-label={displayPath(activeFile)}
                 >
-                  {displayPath(activeFile)}
-                </strong>
-                <span>
-                  {props.onOpenFile ? (
-                    <Button unstyled type="button" className="session-turn-diff-open-file" onClick={() => openFile(activeFile)}>
-                      <FileCode aria-hidden="true" />
-                      <span>{zh ? '打开当前文件' : 'Open current file'}</span>
-                    </Button>
-                  ) : null}
-                </span>
+                  <strong data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>{activeName}</strong>
+                  {activeDirectory ? <small>{activeDirectory}</small> : null}
+                </div>
+                {props.onOpenFile ? (
+                  <Button
+                    unstyled
+                    type="button"
+                    className="session-turn-diff-open-file"
+                    aria-label={zh ? '打开当前文件' : 'Open current file'}
+                    data-icon-tooltip={zh ? '打开当前文件' : 'Open current file'}
+                    onClick={() => openFile(activeFile)}
+                  >
+                    <FileCode aria-hidden="true" />
+                    <span>{zh ? '打开当前文件' : 'Open current file'}</span>
+                  </Button>
+                ) : null}
               </header>
               {busy || ['capturing', 'undoing', 'reapplying'].includes(changeSet.state) ? (
                 <p role="status">{zh ? '正在更新文件，完成后显示预览…' : 'Updating file…'}</p>
@@ -593,41 +643,31 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
       {entries.map(([name, files]) => (
         <li key={props.prefix + name}>
           {name.endsWith('/') ? (
-            <details className="session-turn-diff-directory" open>
-              <summary data-file-path={props.prefix + name} data-icon-tooltip={name} style={{ paddingInlineStart: 7 + props.depth * 14 }}>
-                <CaretDown aria-hidden="true" />
-                <Folder aria-hidden="true" weight="regular" />
-                <span>{name.slice(0, -1)}</span>
-                <small>{files.length}</small>
-              </summary>
+            <details open>
+              <FileTreeRow kind="directory" name={name.slice(0, -1)} path={props.prefix + name} depth={props.depth} />
               <TurnDiffDirectory {...props} files={files} prefix={props.prefix + name} depth={props.depth + 1} />
             </details>
           ) : (
             files.map(({ file }) => (
-              <Button
-                data-busy-behavior="background"
-                unstyled
-                type="button"
-                className="session-turn-diff-file"
-                data-file-path={file.newPath ?? file.oldPath ?? undefined}
+              <FileTreeRow
                 key={file.id}
-                data-icon-tooltip={name}
-                aria-label={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`}
-                aria-current={file.id === props.activeFileId ? 'true' : undefined}
-                onClick={() => props.onSelect(file.id)}
-                style={{ paddingInlineStart: 7 + props.depth * 14 }}
-              >
-                <span className="session-turn-diff-file-name">
-                  <FileTypeIcon name={name} />
-                  <span data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>{name}</span>
-                </span>
-                {file.addedLines || file.deletedLines ? (
-                  <small>
+                kind="file"
+                name={name}
+                path={file.newPath ?? file.oldPath ?? undefined}
+                depth={props.depth}
+                fileStatus={file.changeType === 'binary' ? 'modified' : file.changeType}
+                button={{
+                  'aria-label': `${displayPath(file)} · ${localizedChangeType(file, props.language)}`,
+                  'aria-current': file.id === props.activeFileId ? 'true' : undefined,
+                  onClick: () => props.onSelect(file.id),
+                }}
+                trailing={file.addedLines || file.deletedLines ? (
+                  <span className="session-turn-diff-line-counts">
                     {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
                     {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
-                  </small>
+                  </span>
                 ) : null}
-              </Button>
+              />
             ))
           )}
         </li>

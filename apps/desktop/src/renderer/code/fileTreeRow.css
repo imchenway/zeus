@@ -1,0 +1,110 @@
+/* 文件树和源码搜索结果共用行高度、选中态与键盘焦点。 */
+:is(.project-source-tree-scroll button, .file-tree-row) {
+  display: flex;
+  width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-text);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+}
+
+:is(.project-source-tree-scroll button, .file-tree-row):hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+}
+:is(.project-source-tree-scroll button, .file-tree-row).selected {
+  background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent);
+}
+:is(.project-source-tree-scroll button, .file-tree-row):focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+:is(.project-source-tree-scroll button, .file-tree-row):disabled {
+  opacity: 0.52;
+}
+:is(.project-source-tree-scroll button, .file-tree-row) > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+:is(.project-source-tree-scroll button, .file-tree-row) > span:not(.file-tree-row-disclosure) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.project-source-tree-scroll button, .file-tree-row) > span:has(small) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+:is(.project-source-tree-scroll button, .file-tree-row) strong,
+:is(.project-source-tree-scroll button, .file-tree-row) small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.project-source-tree-scroll button, .file-tree-row) small {
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+}
+.file-tree-row-disclosure {
+  width: 10px;
+  flex: 0 0 10px;
+  color: var(--zeus-control-muted-text);
+  text-align: center;
+}
+
+/* 壳层文件树使用 24 px 平面列表，选中项使用中性底色。 */
+.macos-ai-app.zeus-shell :is(.project-source-tree-scroll button, .file-tree-row) {
+  min-height: 24px;
+  margin-block: 0;
+  padding-block: 2px;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 20px;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.macos-ai-app.zeus-shell :is(.project-source-tree-scroll button, .file-tree-row):hover:not(:disabled):not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent) !important;
+}
+.macos-ai-app.zeus-shell :is(.project-source-tree-scroll button, .file-tree-row).selected {
+  background: color-mix(in srgb, var(--zeus-control-text) 10%, var(--zeus-code-editor-bg)) !important;
+}
+
+/* 审阅目录保留原生展开，源码目录使用 aria-expanded。 */
+.file-tree-row {
+  cursor: pointer;
+  list-style: none;
+}
+
+.file-tree-row:disabled {
+  cursor: default;
+}
+
+.file-tree-row::-webkit-details-marker {
+  display: none;
+}
+
+.file-tree-row > .file-tree-row-folder-open,
+:is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-folder-closed {
+  display: none;
+}
+
+:is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-folder-open {
+  display: block;
+}
+
+:is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-disclosure svg {
+  transform: rotate(90deg);
+}

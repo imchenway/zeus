@@ -5,7 +5,7 @@ import type { ConversationFileLocation, FilePreviewRequest } from '@zeus/shared'
 import type { ConversationResourcePreview, NativeConversationChoice, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import type { SourceWorkspaceState, SourceWorkspaceViewMode } from './SourceWorkspace.js';
 
-/** 会话右侧工作区仅在用户打开或关闭内容时改变。 */
+/** 会话右侧工作区保存当前内容和随页面恢复的展示状态。 */
 export type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'question' }
@@ -14,7 +14,7 @@ export type SessionContextWorkspace =
   | { kind: 'plan'; item: NativeSessionItemBuffer }
   | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation; commentPath?: string }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
-  | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
+  | { kind: 'turn_diff'; turnId: string; fileRequest?: { id: string }; filesOpen: boolean };
 
 /** 只保留展示状态，不保存组件、焦点或浏览器页面副本。 */
 interface SessionContextState {
