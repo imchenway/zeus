@@ -151,6 +151,8 @@ export function DeliveryRepositoryFileTree(props: {
   groups: DeliveryRepositoryGroup[];
   detailStates: Record<string, 'loading' | 'error'>;
   diffScope: DiffScope;
+  /** 历史交付只保存已提交文件，可查看差异但无法勾选提交。 */
+  committedOnly?: boolean;
   totalWorkingFiles: number;
   /** 未完成或失败的比较没有可靠计数，不能显示为零。 */
   totalCommittedFiles: number | null;
@@ -230,17 +232,19 @@ export function DeliveryRepositoryFileTree(props: {
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
         <span role="group" aria-label={props.zh ? '文件范围' : 'File scope'}>
-          <Button
-            unstyled
-            type="button"
-            className={props.diffScope === 'working' ? 'is-active' : ''}
-            aria-pressed={props.diffScope === 'working'}
-            data-icon-tooltip={props.zh ? '本机未提交' : 'Local uncommitted'}
-            onClick={() => props.onScopeChange('working')}
-            disabled={props.disabled}
-          >
-            <span>{props.zh ? '本机未提交' : 'Local uncommitted'}</span> <small>{props.totalWorkingFiles}</small>
-          </Button>
+          {!props.committedOnly ? (
+            <Button
+              unstyled
+              type="button"
+              className={props.diffScope === 'working' ? 'is-active' : ''}
+              aria-pressed={props.diffScope === 'working'}
+              data-icon-tooltip={props.zh ? '本机未提交' : 'Local uncommitted'}
+              onClick={() => props.onScopeChange('working')}
+              disabled={props.disabled}
+            >
+              <span>{props.zh ? '本机未提交' : 'Local uncommitted'}</span> <small>{props.totalWorkingFiles}</small>
+            </Button>
+          ) : null}
           <Button
             unstyled
             type="button"
@@ -269,16 +273,18 @@ export function DeliveryRepositoryFileTree(props: {
             <section key={branchGroup.branchName} className={`task-git-delivery-branch${currentConversation ? ' is-current-conversation' : ''}`}>
               <header>
                 <label>
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    ref={(element) => {
-                      if (element) element.indeterminate = selectedCount > 0 && !allSelected;
-                    }}
-                    aria-checked={selectedCount > 0 && !allSelected ? 'mixed' : allSelected}
-                    onChange={(event) => props.onToggleBranch(workspaceIds, event.target.checked)}
-                    disabled={props.disabled}
-                  />
+                  {!props.committedOnly ? (
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      ref={(element) => {
+                        if (element) element.indeterminate = selectedCount > 0 && !allSelected;
+                      }}
+                      aria-checked={selectedCount > 0 && !allSelected ? 'mixed' : allSelected}
+                      onChange={(event) => props.onToggleBranch(workspaceIds, event.target.checked)}
+                      disabled={props.disabled}
+                    />
+                  ) : null}
                   <strong>{branchGroup.branchName}</strong>
                 </label>
                 <span>
@@ -309,14 +315,16 @@ export function DeliveryRepositoryFileTree(props: {
                   <details open data-file-root={group.localPath} key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
                     <summary onContextMenu={(event) => fileMenu.openMenu(event, group, group.files)} onKeyDown={(event) => fileMenu.onKeyDown(event, group, group.files)}>
                       <label>
-                        <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
+                        {!props.committedOnly ? (
+                          <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
+                        ) : null}
                         <DeliveryEntryIcon />
                         <span>
                           <strong>{repositoryLabel(group.workspace, props.zh)}</strong>
                           <small>
                             {group.files.length} {group.files.some((file) => file.isSubmodule) ? (props.zh ? '项变更' : 'changes') : props.zh ? '个文件' : 'files'}
                           </small>
-                          <small>{group.statusLabel}</small>
+                          {group.statusLabel ? <small>{group.statusLabel}</small> : null}
                         </span>
                       </label>
                     </summary>
@@ -704,6 +712,8 @@ export function GitDeliveryWorkspace(props: {
   zh: boolean;
   fileBrowser: ReactNode;
   actions: ReactNode;
+  /** 历史交付只保留文件浏览和差异区域。 */
+  committedOnly?: boolean;
   selectedFile: string;
   diffTitle: string;
   /** 与文件树使用同一状态，未跟踪文件不由补丁推断。 */
@@ -726,10 +736,10 @@ export function GitDeliveryWorkspace(props: {
   useGitDeliveryWindowFrame(props.contentReady);
   return (
     <div className="task-git-delivery-content">
-      <div className="task-git-review-layout task-git-delivery-layout">
+      <div className={`task-git-review-layout task-git-delivery-layout${props.committedOnly ? ' has-no-actions' : ''}`}>
         {props.fileBrowser}
-        {props.actions}
-        <GitPaneSeparator name="delivery-actions" label={props.zh ? '调整操作区宽度' : 'Resize actions'} unit="px" initial={320} min={240} max={960} reverse />
+        {props.committedOnly ? null : props.actions}
+        {props.committedOnly ? null : <GitPaneSeparator name="delivery-actions" label={props.zh ? '调整操作区宽度' : 'Resize actions'} unit="px" initial={320} min={240} max={960} reverse />}
         <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={15} max={80} />
         <main className="task-git-review-main task-git-delivery-diff-main">
           <header className="task-git-review-pane-title">

@@ -155,6 +155,8 @@ export interface ProjectGitWorkbenchSnapshot {
   projectId: string;
   projectName: string;
   refreshedAt: string;
+  /** 工作树已回收，仓库列表只用于查看保存的提交。 */
+  committedOnly?: true;
   repositories: ProjectGitRepositoryWorkbenchItem[];
 }
 

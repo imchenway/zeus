@@ -909,7 +909,7 @@ export async function recordGitBranchSource(cwd: string, branchName: string, sou
 }
 
 /** 读取固定分支起点；历史分支只采用明确的创建记录，不以移动的上游推测。 */
-async function readGitBranchSourceHead(cwd: string, branchName: string): Promise<string | null> {
+export async function readGitBranchSourceHead(cwd: string, branchName: string): Promise<string | null> {
   /** 分支名先经 Git 校验，再用于配置键和完整引用。 */
   const branch = await assertGitBranchFormat(cwd, branchName, 'branch');
   try {
@@ -3387,6 +3387,12 @@ export function withGitOperationSignal<T>(signal: AbortSignal, operation: () => 
   return projectGitExecution.run({ ...projectGitExecution.getStore(), signal }, operation);
 }
 
+/** 历史比较只读本地 Git 对象，缺失的部分克隆对象不会触发 fetch。 */
+export function withLocalGitObjects<T>(operation: () => Promise<T>): Promise<T> {
+  const execution = projectGitExecution.getStore();
+  return projectGitExecution.run({ ...execution, env: { ...execution?.env, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' } }, operation);
+}
+
 /** 所有工作台写操作在公共仓库锁内执行，并沿用调用方的取消与命令记录。 */
 export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onCommand?: (command: string) => Promise<void>): Promise<ProjectGitActionResult> {
   return withGitRepositoryOperation(cwd, () => projectGitExecution.run({ signal, env, onCommand }, () => executeProjectGitActionInternal(cwd, action)));
@@ -3817,8 +3823,8 @@ export async function getProjectGitCommitDetail(cwd: string, commitHash: string)
   };
 }
 
-/** 读取所选分支与当前分支或工作区的差异；只解析受 Git 校验的 ref。 */
-export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly = false): Promise<GitDiffSummary> {
+/** 读取 Git 差异；回收的工作树通过固定目标提交比较，不读取来源仓库的工作目录。 */
+export async function getProjectGitComparisonDiff(cwd: string, branchName: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly = false, targetCommit?: string): Promise<GitDiffSummary> {
   /** 单文件范围使用字面量路径，不能由文件名注入 Git pathspec。 */
   const paths = path === undefined ? ['.'] : [`:(literal)${requireSafeWorkspacePath(path)}`];
   if (path !== undefined && mode === 'working-tree' && branchName === 'HEAD') return getGitDiff(cwd, path);
@@ -3828,7 +3834,7 @@ export async function getProjectGitComparisonDiff(cwd: string, branchName: strin
   });
   const revision = mode === 'current' || mode === 'working-tree' ? await resolveCommit(topLevel, branchName) : null;
   /** 选中已提交文件时固定两端，供补丁和授权全文共用重命名结果。 */
-  const committedHead = path !== undefined && !summaryOnly && mode === 'current' ? await resolveCommit(topLevel, 'HEAD') : null;
+  const committedHead = mode === 'current' && (targetCommit || (path !== undefined && !summaryOnly)) ? await resolveCommit(topLevel, targetCommit ?? 'HEAD') : null;
   /** 文件清单保留真实增删统计和重命名，不生成全部文件的补丁。 */
   const comparison = committedHead ? [revision!, committedHead] : mode === 'staged' ? ['--cached'] : mode === 'unstaged' ? [] : [mode === 'working-tree' ? revision! : `${revision}..HEAD`];
   const args = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', ...comparison];

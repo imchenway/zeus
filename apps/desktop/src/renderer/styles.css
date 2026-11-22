@@ -16236,6 +16236,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 0;
 }
 
+/* 回收后查看历史时，文件列表使用操作栏腾出的宽度。 */
+.macos-ai-app .task-git-delivery-layout.has-no-actions {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'files' 'separator' 'diff';
+}
+
 /* 分隔条用细线划分区域，拖动与键盘焦点仍使用共享高亮。 */
 .macos-ai-app .task-git-delivery-layout > :is(.git-separator-delivery-height, .git-separator-delivery-actions) {
   background: transparent;
