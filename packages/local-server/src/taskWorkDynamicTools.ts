@@ -24,13 +24,13 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'list_artifacts',
-          description: '列出当前工作拥有或启动时明确交接的正式成果目录、摘要和固定身份。先读取目录，再按需读取正文；不访问其他任务或未授权成果。',
+          description: '列出当前工作拥有或启动时明确交接的正式成果目录、摘要和固定身份。目录也标出已冻结的返工意见读取路径。先读取目录，再按需读取正文；不访问其他任务或未授权成果。',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
         },
         {
           type: 'function',
           name: 'read_artifact',
-          description: '按正式成果目录的精确文件路径有界读取正文。offset 是字符偏移，nextOffset 为空表示读完；单次最多 16384 字符。不能通过 owner 引用扩大工作权限。',
+          description: '按正式成果目录的精确路径有界读取正文或返工意见。offset 是字符偏移，nextOffset 为空表示读完；单次最多 16384 字符。不能通过 owner 引用扩大工作权限。',
           inputSchema: {
             type: 'object',
             properties: { deliverableId: { type: 'string', maxLength: 256 }, path: { type: 'string', maxLength: 1024 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 16384 } },

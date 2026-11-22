@@ -23,6 +23,8 @@ import {
 const maximumArtifactBytes = 12 * 1024 * 1024;
 /** 单次模型读取仅返回有界正文，余文通过偏移继续。 */
 const maximumReadCharacters = 16_384;
+/** 返工意见是本次运行的冻结文本视图，路径独立于前次成果文件。 */
+export const reworkReviewPath = '返工意见.md';
 
 /** Core 发布使用数据库身份及准确会话工作区，不接受模型指定根目录。 */
 export interface WorkArtifactDeliveryOptions {
@@ -51,7 +53,7 @@ export class WorkArtifactDelivery {
   /** 不引入独立调度器或执行状态。 */
   constructor(private readonly options: WorkArtifactDeliveryOptions) {}
 
-  /** 派发前恢复唯一可证的旧返工来源，不修改已有会话或已执行轮次。 */
+  /** 派发前恢复旧返工的准确来源与分页意见。 */
   restorePreparedReworkHandoff(runId: string): boolean {
     return this.options.publications.restorePreparedReworkHandoff(runId);
   }
@@ -150,6 +152,14 @@ export class WorkArtifactDelivery {
     return this.exportDocs(deliverable);
   }
 
+  /** 审查状态与待导出记录同事务保存，阅读副本只在提交后写入。 */
+  exportAfterCommit(deliverable: TaskWorkDeliverableRecord): void {
+    this.freeze(deliverable);
+    this.options.publications.scheduleExport(deliverable.id, () => {
+      this.exportDocs(deliverable);
+    });
+  }
+
   /** 根据已冻结清单导出阅读目录，保留失败原因供调度循环重试。 */
   exportDocs(deliverable: TaskWorkDeliverableRecord): { root: string | null; error: string | null } {
     try {
@@ -226,6 +236,7 @@ export class WorkArtifactDelivery {
           contentSha256: deliverable.contentSha256,
           status: deliverable.status,
           exportError: publication.exportError,
+          ...(reworkReviewText(run, deliverable.id) !== undefined ? { reworkReviewPath } : {}),
           files: publication.files.map((file) => ({ path: file.path, sha256: file.ref.contentSha256, bytes: file.ref.contentByteLength, mimeType: file.ref.mimeType })),
         };
       });
@@ -233,19 +244,18 @@ export class WorkArtifactDelivery {
 
   /** 正文按字符偏移有界读取，二进制附件只提供受控物化。 */
   read(run: TaskWorkRunRecord, input: { deliverableId: string; path: string; offset?: number; limit?: number }): Record<string, unknown> {
+    /** 返工意见和前次文件使用相同的交接授权，意见自身来自本轮快照。 */
+    const review = input.path === reworkReviewPath ? reworkReviewText(run, input.deliverableId) : undefined;
+    const offset = boundedInteger(input.offset ?? 0, 0, review === undefined ? maximumArtifactBytes : Number.MAX_SAFE_INTEGER, '读取偏移');
+    const limit = boundedInteger(input.limit ?? 8_000, 1, maximumReadCharacters, '读取上限');
+    if (review !== undefined) {
+      this.requireDeliverable(run, input.deliverableId);
+      return readTextPage(input, review, createHash('sha256').update(review).digest('hex'), offset, limit);
+    }
     const file = this.requireFile(run, input.deliverableId, input.path);
     if (!/^(text\/|application\/(json|xml|javascript))/.test(file.ref.mimeType)) throw scopeError('该附件为二进制，请使用 materialize_artifact 物化后读取。');
-    const offset = boundedInteger(input.offset ?? 0, 0, maximumArtifactBytes, '读取偏移');
-    const limit = boundedInteger(input.limit ?? 8_000, 1, maximumReadCharacters, '读取上限');
     const content = Buffer.from(this.options.artifacts.readAuthorizedSync({ sha256: file.ref.sha256, owner: { kind: 'task_work_deliverable', id: input.deliverableId }, maximumContentBytes: maximumArtifactBytes }).bytes).toString('utf8');
-    return {
-      deliverableId: input.deliverableId,
-      path: file.path,
-      contentSha256: file.ref.contentSha256,
-      content: content.slice(offset, offset + limit),
-      nextOffset: offset + limit < content.length ? offset + limit : null,
-      totalCharacters: content.length,
-    };
+    return readTextPage({ ...input, path: file.path }, content, file.ref.contentSha256, offset, limit);
   }
 
   /** 受控复制到当前工作区相同资料结构；不同内容的已有文件永不覆盖。 */
@@ -349,6 +359,26 @@ export class WorkArtifactDelivery {
     }
     return { links, issues };
   }
+}
+
+/** 只读取当前运行绑定到指定前次成果的冻结意见。 */
+function reworkReviewText(run: TaskWorkRunRecord, deliverableId: string): string | undefined {
+  const { reworkDeliverableId, reworkReview, reworkReason } = run.entrypointSnapshot;
+  if (reworkDeliverableId !== deliverableId) return undefined;
+  const content = reworkReview ?? reworkReason;
+  return typeof content === 'string' ? content : undefined;
+}
+
+/** 文件和返工意见共用字符偏移与单次读取上限，调用方可以继续读到末尾。 */
+function readTextPage(input: { deliverableId: string; path: string }, content: string, contentSha256: string, offset: number, limit: number): Record<string, unknown> {
+  return {
+    deliverableId: input.deliverableId,
+    path: input.path,
+    contentSha256,
+    content: content.slice(offset, offset + limit),
+    nextOffset: offset + limit < content.length ? offset + limit : null,
+    totalCharacters: content.length,
+  };
 }
 
 /** 链接从当前索引位置计算，特殊文件名不能改变 Markdown 或 URL 的解析范围。 */

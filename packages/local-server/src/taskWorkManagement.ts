@@ -6,7 +6,7 @@ import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplicatio
 import { resolveEmployeeMemories } from './employeeMemoryContext.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { captureTaskWorkEvidence, captureDeploymentCommands } from './taskWorkEvidenceCapture.js';
-import type { WorkArtifactDelivery } from './workArtifactDelivery.js';
+import { reworkReviewPath, type WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { AutomationExecutionReference, DigitalTeamStructuredResult } from '@zeus/shared';
 import { mergeEmployeeWorkSettings, type EmployeeWorkSettings, type EmployeeWorkStageInput, type EmployeeTeamRecipe } from '@zeus/shared';
 import { LongTermMemoryRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository, TurnChangeSetRepository, ConversationProviderItemRepository, TaskWorkPlanningRepository } from '@zeus/storage';
@@ -161,6 +161,16 @@ type TaskWorkCreateRequest = WorkManagementMutationRequest<TaskWorkCreateInput>;
 interface TaskWorkActionInput {
   expectedRevision: number;
   reason?: string;
+}
+
+/** 审查和重试以稳定身份记录接纳结果，运行快照仍从工作账本读取。 */
+interface TaskWorkRunReceipt {
+  /** 接纳操作的工作项。 */
+  workItemId: string;
+  /** 被验收或新建的准确运行。 */
+  runId: string;
+  /** 审查操作原来指向的成果。 */
+  deliverableId?: string;
 }
 
 interface TaskWorkDecisionResolveInput {
@@ -701,9 +711,10 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           resourceId: `task_work_deliverable:${deliverable.id}`,
           mutateBusinessState: () => acceptDeliverable(options, deliverable, parsed.input.expectedRevision),
         });
+        const response = readRunReceipt(options, task.id, result.result);
         await options.save();
         publishChanged(options, task.id, deliverable.workItemId, 'deliverable_accepted');
-        return result.result;
+        return response;
       }),
     );
 
@@ -722,10 +733,11 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             resourceId: `task_work_deliverable:${deliverable.id}`,
             mutateBusinessState: () => requestDeliverableChanges(options, deliverable, parsed.input.expectedRevision, reason),
           });
+          const response = readRunReceipt(options, task.id, result.result);
           await options.save();
           publishChanged(options, task.id, deliverable.workItemId, 'changes_requested');
           kick();
-          return reply.code(202).send(result.result);
+          return reply.code(202).send(response);
         }),
     );
 
@@ -735,10 +747,11 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         const item = requireOwnedItem(options, request.params.taskId, request.params.workItemId);
         const parsed = options.application.parse<TaskWorkActionInput>({ value: request.body, commandType: workManagementCommandTypes.taskWorkItemRetry, scopeKind: 'task', expectedScopeId: () => item.taskId });
         const result = options.application.executeCore({ parsed, destinationId: 'task-work-item-repository', resourceId: `task_work_item:${item.id}`, mutateBusinessState: () => retryWorkItem(options, item, parsed.input.expectedRevision) });
+        const response = readRunReceipt(options, item.taskId, result.result);
         await options.save();
         publishChanged(options, item.taskId, item.id, 'retried');
         kick();
-        return reply.code(202).send(result.result);
+        return reply.code(202).send(response);
       }),
     );
 
@@ -1919,6 +1932,8 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   const taskSource = safeJsonParse(task.sourceContextJson);
   /** 使用运行冻结的正文，避免任务后续编辑改变本次发送的显示内容。 */
   const displayText = isRecord(taskSource) && taskSource.type === 'automation' ? run.contextManifest.task.description : undefined;
+  /** 只向新会话传入本轮交接路径，冻结意见正文由工作工具按页读取。 */
+  const { reworkDeliverableId, reworkReview } = run.entrypointSnapshot;
   const body: Record<string, unknown> = {
     mode: 'create',
     model: model.id,
@@ -1933,6 +1948,11 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     supplementalInfo,
     /** 独立字段保留自动化规则的长度限制，并计入会话接纳摘要。 */
     ...(typeof run.entrypointSnapshot.automationInstruction === 'string' ? { automationInstruction: run.entrypointSnapshot.automationInstruction } : {}),
+    ...(typeof reworkReview === 'string' && typeof reworkDeliverableId === 'string'
+      ? {
+          reworkReviewHandoff: `## 管理者要求修改\n\n请使用 zeus_work.read_artifact 读取前次成果 ${reworkDeliverableId} 的 ${reworkReviewPath}，按 nextOffset 读完所有意见，并核对该成果的正文和附件。`,
+        }
+      : {}),
     ...(displayText?.trim() ? { displayText } : {}),
     ...(supplementalAttachments.length > 0 ? { supplementalAttachments } : {}),
     workspace,
@@ -2306,7 +2326,8 @@ function createCommandFailureDecision(options: TaskWorkManagementOptions, run: T
   });
 }
 
-function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: TaskWorkDeliverableRecord, expectedRevision: number) {
+/** 接受当前成果并登记提交后的资料导出。 */
+function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: TaskWorkDeliverableRecord, expectedRevision: number): TaskWorkRunReceipt {
   /** 验收只收口当前等待审查的运行，不能复活取消或替换后的工作。 */
   const { run, item } = requireReviewableWork(options, deliverable);
   /** 显式要求的成果类型必须有实际证据，人工验收也不能绕过部署凭证等约束。 */
@@ -2320,7 +2341,7 @@ function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: Task
   if (options.items.listByTask(deliverable.taskId).some((item) => item.arrangement?.parentWorkItemId === deliverable.workItemId && item.status !== 'completed'))
     throw new TaskWorkStoreError('ZEUS_TASK_WORK_CHILDREN_PENDING', '子工作尚未全部通过审查，请完成子工作后再验收汇总。');
   const accepted = options.deliverables.transition(deliverable.id, expectedRevision, 'accepted');
-  options.workArtifacts.publish(accepted);
+  options.workArtifacts.exportAfterCommit(accepted);
   options.runs.update(run.id, { status: 'succeeded', completedAt: options.now().toISOString() });
   options.items.update(item.id, { status: 'completed', completedAt: options.now().toISOString() });
   resolveAcceptanceDecision(options, deliverable.id, { action: 'accepted' });
@@ -2330,15 +2351,15 @@ function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: Task
     title: '数字员工交付物已验收',
     payload: { workItemId: item.id, runId: run.id, deliverableId: deliverable.id, version: deliverable.version },
   });
-  return { item: options.items.getById(item.id)!, run: options.runs.getById(run.id)!, deliverable: accepted };
+  return { workItemId: item.id, runId: run.id, deliverableId: accepted.id };
 }
 
 /** 要求修改只授予本次被审查成果，前次正文和附件随返工轮次耐久冻结。 */
-function requestDeliverableChanges(options: TaskWorkManagementOptions, deliverable: TaskWorkDeliverableRecord, expectedRevision: number, reason: string) {
+function requestDeliverableChanges(options: TaskWorkManagementOptions, deliverable: TaskWorkDeliverableRecord, expectedRevision: number, reason: string): TaskWorkRunReceipt {
   /** 旧成果可以阅读，返工只能针对当前工作运行。 */
   const { run: previousRun, item } = requireReviewableWork(options, deliverable);
   const changed = options.deliverables.transition(deliverable.id, expectedRevision, 'changes_requested');
-  options.workArtifacts.publish(changed);
+  options.workArtifacts.exportAfterCommit(changed);
   const closedRun = options.runs.update(previousRun.id, {
     status: 'failed',
     errorCode: 'ZEUS_TASK_WORK_CHANGES_REQUESTED',
@@ -2352,7 +2373,9 @@ function requestDeliverableChanges(options: TaskWorkManagementOptions, deliverab
     .map((note) => `${note.anchor || '整体'}：${note.content}`)
     .join('\n');
   const next = cloneRun(options, item, closedRun, {
-    reworkReason: [reason, reviewContext].filter(Boolean).join('\n\n'),
+    /** 本次意见替换已完成返工的交接内容。 */
+    reworkReason: undefined,
+    reworkReview: [reason, reviewContext].filter(Boolean).join('\n\n'),
     reworkDeliverableId: deliverable.id,
     upstreamDeliverableIds: [
       ...new Set([...(Array.isArray(closedRun.entrypointSnapshot.upstreamDeliverableIds) ? closedRun.entrypointSnapshot.upstreamDeliverableIds.filter((id): id is string => typeof id === 'string') : []), deliverable.id]),
@@ -2366,7 +2389,7 @@ function requestDeliverableChanges(options: TaskWorkManagementOptions, deliverab
     title: '数字员工交付物已要求修改',
     payload: { workItemId: item.id, previousRunId: previousRun.id, runId: next.id, deliverableId: deliverable.id, reason },
   });
-  return { item: options.items.getById(item.id)!, run: next, deliverable: changed };
+  return { workItemId: item.id, runId: next.id, deliverableId: changed.id };
 }
 
 /** 统一人工与自动审查的活动运行边界，关闭后只能读取历史。 */
@@ -2387,19 +2410,19 @@ function requireReviewableWork(options: TaskWorkManagementOptions, deliverable: 
 }
 
 /** 显式重试创建新运行，并在同一事务中关闭该工作的旧待办。 */
-function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number) {
+function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number): TaskWorkRunReceipt {
   if (item.revision !== expectedRevision) throw new TaskWorkStoreError('ZEUS_TASK_WORK_REVISION_CONFLICT', '工作项已更新，请刷新后重试。');
   if (!['failed', 'blocked'].includes(item.status)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_NOT_RETRYABLE', '只有失败或已明确解除阻塞的工作项可以重试。');
   const previous = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
   if (!previous || previous.status === 'outcome_unknown') throw new TaskWorkStoreError('ZEUS_TASK_WORK_OUTCOME_UNKNOWN', '结果未知的运行不能自动重发。');
   const next = cloneRun(options, item, previous);
-  const activeItem = options.items.update(item.id, { expectedRevision, status: 'active', currentRunId: next.id });
+  options.items.update(item.id, { expectedRevision, status: 'active', currentRunId: next.id });
   for (const decision of options.decisions.listByTask(item.taskId))
     if (decision.workItemId === item.id && decision.status === 'pending') options.decisions.resolve(decision.id, decision.revision, { action: 'work_retried', runId: next.id }, 'dismissed');
   if (next.entrypointKind === 'command') {
     const dispatching = options.runs.update(next.id, { status: 'dispatching', startedAt: options.now().toISOString() });
     const waitingRun = options.runs.update(dispatching.id, { status: 'waiting_input' });
-    const waitingItem = options.items.update(activeItem.id, { status: 'waiting_manager' });
+    options.items.update(item.id, { status: 'waiting_manager' });
     options.decisions.create({
       projectId: waitingRun.projectId,
       taskId: waitingRun.taskId,
@@ -2413,9 +2436,18 @@ function retryWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRec
       operationIdentity: `command-confirmation:${waitingRun.id}`,
       expiresAt: null,
     });
-    return { item: waitingItem, run: waitingRun };
   }
-  return { item: activeItem, run: next };
+  return { workItemId: item.id, runId: next.id };
+}
+
+/** HTTP 响应读取回执指向的运行和成果，同时继续识别已保存的完整响应。 */
+function readRunReceipt(options: TaskWorkManagementOptions, taskId: string, receipt: TaskWorkRunReceipt | { item: TaskWorkItemRecord; run: TaskWorkRunRecord; deliverable?: TaskWorkDeliverableRecord }) {
+  if ('run' in receipt) return receipt;
+  const item = requireOwnedItem(options, taskId, receipt.workItemId);
+  const run = options.runs.getById(receipt.runId);
+  if (!run || run.taskId !== taskId || run.workItemId !== item.id) throw new TaskWorkStoreError('ZEUS_TASK_WORK_RUN_NOT_FOUND', '回执对应的工作运行不存在。', 404);
+  if (!receipt.deliverableId) return { item, run };
+  return { item, run, deliverable: requireOwnedDeliverable(options, taskId, receipt.deliverableId) };
 }
 
 /** 新尝试沿用已接纳的模型和权限，不重新继承员工配置。 */
@@ -3030,6 +3062,7 @@ async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOpt
     input.entrypoint.delegationPolicy
       ? `## 团队委派范围\n\n${JSON.stringify(input.entrypoint.delegationPolicy)}\n使用 zeus_work.inspect 核对当前分工，使用 delegate 创建真实子工作。拆分后结束当前轮次即可等待子成果审查；系统将在子工作通过后准备汇总运行。不得用其他通道重复指派。`
       : '',
+    /** 已经派发的旧轮次保留原任务正文，以便接纳回执按原摘要重放。 */
     typeof input.entrypoint.reworkReason === 'string'
       ? `## 管理者要求修改\n\n${input.entrypoint.reworkReason}${typeof input.entrypoint.reworkDeliverableId === 'string' ? `\n\n请先使用 list_artifacts、read_artifact 和 materialize_artifact 核对被要求修改的前次成果 ${input.entrypoint.reworkDeliverableId} 及附件。` : ''}`
       : '',
