@@ -281,8 +281,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     runStorageRecoveryPreflightAndRestart: () => invokeMainCommand('zeus:storage-recovery:preflight-and-restart', 'desktop.storage_recovery.preflight_restart', 'execution_host', 'storage-recovery'),
     /** 打开任务 Git 交付窗口。 */
     openTaskGitDeliveryWindow: (input: unknown) => transport.invoke('zeus:task-git-delivery:open', input),
-    /** 首帧耗时只发送类型和毫秒值，不发送文件正文。 */
-    reportGitDeliveryFrame: (input: { kind: 'window' | 'diff'; durationMs?: number }) => transport.send('zeus:task-git-delivery:frame', input),
+    /** 绘制回执包含阶段、动效偏好或选中文件到差异绘制的毫秒值。 */
+    reportGitDeliveryFrame: (input: { kind: 'surface' | 'window' | 'diff'; durationMs?: number; reduceMotion?: boolean }) => transport.send('zeus:task-git-delivery:frame', input),
     /** 宿主显示预热窗口时显式请求绘制回执，不依赖焦点变化。 */
     onGitDeliveryFrameRequested: (listener: () => void) => transport.subscribe('zeus:task-git-delivery:request-frame', listener),
     /** 提交时隐藏窗口并保留请求，接纳失败时恢复原窗口。 */

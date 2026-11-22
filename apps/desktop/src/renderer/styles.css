@@ -16084,6 +16084,11 @@ body[data-surface='task-git-delivery'] {
 }
 
 /* 独立代码交付窗口复用弹窗内容，但窗口壳必须铺满原生内容区，不能保留通用弹窗的四周遮罩留白。 */
+body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[data-zeus-primitive='modal'] {
+  opacity: 1;
+  transition: none;
+}
+
 body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[data-zeus-primitive='modal'] .task-git-merge-backdrop {
   padding: 0;
   background: transparent;
@@ -16097,6 +16102,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-portal-root.macos-ai-app[
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  transform: none;
+  transition: none;
 }
 
 body[data-surface='task-git-delivery'] .task-git-merge-header {
@@ -16510,7 +16517,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
     transition: background-color var(--zeus-motion-duration-state) var(--zeus-motion-ease-out);
   }
 
-  .macos-ai-app .task-git-delivery-diff-main :is(.code-diff-view, .code-diff-editable, .file-preview-pair, .file-preview-single),
+  body:not([data-surface='task-git-delivery']) .macos-ai-app .task-git-delivery-diff-main :is(.code-diff-view, .code-diff-editable, .file-preview-pair, .file-preview-single),
   .macos-ai-app.project-git-diff-window :is(.code-diff-view, .code-diff-editable, .file-preview-pair, .file-preview-single) {
     animation: zeus-git-delivery-content-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out);
   }
