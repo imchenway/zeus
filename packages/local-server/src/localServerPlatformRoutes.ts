@@ -9,7 +9,7 @@ import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
-import { resolveConversationGitRepository, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { resolveConversationGitRepository, resolveConversationGitWorkspace, resolveRecoveredConversationGitRepositories } from './conversationGitWorkspace.js';
 import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import type { AutomationActionConfig, AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest, InputSuggestionModelOption } from '@zeus/shared';
@@ -50,6 +50,8 @@ import {
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
   getProjectGitHistory,
+  readGitBranchSourceHead,
+  withLocalGitObjects,
   getTaskBranchFileDiff,
   getTaskBranchDiffRange,
   getGitFilePreviewSources,
@@ -72,6 +74,7 @@ import {
   ConversationResourceRepository,
   ConversationServerRequestRepository,
   ConversationTurnRepository,
+  ConversationWorktreeRecoveryRepository,
   DigitalEmployeeAutomationRepository,
   DigitalEmployeeExecutionRepository,
   DigitalEmployeeProjectEventRepository,
@@ -926,9 +929,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   registerStorageRecoveryPreflightApi({ server, db, artifacts: artifactStore });
 
+  /** 回收记录为工作台提供已移除工作树的 Git 提交身份。 */
+  const conversationWorktreeRecovery = new ConversationWorktreeRecoveryRepository(db);
   const projectGitQueries = new ProjectGitQueryApplication({
     resolveConversationWorkspace: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
     resolveConversationRepository: (project, repositoryKey) => resolveConversationGitRepository(project, repositoryKey, conversations, conversationSubmissions),
+    resolveRecoveredConversationRepositories: (project, key) => resolveRecoveredConversationGitRepositories(project, key, conversations, conversationSubmissions, conversationWorktreeRecovery),
     projects,
     repositories: projectRepositories,
     effects: {
@@ -940,7 +946,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readCommit: (localPath, commitHash) => getProjectGitCommitDetail(localPath, commitHash),
       /** 预览不会刷新远端或写入仓库。 */
       readPushPreview: getProjectGitPushPreview,
-      readComparison: getProjectGitComparisonDiff,
+      readComparison: (...args) => (args[5] ? withLocalGitObjects(() => getProjectGitComparisonDiff(...args)) : getProjectGitComparisonDiff(...args)),
+      readSourceHead: (localPath, branch) => withLocalGitObjects(() => readGitBranchSourceHead(localPath, branch)),
     },
     now,
   });

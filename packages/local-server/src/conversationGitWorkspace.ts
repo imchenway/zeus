@@ -1,10 +1,10 @@
-import { discoverGitRepositories, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
+import { discoverGitRepositories, discoverGitRepositoryRoots, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
 import type { GitEnvironmentSummary } from '@zeus/shared';
-import type { ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
+import type { ConversationRepository, ConversationSubmissionRepository, ConversationWorktreeRecoveryRepository, ZeusProjectRecord } from '@zeus/storage';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { realpath } from 'node:fs/promises';
-import { isAbsolute, relative, sep } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /** Git 目录身份查询使用只读子进程，不执行仓库修改。 */
 const execute = promisify(execFile);
@@ -138,6 +138,47 @@ export function conversationRepositoryId(conversationId: string, relativePath: s
   return `${conversationGitRepositoryPrefix}${conversationId}${relativePath && relativePath !== '.' ? `:${Buffer.from(relativePath).toString('base64url')}` : ''}`;
 }
 
+/** 回收记录仅为 Git 只读比较指向项目来源仓库，执行与清理仍要求真实工作树。 */
+export async function resolveRecoveredConversationGitRepositories(
+  project: ZeusProjectRecord,
+  conversationKey: { conversationId: string } | { repositoryKey: string },
+  conversations: Pick<ConversationRepository, 'getRecordById'>,
+  submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
+  recovery: Pick<ConversationWorktreeRecoveryRepository, 'list'>,
+) {
+  const conversation = 'conversationId' in conversationKey ? conversations.getRecordById(conversationKey.conversationId) : conversationForRepositoryKey(conversationKey.repositoryKey, conversations);
+  if (!conversation || conversation.projectId !== project.id || conversation.workspaceId || conversation.environmentId) return [];
+  const context = conversationExecutionWorkspace(conversation.id, submissions);
+  if (typeof context?.projectLocalPath !== 'string' || context.executionWorkspaceMode === 'direct') return [];
+  const rootPath = resolve(context.projectLocalPath);
+  if (rootPath === resolve(project.localPath)) return [];
+  const plans = recovery.list(project.id, rootPath);
+  if (!plans.length) return [];
+  /** 恢复记录先于物理删除落库，仅当保存的工作树均已移除时使用历史。 */
+  const removed = await Promise.all(
+    plans.map((plan) =>
+      lstat(join(plan.worktreePath, '.git')).then(
+        () => false,
+        (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+      ),
+    ),
+  );
+  if (!removed.every(Boolean)) return [];
+  const sources = await discoverGitRepositoryRoots(project.localPath);
+  return plans.flatMap((plan) => {
+    const source = sources.find((candidate) => candidate.localPath === plan.repositoryPath && resolve(rootPath, candidate.relativePath) === plan.worktreePath);
+    if (!source || !plan.headSha) return [];
+    const id = conversationRepositoryId(conversation.id, source.relativePath);
+    if ('repositoryKey' in conversationKey && id !== `${conversationGitRepositoryPrefix}${conversationKey.repositoryKey}`) return [];
+    return [{ ...source, id, branchName: plan.branchName, headSha: plan.headSha }];
+  });
+}
+
+/** 先匹配持久会话 ID，成员后缀只用于匹配仓库身份。 */
+function conversationForRepositoryKey(repositoryKey: string, conversations: Pick<ConversationRepository, 'getRecordById'>) {
+  return conversations.getRecordById(repositoryKey) ?? conversations.getRecordById(repositoryKey.slice(0, repositoryKey.lastIndexOf(':')));
+}
+
 /** 文件和 Git 操作只接受环境内一个已验证仓库，不能向容器目录执行仓库命令。 */
 export async function resolveConversationGitRepository(
   project: ZeusProjectRecord,
@@ -145,8 +186,7 @@ export async function resolveConversationGitRepository(
   conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
 ) {
-  /** 持久会话身份优先；成员后缀只参与身份匹配，绝不解码成磁盘路径。 */
-  const conversationId = conversations.getRecordById(repositoryKey) ? repositoryKey : repositoryKey.slice(0, repositoryKey.lastIndexOf(':'));
+  const conversationId = conversationForRepositoryKey(repositoryKey, conversations)?.id ?? repositoryKey;
   const workspace = await resolveConversationGitWorkspace(project, conversationId, conversations, submissions);
   const repository = workspace.repositories.find((member) => member.id === `${conversationGitRepositoryPrefix}${repositoryKey}`);
   if (!repository) throw Object.assign(new Error('仓库已不存在或不属于当前会话工作目录。'), { code: 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE', statusCode: 409 });

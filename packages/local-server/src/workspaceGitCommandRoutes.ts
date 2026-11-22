@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { gitWorkbenchRepositoryRouteOptions } from './projectGitQueryRoutes.js';
 import {
   WorkspaceGitCommandApplication,
   workspaceGitCommandHttpError,
@@ -19,7 +20,7 @@ type EmptyInput = Record<string, never>;
 export const workspaceGitCommandRoutePolicy = {
   externalOperations: [
     'POST /api/tasks/:taskId/git-workspaces/attach-repository',
-    'POST /api/projects/:projectId/git/workbench/repositories/:repositoryId/actions',
+    'POST /api/projects/:projectId/git/workbench/repositories/actions',
     'POST /api/tasks/:taskId/git-workspaces/commit-all',
     'POST /api/tasks/:taskId/git-workspaces/push-all',
     'POST /api/tasks/:taskId/git-workspaces/:workspaceId/commit',
@@ -94,41 +95,44 @@ export function registerWorkspaceGitCommandRoutes(options: {
     }),
   );
 
-  server.post('/api/projects/:projectId/git/workbench/repositories/:repositoryId/actions', async (request: FastifyRequest<{ Params: ProjectRepositoryParams; Body: WorkspaceGitMutationRequest<Record<string, unknown>> }>, reply) =>
-    execute(request, reply, {
-      commandType: workspaceGitCommandTypes.workbenchAction,
-      scopeKind: 'git_repository',
-      scopeId: request.params.repositoryId,
-      ids: request.params,
-      allowedInputKeys: [
-        'baseRef',
-        'branchName',
-        // 提交与合入携带用户审阅的分支和 HEAD，交给 Git 执行前再次核对。
-        'expectedBranch',
-        'expectedHeadSha',
-        'forceWithLease',
-        'includeUntracked',
-        'keepIndex',
-        'message',
-        'paths',
-        'pop',
-        'pushTags',
-        'pushAllTags',
-        'sourceBranch',
-        'setUpstream',
-        'commitMerge',
-        'includeMergeLog',
-        'noFastForward',
-        'remote',
-        'revision',
-        'smart',
-        'stashRef',
-        'strategy',
-        'targetBranch',
-        'trackRemote',
-        'type',
-      ],
-    }),
+  server.post(
+    '/api/projects/:projectId/git/workbench/repositories/actions',
+    gitWorkbenchRepositoryRouteOptions,
+    async (request: FastifyRequest<{ Params: ProjectParams; Querystring: { repositoryId: string }; Body: WorkspaceGitMutationRequest<Record<string, unknown>> }>, reply) =>
+      execute(request, reply, {
+        commandType: workspaceGitCommandTypes.workbenchAction,
+        scopeKind: 'git_repository',
+        scopeId: request.query.repositoryId,
+        ids: { projectId: request.params.projectId, repositoryId: request.query.repositoryId },
+        allowedInputKeys: [
+          'baseRef',
+          'branchName',
+          // 提交与合入携带用户审阅的分支和 HEAD，交给 Git 执行前再次核对。
+          'expectedBranch',
+          'expectedHeadSha',
+          'forceWithLease',
+          'includeUntracked',
+          'keepIndex',
+          'message',
+          'paths',
+          'pop',
+          'pushTags',
+          'pushAllTags',
+          'sourceBranch',
+          'setUpstream',
+          'commitMerge',
+          'includeMergeLog',
+          'noFastForward',
+          'remote',
+          'revision',
+          'smart',
+          'stashRef',
+          'strategy',
+          'targetBranch',
+          'trackRemote',
+          'type',
+        ],
+      }),
   );
 
   server.post('/api/tasks/:taskId/git-workspaces/commit-all', async (request: FastifyRequest<{ Params: TaskParams; Body: WorkspaceGitMutationRequest<{ message?: unknown }> }>, reply) =>
@@ -293,21 +297,22 @@ export function registerWorkspaceGitCommandRoutes(options: {
       }),
   );
 
-  async function execute<TParams extends Record<string, string>, TInput extends object>(
-    request: FastifyRequest<{ Params: TParams; Body: WorkspaceGitMutationRequest<TInput> }>,
+  /** 命令身份来自各路由已解析的字段，可以同时包含路径和查询参数。 */
+  async function execute<TInput extends object>(
+    request: { body: WorkspaceGitMutationRequest<TInput> },
     reply: FastifyReply,
     route: {
       commandType: WorkspaceGitCommandType;
       scopeKind: WorkspaceGitScopeKind;
       scopeId: string;
-      ids: TParams;
+      ids: Partial<Record<'projectId' | 'taskId' | 'repositoryId' | 'workspaceId' | 'integrationId', string>>;
       allowedInputKeys: readonly string[];
     },
   ): Promise<unknown> {
     try {
       const parsed = options.application.parse<TInput>({ value: request.body, commandType: route.commandType, scopeKind: route.scopeKind, scopeId: route.scopeId });
       assertOnlyInputKeys(parsed.input, route.allowedInputKeys, route.commandType);
-      const ids = route.ids as Record<string, string>;
+      const { ids } = route;
       const prepared = await options.operations.prepare({
         commandType: route.commandType,
         operationIdentity: parsed.operationIdentity,

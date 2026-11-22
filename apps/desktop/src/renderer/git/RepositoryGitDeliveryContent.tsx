@@ -124,7 +124,10 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   /** 审阅焦点独立于提交勾选。 */
   const [focus, setFocus] = useState({ repositoryId: '', path: '' });
   /** 两种入口采用相同文件范围。 */
-  const [scope, setScope] = useState<DiffScope>('working');
+  const [selectedScope, setScope] = useState<DiffScope>('working');
+  /** 回收的工作树始终展示已提交成果。 */
+  const committedOnly = snapshot?.committedOnly === true;
+  const scope = committedOnly ? 'committed' : selectedScope;
   /** 单独合入与组合交付使用同一合入方式。 */
   const [mode, setMode] = useState<'merge' | 'squash'>('merge');
   /** 标题栏承载当前交付操作区的设置入口。 */
@@ -264,19 +267,19 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
               }));
         return {
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
-          localPath: repository.localPath ?? displayedFilePath(repository.relativePath, props.project.localPath),
+          localPath: committedOnly ? undefined : (repository.localPath ?? displayedFilePath(repository.relativePath, props.project.localPath)),
           detail: undefined,
-          workingPaths: props.pathPrefix ? undefined : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => file.path),
+          workingPaths: committedOnly || props.pathPrefix ? undefined : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => file.path),
           files,
           loadState: scope === 'committed' ? (comparisonErrors[repository.id] ? 'error' : comparisonLoading ? 'loading' : undefined) : undefined,
           statusLabel: repository.snapshot.conflictFiles.length
             ? zh
               ? `${repository.snapshot.conflictFiles.length} 个冲突待处理`
               : 'Conflicts pending'
-            : ((scope === 'committed' ? comparisonErrors[repository.id] : undefined) ?? (repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
+            : ((scope === 'committed' ? comparisonErrors[repository.id] : undefined) ?? (committedOnly ? '' : repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
         };
       }),
-    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh, props.project.localPath, props.pathPrefix],
+    [snapshot, scope, committedOnly, committed, comparisonErrors, comparisonLoading, zh, props.project.localPath, props.pathPrefix],
   );
 
   useEffect(() => {
@@ -303,17 +306,19 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       if (!base || !path) return null;
       return {
         key: JSON.stringify([props.project.id, repositoryId, path, scope, snapshot?.refreshedAt]),
-        previewRequest: {
-          kind: 'project-git',
-          projectId: props.project.id,
-          repositoryId,
-          path,
-          ...(scope === 'committed' ? { comparisonRef: base, comparisonMode: 'current' } : {}),
-        },
+        previewRequest: committedOnly
+          ? undefined
+          : {
+              kind: 'project-git',
+              projectId: props.project.id,
+              repositoryId,
+              path,
+              ...(scope === 'committed' ? { comparisonRef: base, comparisonMode: 'current' } : {}),
+            },
         load: () => props.client.loadProjectGitComparisonDiff(props.project.id, repositoryId, base, scope === 'working' ? 'working-tree' : 'current', path),
       };
     },
-    [props.client, props.project.id, scope, snapshot],
+    [props.client, props.project.id, scope, snapshot, committedOnly],
   );
   /** 当前仓库附近三十二项保持可读，后台逐个处理，不并发扫描整个项目。 */
   const readAheadTargets = useMemo(() => {
@@ -572,6 +577,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             contentReady={Boolean(snapshot)}
             zh={zh}
             busy={Boolean(busyAction)}
+            committedOnly={committedOnly}
             fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
             selectedFile={focus.path}
             diffTitle={focusedRepository ? `${focusedRepository.name} / ${focus.path}` : zh ? '差异对比' : 'Diff'}
@@ -579,7 +585,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
             revision={snapshot.refreshedAt}
             onFileSaved={() => refresh()}
             previewRequest={
-              focusedRepository
+              focusedRepository && !committedOnly
                 ? {
                     kind: 'project-git',
                     projectId: props.project.id,
@@ -613,6 +619,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 groups={groups}
                 detailStates={{}}
                 diffScope={scope}
+                committedOnly={committedOnly}
                 totalWorkingFiles={snapshot.repositories.reduce((count, repository) => count + visibleRepositoryFiles(repository, snapshot.repositories).length, 0)}
                 totalCommittedFiles={comparisonLoading || Object.keys(comparisonErrors).length ? null : Object.values(committed).reduce((count, value) => count + value.files.length, 0)}
                 focusedWorkspaceId={focus.repositoryId}
@@ -629,12 +636,16 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 onOpenFile={async (repositoryId, path) => {
                   try {
                     if (!window.zeus?.openProjectGitDiffWindow) throw new Error(zh ? '独立差异窗口需要桌面应用。' : 'A separate diff window requires the desktop app.');
+                    /** 历史差异在当前窗口读取，用现有补丁快照交给独立窗口。 */
+                    const savedDiff = committedOnly ? await fileDiffTarget(repositoryId, path)?.load() : undefined;
+                    if (committedOnly && !savedDiff?.diffText) return;
                     await window.zeus.openProjectGitDiffWindow({
                       conversationId: props.conversationWorkspaceMode !== 'direct' ? props.conversation?.id : undefined,
                       projectId: props.project.id,
                       repositoryId,
                       filePath: path,
                       stage: 'combined',
+                      ...(savedDiff ? { diffText: savedDiff.diffText } : {}),
                       ...(scope === 'committed'
                         ? {
                             comparisonRef: committedBase(snapshot.repositories.find((repository) => repository.id === repositoryId)),
@@ -720,7 +731,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           />
         )}
       </div>
-      {pushSelections && snapshot ? (
+      {pushSelections && snapshot && !committedOnly ? (
         <PushDialog
           open
           zh={zh}

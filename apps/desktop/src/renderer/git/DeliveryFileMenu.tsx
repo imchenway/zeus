@@ -16,6 +16,8 @@ export function useDeliveryFileMenu(props: {
   zh: boolean;
   disabled: boolean;
   working: boolean;
+  /** 已回收的工作树没有可跳转的工作区源码。 */
+  committedOnly?: boolean;
   request(workspaceId: string, path: string): FilePreviewRequest;
   onRefresh(): Promise<void>;
   onBusyChange(busy: boolean): void;
@@ -119,7 +121,7 @@ export function useDeliveryFileMenu(props: {
         danger: true,
         run: () => confirm('rollback', tracked),
       },
-      { label: props.zh ? '跳转到源码' : 'Jump to Source', shortcut: `${primary}↓`, disabled: disabled || !single || single.status === 'deleted', run: () => run('source', id, files) },
+      { label: props.zh ? '跳转到源码' : 'Jump to Source', shortcut: `${primary}↓`, disabled: props.committedOnly || disabled || !single || single.status === 'deleted', run: () => run('source', id, files) },
     ];
   }
   /** 键盘菜单使用当前节点的屏幕边界；不拦截编辑器内快捷键。 */
