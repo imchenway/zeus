@@ -1411,7 +1411,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         onClose={() => setZentaoImportOpen(false)}
                       />
                     </>
-                  ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
+                  ) : sessionDrawerTarget ? null : (
+                    // 任务详情抽屉打开时保留会话正文和滚动位置，供关闭后继续阅读。
                     renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
                   )}
 
