@@ -8,22 +8,27 @@ export function beginGitDiffSelection(path: string): void {
   selection = { path, startedAt: performance.now() };
 }
 
-/** 文件列表实际提交后，展示或重新聚焦窗口时报告其首个已绘制帧。 */
-export function useGitDeliveryWindowFrame(ready: boolean): void {
+/** 交付窗体与内容各自报告绘制状态，让原生窗口在可读后显示。 */
+export function useGitDeliveryWindowFrame(ready: boolean, kind: 'surface' | 'window' = 'window'): void {
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || document.body.dataset.surface !== 'task-git-delivery') return;
+    /** 系统动效偏好由当前 Renderer 提供，主进程与页面使用同一口径。 */
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    /** 两帧之间让 Chromium 有机会提交实际布局。 */
     let first = 0;
     let second = 0;
+    /** 重开、聚焦或系统设置改变后重新报告当前帧。 */
     const report = () => {
       cancelAnimationFrame(first);
       cancelAnimationFrame(second);
       if (document.visibilityState !== 'visible') return;
       first = requestAnimationFrame(() => {
-        second = requestAnimationFrame(() => window.zeus?.reportGitDeliveryFrame?.({ kind: 'window' }));
+        second = requestAnimationFrame(() => window.zeus?.reportGitDeliveryFrame?.({ kind, reduceMotion: motion.matches }));
       });
     };
     report();
     const unsubscribe = window.zeus?.onGitDeliveryFrameRequested?.(report);
+    motion.addEventListener('change', report);
     document.addEventListener('visibilitychange', report);
     window.addEventListener('focus', report);
     return () => {
@@ -31,9 +36,10 @@ export function useGitDeliveryWindowFrame(ready: boolean): void {
       cancelAnimationFrame(second);
       document.removeEventListener('visibilitychange', report);
       window.removeEventListener('focus', report);
+      motion.removeEventListener('change', report);
       unsubscribe?.();
     };
-  }, [ready]);
+  }, [ready, kind]);
 }
 
 /** 差异编辑器挂载并绘制后结束计时，排除仅显示加载提示的帧。 */

@@ -153,8 +153,8 @@ declare global {
           | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string }
         ) & { /** 只准备当前范围，不显示窗口。 */ preload?: boolean },
       ) => Promise<{ opened: boolean; reused: boolean; taskId?: string; projectId?: string; conversationId?: string }>;
-      /** 真实绘制帧只上报类型与耗时，不传文件正文。 */
-      reportGitDeliveryFrame: (input: { kind: 'window' | 'diff'; durationMs?: number }) => void;
+      /** 绘制回执包含阶段、动效偏好或差异绘制耗时（毫秒）。 */
+      reportGitDeliveryFrame: (input: { kind: 'surface' | 'window' | 'diff'; durationMs?: number; reduceMotion?: boolean }) => void;
       /** 原生展示预热窗口后请求一次实际绘制回执。 */
       onGitDeliveryFrameRequested: (listener: () => void) => () => void;
       /** 提交期间立即隐藏窗口，失败时恢复并保留原有输入。 */

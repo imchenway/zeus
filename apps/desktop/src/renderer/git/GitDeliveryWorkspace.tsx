@@ -86,6 +86,7 @@ export interface DeliveryRepositoryGroup {
 
 /** 本机读取失败保留重试，不能把未加载误报为没有变化。 */
 export function InitialLoadState(props: { zh: boolean; error?: unknown; onRetry?: () => void }) {
+  useGitDeliveryWindowFrame(Boolean(props.error));
   if (!props.error)
     return (
       <div className="task-git-delivery-content" role="status" aria-label={props.zh ? '正在读取本机 Git 信息' : 'Loading local Git information'} aria-busy="true">
@@ -733,7 +734,9 @@ export function GitDeliveryWorkspace(props: {
   onShowCommitted?: () => void;
   busy: boolean;
 }) {
-  useGitDeliveryWindowFrame(props.contentReady);
+  /** 文本差异还需加载编辑器，等正文提交；空状态、二进制和失败可直接显示。 */
+  const awaitingDiff = props.diffLoading || Boolean(props.diff?.fileDiffs.some((file) => file.hunks.some((hunk) => hunk.lines.length > 0)));
+  useGitDeliveryWindowFrame(props.contentReady && (!awaitingDiff || props.diffError != null));
   return (
     <div className="task-git-delivery-content">
       <div className={`task-git-review-layout task-git-delivery-layout${props.committedOnly ? ' has-no-actions' : ''}`}>

@@ -368,6 +368,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
   const loading = busyAction === 'loading' && workspaceIndex === null;
+  /** 已有列表且首选文件已确定，或当前仓库没有可预览文件。 */
+  const contentReady = (selectedWorkspace !== null || !Object.values(detailStates).includes('loading')) && (selectedFile !== '' || (diffScope === 'committed' ? committedFiles : workingFiles).length === 0);
   const dismissDisabled = busyAction !== null && busyAction !== 'loading' && busyAction !== 'commit-message';
   const unresolvedConflictBlocks = useMemo(() => countUnresolvedConflictBlocks(conflictDocument), [conflictDocument]);
 
@@ -1122,7 +1124,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
             <ConflictCompletion zh={zh} targetBranch={activeConflict.targetBranch} taskBranch={selectedWorkspace?.branchName ?? ''} />
           ) : (
             <GitDeliveryWorkspace
-              contentReady={repositoryGroups.some((group) => Boolean(group.detail))}
+              contentReady={contentReady}
               zh={zh}
               fileBrowser={
                 <DeliveryRepositoryFileTree

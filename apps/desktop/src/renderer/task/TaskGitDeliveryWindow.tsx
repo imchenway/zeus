@@ -7,6 +7,7 @@ import '../ui/primitives.css';
 import { TaskGitMergeModal } from './TaskGitMergeModal.js';
 import { RepositoryGitDeliveryContent } from '../git/RepositoryGitDeliveryContent.js';
 import { ConversationGitDeliveryContent } from '../session/ConversationGitDeliveryContent.js';
+import { useGitDeliveryWindowFrame } from '../git/gitDeliveryPerformance.js';
 
 /** 当前主会话仅为已有任务窗口提供定位提示，不改变窗口固定的交付范围。 */
 export interface TaskGitDeliveryCurrentContext {
@@ -29,6 +30,7 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
   const [pathPrefix, setPathPrefix] = useState(props.scope.kind === 'repository' ? props.scope.pathPrefix : undefined);
   /** 任务窗口跟随主窗口会话定位，普通会话固定为自身绑定范围。 */
   const [currentContext, setCurrentContext] = useState(props.initialCurrentContext);
+  useGitDeliveryWindowFrame(currentContext.opened !== false, 'surface');
   /** 主题与语言继续通过现有原生窗口广播更新。 */
   const [surfaceSettings, setSurfaceSettings] = useState<{ language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }>({ language: props.language, appearance: props.appearance });
   /** 普通目录走本机项目桥接，独立会话工作树走已有会话限定接口。 */

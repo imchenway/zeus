@@ -574,7 +574,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           <InitialLoadState zh={zh} error={error} onRetry={error ? () => void refresh() : undefined} />
         ) : (
           <GitDeliveryWorkspace
-            contentReady={Boolean(snapshot)}
+            contentReady={focus.path !== '' || groups.every((group) => group.files.length === 0)}
             zh={zh}
             busy={Boolean(busyAction)}
             committedOnly={committedOnly}

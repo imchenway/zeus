@@ -13,7 +13,7 @@ import { fileFindShortcut, requestGroupedFileFind, useFileFindGroup } from './fi
 import { CommentWidget } from './SourceCodePreview.js';
 import './codeDiffView.css';
 import { FilePreviewDataContext } from './FilePreview.js';
-import { useGitDiffContentFrame } from '../git/gitDeliveryPerformance.js';
+import { useGitDeliveryWindowFrame, useGitDiffContentFrame } from '../git/gitDeliveryPerformance.js';
 import { fullFileDiff, normalizedFileLine, refreshedFileDiff } from './fullFileDiff.js';
 import { useGitBlame } from './useGitBlame.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
@@ -105,6 +105,7 @@ export interface CodeDiffViewProps {
 
 /** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
 export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
+  useGitDeliveryWindowFrame(true);
   useGitDiffContentFrame(
     props.file.newPath || props.file.oldPath,
     props.file.hunks.some((hunk) => hunk.lines.length > 0),
