@@ -1,6 +1,6 @@
 import { zeusWorkDynamicTools, type TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { CodexDynamicToolNamespaceSpec, CodexDynamicToolSpec, PiZeusToolDefinitionSpec } from '@zeus/ai-runtime';
-import type { BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
+import { isBrowserCuaPointerMethod, type BrowserAutomationPort, type BrowserAutomationToolCall, type BrowserAutomationToolResult } from './browserAutomation.js';
 import { browserFrozenContractEntry, browserFrozenContractVersion, browserFrozenMethodSupportsSurface, validateBrowserFrozenArguments } from './browserFrozenContract.js';
 import { zeusBrowserDynamicTools } from './browserDynamicTools.js';
 import { zeusComputerDynamicTools } from './computerDynamicTools.js';
@@ -89,7 +89,6 @@ export function createZeusToolBroker(automation: BrowserAutomationPort | undefin
   const invoke = async (input: BrowserAutomationToolCall & { namespace: ZeusNativeToolNamespace }): Promise<BrowserAutomationToolResult> => {
     validateToolIdentity(input);
     if (!registry.has(input.namespace, input.tool)) throw Object.assign(new Error(`Zeus 原生工具不存在：${input.namespace}.${input.tool}`), { code: 'ZEUS_NATIVE_TOOL_UNSUPPORTED' });
-    if (input.namespace === 'zeus_browser' && input.tool === 'invoke') validateAdvancedBrowserCall(input.arguments);
     const surface =
       input.namespace === 'zeus_automation'
         ? 'automation'
@@ -101,6 +100,7 @@ export function createZeusToolBroker(automation: BrowserAutomationPort | undefin
               ? input.arguments.surface
               : 'built_in';
     if (input.namespace === 'zeus_browser' && input.tool === 'invoke') {
+      validateAdvancedBrowserCall(input.arguments, surface);
       const path = String(input.arguments.path);
       const browserSurface = surface === 'chrome' || surface === 'edge' ? surface : 'built_in';
       if (!browserFrozenMethodSupportsSurface(path, browserSurface)) {
@@ -190,8 +190,16 @@ export function isZeusNativeToolMutation(namespace: ZeusNativeToolNamespace, too
   return !['list_tabs', 'snapshot', 'element', 'wait', 'screenshot', 'downloads', 'catalog', 'release_handles'].includes(tool);
 }
 
-function validateAdvancedBrowserCall(input: Record<string, unknown>): void {
+/** 内置指针操作使用当前 CUA 参数契约，外部浏览器继续使用冻结契约。 */
+function validateAdvancedBrowserCall(input: Record<string, unknown>, surface: string): void {
   const path = typeof input.path === 'string' ? input.path.trim() : '';
+  if (surface === 'built_in' && isBrowserCuaPointerMethod(input.path)) {
+    const args = input.arguments;
+    if (args !== undefined && (!args || typeof args !== 'object' || Array.isArray(args))) {
+      throw Object.assign(new Error('CUA 指针操作的参数必须为对象。'), { code: 'ZEUS_BROWSER_ARGUMENT_INVALID' });
+    }
+    return;
+  }
   if (!path || !browserFrozenContractEntry(path)) {
     throw Object.assign(new Error(`Browser ${browserFrozenContractVersion} 冻结契约未注册方法：${path || '<empty>'}`), { code: 'ZEUS_BROWSER_METHOD_NOT_ALLOWLISTED' });
   }

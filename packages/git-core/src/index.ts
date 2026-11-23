@@ -757,7 +757,14 @@ export async function discoverGitRepositoryRoots(containerPath: string, maxDepth
     4,
     async (localPath) => {
       signal?.throwIfAborted();
-      return { localPath, commonDirectory: await getGitCommonDirectory(localPath) };
+      try {
+        return { localPath, commonDirectory: await getGitCommonDirectory(localPath) };
+      } catch (cause) {
+        /** 相对路径在诊断脱敏后仍能标识失败的仓库。 */
+        const repository = relative(containerRoot, localPath).split(sep).join('/') || '.';
+        const reason = cause instanceof Error ? cause.message.trim() : String(cause);
+        throw Object.assign(new Error(`无法读取仓库 ${repository} 的 Git 公共目录：${reason}`, { cause }), { code: (cause as NodeJS.ErrnoException | null)?.code });
+      }
     },
   );
   /** 同一公共 Git 目录只占一个项目仓库身份。 */

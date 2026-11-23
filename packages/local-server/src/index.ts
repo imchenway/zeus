@@ -211,6 +211,7 @@ export { createMacOSKeychainStore, createPlatformSecretStore, getSecretPresenceL
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
+export { isBrowserCuaPointerMethod } from './browserAutomation.js';
 export { isConversationBrowserFileAllowed } from './conversationResources.js';
 export { browserAutomationDeadline, remainingBrowserAutomationTime, createBrowserAutomationFlow } from './browserAutomationFlow.js';
 export { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOptions } from './digitalTeamWorkflowCoordinator.js';

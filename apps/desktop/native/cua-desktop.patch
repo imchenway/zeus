@@ -2888,7 +2888,7 @@ diff --git a/crates/platform-macos/src/windows.rs b/crates/platform-macos/src/wi
  
  /// Enumerate all windows (including off-screen).
 diff --git a/crates/cua-driver-core/src/browser/engine.rs b/crates/cua-driver-core/src/browser/engine.rs
-index 5c987cb..7f0185d 100644
+index 5c987cb..a04f492 100644
 --- a/crates/cua-driver-core/src/browser/engine.rs
 +++ b/crates/cua-driver-core/src/browser/engine.rs
 @@ -58,7 +58,8 @@ use super::store::{
@@ -2942,7 +2942,22 @@ index 5c987cb..7f0185d 100644
  fn authorize_live_browser_origin(
      manifest: Option<&crate::session_manifest::SessionManifest>,
      live_url: &str,
-@@ -1240,7 +1275,20 @@ impl BrowserEngine {
+@@ -221,6 +256,14 @@ pub(crate) struct ValidatedTab {
+     pub cdp_session: String,
+ }
+ 
++impl ValidatedTab {
++    /// 只认可当前轮次的私有宿主端点，CDP 窗口编号仅用于定位。
++    pub(crate) fn is_zeus_hosted(&self, session: &str) -> bool {
++        hosted_browser_endpoint(session, self.record.pid)
++            .is_some_and(|endpoint| endpoint.ws_url == self.record.ws_url)
++    }
++}
++
+ fn viewport_point_to_screen(
+     native: Rect,
+     metrics: &Value,
+@@ -1240,7 +1283,20 @@ impl BrowserEngine {
          pid: i64,
          window_id: u64,
      ) -> Result<(String, TargetRecord), BrowserRefusal> {
@@ -2964,7 +2979,7 @@ index 5c987cb..7f0185d 100644
          if !class.is_browser {
              return Err(refuse(
                  BrowserRefusalCode::BrowserRouteUnavailable,
-@@ -1262,7 +1310,9 @@ impl BrowserEngine {
+@@ -1262,7 +1318,9 @@ impl BrowserEngine {
  
          let native = self.native_window_checked(pid, window_id).await?;
          let fingerprint = self.platform.process_fingerprint(pid).await?;
@@ -2975,7 +2990,7 @@ index 5c987cb..7f0185d 100644
              self.existing_profile_endpoint(pid, &live_grant.endpoint_ws_url)
                  .await?
          } else {
-@@ -1487,8 +1537,11 @@ impl BrowserEngine {
+@@ -1487,8 +1545,11 @@ impl BrowserEngine {
                  }
              }
              EndpointAccessClass::EmbeddedApplication => {
@@ -2988,7 +3003,7 @@ index 5c987cb..7f0185d 100644
                      return Err(refuse(
                          BrowserRefusalCode::BrowserBindingStale,
                          "the process is no longer proven to be the approved embedded browser host",
-@@ -1522,7 +1575,9 @@ impl BrowserEngine {
+@@ -1522,7 +1583,9 @@ impl BrowserEngine {
              .await?;
  
          // 3. Endpoint still owned and unchanged.
@@ -2999,7 +3014,7 @@ index 5c987cb..7f0185d 100644
              self.existing_profile_endpoint(record.pid, &record.ws_url)
                  .await?
          } else {
-@@ -1680,25 +1735,63 @@ impl BrowserEngine {
+@@ -1680,25 +1743,63 @@ impl BrowserEngine {
          viewport_y: f64,
          kind: BrowserVisualActionKind,
      ) {
@@ -3078,7 +3093,7 @@ index 5c987cb..7f0185d 100644
  
          let screen_point = if cdp_session == validated.cdp_session {
              validated
-@@ -1707,12 +1800,25 @@ impl BrowserEngine {
+@@ -1707,12 +1808,25 @@ impl BrowserEngine {
                  .await
                  .ok()
                  .and_then(|metrics| {
@@ -3110,7 +3125,7 @@ index 5c987cb..7f0185d 100644
                  })
          } else {
              // Child-frame coordinates are not necessarily in the top-level
-@@ -2506,6 +2612,29 @@ impl BrowserEngine {
+@@ -2506,6 +2620,29 @@ impl BrowserEngine {
          scope_ref: Option<&str>,
          query: Option<&str>,
          continuation: Option<&str>,
@@ -3140,7 +3155,7 @@ index 5c987cb..7f0185d 100644
      ) -> Result<SemanticSnapshotOutcome, BrowserRefusal> {
          if let Some(token) = continuation {
              if scope_ref.is_some() || query.is_some() {
-@@ -2556,7 +2685,7 @@ impl BrowserEngine {
+@@ -2556,7 +2693,7 @@ impl BrowserEngine {
              })?;
              let page = document.page(
                  continuation.offset,
@@ -3149,7 +3164,7 @@ index 5c987cb..7f0185d 100644
                  continuation.query.as_deref(),
                  continuation.scope_backend_node_id,
              );
-@@ -2723,12 +2852,7 @@ impl BrowserEngine {
+@@ -2723,12 +2860,7 @@ impl BrowserEngine {
              OopifStatus::Unsupported
          };
  
@@ -3164,18 +3179,9 @@ index 5c987cb..7f0185d 100644
          let snapshot_id = self.store.mint_snapshot_id();
          let scope = if scope_ref.is_some() {
 diff --git a/crates/cua-driver-core/src/browser/tools.rs b/crates/cua-driver-core/src/browser/tools.rs
-index e7be285..9d668ab 100644
+index e7be285..127d464 100644
 --- a/crates/cua-driver-core/src/browser/tools.rs
 +++ b/crates/cua-driver-core/src/browser/tools.rs
-@@ -16,7 +16,7 @@ use crate::tool_args::ArgsExt;
- 
- use super::cdp_ws::CdpConnection;
- use super::download::BrowserDownloadTool;
--use super::engine::{BrowserEngine, BrowserTabScreenshot};
-+use super::engine::{hosted_browser_endpoint, BrowserEngine, BrowserTabScreenshot};
- use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
- use super::pointer::BrowserPointerTool;
- use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 @@ -276,6 +276,10 @@ impl GetBrowserStateTool {
                          "type": "string",
                          "description": "Read-only semantic match over role, accessible name, and visible text."
@@ -3228,7 +3234,19 @@ index e7be285..9d668ab 100644
                                  "omitted": {
                                      "css_hidden": outcome.omissions.css_hidden,
                                      "offscreen": outcome.omissions.offscreen,
-@@ -1481,6 +1500,139 @@ pub struct BrowserTypeTool {
+@@ -997,7 +1016,10 @@ impl Tool for BrowserClickTool {
+             Ok(v) => v,
+             Err(refusal) => return refusal.to_tool_result(),
+         };
+-        if route == "trusted" && validated.record.cdp_window_id.is_some() {
++        if route == "trusted"
++            && validated.record.cdp_window_id.is_some()
++            && !validated.is_zeus_hosted(&session)
++        {
+             if let Some(limitation) = self
+                 .engine
+                 .platform
+@@ -1481,6 +1503,137 @@ pub struct BrowserTypeTool {
      engine: Arc<BrowserEngine>,
  }
  
@@ -3270,9 +3288,7 @@ index e7be285..9d668ab 100644
 +        Ok(value) => value,
 +        Err(error) => return error.to_tool_result(),
 +    };
-+    if !hosted_browser_endpoint(&session, validated.record.pid)
-+        .is_some_and(|endpoint| endpoint.ws_url == validated.record.ws_url)
-+    {
++    if !validated.is_zeus_hosted(&session) {
 +        return ToolResult::error("key dispatch requires the private embedded host route");
 +    }
 +    let virtual_key = match key.as_str() {
@@ -3368,7 +3384,7 @@ index e7be285..9d668ab 100644
  impl BrowserTypeTool {
      pub fn new(engine: Arc<BrowserEngine>) -> Self {
          let def = ToolDef {
-@@ -1491,7 +1643,8 @@ impl BrowserTypeTool {
+@@ -1491,7 +1644,8 @@ impl BrowserTypeTool {
                  at the caret, so typing into a field that already holds text appends \
                  to it; pass replace=true to set the field instead, or to clear it by \
                  typing an empty string. Pass a ref to an editable element from the \
@@ -3378,7 +3394,7 @@ index e7be285..9d668ab 100644
                  .into(),
              input_schema: json!({
                  "type": "object",
-@@ -1500,6 +1653,8 @@ impl BrowserTypeTool {
+@@ -1500,6 +1654,8 @@ impl BrowserTypeTool {
                      "tab_id": schema_tab_id(),
                      "session": schema_session(),
                      "text": { "type": "string", "description": "Text to type." },
@@ -3387,7 +3403,7 @@ index e7be285..9d668ab 100644
                      "ref": schema_ref(),
                      "mode": {
                          "type": "string",
-@@ -1517,7 +1672,7 @@ impl BrowserTypeTool {
+@@ -1517,7 +1673,7 @@ impl BrowserTypeTool {
                              framework state stays consistent."
                      },
                  },
@@ -3396,7 +3412,7 @@ index e7be285..9d668ab 100644
                  "additionalProperties": true
              }),
              read_only: false,
-@@ -1560,6 +1715,9 @@ impl Tool for BrowserTypeTool {
+@@ -1560,6 +1716,9 @@ impl Tool for BrowserTypeTool {
      }
  
      async fn invoke(&self, args: Value) -> ToolResult {
@@ -3406,6 +3422,34 @@ index e7be285..9d668ab 100644
          let (target_id, tab_id, text) = match (
              args.require_str("target_id"),
              args.require_str("tab_id"),
+diff --git a/crates/cua-driver-core/src/browser/pointer.rs b/crates/cua-driver-core/src/browser/pointer.rs
+index ad80763..ac4f1ca 100644
+--- a/crates/cua-driver-core/src/browser/pointer.rs
++++ b/crates/cua-driver-core/src/browser/pointer.rs
+@@ -364,8 +364,12 @@ impl BrowserPointerTool {
+         })
+     }
+ 
+-    fn trusted_background_refusal(&self, validated: &ValidatedTab) -> Option<ToolResult> {
+-        if validated.record.cdp_window_id.is_some() {
++    fn trusted_background_refusal(
++        &self,
++        session: &str,
++        validated: &ValidatedTab,
++    ) -> Option<ToolResult> {
++        if validated.record.cdp_window_id.is_some() && !validated.is_zeus_hosted(session) {
+             if let Some(limitation) = self
+                 .engine
+                 .platform
+@@ -790,7 +794,7 @@ impl Tool for BrowserPointerTool {
+             Err(refusal) => return refusal.to_tool_result(),
+         };
+         if request.route == InputRoute::Trusted {
+-            if let Some(refusal) = self.trusted_background_refusal(&validated) {
++            if let Some(refusal) = self.trusted_background_refusal(&session, &validated) {
+                 return refusal;
+             }
+         }
 diff --git a/crates/platform-macos/src/browser/electron_js.rs b/crates/platform-macos/src/browser/electron_js.rs
 index fd6bde6f..7e32de98 100644
 --- a/crates/platform-macos/src/browser/electron_js.rs
