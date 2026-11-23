@@ -13,6 +13,9 @@
   --delivery-progress-color: var(--session-warning, var(--zeus-status-warning-text, #98620d));
   color: var(--delivery-progress-color);
 }
+.git-delivery-progress[data-delivery-state='stopped'] {
+  --delivery-progress-color: var(--zeus-product-muted);
+}
 .git-delivery-progress[data-delivery-state='succeeded'] {
   --delivery-progress-color: var(--zeus-status-success-text, #268353);
 }
@@ -124,6 +127,18 @@
 .git-delivery-progress-step[data-step-state='attention'] .git-delivery-progress-step-marker,
 .git-delivery-progress-step[data-step-state='attention'] {
   color: var(--delivery-progress-color);
+}
+/* 失败原因在所属步骤下换行，窄侧栏也能直接阅读。 */
+.git-delivery-progress-step-error {
+  display: block;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-line;
+}
+/* 在窄进度卡片里完整显示结果摘要，详情按钮保留独立焦点。 */
+.macos-ai-app .git-delivery-progress-step-error .application-error-inline-summary {
+  white-space: normal;
 }
 .git-delivery-progress[data-delivery-state='succeeded'] .git-delivery-progress-step-marker {
   color: var(--delivery-progress-color);

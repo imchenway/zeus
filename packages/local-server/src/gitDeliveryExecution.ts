@@ -415,7 +415,7 @@ export class GitDeliveryExecution {
                 state: 'pending',
                 attempt: step.attempt + 1,
                 message: null,
-                result: { ...step.result, phases, ...(step.result?.cleanupConfirmation && request.body?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) },
+                result: { ...step.result, phases, commitMessageFailed: undefined, ...(step.result?.cleanupConfirmation && request.body?.confirmWorktreeCleanup === true ? { confirmWorktreeCleanup: true } : {}) },
               });
             }
           }
@@ -757,8 +757,12 @@ export class GitDeliveryExecution {
               } catch (error) {
                 const step = this.step(original);
                 const message = error instanceof Error ? error.message : '交付操作失败。';
-                const unknown = step.state === 'unknown' || /OUTCOME_UNKNOWN|RESULT_MISSING|结果未知/u.test(`${(error as { code?: string }).code ?? ''} ${message}`);
-                this.repository.updateStep(step, { state: unknown ? 'unknown' : 'attention', message });
+                /** 生成阶段由执行路径确认，底层错误仍作为原因保存。 */
+                const code = (error as { code?: string } | null)?.code;
+                /** 生成失败发生在 Git 写入前，模型响应未知也可以重试生成。 */
+                const commitMessageFailed = code === 'ZEUS_GIT_COMMIT_MESSAGE_FAILED';
+                const unknown = step.state === 'unknown' || (!commitMessageFailed && /OUTCOME_UNKNOWN|RESULT_MISSING|结果未知/u.test(`${code ?? ''} ${message}`));
+                this.repository.updateStep(step, { state: unknown ? 'unknown' : 'attention', message, ...(commitMessageFailed ? { result: { ...step.result, commitMessageFailed } } : {}) });
                 return;
               } finally {
                 /** 已执行或尝试写入的步骤使真实仓库状态失效，等待 AI 的检查不会进入这里反复运行。 */
@@ -1043,7 +1047,12 @@ export class GitDeliveryExecution {
       }
       if (snapshot.headSha !== selection.expectedHeadSha) throw deliveryError('提交前 HEAD 已变化，请重新审阅文件。');
       /** AI 生成成功后才执行原提交命令；失败不会使用旧草稿继续提交。 */
-      const message = run.input.settings.generateCommitMessage ? await this.generateCommitMessage(run, step, selection, context) : run.input.message;
+      const message = run.input.settings.generateCommitMessage
+        ? await this.generateCommitMessage(run, step, selection, context).catch((error: unknown) => {
+            this.assertAdvancing(run.id);
+            throw deliveryError(error instanceof Error ? error.message : 'AI 生成提交说明时出错。', 'ZEUS_GIT_COMMIT_MESSAGE_FAILED');
+          })
+        : run.input.message;
       if (scope.kind === 'task')
         await this.command(run, step, 'commit', `/api/tasks/${scope.taskId}/git-workspaces/${selection.repositoryId}/commit`, workspaceGitCommandTypes.taskWorkspaceCommit, 'task_workspace', selection.repositoryId, {
           message,
