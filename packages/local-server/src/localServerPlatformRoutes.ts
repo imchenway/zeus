@@ -50,7 +50,6 @@ import {
   getProjectGitComparisonDiff,
   getProjectGitRepositorySnapshot,
   getProjectGitHistory,
-  readGitBranchSourceHead,
   withLocalGitObjects,
   getTaskBranchFileDiff,
   getTaskBranchDiffRange,
@@ -947,7 +946,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       /** 预览不会刷新远端或写入仓库。 */
       readPushPreview: getProjectGitPushPreview,
       readComparison: (...args) => (args[5] ? withLocalGitObjects(() => getProjectGitComparisonDiff(...args)) : getProjectGitComparisonDiff(...args)),
-      readSourceHead: (localPath, branch) => withLocalGitObjects(() => readGitBranchSourceHead(localPath, branch)),
     },
     now,
   });

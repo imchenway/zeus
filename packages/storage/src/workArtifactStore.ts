@@ -151,10 +151,9 @@ export class WorkArtifactRepository {
     this.db.execute('UPDATE work_artifact_publications SET exported_root=?,export_error=?,updated_at=? WHERE deliverable_id=?', [root, error, new Date().toISOString(), deliverableId]);
   }
 
-  /** 持久记录待导出状态，使提交后尚未写盘的成果仍可由调度器恢复。 */
-  scheduleExport(deliverableId: string, exportDocs: () => void): void {
+  /** 持久记录待导出状态，调度器重启后仍可领取。 */
+  markExportPending(deliverableId: string): void {
     this.exported(deliverableId, null, null);
-    this.db.afterCommit(exportDocs);
   }
 
   /** 目录中的已知哈希限制 Core 的覆盖权限。 */
@@ -201,7 +200,7 @@ export class WorkArtifactRepository {
     return Boolean(run?.source_ref && this.repairHandoff(run.task_id, run.source_ref, deliverableId));
   }
 
-  /** 按当前项目目录和任务编码核对完整导出位置，目录变化后沿用原重试间隔。 */
+  /** 首次待导出立即可领取，失败和位置变化沿用原重试间隔。 */
   pendingTaskIds(limit: number, eligibleBefore: string, managedRoot: string): string[] {
     return this.db
       .select<{ task_id: string }>(
@@ -209,9 +208,11 @@ export class WorkArtifactRepository {
          JOIN tasks task ON task.id=publication.task_id
          LEFT JOIN projects project ON project.id=task.project_id AND project.deleted_at IS NULL
          LEFT JOIN work_task_doc_locations location ON location.task_id=task.id
-         WHERE publication.updated_at<=? AND (
-           publication.exported_root IS NULL OR publication.export_error IS NOT NULL OR location.root IS NULL OR
-           location.root <> (rtrim(COALESCE(NULLIF(project.local_path,''),?),?) || ? || COALESCE(NULLIF(task.task_code,''),task.id))
+         WHERE (publication.exported_root IS NULL AND publication.export_error IS NULL) OR (
+           publication.updated_at<=? AND (
+             publication.export_error IS NOT NULL OR location.root IS NULL OR
+             location.root <> (rtrim(COALESCE(NULLIF(project.local_path,''),?),?) || ? || COALESCE(NULLIF(task.task_code,''),task.id))
+           )
          )
          GROUP BY publication.task_id ORDER BY MIN(publication.updated_at),publication.task_id LIMIT ?`,
         [eligibleBefore, resolve(managedRoot), sep, sep + 'docs' + sep, limit],

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   PluginRepository,
@@ -17,7 +17,7 @@ import {
 import type { SecretStore } from './securityCore.js';
 import { inspectZeusPluginDirectory, ZeusPluginManifestError, type ZeusPluginManifestInspection } from './zeusPluginManifest.js';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
-import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, normalizePluginSource, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
+import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, normalizePluginSource, pathExists, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
 
 const maximumMarketplaceNodes = 25_000;
 const maximumMarketplaceBytes = 512 * 1024 * 1024;
@@ -837,18 +837,4 @@ function normalizeServiceError(error: unknown): Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code;
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false;
-    throw error;
-  }
 }

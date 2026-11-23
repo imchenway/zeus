@@ -1,10 +1,12 @@
-import { discoverGitRepositories, discoverGitRepositoryRoots, projectGitRepositoryId, readGitBranchSource } from '@zeus/git-core';
+import { discoverGitRepositories, discoverGitRepositoryRoots, projectGitRepositoryId, readGitBranchSource, readGitBranchSourceHead, withLocalGitObjects } from '@zeus/git-core';
 import type { GitEnvironmentSummary } from '@zeus/shared';
-import type { ConversationRepository, ConversationSubmissionRepository, ConversationWorktreeRecoveryRepository, ZeusProjectRecord } from '@zeus/storage';
+import type { ConversationRepository, ConversationSubmissionRepository, ConversationWorktreeRecovery, ConversationWorktreeRecoveryRepository, ZeusProjectRecord } from '@zeus/storage';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { mapWithConcurrency } from './localServerPlatformSupport.js';
 
 /** Git 目录身份查询使用只读子进程，不执行仓库修改。 */
 const execute = promisify(execFile);
@@ -138,6 +140,41 @@ export function conversationRepositoryId(conversationId: string, relativePath: s
   return `${conversationGitRepositoryPrefix}${conversationId}${relativePath && relativePath !== '.' ? `:${Buffer.from(relativePath).toString('base64url')}` : ''}`;
 }
 
+/** 恢复引用按项目与原工作树隔离。 */
+export function recoveryReferencePrefix(plan: ConversationWorktreeRecovery): string {
+  return `refs/zeus/conversation-recovery/${createHash('sha256')
+    .update(JSON.stringify([plan.projectId, plan.worktreePath]))
+    .digest('hex')}/`;
+}
+
+/** 比较起点绑定本次回收记录的分支和提交，避免同一目录的其他快照复用。 */
+export function recoverySourceHeadReference(plan: ConversationWorktreeRecovery): string {
+  const snapshot = createHash('sha256')
+    .update(JSON.stringify([plan.branchName, plan.headSha]))
+    .digest('hex');
+  return `${recoveryReferencePrefix(plan)}source-head/${snapshot}`;
+}
+
+/** 优先使用已保护的起点，旧记录只查询仍指向原提交的分支创建记录。 */
+async function readRecoveredSourceHead(plan: ConversationWorktreeRecovery): Promise<string | null> {
+  if (!plan.branchName) return null;
+  /** 成果提交引用存在时，本次比较只使用同一快照固定的起点。 */
+  const headReference = `${recoveryReferencePrefix(plan)}${plan.headSha}`;
+  const sourceHeadReference = recoverySourceHeadReference(plan);
+  const branchReference = `refs/heads/${plan.branchName}`;
+  const { stdout } = await execute('git', ['for-each-ref', '--format=%(refname) %(objectname)', headReference, sourceHeadReference, branchReference], {
+    cwd: plan.repositoryPath,
+    timeout: 15_000,
+    env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' },
+  });
+  const refs = stdout.trim().split(/\r?\n/);
+  /** 精确匹配完整引用，避免把同一前缀下的其他分支当作来源。 */
+  const readRef = (reference: string): string | undefined => refs.find((line) => line.startsWith(`${reference} `))?.slice(reference.length + 1);
+  if (readRef(headReference) === plan.headSha) return readRef(sourceHeadReference) ?? null;
+  if (readRef(branchReference) !== plan.headSha) return null;
+  return withLocalGitObjects(() => readGitBranchSourceHead(plan.repositoryPath, plan.branchName));
+}
+
 /** 回收记录仅为 Git 只读比较指向项目来源仓库，执行与清理仍要求真实工作树。 */
 export async function resolveRecoveredConversationGitRepositories(
   project: ZeusProjectRecord,
@@ -165,13 +202,21 @@ export async function resolveRecoveredConversationGitRepositories(
   );
   if (!removed.every(Boolean)) return [];
   const sources = await discoverGitRepositoryRoots(project.localPath);
-  return plans.flatMap((plan) => {
+  const repositories = plans.flatMap((plan) => {
     const source = sources.find((candidate) => candidate.localPath === plan.repositoryPath && resolve(rootPath, candidate.relativePath) === plan.worktreePath);
     if (!source || !plan.headSha) return [];
     const id = conversationRepositoryId(conversation.id, source.relativePath);
     if ('repositoryKey' in conversationKey && id !== `${conversationGitRepositoryPrefix}${conversationKey.repositoryKey}`) return [];
-    return [{ ...source, id, branchName: plan.branchName, headSha: plan.headSha }];
+    return [{ source, id, plan }];
   });
+  /** 单个仓库无法核对起点时，交付窗口仍可读取其他仓库。 */
+  return mapWithConcurrency(repositories, async ({ source, id, plan }) => ({
+    ...source,
+    id,
+    branchName: plan.branchName,
+    headSha: plan.headSha,
+    sourceHeadSha: await readRecoveredSourceHead(plan).catch(() => null),
+  }));
 }
 
 /** 先匹配持久会话 ID，成员后缀只用于匹配仓库身份。 */

@@ -1,4 +1,4 @@
-import { discoverGitRepositories, getGitRepositoryContext, getGitWorktreeClean, prepareTaskWorktree, removeTaskWorktreeForTerminalStatus } from '@zeus/git-core';
+import { discoverGitRepositories, getGitRepositoryContext, getGitWorktreeClean, prepareTaskWorktree, readGitBranchSourceHead, removeTaskWorktreeForTerminalStatus, withLocalGitObjects } from '@zeus/git-core';
 import {
   ConversationWorktreeRecoveryRepository,
   type ConversationRepository,
@@ -11,19 +11,11 @@ import {
 import { lstat, readdir } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { conversationExecutionWorkspace, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { conversationExecutionWorkspace, recoveryReferencePrefix, recoverySourceHeadReference, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 
-/** detached HEAD 恢复使用固定 Git 参数，不通过 shell 拼接。 */
+/** 使用 Git 子进程保护回收记录引用的提交并恢复分离头指针。 */
 const execute = promisify(execFile);
-
-/** 按项目与原工作树隔离恢复引用，不使用分支名，也不影响其他会话目录。 */
-function recoveryReferencePrefix(plan: ConversationWorktreeRecovery): string {
-  return `refs/zeus/conversation-recovery/${createHash('sha256')
-    .update(JSON.stringify([plan.projectId, plan.worktreePath]))
-    .digest('hex')}/`;
-}
 
 /** 只处理会话自有目录，任务环境继续由任务工作区仓储管理。 */
 export interface ConversationWorktreeLifecyclePorts {
@@ -126,20 +118,26 @@ export async function inspectConversationWorktrees(ports: ConversationWorktreeLi
 /** 删除前保存恢复身份；复用任务完成时的 Git 清理，保留本地分支。 */
 export async function removeConversationWorktrees(db: ZeusDatabase, plans: ConversationWorktreeCleanup[], beforeExternalWrite?: () => void): Promise<number> {
   if (!plans.length) return 0;
-  /** 进程停止后重新冻结提交，保留其最后写出的提交与当前检出分支。 */
+  /** 进程停止后重新核对成果提交和分支创建起点。 */
   const snapshots = await Promise.all(
     plans.map(async (plan) => {
-      if (!(await pathExists(plan.worktreePath))) return plan;
+      if (!(await pathExists(plan.worktreePath))) return { ...plan, sourceHeadSha: undefined };
       const git = await getGitRepositoryContext(plan.worktreePath);
       if (!git.isRepository || resolve(git.topLevel) !== resolve(plan.worktreePath)) throw new Error('工作树身份已变化，目录已保留。');
-      return { ...plan, branchName: git.detached ? '' : git.branch, headSha: git.headSha };
+      const branchName = git.detached ? '' : git.branch;
+      const sourceHeadSha = branchName && git.headSha ? await withLocalGitObjects(() => readGitBranchSourceHead(plan.worktreePath, branchName)) : null;
+      return { ...plan, branchName, headSha: git.headSha, sourceHeadSha };
     }),
   );
   for (const snapshot of snapshots) {
-    if (snapshot.branchName || !snapshot.headSha) continue;
-    /** SHA 独立占用一个引用，重试不覆盖数据库尚在使用的旧提交保护。 */
+    /** 已移除的旧分支记录保留原有证据，重试时无法为它重新固定起点。 */
+    if (!snapshot.headSha || (snapshot.branchName && snapshot.sourceHeadSha === undefined)) continue;
     beforeExternalWrite?.();
     await execute('git', ['update-ref', `${recoveryReferencePrefix(snapshot)}${snapshot.headSha}`, snapshot.headSha], { cwd: snapshot.repositoryPath, timeout: 30_000 });
+    if (snapshot.sourceHeadSha) {
+      beforeExternalWrite?.();
+      await execute('git', ['update-ref', recoverySourceHeadReference(snapshot), snapshot.sourceHeadSha], { cwd: snapshot.repositoryPath, timeout: 30_000 });
+    }
   }
   new ConversationWorktreeRecoveryRepository(db).save(snapshots);
   /** 子仓先于父仓回收，避免父工作树含有仍登记的子仓目录。 */
@@ -210,7 +208,7 @@ export async function restoreConversationWorktrees(ports: ConversationWorktreeLi
     }
   }
   await resolveConversationGitWorkspace(project, conversation.id, ports.conversations, ports.conversationSubmissions);
-  /** 全部工作树恢复并核验后，HEAD 已保护当前提交，旧恢复引用可一并释放。 */
+  /** 全部工作树恢复并核验后，释放已结束回收记录的提交引用。 */
   for (const plan of plans) {
     const { stdout } = await execute('git', ['for-each-ref', '--format=%(refname)', recoveryReferencePrefix(plan)], { cwd: plan.repositoryPath, timeout: 30_000 });
     for (const reference of stdout.trim().split(/\r?\n/).filter(Boolean)) {

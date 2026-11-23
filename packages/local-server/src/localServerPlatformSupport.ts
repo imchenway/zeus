@@ -88,3 +88,27 @@ export function parseJsonObject(value: string): Record<string, unknown> {
     return {};
   }
 }
+
+/** 限制查询并发，保持输入顺序并在已有查询结束后抛出首个错误。 */
+export async function mapWithConcurrency<Input, Output>(items: Input[], operation: (item: Input, index: number) => Promise<Output>, concurrency = 4): Promise<Output[]> {
+  /** 用索引写入结果，完成顺序可以不同。 */
+  const results = new Array<Output>(items.length);
+  let nextIndex = 0;
+  let firstError: unknown;
+  /** 领取未开始的查询，出现错误后等待已经启动的查询结束。 */
+  const worker = async (): Promise<void> => {
+    while (!firstError) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      try {
+        results[index] = await operation(items[index]!, index);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()));
+  if (firstError) throw firstError;
+  return results;
+}

@@ -714,6 +714,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         const response = readRunReceipt(options, task.id, result.result);
         await options.save();
         publishChanged(options, task.id, deliverable.workItemId, 'deliverable_accepted');
+        kick();
         return response;
       }),
     );
@@ -2326,7 +2327,7 @@ function createCommandFailureDecision(options: TaskWorkManagementOptions, run: T
   });
 }
 
-/** 接受当前成果并登记提交后的资料导出。 */
+/** 接受当前成果并在同一事务内登记待导出的资料。 */
 function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: TaskWorkDeliverableRecord, expectedRevision: number): TaskWorkRunReceipt {
   /** 验收只收口当前等待审查的运行，不能复活取消或替换后的工作。 */
   const { run, item } = requireReviewableWork(options, deliverable);
@@ -2341,7 +2342,7 @@ function acceptDeliverable(options: TaskWorkManagementOptions, deliverable: Task
   if (options.items.listByTask(deliverable.taskId).some((item) => item.arrangement?.parentWorkItemId === deliverable.workItemId && item.status !== 'completed'))
     throw new TaskWorkStoreError('ZEUS_TASK_WORK_CHILDREN_PENDING', '子工作尚未全部通过审查，请完成子工作后再验收汇总。');
   const accepted = options.deliverables.transition(deliverable.id, expectedRevision, 'accepted');
-  options.workArtifacts.exportAfterCommit(accepted);
+  options.workArtifacts.markExportPending(accepted);
   options.runs.update(run.id, { status: 'succeeded', completedAt: options.now().toISOString() });
   options.items.update(item.id, { status: 'completed', completedAt: options.now().toISOString() });
   resolveAcceptanceDecision(options, deliverable.id, { action: 'accepted' });
@@ -2359,7 +2360,7 @@ function requestDeliverableChanges(options: TaskWorkManagementOptions, deliverab
   /** 旧成果可以阅读，返工只能针对当前工作运行。 */
   const { run: previousRun, item } = requireReviewableWork(options, deliverable);
   const changed = options.deliverables.transition(deliverable.id, expectedRevision, 'changes_requested');
-  options.workArtifacts.exportAfterCommit(changed);
+  options.workArtifacts.markExportPending(changed);
   const closedRun = options.runs.update(previousRun.id, {
     status: 'failed',
     errorCode: 'ZEUS_TASK_WORK_CHANGES_REQUESTED',

@@ -13,6 +13,7 @@ import {
   type SelectableConnectionModel,
 } from '@zeus/ai-runtime';
 import { buildTaskBranchName, buildTaskBranchPrefix, type GitRepositoryContext } from '@zeus/git-core';
+import { mapWithConcurrency } from './localServerPlatformSupport.js';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import type {
   ConversationRepository,
@@ -588,27 +589,6 @@ export function resolveModelCapability<T extends { id: string; model: string; so
 
 function positiveIntegerOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
-}
-
-async function mapWithConcurrency<Input, Output>(items: Input[], operation: (item: Input, index: number) => Promise<Output>, concurrency = 4): Promise<Output[]> {
-  const results = new Array<Output>(items.length);
-  let nextIndex = 0;
-  let firstError: unknown;
-  const worker = async (): Promise<void> => {
-    while (!firstError) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) return;
-      try {
-        results[index] = await operation(items[index]!, index);
-      } catch (error) {
-        firstError ??= error;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()));
-  if (firstError) throw firstError;
-  return results;
 }
 
 function isPathInsideRoot(candidate: string, root: string): boolean {

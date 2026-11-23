@@ -152,12 +152,10 @@ export class WorkArtifactDelivery {
     return this.exportDocs(deliverable);
   }
 
-  /** 审查状态与待导出记录同事务保存，阅读副本只在提交后写入。 */
-  exportAfterCommit(deliverable: TaskWorkDeliverableRecord): void {
+  /** 在审查事务中冻结成果并登记待导出，阅读副本交由调度器写入。 */
+  markExportPending(deliverable: TaskWorkDeliverableRecord): void {
     this.freeze(deliverable);
-    this.options.publications.scheduleExport(deliverable.id, () => {
-      this.exportDocs(deliverable);
-    });
+    this.options.publications.markExportPending(deliverable.id);
   }
 
   /** 根据已冻结清单导出阅读目录，保留失败原因供调度循环重试。 */
