@@ -24,6 +24,64 @@ import { Button } from '../ui/Button.js';
 function chunkTone(chunk: Chunk): string {
   return chunk.fromA === chunk.toA ? 'addition' : chunk.fromB === chunk.toB ? 'deletion' : 'replacement';
 }
+
+/** 未改区间在两侧的字符偏移由前一个变更决定。 */
+function unchangedOffset(view: EditorView, position: number): number {
+  const info = getChunks(view.state);
+  if (!info) return 0;
+  const left = info.side === 'a';
+  /** 区块按文档坐标排列，编辑长文件时不为每个折叠重新扫描全部变更。 */
+  let first = 0;
+  let end = info.chunks.length;
+  while (first < end) {
+    const middle = Math.floor((first + end) / 2);
+    const chunk = info.chunks[middle]!;
+    if ((left ? chunk.toA : chunk.toB) <= position) first = middle + 1;
+    else end = middle;
+  }
+  const chunk = info.chunks[first - 1];
+  return chunk ? (left ? chunk.toB - chunk.toA : chunk.toA - chunk.toB) : 0;
+}
+
+/** 定位、查找和评论都从实际折叠区起点同时展开两侧。 */
+function expandDiffFold(view: EditorView, position: number): void {
+  const line = view.lineBlockAt(position);
+  const blocks = Array.isArray(line.type) ? line.type : [line];
+  const folded = blocks.find((block) => block.widget?.type === 'collapsed-unchanged-code' && block.from <= position && block.to >= position);
+  if (!folded) return;
+  const pair = mergeViewSiblings(view);
+  const offset = unchangedOffset(view, folded.from);
+  view.dispatch({ effects: uncollapseUnchanged.of(folded.from) });
+  if (pair) (pair.a === view ? pair.b : pair.a).dispatch({ effects: uncollapseUnchanged.of(folded.from + offset) });
+}
+
+/** 获取整份文档中原生 Diff 折叠的边界，包含当前视口之外的区间。 */
+function collapsedDiffRanges(view: EditorView): Map<number, number> {
+  const ranges = new Map<number, number>();
+  for (const decorations of view.state.facet(EditorView.decorations)) {
+    if (typeof decorations === 'function') continue;
+    decorations.between(0, view.state.doc.length, (from, to, decoration) => {
+      if (decoration.spec.widget?.type === 'collapsed-unchanged-code') ranges.set(from, to);
+    });
+  }
+  return ranges;
+}
+
+/** 编辑器会独立更新各侧折叠。只有两侧仍指向同一段未改内容时才保留折叠。 */
+function synchronizeDiffFolds(merge: MergeView): void {
+  const remaining = collapsedDiffRanges(merge.b);
+  const expandLeft: StateEffect<number>[] = [];
+  for (const [from, to] of collapsedDiffRanges(merge.a)) {
+    const offset = unchangedOffset(merge.a, from);
+    if (remaining.get(from + offset) === to + offset) remaining.delete(from + offset);
+    else expandLeft.push(uncollapseUnchanged.of(from));
+  }
+  if (expandLeft.length) merge.a.dispatch({ effects: expandLeft });
+  if (remaining.size) merge.b.dispatch({ effects: Array.from(remaining.keys(), (from) => uncollapseUnchanged.of(from)) });
+}
+
+/** 双栏与统一视图保留相同的上下文行数和最短折叠长度。 */
+const diffFoldOptions = { margin: 3, minSize: 4 };
 /** 行号背景与正文保持相同区块语义。 */
 class ToneMarker extends GutterMarker {
   /** CSS 类只表达增删改状态。 */
@@ -46,6 +104,7 @@ function editableDiffColors(): Extension {
           const start = info?.side === 'a' ? chunk.fromA : chunk.fromB;
           const end = info?.side === 'a' ? chunk.toA : chunk.toB;
           for (const range of view.visibleRanges) {
+            if (start === end || range.to < start || range.from >= end) continue;
             let position = view.state.doc.lineAt(Math.min(view.state.doc.length, Math.max(range.from, start))).from;
             while (position < Math.min(range.to + 1, end) && position <= view.state.doc.length) {
               lines.push(Decoration.line({ attributes: { class: `code-diff-line is-${chunkTone(chunk)}`, 'data-diff-block': String(block) } }).range(position));
@@ -157,6 +216,11 @@ const commentsField = StateField.define<DecorationSet>({
   },
   provide: (field) => EditorView.decorations.from(field),
 });
+
+/** 展开评论所在区块，让恢复折叠模式或刷新正文后仍能看到评论。 */
+function revealDiffComments(view: EditorView): void {
+  view.state.field(commentsField, false)?.between(0, view.state.doc.length, (from) => expandDiffFold(view, from));
+}
 /** 可见行号的 React 操作门户。 */
 class EditableLineMarker extends GutterMarker {
   /** 只在行号或回调变化时更新门户。 */
@@ -193,20 +257,9 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   /** MergeView 两端的查找都挂在公共工具栏下方。 */
   const findGroup = useFileFindGroup();
   findGroup.reveal = (view) => {
-    /** 折叠装饰用区块起点定位，不使用区块内的命中偏移。 */
     const position = view.state.selection.main.from;
-    const line = view.lineBlockAt(position);
-    const blocks = Array.isArray(line.type) ? line.type : [line];
-    const collapsed = blocks.find((block) => block.widget?.type === 'collapsed-unchanged-code' && block.from <= position && block.to >= position);
-    const siblings = collapsed && mergeViewSiblings(view);
-    if (siblings && collapsed) {
-      /** 两栏同一未改区块的起点只相差前一个变更累计的偏移。 */
-      const left = siblings.a === view;
-      const previous = (getChunks(view.state)?.chunks ?? []).findLast((chunk) => (left ? chunk.toA : chunk.toB) <= collapsed.from);
-      const offset = previous ? previous.toB - previous.toA : 0;
-      (left ? siblings.b : siblings.a).dispatch({ effects: uncollapseUnchanged.of(collapsed.from + (left ? offset : -offset)) });
-    }
-    view.dispatch({ effects: [...(collapsed ? [uncollapseUnchanged.of(collapsed.from)] : []), EditorView.scrollIntoView(position, { y: 'center' })] });
+    expandDiffFold(view, position);
+    view.dispatch({ effects: EditorView.scrollIntoView(position, { y: 'center' }) });
     /** 宽度变化和折行会修正估算行高，待命中标记绘制后按真实位置对齐。 */
     const selection = view.state.selection.main;
     view.dom.ownerDocument.defaultView?.requestAnimationFrame(() => {
@@ -297,14 +350,39 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     () =>
       EditorView.updateListener.of((update) => {
         if (update.docChanged) queueMicrotask(() => setRevision((value) => value + 1));
-        if (update.docChanged || update.viewportChanged || update.geometryChanged)
+        const changedChunks = getChunks(update.state)?.chunks !== getChunks(update.startState)?.chunks;
+        if (changedChunks && mergeRef.current?.b === update.view && !latest.current.preview.full) {
+          /** 整份正文替换使旧折叠失去坐标，等两侧变更完成后用新正文重建折叠。 */
+          let replacedDocument = false;
+          update.changes.iterChangedRanges((from, to) => {
+            replacedDocument ||= from === 0 && to === update.startState.doc.length;
+          });
+          queueMicrotask(() => {
+            const merge = mergeRef.current;
+            if (!merge || merge.b !== update.view || latest.current.preview.full) return;
+            if (replacedDocument) {
+              merge.reconfigure({ collapseUnchanged: undefined });
+              merge.reconfigure({ collapseUnchanged: diffFoldOptions });
+              revealDiffComments(merge.a);
+              revealDiffComments(merge.b);
+            }
+            synchronizeDiffFolds(merge);
+          });
+        }
+        if (changedChunks || update.docChanged || update.viewportChanged || update.geometryChanged)
           queueMicrotask(() => {
             if (!update.view.dom.isConnected) return;
             const info = getChunks(update.view.state);
-            /** 双栏补白与统一视图的旧文段共用区块分类。 */
+            /** 双栏补位只匹配变更的空侧，统一视图的旧文段挂在新侧区块起点。 */
             update.view.dom.querySelectorAll<HTMLElement>('.cm-mergeSpacer, .cm-deletedChunk').forEach((element) => {
               const pos = update.view.posAtDOM(element);
-              const block = info?.chunks.findIndex((item) => (info.side === 'a' ? item.fromA <= pos && item.toA >= pos : item.fromB <= pos && item.toB >= pos)) ?? -1;
+              const spacer = element.classList.contains('cm-mergeSpacer');
+              const block =
+                info?.chunks.findIndex((item) => {
+                  const from = info.side === 'a' ? item.fromA : item.fromB;
+                  const to = info.side === 'a' ? item.toA : item.toB;
+                  return (!spacer || from === to) && Math.min(from, update.view.state.doc.length) === pos;
+                }) ?? -1;
               const chunk = info?.chunks[block];
               element.dataset.diffTone = chunk ? chunkTone(chunk) : '';
               element.dataset.diffBlock = chunk ? String(block) : '';
@@ -367,10 +445,11 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         });
         return button;
       },
-      collapseUnchanged: preview.full ? undefined : { margin: 3, minSize: 4 },
+      collapseUnchanged: preview.full ? undefined : diffFoldOptions,
       diffConfig: { scanLimit: 10000, timeout: 40 },
     });
     mergeRef.current = merge;
+    synchronizeDiffFolds(merge);
     setViews({ left: merge.a, right: merge.b });
     /** 在途或外部 Git 命令锁定恢复按钮，不能绕过共享只读状态。 */
     const blockRevert = (event: MouseEvent) => {
@@ -386,9 +465,12 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
       merge.destroy();
     };
   }, [single, unified, before, zh]);
-  useEffect(() => {
-    mergeRef.current?.reconfigure({ collapseUnchanged: preview.full ? undefined : { margin: 3, minSize: 4 } });
-  }, [preview.full, editing.dirty]);
+  useLayoutEffect(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    merge.reconfigure({ collapseUnchanged: preview.full ? undefined : diffFoldOptions });
+    synchronizeDiffFolds(merge);
+  }, [preview.full]);
   /** 单栏和统一视图也保留真实当前文档；删除内容仅为只读装饰。 */
   const unifiedConfig = useMemo(
     () =>
@@ -413,7 +495,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
             };
           return button;
         },
-        collapseUnchanged: preview.full ? undefined : { margin: 3, minSize: 4 },
+        collapseUnchanged: preview.full ? undefined : diffFoldOptions,
         diffConfig: { scanLimit: 10000, timeout: 40 },
       }),
     [before, preview.full, zh],
@@ -508,7 +590,8 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
     const view = views[position.side] ?? (unified ? right : undefined);
     if (!view) return;
     const line = view.state.doc.line(Math.min(position.line, view.state.doc.lines));
-    view.dispatch({ effects: [uncollapseUnchanged.of(line.from), EditorView.scrollIntoView(line.from, { y: 'center' })] });
+    expandDiffFold(view, line.from);
+    view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
     if (props.focusAnnotation)
       queueMicrotask(() =>
         anchors
@@ -520,14 +603,9 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   useEffect(() => {
     // 切回折叠模式时保留评论所在片段，使用已经随输入映射的实际坐标。
     for (const view of [views.left, views.right]) {
-      if (!view) continue;
-      const effects: StateEffect<number>[] = [];
-      view.state.field(commentsField, false)?.between(0, view.state.doc.length, (from) => {
-        effects.push(uncollapseUnchanged.of(from));
-      });
-      if (effects.length) view.dispatch({ effects });
+      if (view) revealDiffComments(view);
     }
-  }, [preview.full, editing.dirty, views]);
+  }, [preview.full, anchors, editing.showingDraft, views]);
   /** 每次导航按当前实时差异坐标定位，不依赖已经过期的补丁行号。 */
   function navigate(direction: -1 | 1) {
     const index = Math.max(0, Math.min(chunks.length - 1, currentChange + direction));

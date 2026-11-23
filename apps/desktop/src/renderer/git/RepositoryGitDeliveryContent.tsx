@@ -158,8 +158,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const [error, setError] = useState<unknown>(null);
   /** 操作反馈使用任务交付页共用的逐仓明细。 */
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
-  /** 刷新时保留原有选择，首次加载默认勾选变化。 */
-  const initialized = useRef(false);
+  /** 手动调整后，刷新只保留仍存在的勾选。 */
+  const selectionEdited = useRef(false);
 
   /** 仓库及文件读取完成后一次发布，差异直接来自同一快照。 */
   async function refresh(background = false): Promise<void> {
@@ -183,7 +183,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         setBusyAction(null);
       }
       /** 固定刷新前的选择策略，不能让延后的 React 更新读到已经变化的引用。 */
-      const preserveSelection = initialized.current;
+      const preserveSelection = selectionEdited.current;
       setSelectedIds((current) => (preserveSelection ? current.filter((id) => next.repositories.some((repository) => repository.id === id)) : next.repositories.map((repository) => repository.id)));
       setSelection((current) =>
         Object.fromEntries(
@@ -194,7 +194,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           }),
         ),
       );
-      initialized.current = true;
       setError(null);
       /** 成果比较独立加载，不阻塞本机文件和差异的首屏。 */
       const comparisons = await Promise.allSettled(
@@ -230,6 +229,11 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     }
   }
 
+  /** 新窗口或会话重新采用默认勾选，后台刷新沿用当前选择。 */
+  useEffect(() => {
+    selectionEdited.current = false;
+  }, [open, props.project.id, props.conversation?.id, props.repositoryId]);
+
   useEffect(() => {
     if (!open) return;
     void refresh();
@@ -237,7 +241,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       ++readRevision.current;
       generation.current?.abort();
     };
-  }, [open, props.client, props.project.id, props.repositoryId, props.pathPrefix]);
+  }, [open, props.client, props.project.id, props.conversation?.id, props.repositoryId, props.pathPrefix]);
 
   useGitDeliveryRefresh({
     client: props.client,
@@ -438,6 +442,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
 
   /** 仓库与分支勾选同步当前范围内的子文件，不改变审阅焦点。 */
   function toggleRepositories(ids: string[], checked: boolean): void {
+    selectionEdited.current = true;
     setSelectedIds((current) => (checked ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id))));
     if (scope === 'working') {
       setSelection((current) => {
@@ -453,6 +458,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
 
   /** 文件只决定提交范围，重新选文件时同步选中所属仓库。 */
   function toggleFiles(id: string, paths: string[], checked: boolean): void {
+    selectionEdited.current = true;
     setSelection((current) => {
       /** 仓库未选中时不恢复隐藏的旧文件选择。 */
       const currentPaths = selectedIds.includes(id) ? (current[id] ?? []) : [];

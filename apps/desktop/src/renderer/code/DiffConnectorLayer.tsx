@@ -13,14 +13,13 @@ interface VisibleDiffBlock {
 function visibleBlocks(editor: HTMLElement, origin: number): Map<string, VisibleDiffBlock> {
   /** 同一连续改动在可见行之间合并。 */
   const blocks = new Map<string, VisibleDiffBlock>();
-  editor.querySelectorAll<HTMLElement>('[data-diff-block], .code-diff-alignment').forEach((element) => {
+  editor.querySelectorAll<HTMLElement>('[data-diff-block]:not(.cm-mergeSpacer), .code-diff-alignment').forEach((element) => {
     /** 空身份属于上下文行，不产生连接带。 */
     const id = element.dataset.diffBlock ?? (element.classList.contains('code-diff-alignment') ? (element.previousElementSibling as HTMLElement | null)?.dataset.diffBlock : undefined);
     if (!id) return;
     /** 补白与真实行使用相同区块分类。 */
     const tone = element.dataset.diffTone ?? ['addition', 'deletion', 'replacement'].find((value) => element.classList.contains(`is-${value}`));
     if (!tone) return;
-    if (tone === 'replacement' && element.classList.contains('cm-mergeSpacer')) return;
     /** 编辑器虚拟滚动只提供可见行的实际像素。 */
     const rect = element.getBoundingClientRect();
     if (!rect.height) return;
@@ -31,7 +30,7 @@ function visibleBlocks(editor: HTMLElement, origin: number): Map<string, Visible
   return blocks;
 }
 
-/** 两种 Diff 共用色带；只覆盖中缝，编辑、拖选、滚动及恢复按钮不受影响。 */
+/** 两种 Diff 共用中缝与空侧补位色带，连接层不接收输入事件。 */
 export function DiffConnectorLayer() {
   /** SVG 由 React 挂载，内部路径由本组件按实际布局更新。 */
   const svgRef = useRef<SVGSVGElement>(null);
@@ -50,7 +49,11 @@ export function DiffConnectorLayer() {
       frame = 0;
       /** 单栏视图不会挂载此连接层。 */
       const editors = [...root.querySelectorAll<HTMLElement>('.cm-editor')];
-      if (editors.length !== 2) return;
+      if (editors.length !== 2) {
+        previous = '';
+        svg.replaceChildren();
+        return;
+      }
       /** 所有坐标转换成当前容器内的 CSS 像素。 */
       const bounds = root.getBoundingClientRect();
       const left = editors[0]!;
@@ -62,16 +65,32 @@ export function DiffConnectorLayer() {
       const after = visibleBlocks(right, bounds.top);
       /** 连接带采用不透明共享背景，不叠加额外深色。 */
       const paths: Array<{ className: string; d: string }> = [];
-      /** 补白没有行号节点，只给这段空行号区补色，不覆盖真实行号或提交人。 */
-      for (const editor of editors) {
-        const edge = editor.getBoundingClientRect().left - bounds.left;
-        editor.querySelectorAll<HTMLElement>('.cm-mergeSpacer[data-diff-tone], .code-diff-alignment').forEach((element) => {
+      /** 补位及对应空行号区一起着色，真实行号保留自身样式。 */
+      for (const [editor, own, opposite] of [
+        [left, before, after],
+        [right, after, before],
+      ] as const) {
+        const editorBounds = editor.getBoundingClientRect();
+        const edge = editorBounds.left - bounds.left;
+        editor.querySelectorAll<HTMLElement>('.cm-mergeSpacer[data-diff-block], .code-diff-alignment').forEach((element) => {
           const tone = element.dataset.diffTone ?? ['addition', 'deletion', 'replacement'].find((value) => element.classList.contains(`is-${value}`));
           const rect = element.getBoundingClientRect();
           if (!tone || tone === 'replacement' || !rect.height) return;
-          const end = rect.left - bounds.left;
-          const top = rect.top - bounds.top;
-          const bottom = rect.bottom - bounds.top;
+          let end = rect.left - bounds.left;
+          let top = rect.top - bounds.top;
+          let bottom = rect.bottom - bounds.top;
+          if (element.classList.contains('cm-mergeSpacer')) {
+            /** 对齐补位可包含未修改内容的高度误差，只给与对侧真实变更重合的部分着色。 */
+            const id = element.dataset.diffBlock;
+            const other = id ? opposite.get(id) : undefined;
+            if (!id || !other || other.tone !== tone) return;
+            top = Math.max(top, other.top);
+            bottom = Math.min(bottom, other.bottom);
+            if (bottom <= top) return;
+            end = Math.min(rect.right, editorBounds.right) - bounds.left;
+            const previous = own.get(id);
+            own.set(id, { tone, top: Math.min(previous?.top ?? top, top), bottom: Math.max(previous?.bottom ?? bottom, bottom) });
+          }
           paths.push({ className: `is-${tone}`, d: `M${edge} ${top} H${end} V${bottom} H${edge} Z` });
         });
         /** 波浪边界贯穿行号区，正文部分仍由可点击的折叠控件绘制。 */
