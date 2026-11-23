@@ -3,6 +3,7 @@ import { constants, createCipheriv, createDecipheriv, createPublicKey, generateK
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 /** 故障机器人和诊断工作流共同使用的正式仓库与对象位置。 */
 const repository = 'imchenway/zeus';
@@ -42,6 +43,20 @@ function readBounded(file, maximum) {
 /** 复用现有 gh 登录，把等待上限交给各操作，单位毫秒。 */
 function gh(args, input, timeout = 30_000) {
   return execFileSync('gh', args, { encoding: 'utf8', input, timeout, maxBuffer: reportLimit }).trim();
+}
+
+/** 派发已被接受后，GitHub 的运行查询可能暂时返回 404。只查询同一个运行 ID。 */
+async function waitForRun(runId) {
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    try {
+      gh(['api', '--hostname', 'github.com', `repos/${repository}/actions/runs/${runId}`, '--silent'], undefined, 5_000);
+      return;
+    } catch (error) {
+      if (!error.stderr?.includes('HTTP 404')) throw error;
+    }
+    await delay(2_000);
+  }
+  throw new Error('GitHub 已接受派发，但该运行在等待期限内未出现在查询接口。');
 }
 
 /** 通过正式机器人标记与精确对象链接确认 Issue 对应的报告。 */
@@ -109,7 +124,7 @@ async function sealReport() {
 }
 
 /** 分析前按精确运行身份取回密文，在本机解包并保留原始 JSONL。 */
-function readReport(reference) {
+async function readReport(reference) {
   const reportId = issueReport(reference);
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const recipientKey = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
@@ -121,6 +136,7 @@ function readReport(reference) {
   if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error('GitHub 没有返回可核对的诊断运行 ID。');
   const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
   console.error(`GitHub 诊断运行 ${runUrl}`);
+  await waitForRun(runId);
   gh(['run', 'watch', String(runId), '--repo', repository, '--exit-status', '--interval', '5'], undefined, 7 * 60_000);
   const directory = mkdtempSync(join(tmpdir(), 'zeus-fault-report-'));
   try {
@@ -145,7 +161,7 @@ function readReport(reference) {
 
 try {
   if (process.argv[2] === '--seal') await sealReport();
-  else readReport(process.argv[2]);
+  else await readReport(process.argv[2]);
 } catch (error) {
   console.error(error.stderr?.trim() || error.message);
   process.exitCode = 1;
