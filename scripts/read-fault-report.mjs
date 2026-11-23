@@ -133,10 +133,12 @@ async function readReport(reference) {
   const reportId = issueReport(reference);
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const recipientKey = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
-  const run = JSON.parse(gh(
-    ['api', '--hostname', 'github.com', '-H', 'X-GitHub-Api-Version: 2026-03-10', '--method', 'POST', `repos/${repository}/actions/workflows/zeus-diagnostics.yml/dispatches`, '--input', '-'],
-    JSON.stringify({ ref: 'main', inputs: { report_id: reportId, recipient_key: recipientKey } }),
-  ));
+  const run = JSON.parse(
+    gh(
+      ['api', '--hostname', 'github.com', '-H', 'X-GitHub-Api-Version: 2026-03-10', '--method', 'POST', `repos/${repository}/actions/workflows/zeus-diagnostics.yml/dispatches`, '--input', '-'],
+      JSON.stringify({ ref: 'main', inputs: { report_id: reportId, recipient_key: recipientKey } }),
+    ),
+  );
   const runId = run.workflow_run_id;
   if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error('GitHub 没有返回可核对的诊断运行 ID。');
   const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;

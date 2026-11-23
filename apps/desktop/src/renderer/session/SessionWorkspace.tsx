@@ -604,10 +604,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const attentionRefresh = useRef<{ controller: SessionController; revision: number } | null>(null);
   const { hasUnreadAttention, attentionTurnId, attentionKind, attentionRevision } = props.conversation;
   /** 使用目录中的轮次身份，避免用缓存中的旧正文确认新结果。 */
-  const attentionTurnStatus =
-    hasUnreadAttention && attentionTurnId
-      ? (state.turnsByProviderId[attentionTurnId] ?? Object.values(state.turnsByProviderId).find((turn) => turn.id === attentionTurnId))?.status
-      : undefined;
+  const attentionTurnStatus = hasUnreadAttention && attentionTurnId ? (state.turnsByProviderId[attentionTurnId] ?? Object.values(state.turnsByProviderId).find((turn) => turn.id === attentionTurnId))?.status : undefined;
   useEffect(() => {
     if (!controllerEnabled || props.contentVisible === false || !hasUnreadAttention || !attentionTurnId || state.transportState !== 'ready') return;
     if (attentionTurnStatus && (attentionKind === 'unread' || attentionTurnStatus === attentionKind)) return;
@@ -652,8 +649,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const loadSubagentList = useCallback((): Promise<NativeSubagentListSnapshot> => {
     const conversationId = props.conversation.id;
     if (subagentListRequestRef.current?.conversationId === conversationId) return subagentListRequestRef.current.promise;
-    const promise: Promise<NativeSubagentListSnapshot> = props.client
-      .loadNativeSubagents!(props.conversation.projectId, conversationId)
+    const promise: Promise<NativeSubagentListSnapshot> = props.client.loadNativeSubagents!(props.conversation.projectId, conversationId)
       .then((snapshot) => {
         if (subagentListRequestRef.current?.promise === promise && snapshot.conversationId === conversationId) setSubagentScope({ conversationId, snapshot });
         return snapshot;
@@ -2401,7 +2397,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 正文只展示能定位到父轮次且仍活动的子智能体。 */
   const activeSubagents = useMemo(() => props.subagentListSnapshot?.items.filter((item) => item.parentTurnId && activeNativeSubagentStatuses.has(item.status)) ?? [], [props.subagentListSnapshot?.items]);
   /** 列表刷新只改变状态时复用历史交接集合，避免重建正文投影。 */
-  const operationHandoffKey = (props.subagentListSnapshot?.items ?? []).flatMap((item) => item.operationHandoffTurnIds ?? []).sort().join('\u0000');
+  const operationHandoffKey = (props.subagentListSnapshot?.items ?? [])
+    .flatMap((item) => item.operationHandoffTurnIds ?? [])
+    .sort()
+    .join('\u0000');
   const operationHandoffTurnIds = useMemo(() => (operationHandoffKey ? operationHandoffKey.split('\u0000') : []), [operationHandoffKey]);
   /** 面板中的实际选择用于点亮对应的轮次入口。 */
   const [selectedSubagentThreadId, setSelectedSubagentThreadId] = useState<string | null>(null);

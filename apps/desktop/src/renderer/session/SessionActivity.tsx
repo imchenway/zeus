@@ -742,7 +742,9 @@ export function SessionTurnProcessDisclosure(props: {
             return props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
-          <span>{props.summaryLabel ?? visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} replyVisible={props.replyVisible} /> : label)}</span>
+          <span>
+            {props.summaryLabel ?? visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} replyVisible={props.replyVisible} /> : label)}
+          </span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </Button>
       </div>

@@ -542,9 +542,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
               isFormalPlanTranscriptItem(entry, props.state) &&
               !isComposerQueuedUserItem(entry, composerQueueSubmissionIds, composerQueueClientUserMessageIds),
           )
-          .map((entry) =>
-            knownHandoffTurnIds.has(entry.turnId) && isFinalAnswerItem(entry) ? { ...entry, payload: { ...entry.payload, operationHandoff: true } } : entry,
-          ),
+          .map((entry) => (knownHandoffTurnIds.has(entry.turnId) && isFinalAnswerItem(entry) ? { ...entry, payload: { ...entry.payload, operationHandoff: true } } : entry)),
       ),
     [composerQueueClientUserMessageIds, composerQueueSubmissionIds, knownHandoffTurnIds, props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests],
   );
@@ -688,11 +686,11 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       return rowTurnId !== null && (rowTurnId === attentionTurnId || rowTurnId === attentionTurn?.id || rowTurnId === attentionTurn?.providerTurnId);
     });
     return (
-      matchingRows.findLast(
-        (row) => row.kind === 'turn_failure' || (row.kind === 'item' && isTurnCompletionOutputItem(row.item) && (transcriptItemText(row.item).trim() || row.item.resources.length > 0)),
-      ) ??
-      matchingRows.findLast((row) => row.kind === 'turn_work' && !row.live)
-    )?.key ?? null;
+      (
+        matchingRows.findLast((row) => row.kind === 'turn_failure' || (row.kind === 'item' && isTurnCompletionOutputItem(row.item) && (transcriptItemText(row.item).trim() || row.item.resources.length > 0))) ??
+        matchingRows.findLast((row) => row.kind === 'turn_work' && !row.live)
+      )?.key ?? null
+    );
   }, [attentionTurnId, attentionTurn?.id, attentionTurn?.providerTurnId, turnRows]);
   attentionTargetRef.current = { turnId: attentionTurnId, rowKey: attentionRowKey, waiting: attentionWaiting };
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
@@ -966,9 +964,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     const { turnId, rowKey, waiting } = attentionTargetRef.current;
     /** 结果轮次使用已挂载的目标行，审批和待答问题使用正文末尾。 */
-    const target = turnId && !waiting
-      ? (rowKey ? container?.querySelector<HTMLElement>('[data-transcript-attention-target]') : null)
-      : latestContentMarkerRef.current;
+    const target = turnId && !waiting ? (rowKey ? container?.querySelector<HTMLElement>('[data-transcript-attention-target]') : null) : latestContentMarkerRef.current;
     let visible = false;
     if (latestContentReadyRef.current && container && target && container.clientHeight > 0) {
       /** 视口从滚动区边框内侧开始，与目标使用同一组 CSS 像素坐标。 */
@@ -994,7 +990,18 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     // 即使底部位置未变化，加载完成或会话身份变化后也必须重新报告可见事实。
     lastReportedLatestVisibilityRef.current = null;
     scheduleLatestContentVisibility();
-  }, [attentionTurnId, attentionRowKey, attentionWaiting, historyHydrated, historyPositioned, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
+  }, [
+    attentionTurnId,
+    attentionRowKey,
+    attentionWaiting,
+    historyHydrated,
+    historyPositioned,
+    props.historyLoading,
+    props.state.transportState,
+    props.state.conversationId,
+    props.onLatestContentVisibilityChange,
+    scheduleLatestContentVisibility,
+  ]);
 
   /** 只读取已经挂载的可见行，当前刻度变化才刷新状态。 */
   const updateNavigationCurrent = useCallback(
@@ -1433,7 +1440,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           <div className="session-turn-process-control session-turn-subagent-progress" key={agent.id}>
             <Button unstyled type="button" aria-expanded={props.selectedSubagentThreadId === agent.id} onClick={(event) => props.onOpenSubagent?.(event.currentTarget, agent.id)}>
               <CircleNotchIcon size={14} aria-hidden="true" className={agent.status === 'waiting' ? undefined : 'session-conversation-state-spinner'} />
-              <span title={agent.title}>{status} · {agent.title}</span>
+              <span title={agent.title}>
+                {status} · {agent.title}
+              </span>
               <CaretRightIcon size={13} aria-hidden="true" />
             </Button>
           </div>
@@ -1496,7 +1505,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           <div className="session-turn-process-control">{summaryLabel}</div>
           {agentProgress}
         </>
-      ) : agentProgress;
+      ) : (
+        agentProgress
+      );
       /** 过程沿已有分页范围补齐，展开本身不改变读取方向。 */
       const processPaging = turnDetailPaging(props.state.snapshot, row.processGroup?.id ?? turn?.providerTurnId ?? row.turnId);
       /** 只有首次读取时，正常完成态优先从头阅读。 */
@@ -1591,7 +1602,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
                 {renderProcessSegments(processLive)}
                 {earlierProcess ? null : pageSentinel}
               </SessionTurnProcessDisclosure>
-            ) : progressWithoutDisclosure}
+            ) : (
+              progressWithoutDisclosure
+            )}
           </>
         );
       }
@@ -1625,7 +1638,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
               {process}
               {earlierProcess ? null : pageSentinel}
             </SessionTurnProcessDisclosure>
-          ) : progressWithoutDisclosure}
+          ) : (
+            progressWithoutDisclosure
+          )}
           {!turnActive && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
         </>
       );
@@ -1688,9 +1703,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         ) : null}
         {/* 无过程的轮次在可见正文前显示耗时，不生成空的展开按钮。 */}
         {isTurnSummary && !showV2DeferredDetails && (summaryLabel || (!handoff && turn && (replyVisible || !isActiveSessionTurn(turn)))) ? (
-          <div className="session-turn-process-control">
-            {summaryLabel ?? (turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} replyVisible={replyVisible} /> : null)}
-          </div>
+          <div className="session-turn-process-control">{summaryLabel ?? (turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} replyVisible={replyVisible} /> : null)}</div>
         ) : null}
         {!showV2DeferredDetails ? agentProgress : null}
         {opensWithUserMessage ? null : content}

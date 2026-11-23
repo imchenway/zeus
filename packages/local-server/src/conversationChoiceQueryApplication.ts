@@ -92,10 +92,7 @@ export class ConversationChoiceQueryApplication {
     }
     /** 运行状态沿用已经批量读取的轮次和队列，归属只查活动会话。 */
     const operationRunningConversationIds = new Set<string>();
-    const runningConversationIds = new Set([
-      ...inProgressTurnsByConversationId.keys(),
-      ...[...recoverableSubmissionsByConversationId].filter(([, submissions]) => submissions.some(isInFlightSubmission)).map(([id]) => id),
-    ]);
+    const runningConversationIds = new Set([...inProgressTurnsByConversationId.keys(), ...[...recoverableSubmissionsByConversationId].filter(([, submissions]) => submissions.some(isInFlightSubmission)).map(([id]) => id)]);
     for (const id of runningConversationIds) {
       const owner = this.operationOwner(id);
       if (owner) operationRunningConversationIds.add(owner);

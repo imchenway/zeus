@@ -1040,12 +1040,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       updatedAt: event.receivedAt,
     });
     // 只有正式正文产生普通未读与通知；目标模式继续由目标关键终态统一提醒。
-    if (
-      event.method === 'item/agentMessage/delta' &&
-      classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' &&
-      params.delta.trim() &&
-      !options.goals.get(conversation.id)
-    ) {
+    if (event.method === 'item/agentMessage/delta' && classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' && params.delta.trim() && !options.goals.get(conversation.id)) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
