@@ -19,19 +19,16 @@ export function SystemWindowTitleBar({ title }: { title: string }) {
 
 /** 原窗口继续管理表单和授权，系统窗口只承载同源界面。 */
 export function SystemWindowPortal(props: { kind: SystemWindowKind; title: string; activation?: unknown; onClose?: () => void; children: ReactNode }) {
-  /** 窗口就绪前不挂载业务子树，避免重复读取和资源泄漏。 */
-  const [target, setTarget] = useState<Document | null>(null);
+  /** 原生窗口名称与所属文档一起更新，恢复时内容和显示请求使用同一个窗口。 */
+  const [target, setTarget] = useState<{ name: string; document: Document } | null>(null);
   /** 创建失败必须明确显示，不把网页遮罩伪装成系统窗口。 */
   const [error, setError] = useState('');
-  /** 重复点击入口时只唤回本组件创建的窗口。 */
-  const windowName = useRef('');
   /** 事件监听始终使用最新的关闭回调。 */
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
   useLayoutEffect(() => {
-    /** 每次挂载拥有唯一窗口，关闭和重开不复用过期 DOM。 */
+    /** 会话隐藏后重新显示时，重新分配原生窗口身份。 */
     const name = `zeus-system:${props.kind}:${crypto.randomUUID()}`;
-    windowName.current = name;
     /** 桌面桥接仅用于窗口生命周期，业务调用保持原授权。 */
     const bridge = window.zeus;
     if (!bridge?.updateSystemWindow || !bridge.onSystemWindowCloseRequest) {
@@ -92,13 +89,10 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     const unsubscribe = bridge.onSystemWindowCloseRequest((requested) => {
       if (requested === name) closeDocumentLayer(targetDocument);
     });
-    setTarget(targetDocument);
-    /** 等首帧挂载后展示，避免先看到无样式空白页。 */
-    const frame = window.requestAnimationFrame(() => {
-      void bridge.updateSystemWindow(name, 'show').catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '系统窗口无法显示。'));
-    });
+    setError('');
+    setTarget({ name, document: targetDocument });
     return () => {
-      window.cancelAnimationFrame(frame);
+      setTarget(null);
       observer.disconnect();
       disposeTooltips();
       disposeFilePathActions();
@@ -109,10 +103,21 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     };
   }, [props.kind]);
   useLayoutEffect(() => {
-    if (target) void window.zeus?.updateSystemWindow(windowName.current, 'show').catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '系统窗口无法显示。'));
-  }, [props.activation]);
+    if (!target || error || !systemWindowDocuments.has(target.document)) return;
+    /** 内容提交到该文档后再显示；已离开的窗口不能回写显示错误。 */
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      void window.zeus?.updateSystemWindow(target.name, 'show').catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '系统窗口无法显示。');
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [target, error, props.activation]);
   useLayoutEffect(() => {
-    if (target) target.title = props.title;
+    if (target) target.document.title = props.title;
   }, [target, props.title]);
   if (error)
     return (
@@ -123,7 +128,12 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
         </Button>
       </div>
     );
-  return target ? <WindowDocumentContext.Provider value={target}>{props.children}</WindowDocumentContext.Provider> : null;
+  // 子树按原生窗口身份挂载，使门户、焦点和关闭操作使用新文档。
+  return target ? (
+    <WindowDocumentContext.Provider key={target.name} value={target.document}>
+      {props.children}
+    </WindowDocumentContext.Provider>
+  ) : null;
 }
 import { installFilePathActions } from './filePathActions.js';
 import { Button } from './Button.js';
