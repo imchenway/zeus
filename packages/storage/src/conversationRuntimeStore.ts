@@ -47,6 +47,8 @@ export interface ConversationSubagentRecord {
   permissionMode: string;
   /** 父轮次冻结的上下文，恢复时不重新猜测。 */
   contextJson: string;
+  /** 最近一次向子会话成功提交任务的父轮次。 */
+  parentTurnId?: string;
 }
 
 /** 幂等建立归属表，不改变已有进程和会话数据。 */
@@ -77,6 +79,31 @@ export class ConversationRuntimeRepository {
   /** 同一根会话的全部子代理包含已完成结果，不删除历史。 */
   listSubagents(rootId: string): ConversationSubagentRecord[] {
     return this.db.select<{ state: string }>('SELECT state_json AS state FROM conversation_subagents WHERE root_id = ?', [rootId]).map((row) => JSON.parse(row.state) as ConversationSubagentRecord);
+  }
+
+  /** 记录已接纳的交接轮次，供主会话定位子任务的进度。 */
+  recordSubagentHandoff(conversationId: string, turnId: string): void {
+    this.db.execute("UPDATE conversation_subagents SET state_json = json_set(state_json, '$.parentTurnId', ?) WHERE conversation_id = ?", [turnId, conversationId]);
+  }
+
+  /** 只有实际接纳操作任务的父轮次属于交接。 */
+  isOperationHandoff(conversationId: string, turnId: string): boolean {
+    return Boolean(
+      this.db.get(
+        `SELECT 1 FROM conversation_subagents AS child
+          WHERE child.root_id = COALESCE((SELECT root_id FROM conversation_subagents WHERE conversation_id = ?), ?)
+            AND child.parent_id = ?
+            AND json_extract(json_extract(child.state_json, '$.contextJson'), '$.automation.capability') IN ('browser', 'computer')
+            AND (
+              json_extract(child.state_json, '$.parentTurnId') = ?
+              OR (
+                json_extract(json_extract(child.state_json, '$.contextJson'), '$.automation.parentTurnId') = ?
+                AND EXISTS (SELECT 1 FROM conversation_submissions WHERE conversation_id = child.conversation_id AND status NOT IN ('cancelled', 'deleted'))
+              )
+            ) LIMIT 1`,
+        [conversationId, conversationId, conversationId, turnId, turnId],
+      ),
+    );
   }
 
   /** 缺少记录的历史目标仍由原生 Provider 控制。 */

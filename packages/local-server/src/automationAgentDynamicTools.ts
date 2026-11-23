@@ -1,4 +1,5 @@
 import type { CodexDynamicToolSpec } from '@zeus/ai-runtime';
+import { parseJsonObject } from './localServerPlatformSupport.js';
 
 /** 由宿主保存的操作归属，模型参数不能指定另一产品会话。 */
 export interface AutomationAgentContext {
@@ -10,6 +11,15 @@ export interface AutomationAgentContext {
   parentTurnId: string;
 }
 
+/** 从持久子会话归属读取操作能力及其主会话。 */
+export function automationAgentContextFromRelation(relation: { contextJson: string } | undefined): AutomationAgentContext | null {
+  const automation = relation ? parseJsonObject(relation.contextJson).automation : null;
+  if (!automation || typeof automation !== 'object') return null;
+  const { capability, ownerConversationId, parentTurnId } = automation as Partial<AutomationAgentContext>;
+  if ((capability !== 'browser' && capability !== 'computer') || typeof ownerConversationId !== 'string' || typeof parentTurnId !== 'string') return null;
+  return { capability, ownerConversationId, parentTurnId };
+}
+
 /** 操作模型委派复用现有子代理；工具立即返回接纳状态，不等待任务结束。 */
 export function automationAgentDynamicTools(): CodexDynamicToolSpec[] {
   return [
@@ -17,7 +27,7 @@ export function automationAgentDynamicTools(): CodexDynamicToolSpec[] {
       type: 'namespace',
       name: 'zeus_automation',
       description:
-        'Delegate browser or computer work to the configured operation model. Tasks run asynchronously as ordinary Zeus subagents and remain visible in the current conversation. After delegation, finish the current response; completion automatically resumes the parent. Do not poll or wait unless the user asks. Before operating, read settings; follow-conversation mode uses the normal tools directly. Use followup for corrections and stop for cancellation.',
+        'Delegate browser or computer work to the configured operation model. Tasks run asynchronously as ordinary Zeus subagents and remain visible in the current conversation. After delegation, finish the current turn without a user-facing answer. Zeus shows task progress and automatically resumes the parent with the result. Give the user one consolidated answer after the result arrives. Do not poll or wait unless the user asks. Before operating, read settings; follow-conversation mode uses the normal tools directly. Use followup for corrections and stop for cancellation.',
       tools: [
         {
           type: 'function',

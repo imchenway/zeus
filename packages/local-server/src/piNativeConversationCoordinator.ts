@@ -209,6 +209,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   browserAutomation?: BrowserAutomationPort;
   /** 与 Codex 共用操作模型委派入口。 */
   automationAgents?: Pick<BrowserAutomationPort, 'invoke'>;
+  /** 已交接的父轮次等待实际结果后再提醒。 */
+  isOperationHandoff?(conversationId: string, turnId: string): boolean;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
   /** 与 Codex 共用产品来源及历史读取，不依赖 Pi JSONL 路径。 */
@@ -1898,7 +1900,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
             /** 进行中消息先按沟通内容登记，message_end 会在同一身份上补齐最终用途和资源。 */
             const presentation = piProviderPresentation(run);
             /** 实时正文只携带显示所需字段，完整用量与工具内容仍走各自存储。 */
-            const itemPayload = { ...presentation, protocolFamily, stageId: run.currentStageId };
+            const itemPayload = {
+              ...presentation,
+              protocolFamily,
+              stageId: run.currentStageId,
+              ...(options.isOperationHandoff?.(run.conversationId, run.turnId) ? { operationHandoff: true } : {}),
+            };
             /** 同一 stageId 是开始、增量和完成事件的稳定条目身份。 */
             const item = options.providerItems.upsertProgress({
               conversationId: run.conversationId,
@@ -2059,6 +2066,9 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const isToolUseStage = stopReason === 'toolUse' || stopReason === 'tool_use' || hasToolCall;
       const providerPresentation = piProviderPresentation(run);
       const phase = isToolUseStage ? ('prework' as const) : ('final_answer' as const);
+      /** 交接文本沿实际消息身份保存，实时和历史都归入过程。 */
+      const operationHandoff = options.isOperationHandoff?.(run.conversationId, run.turnId) === true;
+      const itemPayload = { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason, ...(operationHandoff ? { operationHandoff: true } : {}) };
       const previousRevision = options.conversations.getById(run.conversationId)?.attentionRevision ?? 0;
       let attention: ReturnType<ConversationRepository['markAttentionUnread']> | null = null;
       /** 与完成消息同时保存并发出，避免首屏链接缺资源、刷新后才可预览。 */
@@ -2074,7 +2084,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           providerItemId: messageStageId,
           itemType: 'agentMessage' as const,
           phase,
-          payload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
+          payload: itemPayload,
           textContent: text,
           updatedAt: event.createdAt,
           agentKind: runtimeKind,
@@ -2094,7 +2104,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           role: 'assistant',
           content: text,
           source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
-          metadata: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, phase },
+          metadata: { ...itemPayload, phase },
           createdAt: event.createdAt,
           providerThreadId: event.nativeSessionId ?? run.providerThreadId,
           providerTurnId: run.providerTurnId,
@@ -2112,7 +2122,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           });
         }
         // 工具调用阶段的说明只记录过程；正式正文才产生普通未读与通知。
-        if (phase === 'final_answer') {
+        if (phase === 'final_answer' && !operationHandoff) {
           attention = options.conversations.markAttentionUnread(run.conversationId, {
             kind: 'unread',
             turnId: run.providerTurnId,
@@ -2135,7 +2145,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           turnId: run.providerTurnId,
           itemId: messageStageId,
           itemType: 'agentMessage',
-          itemPayload: { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason },
+          itemPayload,
           protocolFamily: messageProtocolFamily,
           stageId: messageStageId,
           status: failed ? 'failed' : 'completed',
@@ -2160,6 +2170,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const outcomeUnknown = failed && payload.code === 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN';
       const interrupted = interruptedRuns.delete(event.nativeRunId);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
+      /** 失败和中断仍以本轮终态提醒。 */
+      const operationHandoff = status === 'completed' && options.isOperationHandoff?.(run.conversationId, run.turnId) === true;
       const existingTurn = options.turns.getById(run.turnId);
       options.turns.upsert({
         id: run.turnId,
@@ -2191,12 +2203,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           status: warning || !failed ? 'open' : 'failed',
         });
       }
-      options.conversations.markAttentionUnread(run.conversationId, {
-        // 供应商拒绝单次模型请求只提醒用户；Worker 结果未知则保留失败注意项和显式恢复门禁。
-        kind: warning ? 'unread' : status,
-        turnId: run.providerTurnId,
-        occurredAt: event.createdAt,
-      });
+      if (!operationHandoff) {
+        options.conversations.markAttentionUnread(run.conversationId, {
+          // 供应商拒绝单次模型请求只提醒用户；Worker 结果未知则保留失败注意项和显式恢复门禁。
+          kind: warning ? 'unread' : status,
+          turnId: run.providerTurnId,
+          occurredAt: event.createdAt,
+        });
+      }
       let usageSnapshot: NativeTokenUsageSnapshot | null = null;
       if (run.priceRequests.length > 0) {
         const estimate = aggregateRequestPrices(run.priceRequests);
@@ -2251,9 +2265,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(failed ? { error: projectConversationTurnFailure(payload) } : {}),
         ...(warning ? { severity: 'warning' } : {}),
         completedAt: event.createdAt,
-        notificationEligible: true,
+        ...(operationHandoff ? { operationHandoff: true } : {}),
+        notificationEligible: !operationHandoff,
         /** 建议使用真实正常完成事件，不从历史页面或正文增量补触发。 */
-        inputSuggestionEligible: !failed && !interrupted,
+        inputSuggestionEligible: !failed && !interrupted && !operationHandoff,
       });
       publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });

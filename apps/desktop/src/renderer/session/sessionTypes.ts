@@ -119,6 +119,8 @@ export interface NativeTurnSnapshot {
   providerTurnId: string | null;
   submissionId: string | null;
   status: string;
+  /** 轮次已交接操作任务，摘要沿用任务进度语义。 */
+  operationHandoff?: true;
   error?: NativeTurnFailureSnapshot | null;
   plan?: NativeTurnPlanSnapshot | null;
   startedAt: string | null;
@@ -164,6 +166,9 @@ export interface NativeItemSnapshot {
 
 export type NativeSubagentStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'unknown';
 
+/** 排队、执行和等待处理都需要保留子会话进度入口。 */
+export const activeNativeSubagentStatuses: ReadonlySet<NativeSubagentStatus> = new Set(['pending', 'running', 'waiting']);
+
 export interface NativeSubagentSummary {
   /** 服务端核实的操作代理，原生子线程不推断此字段。 */
   operation?: 'browser' | 'computer';
@@ -173,6 +178,10 @@ export interface NativeSubagentSummary {
   dispatchUnconfirmed?: true;
   id: string;
   parentThreadId: string | null;
+  /** 实际派发子任务的父轮次。 */
+  parentTurnId?: string;
+  /** 已确认的操作交接轮次，供历史时间线归类。 */
+  operationHandoffTurnIds?: string[];
   title: string;
   nickname: string | null;
   role: string | null;
@@ -999,6 +1008,8 @@ export interface NativeConversationChoice {
   pendingRequestKind: 'approval' | 'user_input' | null;
   /** 服务端基于队列、轮次和请求元数据计算的列表状态，避免列表刷新读取完整会话。 */
   listRuntimeState?: 'connecting' | 'reconnecting' | 'paused' | 'queued' | 'ready' | 'streaming' | 'pending_approval' | 'pending_user_input' | 'error' | 'legacy_readonly';
+  /** 操作子会话仍在排队或执行，主会话的侧栏保持运行状态。 */
+  operationAgentRunning?: boolean;
   /** 与列表状态同源的任务运行状态，避免客户端从不完整元数据重复猜测。 */
   taskRunStatus?: 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
   /** 异步待回复独立于运行状态；后台会话和历史未载入时仍显示提醒。 */
@@ -1732,6 +1743,8 @@ type NativeTurnEventPayload = NativeEventIdentity & {
   startedAt?: string;
   completedAt?: string;
   hasUnreadAttention?: boolean;
+  /** 无交接正文时也由轮次终态标记操作交接。 */
+  operationHandoff?: true;
   /** 轮次终态携带结算后的权威队列，与失败状态同时接管界面。 */
   queue?: NativeQueueSnapshot;
 };

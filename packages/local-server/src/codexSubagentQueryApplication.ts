@@ -33,6 +33,8 @@ type SubagentActivity = {
   interrupted: Set<string>;
   states: Map<string, string>;
   instructions: Map<string, string>;
+  /** 父线程中实际派发任务的轮次。 */
+  parentTurns: Map<string, string>;
 };
 
 const codexSubagentSourceKinds = ['subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'] as const;
@@ -46,7 +48,12 @@ export class CodexSubagentQueryApplication {
     if (!conversation || conversation.projectId !== projectId) throw queryError('ZEUS_CONVERSATION_NOT_FOUND', '会话不存在。', 404);
     const owned = this.ports.owned?.list(conversation.id) ?? [];
     if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') return { conversationId, parentThreadId: conversation.id, items: owned };
-    const native = await this.load(this.requireCodexConversation(projectId, conversationId));
+    const parent = this.requireCodexConversation(projectId, conversationId);
+    // 托管子任务由本地会话执行，原生目录暂不可读时仍可展示其真实进度。
+    if (owned.length && (!parent.providerThreadId || this.ports.provider.getState().type !== 'ready')) {
+      return { conversationId, parentThreadId: parent.providerThreadId ?? parent.id, items: owned };
+    }
+    const native = await this.load(parent);
     return { ...native, items: [...native.items, ...owned] };
   }
 
@@ -168,33 +175,50 @@ export class CodexSubagentQueryApplication {
       taskInstruction: availablePrompt(String(context.instruction ?? ''), 'collaboration_prompt'),
       inheritedContext: availablePrompt(JSON.stringify(context.history ?? []), 'collaboration_prompt'),
       historyBoundary: { state: 'confirmed', createdAt: child.createdAt, ownedTurnCount: records.length, hiddenInheritedTurnCount: 0, hiddenAmbiguousTurnCount: 0, reason: null },
-      turns: records.map((turn) => ({
-        id: turn.providerTurnId ?? turn.id,
-        status: turn.status,
-        startedAt: turn.startedAt,
-        completedAt: turn.completedAt,
-        items: [
-          ...child.messages
-            .filter((message) => message.role === 'user' && message.providerTurnId === turn.providerTurnId)
-            .map((message) => subagentInputItem({ id: message.id, turnId: turn.providerTurnId ?? turn.id, sender: parent.id, fromParent: true, timestamp: message.createdAt, contentState: 'available', text: message.content })),
-          ...items
-            .filter((item) => item.turnId === turn.id)
-            .map((item) => ({
-              id: item.id,
-              turnId: turn.providerTurnId ?? turn.id,
-              providerItemId: item.providerItemId,
-              type: item.itemType,
-              status: item.status === 'failed' ? ('failed' as const) : item.status === 'completed' ? ('completed' as const) : ('in_progress' as const),
-              phase: item.phase === 'final_answer' ? ('final_answer' as const) : ('prework' as const),
-              text: item.textContent,
-              payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
-              resources: [] as never[],
-              startedAt: item.startedAt,
-              completedAt: item.completedAt,
-              updatedAt: item.updatedAt,
-            })),
-        ],
-      })),
+      turns: records.map((turn) => {
+        const turnId = turn.providerTurnId ?? turn.id;
+        const turnItems = items.filter((item) => item.turnId === turn.id);
+        /** 同一轮次的 Provider 输入可补充展示字段，每个已匹配项只输出一次。 */
+        const providerInputs = new Map(turnItems.filter((item) => item.itemType === 'userMessage').map((item) => [item.providerItemId, item]));
+        const parentInputs = child.messages
+          .filter((message) => message.role === 'user' && message.providerTurnId === turn.providerTurnId)
+          .map((message) => {
+            const input = subagentInputItem({ id: message.id, turnId, sender: parent.id, fromParent: true, timestamp: message.createdAt, contentState: 'available', text: message.content });
+            const providerInput = message.providerItemId ? providerInputs.get(message.providerItemId) : undefined;
+            if (!providerInput) return input;
+            providerInputs.delete(providerInput.providerItemId);
+            return {
+              ...input,
+              providerItemId: providerInput.providerItemId,
+              payload: { ...sanitizeConversationItemPayload(parseJsonObject(providerInput.payloadJson)), ...input.payload },
+            };
+          });
+        return {
+          id: turnId,
+          status: turn.status,
+          startedAt: turn.startedAt,
+          completedAt: turn.completedAt,
+          items: [
+            ...parentInputs,
+            ...turnItems
+              .filter((item) => item.itemType !== 'userMessage' || providerInputs.has(item.providerItemId))
+              .map((item) => ({
+                id: item.id,
+                turnId,
+                providerItemId: item.providerItemId,
+                type: item.itemType,
+                status: item.status === 'failed' ? ('failed' as const) : item.status === 'completed' ? ('completed' as const) : ('in_progress' as const),
+                phase: item.phase === 'final_answer' ? ('final_answer' as const) : ('prework' as const),
+                text: item.textContent,
+                payload: sanitizeConversationItemPayload(parseJsonObject(item.payloadJson)),
+                resources: [] as never[],
+                startedAt: item.startedAt,
+                completedAt: item.completedAt,
+                updatedAt: item.updatedAt,
+              })),
+          ],
+        };
+      }),
     };
   }
 
@@ -263,6 +287,7 @@ export class CodexSubagentQueryApplication {
     const interrupted = new Set<string>();
     const states = new Map<string, string>();
     const instructions = new Map<string, string>();
+    const parentTurns = new Map<string, string>();
     for (const item of this.ports.providerItems.listByConversation(conversationId)) {
       const payload = parseJsonObject(item.payloadJson);
       const payloadType = typeof payload.type === 'string' ? payload.type : item.itemType;
@@ -296,8 +321,11 @@ export class CodexSubagentQueryApplication {
       const tool = typeof payload.tool === 'string' ? payload.tool.toLowerCase().replaceAll(/[^a-z]/gu, '') : '';
       const prompt = firstNonEmptyString(payload.prompt, payload.instruction, payload.message, payload.task);
       if (prompt && (tool === 'spawn' || tool === 'spawnagent')) for (const receiverThreadId of receiverThreadIds) instructions.set(receiverThreadId, prompt);
+      if (item.status !== 'failed' && (tool === 'spawn' || tool === 'spawnagent' || tool === 'sendinput')) {
+        for (const id of receiverThreadIds) parentTurns.set(id, item.providerTurnId || item.turnId);
+      }
     }
-    return { threadIds, paths, interrupted, states, instructions };
+    return { threadIds, paths, interrupted, states, instructions, parentTurns };
   }
 
   /** 原生线程优先，历史只补缺少的输入；轮次时间与消息时间分别保留。 */
@@ -370,6 +398,10 @@ export interface ConversationSubagentSummary {
   dispatchUnconfirmed?: true;
   id: string;
   parentThreadId: string | null;
+  /** 已确认的父会话轮次，用于把当前进度放回派发位置。 */
+  parentTurnId?: string;
+  /** 已保存的操作交接轮次，可识别旧历史中的交接文本。 */
+  operationHandoffTurnIds?: string[];
   title: string;
   nickname: string | null;
   role: string | null;
@@ -544,6 +576,7 @@ function toSummary(thread: Record<string, unknown>, activity: SubagentActivity):
   return {
     id,
     parentThreadId: typeof thread.parentThreadId === 'string' ? thread.parentThreadId : null,
+    parentTurnId: activity.parentTurns.get(id),
     title: title(thread, path),
     nickname: typeof thread.agentNickname === 'string' ? thread.agentNickname : null,
     role: typeof thread.agentRole === 'string' ? thread.agentRole : null,

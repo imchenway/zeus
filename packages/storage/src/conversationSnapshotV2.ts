@@ -193,6 +193,7 @@ const modelHistoryAssistantMetadataSql = `COALESCE(
   (SELECT json_object(
       'phase', COALESCE(json_extract(item.payload_projection_json, '$.phase'), item.phase),
       'delivery', json_extract(item.payload_projection_json, '$.delivery'),
+      'operationHandoff', json(CASE WHEN json_extract(item.payload_projection_json, '$.operationHandoff') = 1 THEN 'true' ELSE 'null' END),
       'questions', json_extract(item.payload_projection_json, '$.questions'))
      FROM conversation_provider_item_states AS item
     WHERE item.conversation_id = conversation_model_history.conversation_id
@@ -208,10 +209,11 @@ const modelHistoryAssistantMetadataSql = `COALESCE(
       AND message.role = 'assistant' AND json_valid(message.metadata_json)
     LIMIT 1)
 )`;
-// SQL 只根据明确的异步交付字段排除完成锚点；完整分类统一在 mapModelHistoryRows 中执行。
+// 异步问题和操作交接不能占用最终正文锚点；完整分类在 mapModelHistoryRows 中执行。
 const modelHistoryAssistantPhaseSql = `CASE
   WHEN json_valid(reasoning_source_json) AND json_extract(reasoning_source_json, '$.itemType') = 'plan' THEN 'plan'
-  WHEN json_extract(${modelHistoryAssistantMetadataSql}, '$.delivery') = 'async' THEN 'prework'
+  WHEN json_extract(${modelHistoryAssistantMetadataSql}, '$.delivery') = 'async'
+    OR json_extract(${modelHistoryAssistantMetadataSql}, '$.operationHandoff') = 1 THEN 'prework'
   ELSE json_extract(${modelHistoryAssistantMetadataSql}, '$.phase')
 END`;
 /** 轮次最终正文的筛选条件，与普通会话的完成输出共用。 */

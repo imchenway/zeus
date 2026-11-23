@@ -108,6 +108,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
+import { activeNativeSubagentStatuses } from './sessionTypes.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
 import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
@@ -459,7 +460,8 @@ export interface ConnectedSessionWorkspaceProps {
   readOnlyGate?: SessionReadOnlyGate;
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
   /** 按真实项目与会话上报最新正文可见性，主栏和侧栏分别确认已读。 */
-  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean) => void;
+  /** 正文可见性携带已看见的实际轮次，用于确认对应的提醒。 */
+  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean, turnId?: string | null) => void;
   /** 面板被关闭或其他工作面遮住时，不把已挂载的正文当作可见。 */
   contentVisible?: boolean;
 }
@@ -598,6 +600,21 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [controller, controllerEnabled, props.pendingCodeComments, props.onCodeCommentsStaged]);
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
+  /** 空闲历史页可以没有实时订阅，同一未读版本只补读一次。 */
+  const attentionRefresh = useRef<{ controller: SessionController; revision: number } | null>(null);
+  const { hasUnreadAttention, attentionTurnId, attentionKind, attentionRevision } = props.conversation;
+  /** 使用目录中的轮次身份，避免用缓存中的旧正文确认新结果。 */
+  const attentionTurnStatus =
+    hasUnreadAttention && attentionTurnId
+      ? (state.turnsByProviderId[attentionTurnId] ?? Object.values(state.turnsByProviderId).find((turn) => turn.id === attentionTurnId))?.status
+      : undefined;
+  useEffect(() => {
+    if (!controllerEnabled || props.contentVisible === false || !hasUnreadAttention || !attentionTurnId || state.transportState !== 'ready') return;
+    if (attentionTurnStatus && (attentionKind === 'unread' || attentionTurnStatus === attentionKind)) return;
+    if (attentionRefresh.current?.controller === controller && attentionRefresh.current.revision === attentionRevision) return;
+    attentionRefresh.current = { controller, revision: attentionRevision };
+    controller.refreshAfterReveal(false);
+  }, [controller, controllerEnabled, props.contentVisible, hasUnreadAttention, attentionTurnId, attentionTurnStatus, attentionKind, attentionRevision, state.transportState]);
   /** 同一选区交给控制器后，父页面刷新不能再次派发。 */
   const handledExplanationId = useRef<string | null>(null);
   useEffect(() => {
@@ -630,27 +647,42 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [controller, props.conversation.id, props.conversation.archived, props.onArchivedSideQuestion, state.snapshot?.archived]);
   const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
   const subagentListSnapshot = subagentScope.conversationId === props.conversation.id ? subagentScope.snapshot : null;
-  /** 工具完成后补读托管子代理，流式文字增量不触发额外查询。 */
-  const subagentReadRevision = Object.values(state.items)
-    .filter((item) => item.status === 'completed' || item.status === 'failed')
-    .map((item) => `${item.key}:${item.status}`)
-    .join('|');
-  useEffect(() => {
-    const loadSubagents = props.client.loadNativeSubagents;
-    if (!loadSubagents || props.conversation.transportKind !== 'codex_native') return;
+  /** 正文与右侧面板复用同一个在途列表请求。 */
+  const subagentListRequestRef = useRef<{ conversationId: string; promise: Promise<NativeSubagentListSnapshot> } | null>(null);
+  const loadSubagentList = useCallback((): Promise<NativeSubagentListSnapshot> => {
     const conversationId = props.conversation.id;
-    let active = true;
-    void loadSubagents(props.conversation.projectId, conversationId)
+    if (subagentListRequestRef.current?.conversationId === conversationId) return subagentListRequestRef.current.promise;
+    const promise: Promise<NativeSubagentListSnapshot> = props.client
+      .loadNativeSubagents!(props.conversation.projectId, conversationId)
       .then((snapshot) => {
-        if (active) setSubagentScope({ conversationId, snapshot });
+        if (subagentListRequestRef.current?.promise === promise && snapshot.conversationId === conversationId) setSubagentScope({ conversationId, snapshot });
+        return snapshot;
       })
-      .catch(() => {
-        // 智能体预读失败不影响主会话；用户打开面板时仍可手动重试。
+      .finally(() => {
+        if (subagentListRequestRef.current?.promise === promise) subagentListRequestRef.current = null;
       });
-    return () => {
-      active = false;
-    };
-  }, [props.client, props.conversation.id, props.conversation.projectId, props.conversation.transportKind, subagentReadRevision]);
+    subagentListRequestRef.current = { conversationId, promise };
+    return promise;
+  }, [props.client, props.conversation.id, props.conversation.projectId]);
+  /** 工具完成后补读托管子代理，流式文字增量不触发额外查询。 */
+  const subagentReadRevision = useMemo(() => {
+    const items = Object.values(state.items);
+    const completedItems = items.filter((item) => item.status === 'completed' || item.status === 'failed').map((item) => `${item.key}:${item.status}`);
+    return `${projectSubagentActivity(items).revision}|${completedItems.join('|')}`;
+  }, [state.items]);
+  /** 只刷新当前露出的真实会话。 */
+  const readSubagents = controllerEnabled && Boolean(props.client.loadNativeSubagents) && props.conversation.transportKind === 'codex_native' && props.contentVisible !== false;
+  const operationAgentRunning = props.conversation.operationAgentRunning === true;
+  /** 父轮次可以先结束，子任务列表继续刷新到子任务完成为止。 */
+  const pollSubagents = readSubagents && (operationAgentRunning || Boolean(subagentListSnapshot?.items.some((item) => activeNativeSubagentStatuses.has(item.status))));
+  useEffect(() => {
+    if (readSubagents) void loadSubagentList().catch(() => undefined);
+  }, [readSubagents, loadSubagentList, subagentReadRevision, operationAgentRunning]);
+  useEffect(() => {
+    if (!pollSubagents) return;
+    const timer = window.setInterval(() => void loadSubagentList().catch(() => undefined), 2_000);
+    return () => window.clearInterval(timer);
+  }, [loadSubagentList, pollSubagents]);
   const [capabilitiesScope, setCapabilitiesScope] = useState<ScopedConversationCapabilities>(() => ({
     projectId: props.conversation.projectId,
     value: props.initialCapabilities ?? readCachedCodexConversationCapabilities(props.client, props.conversation.projectId),
@@ -854,7 +886,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       ...(props.client.loadNativeConversationInformation ? { onLoadConversationInformation: (signal: AbortSignal) => props.client.loadNativeConversationInformation!(projectId, conversationId, signal) } : {}),
       ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
         ? {
-            onLoadSubagents: () => props.client.loadNativeSubagents!(projectId, conversationId),
+            onLoadSubagents: loadSubagentList,
             onLoadSubagentThread: (threadId: string) => props.client.loadNativeSubagentThread!(projectId, conversationId, threadId),
             onStopOperationAgent: async (threadId?: string) => {
               /** 仅处理服务端确认归属当前会话的操作代理。 */
@@ -894,6 +926,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     controllerInteractive,
     historySnapshotOnly,
     loadConversationCapabilities,
+    loadSubagentList,
     props.client,
     props.conversation.id,
     props.conversation.projectId,
@@ -997,7 +1030,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                 renderConversation={(conversation, annotations, onStaged) => (
                   <ConnectedSessionWorkspace
                     {...props}
-                    conversation={conversation}
+                    conversation={props.choices?.find((choice) => choice.id === conversation.id) ?? conversation}
                     initialCachedState={undefined}
                     initialOptimisticState={{
                       ...createInitialSessionState(),
@@ -1907,8 +1940,8 @@ export interface SessionWorkspaceProps {
   loadState?: 'empty' | 'loading' | 'error';
   loadError?: string | null;
   autoFocusNewConversation?: boolean;
-  /** 最新正文的阅读事实归属实际渲染的会话。 */
-  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean) => void;
+  /** 正文可见性携带已看见的实际轮次，用于确认对应的提醒。 */
+  onLatestContentVisibilityChange?: (projectId: string, conversationId: string, visible: boolean, turnId?: string | null) => void;
   /** 隐藏的侧栏仍可保持挂载，但不能确认已读。 */
   contentVisible?: boolean;
   creationStatus?: SessionCreationStatus;
@@ -2206,9 +2239,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const contentConversationId = props.conversation?.id;
   /** 可见事实携带正文身份；全宽上下文或隐藏侧栏不代表用户读过正文。 */
   const reportLatestContentVisibility = useCallback(
-    (visible: boolean): void => {
+    (visible: boolean, turnId?: string | null): void => {
       if (!contentProjectId || !contentConversationId) return;
-      props.onLatestContentVisibilityChange?.(contentProjectId, contentConversationId, visible && props.contentVisible !== false && !contextCoversConversation);
+      props.onLatestContentVisibilityChange?.(contentProjectId, contentConversationId, visible && props.contentVisible !== false && !contextCoversConversation, turnId);
     },
     [contentProjectId, contentConversationId, contextCoversConversation, props.contentVisible, props.onLatestContentVisibilityChange],
   );
@@ -2365,7 +2398,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const goalWritable = goalAvailable && !hardInteractionReadOnly;
   const subagentActivity = useMemo(() => projectSubagentActivity(Object.values(props.state?.items ?? {})), [props.state?.items]);
   const subagentThreadIds = useMemo(() => [...new Set([...subagentActivity.threadIds, ...(props.subagentListSnapshot?.items.map((item) => item.id) ?? [])])].sort(), [props.subagentListSnapshot?.items, subagentActivity.threadIds]);
-  const subagentSnapshotRevision = props.subagentListSnapshot?.items.map((item) => `${item.id}:${item.status}:${item.updatedAt ?? ''}`).join('|') ?? '';
+  /** 正文只展示能定位到父轮次且仍活动的子智能体。 */
+  const activeSubagents = useMemo(() => props.subagentListSnapshot?.items.filter((item) => item.parentTurnId && activeNativeSubagentStatuses.has(item.status)) ?? [], [props.subagentListSnapshot?.items]);
+  /** 列表刷新只改变状态时复用历史交接集合，避免重建正文投影。 */
+  const operationHandoffKey = (props.subagentListSnapshot?.items ?? []).flatMap((item) => item.operationHandoffTurnIds ?? []).sort().join('\u0000');
+  const operationHandoffTurnIds = useMemo(() => (operationHandoffKey ? operationHandoffKey.split('\u0000') : []), [operationHandoffKey]);
+  /** 面板中的实际选择用于点亮对应的轮次入口。 */
+  const [selectedSubagentThreadId, setSelectedSubagentThreadId] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     contextReturnFocusRef.current = null;
@@ -2913,6 +2952,17 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return result;
   }
 
+  /** 顶部入口和轮次入口打开同一个右侧面板，后者会直接选择一个线程。 */
+  function openSubagentWorkspace(trigger: HTMLButtonElement, threadId?: string): void {
+    contextReturnFocusRef.current = trigger;
+    if (threadId && selectedSubagentThreadId === threadId && contextOpen && contextWorkspace.kind === 'subagents') {
+      closeContextWorkspace();
+      return;
+    }
+    setContextFullWidth(false);
+    setContextWorkspace({ kind: 'subagents', ...(threadId ? { threadRequest: { threadId } } : {}) });
+  }
+
   /** 开始收拢时交还焦点，原生标签在视区缩到零后释放。 */
   function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
     if (contextClosing || contextWorkspaceRef.current.kind === 'none') return;
@@ -3345,15 +3395,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   }
                   subagentCount={subagentThreadIds.length}
                   onStopOperationAgent={actions.onStopOperationAgent}
-                  onOpenSubagents={
-                    actions.onLoadSubagents && actions.onLoadSubagentThread
-                      ? (trigger) => {
-                          contextReturnFocusRef.current = trigger;
-                          setContextFullWidth(false);
-                          setContextWorkspace({ kind: 'subagents' });
-                        }
-                      : undefined
-                  }
+                  onOpenSubagents={actions.onLoadSubagents && actions.onLoadSubagentThread ? openSubagentWorkspace : undefined}
                   onStartCodeReview={(selection: SessionCodeReviewSelection) => {
                     if (props.conversation && !props.conversation.workspaceId && !props.conversation.environmentId && owner && actions.onStartProjectConversation) {
                       return actions.onStartProjectConversation({
@@ -3479,6 +3521,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     projectPersistedPlans={props.projectPersistedPlans}
                     localSubmissionRevision={localSubmissionRevision}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}
+                    attentionTurnId={props.conversation?.hasUnreadAttention ? props.conversation.attentionTurnId : null}
+                    activeSubagents={activeSubagents}
+                    operationHandoffTurnIds={operationHandoffTurnIds}
+                    operationAgentRunning={props.conversation?.operationAgentRunning}
+                    selectedSubagentThreadId={contextOpen && contextWorkspace.kind === 'subagents' ? selectedSubagentThreadId : null}
+                    onOpenSubagent={actions.onLoadSubagents && actions.onLoadSubagentThread ? openSubagentWorkspace : undefined}
                     onLatestContentVisibilityChange={reportLatestContentVisibility}
                     creationStatus={props.creationStatus}
                     onEditUserItem={
@@ -3647,8 +3695,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                           <SubagentWorkspace
                             language={props.language}
                             conversationId={props.state.conversationId ?? props.conversation.id}
-                            activityRevision={`${subagentActivity.revision}|${subagentSnapshotRevision}`}
                             initialSnapshot={props.subagentListSnapshot}
+                            threadRequest={contextWorkspace.threadRequest}
+                            onSelectedThreadChange={setSelectedSubagentThreadId}
                             toolbarHost={contextToolbarHost}
                             canSplit={browserLayoutWidth > 840}
                             fullWidth={contextFullWidth}

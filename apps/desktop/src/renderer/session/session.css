@@ -10819,6 +10819,28 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   outline-offset: 2px;
 }
 
+/* 子智能体进度沿用摘要的高度与焦点样式，窄栏只截断名称。 */
+.session-codex-parity-v1 .session-turn-subagent-progress > button {
+  max-inline-size: 100%;
+  padding-inline: 5px;
+}
+
+.session-codex-parity-v1 .session-turn-subagent-progress > button > svg {
+  flex: 0 0 auto;
+}
+
+.session-codex-parity-v1 .session-turn-subagent-progress > button > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-turn-subagent-progress > button[aria-expanded='true'] {
+  background: var(--session-control-hover);
+  color: var(--session-accent);
+}
+
 .session-codex-parity-v1 .session-turn-process-caret {
   block-size: 13px;
   flex: 0 0 auto;

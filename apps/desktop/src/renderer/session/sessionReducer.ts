@@ -1150,6 +1150,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         providerTurnId: existingTurn?.providerTurnId ?? turnId,
         submissionId: existingTurn?.submissionId ?? stringValue(payload.submissionId),
         status,
+        ...(payload.operationHandoff === true || existingTurn?.operationHandoff === true ? { operationHandoff: true } : {}),
         error: nativeTurnFailureFrom(payload.error) ?? existingTurn?.error ?? null,
         plan: existingTurn?.plan ?? null,
         startedAt: existingTurn?.startedAt ?? stringValue(payload.startedAt),

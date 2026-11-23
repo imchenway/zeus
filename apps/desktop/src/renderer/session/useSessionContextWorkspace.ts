@@ -10,7 +10,8 @@ export type SessionContextWorkspace =
   | { kind: 'none' }
   | { kind: 'question' }
   | { kind: 'browser' }
-  | { kind: 'subagents' }
+  /** 从轮次直接打开时带上本次请求的子线程身份。 */
+  | { kind: 'subagents'; threadRequest?: { threadId: string } }
   | { kind: 'plan'; item: NativeSessionItemBuffer }
   | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation; commentPath?: string }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
