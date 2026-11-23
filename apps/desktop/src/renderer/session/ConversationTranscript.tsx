@@ -329,7 +329,6 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const navigationRequestRef = useRef(0);
   const containerRef = useRef<HTMLElement | null>(null);
   const latestContentMarkerRef = useRef<HTMLSpanElement | null>(null);
-  const latestMarkerIntersectingRef = useRef(true);
   const latestPositionFrameRef = useRef<number | null>(null);
   const latestPositionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPositionConvergenceRequestedRef = useRef(false);
@@ -890,11 +889,17 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     viewportVirtualizer.synchronizeViewport(container);
   }, [props.state.itemOrder.length, props.state.snapshot?.v2Paging?.history.loading, props.state.snapshot?.v2Paging?.history.nextCursor]);
 
+  /** 当帧测量正文末尾，滚动区的底部留白不参与已读判定。 */
   const publishLatestContentVisibility = useCallback(() => {
     const container = containerRef.current;
-    if (!container) return;
-    const current = metrics(container);
-    const visible = latestContentReadyRef.current && current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current;
+    const marker = latestContentMarkerRef.current;
+    let visible = false;
+    if (latestContentReadyRef.current && container && marker && container.clientHeight > 0) {
+      /** 视口从滚动区边框内侧开始，与末尾标记使用同一组 CSS 像素坐标。 */
+      const viewportTop = container.getBoundingClientRect().top + container.clientTop;
+      const markerBounds = marker.getBoundingClientRect();
+      visible = markerBounds.bottom > viewportTop && markerBounds.top < viewportTop + container.clientHeight;
+    }
     if (lastReportedLatestVisibilityRef.current === visible) return;
     lastReportedLatestVisibilityRef.current = visible;
     latestVisibilityCallbackRef.current?.(visible);
@@ -1079,13 +1084,11 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     const marker = latestContentMarkerRef.current;
     if (!container || !marker || typeof IntersectionObserver === 'undefined') {
-      latestMarkerIntersectingRef.current = true;
       scheduleLatestContentVisibility();
       return;
     }
     const observer = new IntersectionObserver(
-      (entries) => {
-        latestMarkerIntersectingRef.current = entries[0]?.isIntersecting ?? false;
+      () => {
         // 活动状态收起、Markdown 完成布局等变化可能只移动底部标记，既不改变
         // 固定高度滚动容器的 border box，也不保证产生可观察的正文 DOM 变更。
         // 跟随态下标记一旦离开视口，就必须重新唤醒统一贴底调度器；历史阅读态
@@ -1114,6 +1117,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       if (latestPositionFrameRef.current !== null && latestPositionFrameRef.current >= 0) cancelAnimationFrame(latestPositionFrameRef.current);
       if (latestPositionFallbackTimerRef.current) clearTimeout(latestPositionFallbackTimerRef.current);
       if (latestVisibilityFrameRef.current !== null) cancelAnimationFrame(latestVisibilityFrameRef.current);
+      // 缓存会话隐藏时会清理副作用并保留引用，重新显示后必须能安排新的测量。
+      latestVisibilityFrameRef.current = null;
       if (userScrollIntentTimerRef.current) clearTimeout(userScrollIntentTimerRef.current);
       lastReportedLatestVisibilityRef.current = false;
       latestVisibilityCallbackRef.current?.(false);
