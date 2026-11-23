@@ -3,6 +3,7 @@ import type { GitDiffSummary, GitStatusSummary, ProjectGitRepositorySnapshot } f
 import type { ProjectGitPushPreviewInput } from '@zeus/git-core';
 import type { GitEnvironmentSummary } from '@zeus/shared';
 import type { ProjectRepository, ProjectRepositoryRegistrationRepository, ZeusProjectRecord } from '@zeus/storage';
+import { mapWithConcurrency } from './localServerPlatformSupport.js';
 
 export interface ProjectGitReadEffectPort {
   /** 读取 workspace 是否具有 Git 元数据；不得创建目录或修复仓库。 */
@@ -16,8 +17,6 @@ export interface ProjectGitReadEffectPort {
   readPushPreview(localPath: string, input: ProjectGitPushPreviewInput): Promise<unknown>;
   readHistory(localPath: string, offset: number, ref?: string): Promise<unknown>;
   readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree' | 'staged' | 'unstaged', path?: string, summaryOnly?: boolean, targetCommit?: string): Promise<unknown>;
-  /** 读取 Git 中记录的分支起始提交。 */
-  readSourceHead(localPath: string, branchName: string): Promise<string | null>;
 }
 
 interface ProjectGitQueryPorts {
@@ -35,7 +34,7 @@ interface ProjectGitQueryPorts {
   resolveRecoveredConversationRepositories(
     project: ZeusProjectRecord,
     key: { conversationId: string } | { repositoryKey: string },
-  ): Promise<Array<{ id: string; name: string; relativePath: string; localPath: string; branchName: string; headSha: string }>>;
+  ): Promise<Array<{ id: string; name: string; relativePath: string; localPath: string; branchName: string; headSha: string; sourceHeadSha: string | null }>>;
 }
 
 /** Project Git 查询拥有者：只组合已登记仓库与显式只读 Git effect。 */
@@ -67,11 +66,11 @@ export class ProjectGitQueryApplication {
         if (!isConversationWorktreeUnavailable(error)) throw error;
         const recovered = await this.ports.resolveRecoveredConversationRepositories(project, { conversationId });
         if (!recovered.length) throw error;
-        const repositories = await mapWithConcurrency(recovered, async ({ id, name, relativePath, localPath, branchName, headSha }) => ({
+        const repositories = recovered.map(({ id, name, relativePath, branchName, headSha, sourceHeadSha }) => ({
           id,
           name,
           relativePath,
-          snapshot: committedOnlySnapshot(branchName, headSha, branchName ? await this.ports.effects.readSourceHead(localPath, branchName) : null),
+          snapshot: committedOnlySnapshot(branchName, headSha, sourceHeadSha),
         }));
         return { ...header, refreshedAt: this.ports.now().toISOString(), committedOnly: true, repositories };
       }
@@ -112,8 +111,9 @@ export class ProjectGitQueryApplication {
     } catch (error) {
       if (mode !== 'current' || !repositoryId.startsWith('conversation:') || !isConversationWorktreeUnavailable(error)) throw error;
       const [recovered] = await this.ports.resolveRecoveredConversationRepositories(project, { repositoryKey: repositoryId.slice('conversation:'.length) });
-      if (!recovered?.branchName) throw error;
-      const base = await this.ports.effects.readSourceHead(recovered.localPath, recovered.branchName);
+      if (!recovered) throw error;
+      /** 清单和单文件比较由同一回收记录提供两端提交。 */
+      const base = recovered.sourceHeadSha;
       if (!base || ref !== base) throw queryError('ZEUS_GIT_REF_REQUIRED', '无法确认已提交成果的比较基线。', 409);
       return this.ports.effects.readComparison(recovered.localPath, base, 'current', path, summaryOnly, recovered.headSha);
     }
@@ -200,27 +200,6 @@ function committedOnlySnapshot(branch: string, headSha: string, sourceHeadSha: s
     stagedDiff: emptyDiff,
     unstagedDiff: emptyDiff,
   };
-}
-
-async function mapWithConcurrency<Input, Output>(items: Input[], operation: (item: Input, index: number) => Promise<Output>, concurrency = 4): Promise<Output[]> {
-  const results = new Array<Output>(items.length);
-  let nextIndex = 0;
-  let firstError: unknown;
-  const worker = async (): Promise<void> => {
-    while (!firstError) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) return;
-      try {
-        results[index] = await operation(items[index]!, index);
-      } catch (error) {
-        firstError ??= error;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()));
-  if (firstError) throw firstError;
-  return results;
 }
 
 function queryError(code: string, message: string, statusCode?: number): Error & { code: string; statusCode?: number } {

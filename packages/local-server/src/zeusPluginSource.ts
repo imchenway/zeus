@@ -347,7 +347,8 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code;
 }
 
-async function pathExists(path: string): Promise<boolean> {
+/** 插件路径只有明确不存在时返回 false，权限和磁盘错误继续上报。 */
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;

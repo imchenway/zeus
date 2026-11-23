@@ -3,6 +3,7 @@ import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { PluginComponentSnapshot } from '@zeus/storage';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
+import { pathExists } from './zeusPluginSource.js';
 import { isCommandShell } from '@zeus/shared';
 
 const maximumPluginNodes = 10_000;
@@ -424,14 +425,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === code;
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return false;
-    throw error;
-  }
 }
