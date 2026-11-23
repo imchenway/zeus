@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  automationEventTaskMissing,
   localParts,
   parseAutomationOnceAt,
   parseAutomationWeekdays,
@@ -1122,9 +1123,11 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, [automationId, safeLimit]).map(mapRun);
   }
 
-  /** 待验收继续对账真实成果，不受历史列表页数限制。 */
-  listInFlight(): AutomationRunRecord[] {
-    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running', 'awaiting_review') ORDER BY accepted_at, id`).map(mapRun);
+  /** 对账可继续读取已经完成派发、仍有执行引用的未知结果。 */
+  listInFlight(includeDispatchedUnknown = false): AutomationRunRecord[] {
+    /** 只有派发结束后的未知结果才能沿原引用重新结算。 */
+    const unknown = includeDispatchedUnknown ? "OR (status = 'outcome_unknown' AND dispatch_completed_at IS NOT NULL AND execution_references_json <> '[]')" : '';
+    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running', 'awaiting_review') ${unknown} ORDER BY accepted_at, id`).map(mapRun);
   }
 
   /** 删除规则后的未派发队列按取消收口，也覆盖删除前遗留的记录。 */
@@ -1330,14 +1333,15 @@ export class AutomationRunRepository {
   /** 界面与恢复命令共用原目标资格，删除或身份迁移后的规则不能被恢复。 */
   canResumeDispatch(run: AutomationRunRecord): boolean {
     /** 派发中的运行仅在规则暂停时提供人工恢复，日额度等待仍由调度器处理。 */
-    const task = new AutomationTaskRepository(this.db).getById(run.automationId);
-    return Boolean(
-      task &&
-      !run.dispatchCompletedAt &&
-      run.dispatchTargets.some((target) => target.status === 'pending' || target.status === 'accepting') &&
-      !run.dispatchTargets.some((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:')) &&
-      (['blocked', 'outcome_unknown'].includes(run.status) || (run.status === 'dispatching' && task.status === 'paused')),
-    );
+    const tasks = new AutomationTaskRepository(this.db);
+    const task = tasks.getById(run.automationId);
+    if (!task || run.dispatchCompletedAt || !(['blocked', 'outcome_unknown'].includes(run.status) || (run.status === 'dispatching' && task.status === 'paused'))) return false;
+    if (run.dispatchTargets.some((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:'))) return false;
+    /** 恢复沿用原规则修订和事件，当前编辑无法补充旧运行的目标。 */
+    const pending = run.dispatchTargets.filter((target) => target.status === 'pending' || target.status === 'accepting');
+    if (!pending.length) return false;
+    const action = tasks.getRevision(run.automationRevisionId)?.snapshot.action;
+    return Boolean(action && pending.every((target) => !automationEventTaskMissing(action, run.sourceEvent, target.projectId)));
   }
 
   /** 原运行恢复后只处理缺失目标；终态历史保存在尝试和核对记录。 */
@@ -1393,11 +1397,12 @@ export class AutomationRunRepository {
       /** 冻结动作决定是否可以释放，后续编辑不改变原运行的验收边界。 */
       const run = this.getById(id);
       if (!run) throw new Error('ZEUS_AUTOMATION_RUN_NOT_FOUND: 自动化运行不存在。');
-      if (run.status !== 'running' || new AutomationTaskRepository(this.db).getRevision(run.automationRevisionId)?.snapshot.action.kind !== 'employee_work') return run;
+      if (run.status !== 'running' && !(run.status === 'outcome_unknown' && run.dispatchCompletedAt)) return run;
+      if (new AutomationTaskRepository(this.db).getRevision(run.automationRevisionId)?.snapshot.action.kind !== 'employee_work') return run;
       /** 待验收不是成功或终态，完成时间仍为空。 */
       const timestamp = nowIso();
-      this.db.execute("UPDATE automation_runs SET status = 'awaiting_review', unread = 1, updated_at = ? WHERE id = ?", [timestamp, id]);
-      this.db.execute("UPDATE automation_run_attempts SET status = 'awaiting_review' WHERE run_id = ? AND attempt = ?", [id, run.attempt]);
+      this.db.execute("UPDATE automation_runs SET status = 'awaiting_review', unread = 1, completed_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?", [timestamp, id]);
+      this.db.execute("UPDATE automation_run_attempts SET status = 'awaiting_review', completed_at = NULL, error_code = NULL, error_message = NULL WHERE run_id = ? AND attempt = ?", [id, run.attempt]);
       this.promoteNext(id);
       return this.getById(id)!;
     });
@@ -1406,7 +1411,8 @@ export class AutomationRunRepository {
   setTerminal(id: string, status: Extract<AutomationRunStatus, 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'outcome_unknown'>, errorCode: string | null = null, errorMessage: string | null = null): AutomationRunRecord {
     const timestamp = nowIso();
     this.db.transaction(() => {
-      this.db.execute(`UPDATE automation_runs SET status = ?, unread = 1, completed_at = COALESCE(completed_at, ?), error_code = ?, error_message = ?, updated_at = ? WHERE id = ?`, [
+      /** 确认未知结果时，完成时间取实际结算时刻。 */
+      this.db.execute(`UPDATE automation_runs SET status = ?, unread = 1, completed_at = COALESCE(CASE WHEN status <> 'outcome_unknown' THEN completed_at END, ?), error_code = ?, error_message = ?, updated_at = ? WHERE id = ?`, [
         status,
         timestamp,
         errorCode,
@@ -1414,14 +1420,10 @@ export class AutomationRunRepository {
         timestamp,
         id,
       ]);
-      this.db.execute(`UPDATE automation_run_attempts SET status = ?, completed_at = COALESCE(completed_at, ?), error_code = ?, error_message = ? WHERE run_id = ? AND attempt = (SELECT attempt FROM automation_runs WHERE id = ?)`, [
-        status,
-        timestamp,
-        errorCode,
-        errorMessage,
-        id,
-        id,
-      ]);
+      this.db.execute(
+        `UPDATE automation_run_attempts SET status = ?, completed_at = COALESCE(CASE WHEN status <> 'outcome_unknown' THEN completed_at END, ?), error_code = ?, error_message = ? WHERE run_id = ? AND attempt = (SELECT attempt FROM automation_runs WHERE id = ?)`,
+        [status, timestamp, errorCode, errorMessage, id, id],
+      );
       this.promoteNext(id);
     });
     const updated = this.getById(id);

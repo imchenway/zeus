@@ -88,6 +88,18 @@ export interface AutomationSourceEvent {
   payload: Record<string, unknown>;
 }
 
+/** 解析显式任务策略与旧规则的默认策略。 */
+export function resolveAutomationTaskSelection(action: AutomationActionConfig, isEventProject: boolean): NonNullable<AutomationActionConfig['taskSelection']> {
+  if (action.kind !== 'project_task') return 'create';
+  return action.taskSelection ?? (action.taskId ? 'specified' : action.useEventTask !== false && isEventProject ? 'event' : 'create');
+}
+
+/** 事件任务只能来自本次运行在目标项目中的原始事件。 */
+export function automationEventTaskMissing(action: AutomationActionConfig, sourceEvent?: AutomationSourceEvent | null, projectId?: string): boolean {
+  const event = sourceEvent?.projectId === projectId ? sourceEvent : null;
+  return resolveAutomationTaskSelection(action, Boolean(event)) === 'event' && !event?.taskId;
+}
+
 /** 所有项目事件消费同一提取规则；只读原事件，不重新读取任务当前状态。 */
 export function automationEventStatusId(payload: Record<string, unknown>, before: boolean): string | null {
   /** 新旧事件写入器的字段均表达发生时的状态，不改变事实来源。 */

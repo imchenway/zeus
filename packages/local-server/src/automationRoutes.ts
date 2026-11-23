@@ -1,5 +1,5 @@
 import type { AutomationRunRepository, AutomationTaskRepository, CreateAutomationTaskInput, UpdateAutomationTaskInput, ZeusDatabasePort } from '@zeus/storage';
-import { parseAutomationWeekdays } from '@zeus/shared';
+import { automationEventTaskMissing, parseAutomationWeekdays } from '@zeus/shared';
 import type { AutomationNotificationService } from './automationNotificationService.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AutomationMutationApplication, type AutomationMutationResult } from './automationMutationApplication.js';
@@ -74,6 +74,7 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return mutate(request, reply, () => {
       const task = tasks.getById(request.params.automationId);
       if (!task) throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
+      if (automationEventTaskMissing(task.action)) throw new Error('ZEUS_AUTOMATION_EVENT_TASK_REQUIRED: 该规则只能由携带任务的事件触发。');
       const scheduledAt = options.now();
       const nonce = request.headers['idempotency-key'];
       /** 手动触发冻结当前启用项目，并只创建一条运行。 */
