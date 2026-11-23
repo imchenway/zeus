@@ -45,18 +45,23 @@ function gh(args, input, timeout = 30_000) {
   return execFileSync('gh', args, { encoding: 'utf8', input, timeout, maxBuffer: reportLimit }).trim();
 }
 
-/** 派发已被接受后，GitHub 的运行查询可能暂时返回 404。只查询同一个运行 ID。 */
+/** 派发后持续查询同一个运行直到结束，预算与运行器超时单位均为毫秒。 */
 async function waitForRun(runId) {
-  for (let attempt = 0; attempt < 15; attempt += 1) {
+  const deadline = Date.now() + 7 * 60_000;
+  while (Date.now() < deadline) {
+    let run;
     try {
-      gh(['api', '--hostname', 'github.com', `repos/${repository}/actions/runs/${runId}`, '--silent'], undefined, 5_000);
-      return;
+      run = JSON.parse(gh(['api', '--hostname', 'github.com', `repos/${repository}/actions/runs/${runId}`, '--jq', '{status,conclusion}'], undefined, 10_000));
     } catch (error) {
       if (!error.stderr?.includes('HTTP 404')) throw error;
     }
-    await delay(2_000);
+    if (run?.status === 'completed') {
+      if (run.conclusion !== 'success') throw new Error(`GitHub 诊断运行结束，结果为 ${run.conclusion}。`);
+      return;
+    }
+    await delay(5_000);
   }
-  throw new Error('GitHub 已接受派发，但该运行在等待期限内未出现在查询接口。');
+  throw new Error('GitHub 已接受派发，但该诊断运行在等待期限内未完成。');
 }
 
 /** 通过正式机器人标记与精确对象链接确认 Issue 对应的报告。 */
@@ -77,7 +82,7 @@ async function getOssReport(reportId) {
   const endpoint = `https://oss-${region}.aliyuncs.com`;
   let signed;
   try {
-    signed = execFileSync('ossutil', ['sign', `oss://${bucket}/${key}`, '--region', region, '--endpoint', endpoint, '--mode', 'StsToken', '--timeout', '60', '--loglevel', 'off'], {
+    signed = execFileSync('ossutil', ['presign', `oss://${bucket}/${key}`, '--region', region, '--endpoint', endpoint, '--mode', 'StsToken', '--expires-duration', '1m', '--loglevel', 'off'], {
       encoding: 'utf8',
       timeout: 15_000,
       maxBuffer: 16_384,
@@ -137,7 +142,6 @@ async function readReport(reference) {
   const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
   console.error(`GitHub 诊断运行 ${runUrl}`);
   await waitForRun(runId);
-  gh(['run', 'watch', String(runId), '--repo', repository, '--exit-status', '--interval', '5'], undefined, 7 * 60_000);
   const directory = mkdtempSync(join(tmpdir(), 'zeus-fault-report-'));
   try {
     gh(['run', 'download', String(runId), '--repo', repository, '--name', 'zeus-fault-report', '--dir', directory], undefined, 90_000);
