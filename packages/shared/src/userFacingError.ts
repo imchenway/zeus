@@ -594,6 +594,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_AUTOMATION_TRIGGER_INACTIVE'], ['这个自动化已暂停，请先启用后再运行。', 'This automation is paused. Enable it before running it.']],
   [['ZEUS_AUTOMATION_BUDGET_RUNS_EXHAUSTED'], ['已达到自动化每日运行次数上限。请等待下一天，或调整次数上限。', 'The automation reached its daily run limit. Wait until the next day or adjust the limit.']],
   [['ZEUS_AUTOMATION_DISPATCH_INTERACTION_REQUIRED'], ['自动化需要你的回答或授权，已暂停等待。请在对应对话中处理。', 'The automation needs your answer or approval and is paused. Handle the request in its conversation.']],
+  [['ZEUS_AUTOMATION_EVENT_TASK_REQUIRED'], ['该规则只能由携带任务的事件触发。', 'This rule runs only when an event supplies a task.']],
   [['ZEUS_AUTOMATION_QUEUE_DISCARDED'], ['已有工作阻止本次运行，已按你设置的策略跳过这次触发。', 'Existing work prevented this run. This trigger was skipped according to your configured policy.']],
   [['ZEUS_AUTOMATION_QUEUE_EVICTED'], ['等待运行的任务已满，已按设置移除最早的一项。', 'The waiting queue is full. The oldest waiting run was removed according to your settings.']],
   [['ZEUS_AUTOMATION_TRIGGER_CAUSAL_CYCLE'], ['这次自动化会重复触发同一项目中的自身，Zeus 已停止它以避免无限循环。', 'This automation would trigger itself again in the same project. Zeus stopped it to prevent an endless loop.']],

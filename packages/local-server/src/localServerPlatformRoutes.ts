@@ -12,7 +12,7 @@ import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses }
 import { resolveConversationGitRepository, resolveConversationGitWorkspace, resolveRecoveredConversationGitRepositories } from './conversationGitWorkspace.js';
 import { parseJsonObject, resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
-import type { AutomationActionConfig, AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest, InputSuggestionModelOption } from '@zeus/shared';
+import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest, InputSuggestionModelOption } from '@zeus/shared';
 import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, InputSuggestionJobRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
 import { WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -62,7 +62,7 @@ import {
 } from '@zeus/git-core';
 import { normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
-import { isCodexServiceTierId, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
+import { automationEventTaskMissing, isCodexServiceTierId, resolveAutomationTaskSelection, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,
   AutomationTaskRepository,
@@ -4098,8 +4098,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   if (!readOnlyValidation) {
     /** 目标冻结和接纳共用原规则的选择策略，兼容未显式保存策略的修订。 */
-    const resolveAutomationTaskSelection = (action: AutomationActionConfig, isEventProject: boolean): NonNullable<AutomationActionConfig['taskSelection']> =>
-      action.kind === 'employee_work' ? 'create' : (action.taskSelection ?? (action.taskId ? 'specified' : action.useEventTask !== false && isEventProject ? 'event' : 'create'));
     automationScheduler = createAutomationScheduler({
       synchronizeNotifications: () => automationNotifications.synchronize(),
       migrateLegacy: () => migrateEmployeeAutomationsToUnified(db),
@@ -4121,6 +4119,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (!employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。');
         /** 必须依据冻结修订选择目标。 */
         const selection = resolveAutomationTaskSelection(snapshot.action, run.sourceEvent?.projectId === project.id);
+        if (automationEventTaskMissing(snapshot.action, run.sourceEvent, project.id)) throw nativeApiError('ZEUS_AUTOMATION_EVENT_TASK_REQUIRED', '该规则只能由携带任务的事件触发。');
         /** 任务池为空明确跳过，不创建替代任务。 */
         const pooledTask = selection === 'pool' ? digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, undefined, snapshot.action.taskFilter) : null;
         if (selection === 'pool' && !pooledTask) return null;

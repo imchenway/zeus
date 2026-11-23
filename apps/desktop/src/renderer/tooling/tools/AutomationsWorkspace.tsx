@@ -2,7 +2,7 @@ import { MotionPresence } from '../toolPageHost.js';
 import { formatVisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ClockTimeInput, formatAutomationOnceInput, formatZeusDateTime, hasValidAutomationWeekdays, parseAutomationOnceInput } from '../toolPageHost.js';
+import { ClockTimeInput, automationEventTaskMissing, formatAutomationOnceInput, formatZeusDateTime, hasValidAutomationWeekdays, parseAutomationOnceInput } from '../toolPageHost.js';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';
@@ -309,7 +309,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   <span className="automation-row-schedule">{scheduleLabel(task, zh)}</span>
                 </Button>
                 <div className="automation-row-actions">
-                  {task.status === 'active' ? (
+                  {task.status === 'active' && !automationEventTaskMissing(task.action) ? (
                     <Button
                       className="automation-icon-action"
                       data-icon-tooltip={zh ? '立即运行' : 'Run now'}
@@ -863,6 +863,7 @@ function formatDate(value: string): string {
 /** 复用列表排程文案，区分已暂停与自定义规则已无后继时间。 */
 function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {
   if (task.status === 'paused') return zh ? '已暂停' : 'Paused';
+  if (automationEventTaskMissing(task.action)) return zh ? '仅事件触发' : 'Event only';
   if (task.triggerKind === 'manual') return zh ? '手动触发' : 'Manual';
   if (task.triggerKind === 'rrule' && !task.nextRunAt) return zh ? '无后续计划' : 'No upcoming schedule';
   return task.nextRunAt ? formatDate(task.nextRunAt) : zh ? '等待计算' : 'Awaiting schedule';
