@@ -29,6 +29,11 @@ export interface BrowserAutomationToolResult {
   success: boolean;
 }
 
+/** 内置浏览器目录和调用入口共用的 CUA 指针操作。参数由同一个 CUA 驱动公布和校验。 */
+export function isBrowserCuaPointerMethod(path: unknown): boolean {
+  return path === 'browser_click' || path === 'browser_pointer';
+}
+
 /**
  * Electron Main 实现此端口；local-server 只负责编排 app-server 动态工具，
  * 不直接依赖 Electron、Chromium session 或窗口对象。

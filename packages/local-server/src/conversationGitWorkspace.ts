@@ -38,8 +38,10 @@ export async function resolveConversationGitWorkspace(
   conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
 ) {
-  /** 错误身份保持稳定，文案适用于普通目录和独立工作树。 */
-  const unavailable = () => Object.assign(new Error('会话工作目录不存在、已回收或不属于当前项目。'), { code: 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE', statusCode: 409 });
+  /** 会话目录的业务错误码供交付、归档和恢复识别。 */
+  const unavailableCode = 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE';
+  /** HTTP 409 保留失败原因，供既有私有故障上报链路采集。 */
+  const unavailable = (cause?: unknown) => Object.assign(new Error('会话工作目录不存在、已回收或不属于当前项目。', { cause }), { code: unavailableCode, statusCode: 409 });
   const conversation = conversations.getRecordById(conversationId);
   if (!conversation || conversation.projectId !== project.id || conversation.workspaceId || conversation.environmentId) throw unavailable();
   /** 沿用最初持久提交的目录，不从最近命令的 cwd 或客户端路径推断操作范围。 */
@@ -128,8 +130,9 @@ export async function resolveConversationGitWorkspace(
         id: conversationRepositoryId(conversation.id, repository.relativePath),
       })),
     };
-  } catch {
-    throw unavailable();
+  } catch (cause) {
+    if (cause instanceof Error && 'code' in cause && cause.code === unavailableCode) throw cause;
+    throw unavailable(cause);
   }
 }
 

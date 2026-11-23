@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ToolResult } from '@trycua/cua-driver';
-import type { BrowserAutomationToolCall, BrowserAutomationToolResult } from '@zeus/local-server';
+import { isBrowserCuaPointerMethod, type BrowserAutomationToolCall, type BrowserAutomationToolResult } from '@zeus/local-server';
 import { BrowserCuaBridge, type BrowserCuaSurface } from './browserCuaBridge.js';
 import type { ComputerHost } from './computerHost.js';
 
@@ -41,22 +41,22 @@ export class BrowserCuaHost {
     this.endpoint = await this.bridge.start();
   }
 
-  /** 能力名称、参数和描述来自当前 CUA 运行库。 */
+  /** 目录只公布可直接调用的指针方法，参数和描述来自当前 CUA 运行库。 */
   async catalog(query?: string): Promise<BrowserAutomationToolResult> {
     const tools = await this.computer().browserCatalog();
     const methods = tools
-      .filter((tool) => !query || `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase()))
+      .filter((tool) => isBrowserCuaPointerMethod(tool.name) && (!query || `${tool.name} ${tool.description}`.toLowerCase().includes(query.toLowerCase())))
       .map((tool) => {
         const schema = structuredClone(tool.inputSchema ?? tool.input_schema) as { properties?: Record<string, unknown>; required?: string[] };
         const internal = ['pid', 'window_id', 'target_id', 'tab_id', 'session', 'snapshot_format'];
         for (const name of internal) if (schema.properties) delete schema.properties[name];
         schema.required = schema.required?.filter((name) => !internal.includes(name));
-        for (const name of ['ref', 'scope_ref', 'destination_ref']) {
+        for (const name of ['ref', 'destination_ref']) {
           if (schema.properties?.[name]) schema.properties[name] = { ...(schema.properties[name] as Record<string, unknown>), description: 'Observed opaque eN ref returned by the current Zeus CUA snapshot.' };
         }
         return {
           path: tool.name,
-          description: tool.name === 'get_browser_state' ? 'Read a CUA semantic snapshot of the outer Zeus tabId; Zeus supplies the exact native binding. Use query, scope_ref or continuation to narrow the observation.' : tool.description,
+          description: tool.description,
           inputSchema: schema,
         };
       });
@@ -74,9 +74,7 @@ export class BrowserCuaHost {
     this.bridge.register(session.id, surface);
     const computer = this.computer();
     const windowId = this.bridge.windowId(surface.window());
-    const observation =
-      ['snapshot', 'element', 'screenshot'].includes(input.tool) ||
-      (input.tool === 'invoke' && (input.arguments.path === 'get_browser_state' || (input.arguments.path === 'browser_dialog' && (input.arguments.arguments as { action?: unknown } | undefined)?.action === 'inspect')));
+    const observation = ['snapshot', 'element', 'screenshot'].includes(input.tool);
     if (session.binding && (session.binding.windowId !== windowId || session.binding.generation !== computer.getBrowserGeneration())) {
       session.binding = undefined;
       if (!observation) throw new Error('浏览器窗口或原生实例已变化，请重新读取快照后操作。');
@@ -170,16 +168,16 @@ export class BrowserCuaHost {
       }
       case 'invoke':
         tool = String(input.arguments.path ?? '');
+        if (!isBrowserCuaPointerMethod(tool)) throw new Error('当前 CUA 浏览器入口未开放该方法。');
         args = { ...(input.arguments.arguments as Record<string, unknown> | undefined) };
         if (input.arguments.handle !== undefined || ['pid', 'window_id', 'target_id', 'tab_id', 'session', 'tabId'].some((field) => Object.hasOwn(args, field)))
           throw new Error('CUA 的窗口和会话身份由 Zeus 提供；请用外层 tabId 选择网页，不传原生身份或旧句柄。');
-        if (tool === 'get_browser_state') args.snapshot_format = 'semantic_v2';
         break;
       default:
         throw new Error('当前 CUA 浏览器入口不支持此操作。');
     }
     if (input.tool === 'invoke') {
-      for (const field of ['ref', 'scope_ref', 'destination_ref']) if (args[field] !== undefined) args[field] = this.reference(session, args[field]);
+      for (const field of ['ref', 'destination_ref']) if (args[field] !== undefined) args[field] = this.reference(session, args[field]);
     }
     const result = await computer.browserTool(input, session.id, tool, { ...args, pid: undefined, window_id: undefined, target_id: session.binding.targetId, tab_id: session.binding.tabId }, () => this.sessions.get(key) === session);
     if (this.sessions.get(key) !== session) throw new Error('浏览器控制会话已撤销，动作结果需要重新观察确认。');
