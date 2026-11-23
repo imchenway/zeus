@@ -22,8 +22,8 @@ export function ServiceTierSelect(props: {
 }) {
   /** 遮罩 ID 独立于同一窗口的其他速度按钮。 */
   const lightningGapId = useId();
-  /** 展示当前模型可选的标准和加速档位。 */
-  const options = serviceTierOptions(props.model, props.language);
+  /** 会话速度菜单使用英文档位名与说明，与输出速率明细一致。 */
+  const options = serviceTierOptions(props.model, 'en-US');
   /** 当前有效的速度用于菜单选中状态。 */
   const value = serviceTierPickerValue(props.value, props.model);
   const selected = options.find((option) => option.value === value) ?? options[0]!;
