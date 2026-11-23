@@ -50,6 +50,8 @@
 
 ## 从一条 Issue 读取现场
 
+维护者可运行 `node scripts/read-fault-report.mjs <Issue 链接或编号>`。命令复用已授权的 GitHub CLI，在仅供 `main` 使用的 `zeus-diagnostics` 环境中获取 OIDC 临时凭证。诊断只读角色按报告 ID 读取私有 OSS 对象，GitHub Actions 仅保存一日有效的加密制品，解密和报告 ID 校验在本机完成。
+
 1. 打开 Issue 的“读取私有诊断包”链接，使用已有阿里云维护者登录。链接按完整对象键定位单个报告，不包含临时签名或公开下载凭据。
 2. 点击对象“详情”中的“下载”，读取 JSONL 首行的 `packet`；后续行是上报状态变更。先核对 `packet.reportId` 与 Issue 报告 ID。
 3. 查看 `stack` 中的错误原因链和 `context.traceId`，与 `events[].details` 中的日志内容关联。`diagnostics.snapshots` 保存白名单投影后的会话和进程状态，`diagnostics.logs` 保存系统诊断日志。
