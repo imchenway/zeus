@@ -45,7 +45,7 @@ export function DiffReviewToolbar(props: {
     <div className="diff-review-toolbar" role="group" aria-label={props.zh ? '差异操作' : 'Diff actions'}>
       <span className="diff-review-range" role="group" aria-label={props.zh ? '显示范围' : 'Visible range'}>
         <Button unstyled type="button" aria-pressed={!props.full} onClick={() => props.onFullChange(false)}>
-          {props.zh ? '差异附近' : 'Changes'}
+          {props.zh ? '差异' : 'Changes'}
         </Button>
         <Button
           unstyled
