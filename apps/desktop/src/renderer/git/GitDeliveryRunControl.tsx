@@ -12,7 +12,7 @@ import { ConflictAiPermissions, TaskGitConflictWorkspace } from '../task/TaskGit
 import { TaskManagementStatusSelect } from '../task/TaskManagementStatusSelect.js';
 import { createConflictDocument, serializeConflictForGit, countUnresolvedConflictBlocks, type ConflictDocument } from '../task/taskConflictModel.js';
 import type { TaskIntegrationConflictFile } from '../session/sessionTypes.js';
-import { GitDeliveryProgress, gitDeliveryActionLabel as actionLabel } from './GitDeliveryProgress.js';
+import { GitDeliveryProgress, GitDeliveryStepError, gitDeliveryActionLabel as actionLabel } from './GitDeliveryProgress.js';
 import { GitDeliveryRunActions, GitDeliveryCleanupConfirmation } from './GitDeliveryRunActions.js';
 import { useGitDeliveryRuns } from './useGitDeliveryRuns.js';
 import { GitDeliveryCommandSelect } from './GitDeliveryCommandSelect.js';
@@ -376,7 +376,9 @@ export function GitDeliveryRunControl(props: {
           /** 进度摘要已显示当前动作，只为异常、冲突和附加原因保留详情行。 */
           const detailedSteps = run.steps.filter(
             (step) =>
-              step.state !== 'succeeded' && step.state !== 'pending' && (step.state === 'attention' || step.state === 'unknown' || step.message || step.error || step.conversationId || (step.action === 'merge' && step.state === 'waiting')),
+              step.state !== 'succeeded' &&
+              step.state !== 'pending' &&
+              ((step.state === 'attention' && !step.stopped) || step.state === 'unknown' || step.message || step.error || step.conversationId || (step.action === 'merge' && step.state === 'waiting')),
           );
           return (
             <section key={run.id} className="git-delivery-run" aria-label={props.zh ? '交付进度' : 'Delivery progress'}>
@@ -393,16 +395,16 @@ export function GitDeliveryRunControl(props: {
                               pending: props.zh ? '等待前序步骤' : 'Pending',
                               running: props.zh ? '执行中' : 'Running',
                               waiting: step.action === 'command' ? (props.zh ? '命令运行中' : 'Command running') : props.zh ? 'AI 处理中' : 'AI running',
-                              attention: props.zh ? '需要处理' : 'Needs attention',
+                              attention: step.stopped ? (props.zh ? '已终止' : 'Stopped') : props.zh ? '需要处理' : 'Needs attention',
                               unknown: props.zh ? '结果待核对' : 'Outcome unknown',
                               succeeded: props.zh ? '已完成' : 'Completed',
                             }[step.state]
                           }
                         </span>
                       </div>
-                      {step.message || step.error ? (
+                      {step.state === 'unknown' || step.message || step.error ? (
                         <small>
-                          <VisibleApplicationError error={step.error ?? step.message} summary={step.message ?? undefined} title={`${step.repositoryName} · ${actionLabel(step.action, props.zh)}`} language={props.zh ? 'zh-CN' : 'en'} />
+                          <GitDeliveryStepError step={step} zh={props.zh} />
                         </small>
                       ) : null}
                       {step.conversationId ? (

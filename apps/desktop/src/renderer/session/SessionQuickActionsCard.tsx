@@ -600,7 +600,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     </Button>
                     {deliveryRun ? (
                       <div className="session-quick-actions-delivery-progress">
-                        <GitDeliveryProgress run={deliveryRun} zh={zh} />
+                        <GitDeliveryProgress run={deliveryRun} zh={zh} showErrorSummaries />
                         {gitClient ? <GitDeliveryRunActions client={gitClient} run={deliveryRun} zh={zh} onUpdated={() => refreshDelivery()} /> : null}
                       </div>
                     ) : null}

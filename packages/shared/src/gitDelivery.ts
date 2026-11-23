@@ -104,6 +104,10 @@ export interface GitDeliveryStep {
   state: GitDeliveryStepState;
   /** 真实错误或待处理原因。 */
   message: string | null;
+  /** AI 生成提交说明失败，尚未进入本次 Git 提交。 */
+  commitMessageFailed?: boolean;
+  /** 此步骤是用户终止交付时保留的进度断点。 */
+  stopped?: boolean;
   /** 原命令回执中的脱敏失败详情，不被后续结果核对提示覆盖。 */
   error?: UserFacingErrorCause;
   /** 终态清理需要用户再次确认，保留服务端实际数量。 */

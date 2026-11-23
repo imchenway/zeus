@@ -85,7 +85,7 @@ export function GitDeliveryRunActions(props: {
       ) : null}
       {props.run.state === 'attention' && !props.run.stopping ? (
         <Button size="compact" disabled={busy || props.disabled} onClick={() => control('resume')}>
-          {props.zh ? '继续' : 'Continue'}
+          {props.zh ? '继续交付' : 'Continue delivery'}
         </Button>
       ) : null}
       {error ? (
