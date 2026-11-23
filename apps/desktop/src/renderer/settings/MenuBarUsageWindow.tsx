@@ -1174,7 +1174,7 @@ function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdow
             {props.entries.map((entry) => (
               <tr key={JSON.stringify([entry.model, entry.serviceTier])}>
                 <th scope="row">{entry.model}</th>
-                <td>{formatOutputRateServiceTier(entry.serviceTier, props.language)}</td>
+                <td lang="en">{formatOutputRateServiceTier(entry.serviceTier)}</td>
                 <td>{formatOutputRate(entry.outputTokensPerSecond, props.language)}</td>
               </tr>
             ))}
@@ -1185,17 +1185,17 @@ function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdow
   );
 }
 
-/** 常用速度沿用请求选择器的名称，其他档位保留原始标识。 */
-function formatOutputRateServiceTier(tier: string | null, language: Language): string {
+/** 常用速度使用英文名称，其他档位保留供应商标识。 */
+function formatOutputRateServiceTier(tier: string | null): string {
   switch (tier) {
     case 'default':
-      return language === 'zh-CN' ? '标准' : 'Standard';
+      return 'Standard';
     case 'priority':
-      return language === 'zh-CN' ? '快速' : 'Fast';
+      return 'Fast';
     case 'ultrafast':
-      return language === 'zh-CN' ? '超快' : 'Ultrafast';
+      return 'Ultrafast';
     default:
-      return tier ?? (language === 'zh-CN' ? '未知' : 'Unknown');
+      return tier ?? 'Unknown';
   }
 }
 
