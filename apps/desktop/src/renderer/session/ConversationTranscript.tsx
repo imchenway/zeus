@@ -15,6 +15,8 @@ import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationa
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import { WifiHighIcon } from '@phosphor-icons/react/dist/csr/WifiHigh';
+import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import type {
   ConversationResource,
   ConversationResourcePreview,
@@ -25,6 +27,7 @@ import type {
   NativeSessionError,
   NativeSessionItemBuffer,
   NativeSessionState,
+  NativeSubagentSummary,
   NativeTurnFailureSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
@@ -79,7 +82,20 @@ export interface ConversationTranscriptProps {
   onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
   onReviewTurnChanges?: (changeSet: TurnChangeSet, fileId?: string) => void;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
-  onLatestContentVisibilityChange?: (visible: boolean) => void;
+  /** 有未读轮次时，回执绑定实际进入视口的结果。 */
+  attentionTurnId?: string | null;
+  /** 已确认父轮次且仍活动的子智能体。 */
+  activeSubagents?: readonly NativeSubagentSummary[];
+  /** 持久归属用于识别写入展示标记前的交接正文。 */
+  operationHandoffTurnIds?: readonly string[];
+  /** 目录根据子会话的实际队列和轮次状态判断是否仍在执行。 */
+  operationAgentRunning?: boolean;
+  /** 已在右侧展开的子智能体对话。 */
+  selectedSubagentThreadId?: string | null;
+  /** 点击进度入口时直接打开该子线程。 */
+  onOpenSubagent?: (trigger: HTMLButtonElement, threadId: string) => void;
+  /** 第二个参数为已看见的提醒轮次，普通贴底可见性没有轮次。 */
+  onLatestContentVisibilityChange?: (visible: boolean, turnId?: string | null) => void;
   historyLoading?: boolean;
   creationStatus?: SessionCreationStatus;
   /** 选区暂存或直接发送到右侧会话，不写入主会话草稿。 */
@@ -336,6 +352,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const maintainLatestPositionRef = useRef<() => void>(() => undefined);
   const latestVisibilityFrameRef = useRef<number | null>(null);
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
+  /** 前一帧确认的正文轮次，用于同一位置上结果更新后重新上报。 */
+  const lastReportedAttentionTurnRef = useRef<string | null>(null);
+  /** 当前要确认的轮次和对应的真实结果行。 */
+  const attentionTargetRef = useRef<{ turnId: string | null; rowKey: string | null; waiting: boolean }>({ turnId: null, rowKey: null, waiting: false });
   /** 加载占位和读取失败不能作为正文已查看的证据。 */
   const latestContentReadyRef = useRef(false);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
@@ -479,6 +499,16 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   }, [navigation.error, props.state.conversationId]);
   /** 内容批次复用已建立的输入、阶段和父组索引。 */
   const previousProjection = useRef<TranscriptProjection | null>(null);
+  /** 会话轮次和 Provider 轮次都可能出现在不同历史入口。 */
+  const knownHandoffTurnIds = useMemo(() => {
+    const ids = new Set(props.operationHandoffTurnIds ?? []);
+    for (const turn of Object.values(props.state.turnsByProviderId)) {
+      if (!turn.operationHandoff && !ids.has(turn.id) && !(turn.providerTurnId && ids.has(turn.providerTurnId))) continue;
+      ids.add(turn.id);
+      if (turn.providerTurnId) ids.add(turn.providerTurnId);
+    }
+    return ids;
+  }, [props.operationHandoffTurnIds, props.state.turnsByProviderId]);
   const projectionContext = [
     navigation.snapshot?.processGroups,
     props.state.conversationId,
@@ -496,6 +526,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     props.composerQueueVisible,
     props.projectPersistedPlans,
     props.creationStatus,
+    knownHandoffTurnIds,
   ];
   const contentProjection = updateTranscriptProjection(previousProjection.current, props.state, projectionContext);
   const persistedItems = useMemo(
@@ -511,9 +542,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
               isVisibleTranscriptItem(entry) &&
               isFormalPlanTranscriptItem(entry, props.state) &&
               !isComposerQueuedUserItem(entry, composerQueueSubmissionIds, composerQueueClientUserMessageIds),
+          )
+          .map((entry) =>
+            knownHandoffTurnIds.has(entry.turnId) && isFinalAnswerItem(entry) ? { ...entry, payload: { ...entry.payload, operationHandoff: true } } : entry,
           ),
       ),
-    [composerQueueClientUserMessageIds, composerQueueSubmissionIds, props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests],
+    [composerQueueClientUserMessageIds, composerQueueSubmissionIds, knownHandoffTurnIds, props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests],
   );
   const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, transcriptQueuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, transcriptQueuedSubmissions]);
   /** 历史补页、正文补载和连接状态变化不算新消息。 */
@@ -554,6 +588,22 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
+  /** 实时条目自带已接纳的标记，旧历史使用持久子会话的父轮次。 */
+  const handoffTurnIds = useMemo(() => new Set([...knownHandoffTurnIds, ...items.filter((item) => item.payload.operationHandoff === true).map((item) => item.turnId)]), [items, knownHandoffTurnIds]);
+  /** 子任务活动与主模型的 Provider 轮次使用各自的真实状态。 */
+  const activeOperation = props.activeSubagents?.find((agent) => agent.operation && !agent.startupBlock && !agent.dispatchUnconfirmed);
+  /** 隐藏的结果提交尚未派发时，仍处于本次操作的接续阶段。 */
+  const operationReturnPending = props.state.queue?.submissions.some(
+    (submission) => submission.internalOperation === true && submission.clientUserMessageId?.startsWith('automation-result:') && (submission.status === 'queued' || submission.status === 'dispatching'),
+  );
+  const waitingForOperation = props.operationAgentRunning === true || Boolean(activeOperation) || operationReturnPending === true;
+  const latestTurnId = latestTurn?.providerTurnId ?? latestTurn?.id;
+  const pendingOperationTurnId = activeOperation?.parentTurnId ?? (waitingForOperation && latestTurnId && handoffTurnIds.has(latestTurnId) ? latestTurnId : undefined);
+  const pendingOperationTurn = pendingOperationTurnId ? turnByAnyIdentity(props.state.turnsByProviderId, pendingOperationTurnId) : undefined;
+  /** 同一个父轮次可能以本地编号或 Provider 编号出现在摘要中。 */
+  const operationProcessingLabel = props.language === 'zh-CN' ? '处理中' : 'Processing';
+  const isPendingOperationTurn = (turnId: string): boolean =>
+    Boolean(waitingForOperation && pendingOperationTurnId && (turnId === pendingOperationTurnId || turnId === pendingOperationTurn?.id || turnId === pendingOperationTurn?.providerTurnId));
   canRevealHistoryRef.current = historyHydrated || !props.historyLoading;
   latestContentReadyRef.current = historyPositioned && historyHydrated && !props.historyLoading && props.state.transportState === 'ready';
   const enteringItemIds = useNewItemMotionIds(
@@ -626,6 +676,26 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     () => projectSystemMessageRows(projectTranscriptFailureRows(props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows, props.state.turnsByProviderId), systemMessages),
     [baseTurnRows, navigationEntries, props.onLoadNavigation, props.state.turnsByProviderId, systemMessages],
   );
+  /** 回执以本轮结果为准。失败或没有正文的轮次使用实际可见的过程结果。 */
+  const attentionTurnId = props.onLatestContentVisibilityChange ? (props.attentionTurnId ?? latestTurn?.providerTurnId ?? latestTurn?.id ?? null) : null;
+  /** 审批和待答问题沿用原来的贴底阅读规则。 */
+  const attentionTurn = attentionTurnId ? turnByAnyIdentity(props.state.turnsByProviderId, attentionTurnId) : undefined;
+  const attentionWaiting = attentionTurn?.status === 'waiting';
+  const attentionRowKey = useMemo(() => {
+    if (!attentionTurnId) return null;
+    /** 现场数据可能以 Provider 轮次或持久轮次标识同一条正文。 */
+    const matchingRows = turnRows.filter((row) => {
+      const rowTurnId = transcriptTurnRowTurnId(row);
+      return rowTurnId !== null && (rowTurnId === attentionTurnId || rowTurnId === attentionTurn?.id || rowTurnId === attentionTurn?.providerTurnId);
+    });
+    return (
+      matchingRows.findLast(
+        (row) => row.kind === 'turn_failure' || (row.kind === 'item' && isTurnCompletionOutputItem(row.item) && (transcriptItemText(row.item).trim() || row.item.resources.length > 0)),
+      ) ??
+      matchingRows.findLast((row) => row.kind === 'turn_work' && !row.live)
+    )?.key ?? null;
+  }, [attentionTurnId, attentionTurn?.id, attentionTurn?.providerTurnId, turnRows]);
+  attentionTargetRef.current = { turnId: attentionTurnId, rowKey: attentionRowKey, waiting: attentionWaiting };
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
   const navigationKeyByRow = useMemo(() => {
     /** 目录身份同时标记已加载行与未加载占位。 */
@@ -772,6 +842,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     }
     return anchors;
   }, [completionAnchorKeyByTurn, transcriptRows]);
+  /** 轮次尚未加载时先复用正文状态，摘要出现后由摘要承载进行中。 */
+  const operationSummaryVisible = waitingForOperation && [...projectedTurnWorkKeyByTurn.keys(), ...Object.keys(turnSummaryAnchorKeyByTurn)].some(isPendingOperationTurn);
   const motionFocus = props.historyOnly ? null : resolveSessionMotionFocus(props.state, transcriptItems, showActiveStatus);
   const interactionAuthorityMissing = props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interaction_authority_missing' && Boolean(props.state.activeTurnId);
   const awaitingReplyMessageIdsKey = items
@@ -894,10 +966,20 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     if (!container) return;
     const current = metrics(container);
-    const visible = latestContentReadyRef.current && current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current;
-    if (lastReportedLatestVisibilityRef.current === visible) return;
+    const { turnId, rowKey, waiting } = attentionTargetRef.current;
+    /** 只有挂载在虚拟窗口且与滚动视口相交的结果才算可见。 */
+    const row = rowKey ? container.querySelector<HTMLElement>('[data-transcript-attention-target]') : null;
+    const result = row?.getBoundingClientRect();
+    const viewport = result ? container.getBoundingClientRect() : null;
+    const visible =
+      latestContentReadyRef.current &&
+      (turnId && !waiting
+        ? Boolean(result && viewport && result.height > 0 && viewport.height > 0 && result.bottom > viewport.top && result.top < viewport.bottom)
+        : current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current);
+    if (lastReportedLatestVisibilityRef.current === visible && lastReportedAttentionTurnRef.current === turnId) return;
     lastReportedLatestVisibilityRef.current = visible;
-    latestVisibilityCallbackRef.current?.(visible);
+    lastReportedAttentionTurnRef.current = turnId;
+    latestVisibilityCallbackRef.current?.(visible, turnId);
   }, []);
 
   const scheduleLatestContentVisibility = useCallback(() => {
@@ -912,7 +994,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     // 即使底部位置未变化，加载完成或会话身份变化后也必须重新报告可见事实。
     lastReportedLatestVisibilityRef.current = null;
     scheduleLatestContentVisibility();
-  }, [historyHydrated, historyPositioned, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
+  }, [attentionTurnId, attentionRowKey, attentionWaiting, historyHydrated, historyPositioned, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
 
   /** 只读取已经挂载的可见行，当前刻度变化才刷新状态。 */
   const updateNavigationCurrent = useCallback(
@@ -1337,6 +1419,28 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     synchronizeTranscriptViewport(container);
   }, [expandedRowKeys, synchronizeTranscriptViewport]);
 
+  /** 进度以父轮次为锚，只在该轮次的摘要区域显示。 */
+  function renderTurnSubagentProgress(turnId: string): ReactNode {
+    if (!props.onOpenSubagent || !props.activeSubagents?.length) return null;
+    /** 轮次身份可能来自 Provider 条目或 Zeus 的持久会话记录。 */
+    const turn = turnByAnyIdentity(props.state.turnsByProviderId, turnId);
+    return props.activeSubagents
+      .filter(({ parentTurnId }) => parentTurnId && (parentTurnId === turnId || parentTurnId === turn?.id || parentTurnId === turn?.providerTurnId))
+      .map((agent) => {
+        const zh = props.language === 'zh-CN';
+        const status = agent.status === 'waiting' ? (zh ? '等待处理' : 'Waiting') : agent.status === 'pending' ? (zh ? '正在准备' : 'Preparing') : zh ? '正在执行' : 'Executing';
+        return (
+          <div className="session-turn-process-control session-turn-subagent-progress" key={agent.id}>
+            <Button unstyled type="button" aria-expanded={props.selectedSubagentThreadId === agent.id} onClick={(event) => props.onOpenSubagent?.(event.currentTarget, agent.id)}>
+              <CircleNotchIcon size={14} aria-hidden="true" className={agent.status === 'waiting' ? undefined : 'session-conversation-state-spinner'} />
+              <span title={agent.title}>{status} · {agent.title}</span>
+              <CaretRightIcon size={13} aria-hidden="true" />
+            </Button>
+          </div>
+        );
+      });
+  }
+
   const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
     if (row.kind === 'system_message')
       return (
@@ -1381,6 +1485,18 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
+      /** 分段的轮次只在最后一处过程摘要下显示进度。 */
+      const isTurnSummary = projectedTurnWorkKeyByTurn.get(row.turnId) === row.key;
+      const agentProgress = isTurnSummary ? renderTurnSubagentProgress(row.turnId) : null;
+      const summaryLabel = isTurnSummary && isPendingOperationTurn(row.turnId) ? operationProcessingLabel : undefined;
+      const handoff = handoffTurnIds.has(row.turnId);
+      /** 缺少过程详情时仍保留同一轮次的进度位置。 */
+      const progressWithoutDisclosure = summaryLabel ? (
+        <>
+          <div className="session-turn-process-control">{summaryLabel}</div>
+          {agentProgress}
+        </>
+      ) : agentProgress;
       /** 过程沿已有分页范围补齐，展开本身不改变读取方向。 */
       const processPaging = turnDetailPaging(props.state.snapshot, row.processGroup?.id ?? turn?.providerTurnId ?? row.turnId);
       /** 只有首次读取时，正常完成态优先从头阅读。 */
@@ -1456,7 +1572,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
-                itemCount={row.replyVisible ? undefined : processActivityCount}
+                afterSummary={agentProgress}
+                summaryLabel={summaryLabel}
+                itemCount={row.replyVisible || (handoff && isTurnSummary) ? undefined : processActivityCount}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
                 contentPending={processContentPending}
@@ -1473,7 +1591,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
                 {renderProcessSegments(processLive)}
                 {earlierProcess ? null : pageSentinel}
               </SessionTurnProcessDisclosure>
-            ) : null}
+            ) : progressWithoutDisclosure}
           </>
         );
       }
@@ -1485,10 +1603,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
-              turn={(turnActive && !row.replyVisible) || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
+              afterSummary={agentProgress}
+              summaryLabel={summaryLabel}
+              turn={handoff || (turnActive && !row.replyVisible) || !isTurnSummary ? undefined : turn}
               replyVisible={row.replyVisible}
               requests={props.state.pendingRequests}
-              itemCount={row.replyVisible ? undefined : processActivityCount}
+              itemCount={row.replyVisible || (handoff && isTurnSummary) ? undefined : processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
               contentPending={processContentPending}
@@ -1505,7 +1625,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
               {process}
               {earlierProcess ? null : pageSentinel}
             </SessionTurnProcessDisclosure>
-          ) : null}
+          ) : progressWithoutDisclosure}
           {!turnActive && containsCompletionAnchor ? renderTurnArtifacts(row.turnId, renderProps, completionAnchorKeyByTurn[row.turnId]) : null}
         </>
       );
@@ -1516,6 +1636,11 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     const anchorsTurnArtifacts = completionAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     /** 正文之后还有交付资源时，耗时仍显示在正文之前。 */
     const anchorsTurnSummary = turnSummaryAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    /** 未加载过程的轮次使用已有的摘要回退位置。 */
+    const isTurnSummary = anchorsTurnSummary && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId);
+    const agentProgress = isTurnSummary ? renderTurnSubagentProgress(lastRowItem.turnId) : null;
+    const summaryLabel = isTurnSummary && isPendingOperationTurn(lastRowItem.turnId) ? operationProcessingLabel : undefined;
+    const handoff = handoffTurnIds.has(lastRowItem.turnId);
     /** 未加载过程或没有操作的轮次，也在非空正文出现时显示耗时。 */
     const replyVisible = isFinalAnswerItem(lastRowItem) && Boolean(transcriptItemText(lastRowItem).trim());
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
@@ -1531,7 +1656,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     // 入口只能来自可见过程事实。缺少 turn summary 或仅有历史视图会隐藏的 reasoning，
     // 都不能凭最终回答臆造一个展开后为空的“查看处理过程”。
     const historicalProcessAvailable = Boolean(v2Turn?.process.available);
-    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && historicalProcessAvailable && (replyVisible || !turn || !isActiveSessionTurn(turn)));
+    const showV2DeferredDetails = Boolean(isTurnSummary && historicalProcessAvailable && (replyVisible || !turn || !isActiveSessionTurn(turn)));
     /** 只剩用户输入的结束轮次仍先显示输入，随后显示其耗时。 */
     const opensWithUserMessage = itemRole(lastRowItem) === 'user';
     /** 同一消息仅渲染一次，根据消息角色决定它与轮次摘要的先后关系。 */
@@ -1542,7 +1667,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         {showV2DeferredDetails ? (
           <SessionTurnProcessDisclosure
             language={props.language}
-            turn={turn}
+            afterSummary={agentProgress}
+            summaryLabel={summaryLabel}
+            turn={handoff ? undefined : turn}
             replyVisible={replyVisible}
             requests={props.state.pendingRequests}
             labelKind={historicalProcessAvailable ? 'process' : 'details'}
@@ -1560,11 +1687,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
           </SessionTurnProcessDisclosure>
         ) : null}
         {/* 无过程的轮次在可见正文前显示耗时，不生成空的展开按钮。 */}
-        {anchorsTurnSummary && turn && (replyVisible || !isActiveSessionTurn(turn)) && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
+        {isTurnSummary && !showV2DeferredDetails && (summaryLabel || (!handoff && turn && (replyVisible || !isActiveSessionTurn(turn)))) ? (
           <div className="session-turn-process-control">
-            <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} replyVisible={replyVisible} />
+            {summaryLabel ?? (turn ? <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} replyVisible={replyVisible} /> : null)}
           </div>
         ) : null}
+        {!showV2DeferredDetails ? agentProgress : null}
         {opensWithUserMessage ? null : content}
         {anchorsTurnArtifacts ? renderTurnArtifacts(lastRowItem.turnId, renderProps, lastRowItem.key) : null}
       </>
@@ -1678,6 +1806,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
                     ref={viewportVirtualizer.rowRef(row.key)}
                     className="session-transcript-window-row"
                     data-transcript-row-key={row.key}
+                    data-transcript-attention-target={row.key === attentionRowKey || undefined}
                     data-pinned={pinnedRowKeys.has(row.key) || undefined}
                     onFocusCapture={() => setFocusedRowKey(row.key)}
                     onBlurCapture={(event) => {
@@ -1689,7 +1818,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
                 );
               })}
             </div>
-          ) : !showActiveStatus && queuedSubmissions.length === 0 && historyHydrated ? (
+          ) : !showActiveStatus && !waitingForOperation && queuedSubmissions.length === 0 && historyHydrated ? (
             <p className="session-transcript-empty">
               {props.historyOnly
                 ? props.language === 'zh-CN'
@@ -1701,7 +1830,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
             </p>
           ) : null}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice key={props.state.conversationId} status={props.creationStatus} language={props.language} /> : null}
-          {showActiveStatus && activeStatusKind ? (
+          {showActiveStatus && activeStatusKind && !(operationSummaryVisible && activeTurnId && isPendingOperationTurn(activeTurnId)) ? (
             <TranscriptActiveStatus
               key={props.state.providerReconnectTurnId ?? activeTurnId ?? props.state.conversationId}
               language={props.language}
@@ -1711,6 +1840,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
               reconnectAttempts={props.state.providerReconnectAttempt > 0 ? props.state.providerReconnectAttempts : 5}
             />
           ) : null}
+          {!showActiveStatus && waitingForOperation && !operationSummaryVisible ? <TranscriptActiveStatus language={props.language} kind="executing" reconnectAttempt={0} reconnectAttempts={0} /> : null}
           {!props.historyOnly && props.state.transportState === 'failed' && props.state.error?.code === 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED' ? (
             <ConversationNotice label={props.language === 'zh-CN' ? '连接失败' : 'Connection failed'}>
               <span>{props.language === 'zh-CN' ? '连接已断开。' : 'Connection lost.'}</span>
@@ -3146,6 +3276,8 @@ function isTurnProcessRow(row: TranscriptRow, collapseAssistantMessages = false)
   if (row.questionAnswer) return false;
   // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
   if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
+  // 交接仅在摘要折叠的过程里提供回看，即使 Provider 还在流式发送。
+  if (row.item.payload.operationHandoff === true) return true;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   // 思考与规则更新都归入处理过程，实际类型分别保留。

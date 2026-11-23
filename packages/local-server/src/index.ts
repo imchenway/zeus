@@ -200,6 +200,7 @@ import { createTaskRuntimeOperations } from './taskRuntimeOperations.js';
 import { TelegramCommandApplication } from './telegramCommandApplication.js';
 import { createTurnChangeSetService } from './turnChangeSets.js';
 import { createUsageOverviewService } from './usageOverviewService.js';
+import { automationAgentContextFromRelation } from './automationAgentDynamicTools.js';
 import { WorkManagementCommandApplication } from './workManagementCommandApplication.js';
 import { WorkspaceGitCommandApplication } from './workspaceGitCommandApplication.js';
 import { createZentaoCredentialService } from './zentaoCredentialService.js';
@@ -1638,6 +1639,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           }
         : undefined,
       automationAgents: options.browserAutomation ? { invoke: (input) => conversationOperations.invokeAutomationAgentTool(input) } : undefined,
+      isOperationHandoff: (conversationId, turnId) => conversationRuntime.isOperationHandoff(conversationId, turnId),
       workTools: nativeWorkTools,
       auditNativeTool: async (event) => {
         auditLogs.append({
@@ -1743,6 +1745,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     requests: conversationRequests,
     submissions: conversationSubmissions,
     turns: conversationTurns,
+    subagents: conversationRuntime,
     workspaces: taskWorkspaces,
     codexNativeEnabled,
     readOnlyValidation: Boolean(readOnlyValidation),
@@ -2181,6 +2184,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       planActions: conversationPlanActions,
       goals: conversationGoals,
       goalControls: conversationRuntime,
+      isOperationHandoff: (conversationId, turnId) => conversationRuntime.isOperationHandoff(conversationId, turnId),
       receipts: providerEventReceipts,
       syncCheckpoints: conversationProviderSyncCheckpoints,
       settings,
@@ -3159,8 +3163,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               facet: providerFacet(typeof payload.itemType === 'string' ? payload.itemType : 'agentMessage'),
             })
           : null);
+      /** 子会话仍保留自己的事件身份，目录另按操作归属刷新主会话。 */
+      const operationOwnerConversationId =
+        conversation.listingScope === 'subagent_internal' &&
+        (mappedType === 'conversation.submission.accepted' || mappedType === 'conversation.queue.changed' || mappedType === 'conversation.turn.started' || mappedType === 'conversation.turn.completed')
+          ? automationAgentContextFromRelation(conversationRuntime.getSubagent(conversationId))?.ownerConversationId
+          : undefined;
       const eventPayload = {
         ...payload,
+        ...(operationOwnerConversationId ? { operationOwnerConversationId } : {}),
         ...(transcript ? { transcript } : {}),
         ...(mappedType === 'conversation.tokenUsage.changed' ? { unifiedUsage: conversationExecution.usageSnapshot(conversationId) } : {}),
         ...(mappedType === 'conversation.sessionMetrics.changed' ? { sessionMetrics: conversationExecution.sessionMetrics(conversationId) } : {}),

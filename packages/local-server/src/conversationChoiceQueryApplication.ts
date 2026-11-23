@@ -4,6 +4,7 @@ import {
   isInFlightSubmission,
   type ConversationAttentionKind,
   type ConversationRepository,
+  type ConversationRuntimeRepository,
   type ConversationSnapshotV2Repository,
   type ConversationServerRequestRepository,
   type ConversationSubmissionRepository,
@@ -14,6 +15,7 @@ import {
   type ZeusConversationRecord,
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
+import { automationAgentContextFromRelation } from './automationAgentDynamicTools.js';
 
 export type ProjectConversationAttentionState = 'idle' | 'running' | 'unread' | 'completed' | 'failed' | 'interrupted' | 'reply_required';
 
@@ -29,6 +31,8 @@ export interface NativeConversationChoiceProjectionContext {
   workspaceById: ReadonlyMap<string, ZeusTaskWorkspaceRecord>;
   recoverableSubmissionsByConversationId: ReadonlyMap<string, readonly ChoiceSubmission[]>;
   inProgressTurnsByConversationId: ReadonlyMap<string, readonly ChoiceTurn[]>;
+  /** 有操作代理在队列中或正在执行的主会话身份。 */
+  operationRunningConversationIds: ReadonlySet<string>;
   /** 列表批量读取时，未命中的会话没有交付冲突来源。 */
   deliveryConflictOrigins?: ReturnType<ConversationRepository['listDeliveryConflictOriginsByProject']>;
 }
@@ -45,6 +49,7 @@ interface ConversationChoiceQueryPorts {
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation' | 'getSourceConversationId'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
+  subagents?: Pick<ConversationRuntimeRepository, 'getSubagent'>;
   workspaces: Pick<TaskWorkspaceRepository, 'listByProject' | 'getById'>;
   codexNativeEnabled: boolean;
   readOnlyValidation: boolean;
@@ -85,6 +90,16 @@ export class ConversationChoiceQueryApplication {
       entries.push(turn);
       inProgressTurnsByConversationId.set(turn.conversationId, entries);
     }
+    /** 运行状态沿用已经批量读取的轮次和队列，归属只查活动会话。 */
+    const operationRunningConversationIds = new Set<string>();
+    const runningConversationIds = new Set([
+      ...inProgressTurnsByConversationId.keys(),
+      ...[...recoverableSubmissionsByConversationId].filter(([, submissions]) => submissions.some(isInFlightSubmission)).map(([id]) => id),
+    ]);
+    for (const id of runningConversationIds) {
+      const owner = this.operationOwner(id);
+      if (owner) operationRunningConversationIds.add(owner);
+    }
     return {
       projectLocalPath: this.ports.projects.getById(projectId)?.localPath ?? null,
       pendingAsyncQuestionConversationIds: this.ports.snapshots.pendingAsyncQuestionConversationIds([projectId]),
@@ -92,6 +107,7 @@ export class ConversationChoiceQueryApplication {
       workspaceById: new Map(this.ports.workspaces.listByProject(projectId).map((workspace) => [workspace.id, workspace])),
       recoverableSubmissionsByConversationId,
       inProgressTurnsByConversationId,
+      operationRunningConversationIds,
       ...(batchDeliveryOrigins ? { deliveryConflictOrigins: this.ports.conversations.listDeliveryConflictOriginsByProject(projectId) } : {}),
     };
   }
@@ -158,6 +174,7 @@ export class ConversationChoiceQueryApplication {
       /** 单条会话刷新与完整目录共用持久化的列表范围。 */
       listingScope: conversation.listingScope,
       listRuntimeState: state.runtimeState,
+      operationAgentRunning: context.operationRunningConversationIds.has(conversation.id),
       taskRunStatus: state.taskRunStatus,
       // 正式数据库副本中的原生会话只允许历史投影；列表本身就必须显式禁用恢复。
       // failed 只表示最近轮次失败；用户明确续发时仍由 Coordinator 核对 Provider 安全边界，closed 才永久不可续接。
@@ -183,6 +200,11 @@ export class ConversationChoiceQueryApplication {
       const replyRequired = pendingRequestConversationIds.has(conversation.id) || pendingAsyncQuestionConversationIds.has(conversation.id) || conversation.providerState === 'waiting' || conversation.stage === 'waiting_user';
       const legacyRuntimeRunning = conversation.transportKind === 'legacy_cli' && (conversation.status === 'starting' || conversation.status === 'running');
       const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || legacyRuntimeRunning;
+      // 内部操作的结果由主会话呈现，内部轮次只为项目贡献进行中状态。
+      if (conversation.listingScope === 'subagent_internal' && this.operationOwner(conversation.id)) {
+        if (running && states.get(conversation.projectId) === 'idle') states.set(conversation.projectId, 'running');
+        continue;
+      }
       if (replyRequired) {
         states.set(conversation.projectId, 'reply_required');
       } else if (states.get(conversation.projectId) !== 'reply_required' && conversation.attentionUnread) {
@@ -200,9 +222,15 @@ export class ConversationChoiceQueryApplication {
     const counts = new Map<string, number>(projectIds.map((projectId) => [projectId, 0]));
     for (const conversation of this.ports.conversations.listUnarchivedRecords()) {
       if (!targetProjectIds.has(conversation.projectId) || !conversation.attentionUnread || this.isEphemeral(conversation)) continue;
+      if (conversation.listingScope === 'subagent_internal' && this.operationOwner(conversation.id)) continue;
       counts.set(conversation.projectId, (counts.get(conversation.projectId) ?? 0) + 1);
     }
     return Object.fromEntries(counts);
+  }
+
+  /** 内部操作代理将用户可见的结果交回此会话。 */
+  private operationOwner(conversationId: string): string | undefined {
+    return automationAgentContextFromRelation(this.ports.subagents?.getSubagent(conversationId))?.ownerConversationId;
   }
 
   listTaskHistory(taskId: string, projectId: string): ZeusConversationRecord[] {

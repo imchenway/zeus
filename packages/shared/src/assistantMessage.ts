@@ -8,6 +8,8 @@ export interface AssistantMessageMetadata {
   phase: string;
   delivery?: string;
   questions?: unknown[];
+  /** 操作任务已交接，助手文本归入处理过程。 */
+  operationHandoff?: true;
   messageKind: AssistantMessageKind;
 }
 
@@ -55,6 +57,7 @@ export function asyncMessageQuestions(payload: Record<string, unknown>): Canonic
 /** 优先使用结构化交付事实；缺少结构的问题也不能因 final_answer 被当作最终交付。 */
 export function classifyAssistantMessage(payload: Record<string, unknown>, fallbackPhase?: string | null): AssistantMessageKind {
   if (payload.delivery === 'async') return asyncMessageQuestions(payload).length > 0 ? 'question' : 'progress';
+  if (payload.operationHandoff === true) return 'progress';
   const phase = typeof payload.phase === 'string' ? payload.phase : fallbackPhase;
   return !phase || phase === 'final_answer' || phase === 'finalAnswer' ? 'final' : 'progress';
 }
@@ -65,6 +68,7 @@ export function assistantMessageMetadata(payload: Record<string, unknown>, fallb
     phase: typeof payload.phase === 'string' ? payload.phase : (fallbackPhase ?? 'final_answer'),
     ...(typeof payload.delivery === 'string' ? { delivery: payload.delivery } : {}),
     ...(Array.isArray(payload.questions) ? { questions: payload.questions } : {}),
+    ...(payload.operationHandoff === true ? { operationHandoff: true } : {}),
     messageKind: classifyAssistantMessage(payload, fallbackPhase),
   };
 }

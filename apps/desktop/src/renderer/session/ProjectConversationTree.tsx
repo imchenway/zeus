@@ -506,7 +506,8 @@ export function taskRunStatusFromConversationTreeState(runtimeState: Conversatio
 export function resolveConversationTreeRuntimeState(conversation: NativeConversationChoice, conversationStates?: Record<string, ConversationTreeRuntimeState>): ConversationTreeRuntimeState {
   /** 运行状态仍采用实时投影；异步待回复独立保留，避免历史分页或后台刷新漏掉原题。 */
   const runtimeState = conversationStates?.[conversationNavigationId(conversation)] ?? conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
-  return conversation.hasPendingAsyncQuestion && runtimeState !== 'pending_approval' ? 'pending_user_input' : runtimeState;
+  if (conversation.hasPendingAsyncQuestion && runtimeState !== 'pending_approval') return 'pending_user_input';
+  return conversation.operationAgentRunning && runtimeState === 'ready' ? 'streaming' : runtimeState;
 }
 
 /** 合并项目直属与任务会话，按显示标题搜索，再按最近创建或主动输入时间排序。 */

@@ -683,7 +683,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
                 },
           );
         }
-        if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
+        if (typeof event.payload.projectId === 'string' && typeof event.payload.operationOwnerConversationId === 'string') {
+          refreshNativeConversationList(event.payload.projectId, event.payload.operationOwnerConversationId);
+        } else if (shouldRefreshNativeConversationListForRealtimeEvent(event)) {
           refreshNativeConversationList(event.payload.projectId as string, event.payload.conversationId as string);
         }
         if (event.type === 'conversation.thread.archived' && typeof event.payload.conversationId === 'string') {

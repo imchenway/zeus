@@ -664,6 +664,10 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
+  /** 轮次摘要下方的进度在处理过程收起时也保留。 */
+  afterSummary?: ReactNode;
+  /** 操作任务仍在执行时，用当前状态覆盖轮次用时。 */
+  summaryLabel?: string;
   onOpen?: () => void | Promise<void>;
   /** 目录晚于用户展开抵达时，按同一持久分组补读一次。 */
   loadKey?: string;
@@ -720,7 +724,8 @@ export function SessionTurnProcessDisclosure(props: {
   /** 阶段入口保持固定数量，整轮入口未传数量时显示真实用时。 */
   const visibleCountLabel = props.labelKind !== 'details' ? countLabel : null;
   /** 悬停提示和无障碍名称仍说明查看或收起动作，并保留真实操作数量。 */
-  const accessibleLabel = countLabel ? `${label}${props.language === 'zh-CN' ? '，' : ', '}${countLabel}` : label;
+  const detailLabel = props.summaryLabel ?? countLabel;
+  const accessibleLabel = detailLabel ? `${label}${props.language === 'zh-CN' ? '，' : ', '}${detailLabel}` : label;
   return (
     <section className="session-turn-process" data-label-kind={props.labelKind ?? 'process'} data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
@@ -737,10 +742,11 @@ export function SessionTurnProcessDisclosure(props: {
             return props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
-          <span>{visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} replyVisible={props.replyVisible} /> : label)}</span>
+          <span>{props.summaryLabel ?? visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} replyVisible={props.replyVisible} /> : label)}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </Button>
       </div>
+      {props.afterSummary}
       <Collapsible id={bodyId} open={open} animateHeight>
         <div className="session-turn-process-body">
           {props.loading || (props.contentPending && !props.error) ? (

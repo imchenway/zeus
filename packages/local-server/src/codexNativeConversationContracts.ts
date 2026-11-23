@@ -54,6 +54,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   goals: ConversationGoalRepository;
   /** 双执行链交接目标时记录唯一控制来源。 */
   goalControls?: import('@zeus/storage').ConversationRuntimeRepository;
+  /** 操作任务交接的正文保留在历史中，等待实际结果后再提醒。 */
+  isOperationHandoff?(conversationId: string, turnId: string): boolean;
   receipts: ProviderEventReceiptRepository;
   syncCheckpoints: ConversationProviderSyncCheckpointRepository;
   settings: SettingRepository;

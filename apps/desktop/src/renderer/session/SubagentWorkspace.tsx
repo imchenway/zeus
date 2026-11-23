@@ -9,6 +9,7 @@ import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/Car
 import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
+import { activeNativeSubagentStatuses as activeStatuses } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { ConversationTranscript, isSubagentCoordinationItem, isVisibleTranscriptItem } from './ConversationTranscript.js';
@@ -22,8 +23,11 @@ import { Button } from '../ui/Button.js';
 interface SubagentWorkspaceProps {
   language: SessionUiLanguage;
   conversationId: string;
-  activityRevision: string;
   initialSnapshot?: NativeSubagentListSnapshot | null;
+  /** 轮次入口发起的一次直接选择。 */
+  threadRequest?: { threadId: string };
+  /** 向轮次入口同步面板中的实际选中线程。 */
+  onSelectedThreadChange?: (threadId: string | null) => void;
   /** 会话顶栏中与侧栏正文同宽的挂载点。 */
   toolbarHost: HTMLElement | null;
   /** 窄窗口直接使用全宽工作面。 */
@@ -36,9 +40,6 @@ interface SubagentWorkspaceProps {
   /** 操作代理通过已有中断命令停止，不给原生线程猜测产品身份。 */
   onStopOperationAgent?: (threadId: string) => Promise<void>;
 }
-
-/** 原生运行状态决定刷新周期，不由正文内容推断完成。 */
-const activeStatuses = new Set<NativeSubagentStatus>(['pending', 'running', 'waiting']);
 
 /** 复用主会话消息与详情，面板只保留子线程导航。 */
 export function SubagentWorkspace(props: SubagentWorkspaceProps) {
@@ -108,14 +109,25 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
     }
   }, []);
 
+  /** 主会话已经预读时直接使用同一份列表。 */
+  const hasInitialSnapshot = Boolean(props.initialSnapshot);
   useEffect(() => {
-    void refreshList(!props.initialSnapshot);
-  }, [props.activityRevision, props.conversationId, props.initialSnapshot, refreshList]);
+    if (!hasInitialSnapshot) void refreshList(true);
+  }, [hasInitialSnapshot, props.conversationId, refreshList]);
 
   useEffect(() => {
-    // 重新挂载时读取上次选择的线程；正文位置由共享时间线恢复。
-    if (initialThreadId) void openThread(initialThreadId, true);
-  }, [initialThreadId, openThread]);
+    if (props.threadRequest) {
+      void openThread(props.threadRequest.threadId, true);
+      titleRef.current?.focus();
+    } else if (initialThreadId) {
+      // 重新挂载时读取上次选择的线程；正文位置由共享时间线恢复。
+      void openThread(initialThreadId, true);
+    }
+  }, [initialThreadId, openThread, props.threadRequest]);
+
+  useEffect(() => {
+    props.onSelectedThreadChange?.(selectedThreadId);
+  }, [props.onSelectedThreadChange, selectedThreadId]);
 
   useLayoutEffect(() => {
     if (!focusTitle.current) return;
@@ -132,15 +144,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   }, [props.conversationId]);
 
   const selectedAgent = selectedThreadId ? snapshot?.items.find((item) => item.id === selectedThreadId) : null;
-  const hasRunningAgents = snapshot?.items.some((item) => activeStatuses.has(item.status)) ?? false;
   /** 使用稳定的状态值，列表轮询不重置线程轮询的计时器。 */
   const selectedStatus = selectedAgent?.status;
-
-  useEffect(() => {
-    if (!hasRunningAgents) return;
-    const timer = setTimeout(() => void refreshList(false), 2_000);
-    return () => clearTimeout(timer);
-  }, [hasRunningAgents, refreshList, snapshot?.items]);
 
   useEffect(() => {
     if (!selectedThreadId || !selectedStatus || !activeStatuses.has(selectedStatus)) return;

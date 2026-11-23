@@ -723,7 +723,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
     const conversationGoal = options.goals.get(conversation.id);
-    if (!internalContextCompaction && !ephemeral && !conversationGoal) {
+    /** 正常交接等待子任务回传，失败和中断仍按自身终态提醒。 */
+    const operationHandoff = !failed && !interrupted && options.isOperationHandoff?.(conversation.id, terminalTurn.id) === true;
+    if (!internalContextCompaction && !ephemeral && !conversationGoal && !operationHandoff) {
       options.conversations.markAttentionUnread(conversation.id, {
         kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
         turnId: providerTurnId,
@@ -767,11 +769,12 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         status: terminalStatus,
         completedAt: timestamp,
+        ...(operationHandoff ? { operationHandoff: true } : {}),
         ...(failureRecord ? { error: projectConversationTurnFailure(failureRecord) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
-        notificationEligible: !internalContextCompaction && !conversationGoal,
+        notificationEligible: !internalContextCompaction && !conversationGoal && !operationHandoff,
         /** 正常实时完成才允许预测下一句，独立于桌面通知和目标模式。 */
-        inputSuggestionEligible: !internalContextCompaction,
+        inputSuggestionEligible: !internalContextCompaction && !operationHandoff,
         ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),
       },
     };
@@ -783,7 +786,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const providerItemId = providerItemIdFrom(params);
     const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
     if (!providerTurnId || !providerItemId || !turn) return;
-    const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
+    /** 交接正文在首个条目事件起使用处理过程展示语义。 */
+    const presentedItemPayload = sanitizeConversationItemPayload(
+      itemPayload.type === 'userMessage'
+        ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) }
+        : itemPayload.type === 'agentMessage'
+          ? { ...itemPayload, operationHandoff: options.isOperationHandoff?.(conversation.id, turn.id) || undefined }
+          : itemPayload,
+    );
     const itemType = itemTypeFromValue(itemPayload.type);
     // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
     // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
@@ -1014,6 +1024,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (params.delta.trim()) modelRequestTiming.observe(conversation.id, turn.id, firstVisibleReceiptAt(receiptEvents, event.receivedAt), 'visible_text');
     // 增量本身不声明正文阶段，沿用已知分类；缺少开始事件时等待完成事件确认。
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
+    const existingPayload = existing ? parseJsonRecord(existing.payloadJson) : {};
+    /** 从已有标记接续流式正文；丢失开始事件时核对持久交接记录。 */
+    const operationHandoff = event.method === 'item/agentMessage/delta' && (existingPayload.operationHandoff === true || options.isOperationHandoff?.(conversation.id, turn.id) === true);
     const item = options.providerItems.appendDelta({
       conversationId: conversation.id,
       turnId: turn.id,
@@ -1022,12 +1035,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerItemId,
       itemType: itemTypeFromMethod(event.method),
       phase: existing?.phase ?? 'prework',
-      payload: { ...(existing ? parseJsonRecord(existing.payloadJson) : {}), ...params },
+      payload: { ...existingPayload, ...params, ...(operationHandoff ? { operationHandoff: true } : {}) },
       delta: params.delta,
       updatedAt: event.receivedAt,
     });
     // 只有正式正文产生普通未读与通知；目标模式继续由目标关键终态统一提醒。
-    if (event.method === 'item/agentMessage/delta' && classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' && params.delta.trim() && !options.goals.get(conversation.id)) {
+    if (
+      event.method === 'item/agentMessage/delta' &&
+      classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final' &&
+      params.delta.trim() &&
+      !options.goals.get(conversation.id)
+    ) {
       const previousRevision = options.conversations.getById(conversation.id)?.attentionRevision ?? 0;
       const attention = options.conversations.markAttentionUnread(conversation.id, {
         kind: 'unread',
@@ -1064,7 +1082,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const providerItemId = providerItemIdFrom(params);
     const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
     if (!providerTurnId || !providerItemId || !turn) return;
-    const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
+    /** 只有受信的交接轮次把模型最终输出归入过程。 */
+    const presentedItemPayload = sanitizeConversationItemPayload(
+      itemPayload.type === 'userMessage'
+        ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) }
+        : itemPayload.type === 'agentMessage'
+          ? { ...itemPayload, operationHandoff: options.isOperationHandoff?.(conversation.id, turn.id) || undefined }
+          : itemPayload,
+    );
     const itemType = itemTypeFromValue(itemPayload.type);
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
     const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId, event.receivedAt) : null;

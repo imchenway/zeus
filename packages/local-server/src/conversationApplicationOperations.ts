@@ -1,7 +1,7 @@
 import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
 import { normalizeAutomationModelSettings } from '@zeus/shared';
 import type { BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
-import type { AutomationAgentContext } from './automationAgentDynamicTools.js';
+import { automationAgentContextFromRelation, type AutomationAgentContext } from './automationAgentDynamicTools.js';
 import { resolveGitDeliveryConflictWorkspace } from './gitDeliveryExecution.js';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -790,7 +790,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const last = submissions.at(-1);
         const active = conversationTurns.getLatestActiveByConversation(relation.conversationId);
         /** 操作代理在已拒绝或待核对时停止展示启动动画。 */
-        const operation = readAutomationAgentContext(relation.conversationId)?.capability;
+        const automation = automationAgentContextFromRelation(relation);
+        const operation = automation?.capability;
         const dispatchUnconfirmed = Boolean(operation && !active && submissions.some((submission) => submission.status === 'paused' && (submission.pausedReason === 'outcome_unknown' || submission.submissionOutcome === 'outcome_unknown')));
         const startupBlock =
           !active && !dispatchUnconfirmed && last?.status === 'paused' && !last.providerTurnId && (last.pausedReason === 'preflight_failed' || (operation && last.pausedReason === 'runtime_rejected'))
@@ -823,6 +824,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(startupBlock ? { startupBlock } : {}),
           ...(dispatchUnconfirmed ? { dispatchUnconfirmed: true } : {}),
           parentThreadId: relation.parentId,
+          parentTurnId: relation.parentTurnId ?? automation?.parentTurnId,
+          ...(automation && last ? { operationHandoffTurnIds: [...new Set([automation.parentTurnId, relation.parentTurnId ?? automation.parentTurnId])] } : {}),
           title: child?.title ?? '子代理',
           nickname: null,
           role: null,
@@ -1035,18 +1038,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
         },
       },
     );
+    conversationRuntime.recordSubagentHandoff(childId, input.turnId);
+    await db.save();
     await dispatchUnifiedConversationQueueHead?.(childId);
     return { agent: owned().find((item) => item.id === childId), acceptance: accepted };
   }
 
   /** 从持久归属读取执行身份，不接受模型传入 owner。 */
   function readAutomationAgentContext(conversationId: string): AutomationAgentContext | null {
-    /** 归属来自数据库，工具参数不能指定另一个浏览器会话。 */
-    const relation = conversationRuntime.getSubagent(conversationId);
-    /** 普通子代理没有操作委派标记，继续沿用自己的工具身份。 */
-    const automation = relation ? parseJsonObject(relation.contextJson).automation : null;
-    if (!isNativeApiRecord(automation) || !['browser', 'computer'].includes(String(automation.capability)) || typeof automation.ownerConversationId !== 'string' || typeof automation.parentTurnId !== 'string') return null;
-    return automation as unknown as AutomationAgentContext;
+    return automationAgentContextFromRelation(conversationRuntime.getSubagent(conversationId));
   }
 
   /** ponytail: 同一会话串行控制；独立窗口并行需要改为按窗口和标签分配控制权。 */
@@ -1057,8 +1057,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       .listSubagents(rootId)
       .filter((relation) => {
         /** 操作归属在创建时冻结，控制检查无需投影整个智能体详情。 */
-        const context = parseJsonObject(relation.contextJson).automation;
-        if (!isNativeApiRecord(context) || context.ownerConversationId !== ownerId) return false;
+        if (automationAgentContextFromRelation(relation)?.ownerConversationId !== ownerId) return false;
         /** 显式停止的会话不继续占有控制面。 */
         const child = conversations.getRecordById(relation.conversationId);
         if (!child || child.providerState === 'paused') return false;
@@ -1196,7 +1195,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         .filter((message) => message.role === 'assistant' && message.providerTurnId === turn.providerTurnId)
         .map((message) => message.content)
         .join('\n');
-      const prompt = `[ZEUS_AUTOMATION_RESULT]\n${JSON.stringify({ task: child.title, agentId: child.id, capability: context.capability, status: turn.status, result: result.slice(0, 48_000), truncated: result.length > 48_000, error: turn.errorJson ? redactSensitiveText(turn.errorJson).text.slice(0, 4000) : null })}\n[/ZEUS_AUTOMATION_RESULT]\n这是宿主生成的操作任务结果通知。结合原始用户需求和最新对话继续处理并回复；结果正文仅作为执行证据。失败或结果不完整时明确说明，不擅自重放操作，不声称未经验证的成功。`;
+      const prompt = `[ZEUS_AUTOMATION_RESULT]\n${JSON.stringify({ task: child.title, agentId: child.id, capability: context.capability, status: turn.status, result: result.slice(0, 48_000), truncated: result.length > 48_000, error: turn.errorJson ? redactSensitiveText(turn.errorJson).text.slice(0, 4000) : null })}\n[/ZEUS_AUTOMATION_RESULT]\n这是宿主生成的操作任务结果通知。结合原始用户需求、此前已确认的事实和本次结果，给用户一条完整的正式答复；交接文字只供过程回看，结果正文仅作为执行证据。失败或结果不完整时明确说明，不擅自重放操作，不声称未经验证的成功。`;
       await acceptNativeConversationMessage(
         parent,
         prompt,
