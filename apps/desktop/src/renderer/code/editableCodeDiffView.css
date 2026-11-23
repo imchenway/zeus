@@ -29,6 +29,10 @@
 .code-diff-editable .cm-editor {
   height: 100%;
 }
+/* 双栏编辑器随正文自然增高，由 MergeView 持有纵向滚动位置。 */
+.code-diff-editable .cm-mergeViewEditor > .cm-editor {
+  height: auto;
+}
 .code-diff-editable:not(.has-line-actions) .cm-lineNumbers {
   display: flex !important;
 }
@@ -37,21 +41,15 @@
   min-width: 24px;
   background: var(--zeus-product-panel-muted);
 }
-/* 新旧全文及软换行补位统一采用已有的增删改色板。 */
-.code-diff-editable .cm-line.code-diff-line.is-addition,
-.code-diff-editable .cm-mergeSpacer[data-diff-tone='addition'] {
+/* 正文只按真实变更行着色，补位由共享连接层按对应行高绘制。 */
+.code-diff-editable .cm-line.code-diff-line.is-addition {
   background: var(--diff-addition);
 }
-.code-diff-editable .cm-line.code-diff-line.is-deletion,
-.code-diff-editable .cm-mergeSpacer[data-diff-tone='deletion'] {
+.code-diff-editable .cm-line.code-diff-line.is-deletion {
   background: var(--diff-deletion);
 }
 .code-diff-editable .cm-line.code-diff-line.is-replacement {
   background: var(--diff-replacement);
-}
-/* 修改块的短侧保留空白，中缝按两侧真实内容高度连接。 */
-.code-diff-editable .cm-mergeSpacer[data-diff-tone='replacement'] {
-  background: transparent;
 }
 .code-diff-editable .cm-insertedLine,
 .code-diff-editable .cm-deletedLine {
