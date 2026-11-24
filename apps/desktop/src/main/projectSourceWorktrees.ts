@@ -1,9 +1,24 @@
 import { discoverGitRepositories, getGitCommonDirectory, getGitRepositoryContext } from '@zeus/git-core';
 import type { ProjectSourceWorktree } from '@zeus/shared';
 import { createHash } from 'node:crypto';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ProjectGitProjectIdentity } from './projectGitWorkbench.js';
+
+/** 只返回已确认不再是目录的受信根路径；权限或临时 I/O 错误保留原快照。 */
+export async function findMissingSourceRoots(roots: Set<string>): Promise<string[]> {
+  const checked = await Promise.all(
+    [...roots].map(async (root) => {
+      try {
+        return (await stat(root)).isDirectory() ? null : root;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        return code === 'ENOENT' || code === 'ENOTDIR' ? root : null;
+      }
+    }),
+  );
+  return checked.filter((root): root is string => root !== null);
+}
 
 /** 只查询项目内仓库的 Git 登记，不从目录名推断工作树，也不创建或检出分支。 */
 export async function listProjectSourceWorktrees(project: ProjectGitProjectIdentity): Promise<ProjectSourceWorktree[]> {

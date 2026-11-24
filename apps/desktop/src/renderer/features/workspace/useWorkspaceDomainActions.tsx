@@ -4,6 +4,7 @@ import { markSideQuestionConversationArchived, restoreSideQuestionWorkspace } fr
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { isLocalNetworkOffline } from '../../session/conversationSystemMessages.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
+import { forgetRemovedSourceWorktree } from '../../code/projectSourceTreeCache.js';
 import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
 import { modelCatalogGeneration } from '../integrations/modelCatalogEvents.js';
 import type { ProjectRecord } from '../../apiClient.js';
@@ -601,6 +602,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
+        if (event.type === 'git.worktree.removed' && typeof event.payload.worktreePath === 'string') {
+          forgetRemovedSourceWorktree(event.payload.worktreePath);
+          return;
+        }
         observeInputSuggestion(event);
         observeConversationPreload(event);
         // 原生用户发送及旧运行时首条消息刷新完整统计；普通会话状态变化不进入此路径。

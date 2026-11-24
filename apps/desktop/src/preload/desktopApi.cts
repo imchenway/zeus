@@ -416,6 +416,8 @@ export function createDesktopApi(transport: DesktopTransport) {
     quitFromMenuBarUsage: () => transport.invoke('zeus:menu-bar-usage:quit'),
     /** 查询和选择项目的源码工作树。 */
     listProjectSourceWorktrees: (projectId: string) => transport.invoke('zeus:project-source:list-worktrees', projectId),
+    /** 返回当前窗口已授权身份中，磁盘上已消失的根目录。 */
+    findMissingProjectSourceWorktrees: (projectId: string, sourceIds: string[]) => transport.invoke('zeus:project-source:missing-worktrees', projectId, sourceIds),
     selectProjectSourceWorktree: (input: { projectId: string; worktreeId: string }) => transport.invoke('zeus:project-source:select-worktree', input),
     /** 列出项目源码目录条目。 */
     listProjectSourceDirectory: (input: unknown) => transport.invoke('zeus:project-source:list-directory', input),

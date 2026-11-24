@@ -23,6 +23,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -33,6 +34,7 @@ import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { FileTreeRow } from './FileTreeRow.js';
 import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
+import { projectSourceTree } from './projectSourceTreeCache.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -46,7 +48,7 @@ import type { ConversationFileLocation, ProjectCodeWorkspacePreference, ProjectS
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
 import { Form } from '../ui/Form.js';
@@ -65,6 +67,8 @@ const sourceViewModes = [
 ] as const;
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
+/** 当前显示的工作树已被移除时，目录面板使用同一份空快照。 */
+const emptyDirectories: Record<string, ProjectSourceDirectorySnapshot> = {};
 
 type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -101,6 +105,8 @@ export interface ProjectSourceWorkspaceHandle {
 }
 
 export interface ProjectSourceWorkspaceProps {
+  /** 当前源码目录所属的业务项目，工作树刷新只核对本项目的缓存。 */
+  ownerProjectId: string;
   /** 顶部目录选择由所属项目提供，编辑根目录仍来自受信工作区身份。 */
   workspaceSelector?: ReactNode;
   /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
@@ -121,9 +127,31 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   conflictFind.labels = { before: zh ? '当前更改' : 'Current changes', after: zh ? '传入更改' : 'Incoming changes' };
   const conflictExtensions = useMemo(() => sourceConflictExtensions(zh, (current, incoming) => setConflictComparison({ current, incoming })), [zh]);
   const bridge = typeof window === 'undefined' ? undefined : window.zeus;
-  const initialPreference = normalizePreference(props.preference);
-  const [directories, setDirectories] = useState<Record<string, ProjectSourceDirectorySnapshot>>({});
-  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
+  /** 同一根目录被删除后，原来的异步读取只持有已失效的缓存实例。 */
+  const [tree] = useState(() => projectSourceTree(props.ownerProjectId, props.project.id, props.project.localPath));
+  const [initialPreference] = useState(() => {
+    const preference = normalizePreference(props.preference);
+    return tree.expandedDirectories ? { ...preference, expandedDirectories: [...tree.expandedDirectories] } : preference;
+  });
+  /** 目录删除回执会立即更新已打开的文件树，编辑器草稿独立保留。 */
+  const directorySnapshot = useSyncExternalStore(tree.subscribe, tree.getSnapshot, tree.getSnapshot);
+  const directories = directorySnapshot ?? emptyDirectories;
+  /** 旧页面的目录读取不能写回再次挂载后的同一工作树。 */
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  /** 页面卸载后忽略它发起的目录更新。 */
+  const setDirectories = useCallback<typeof tree.setDirectories>(
+    (update) => {
+      if (mounted.current) tree.setDirectories(update);
+    },
+    [tree],
+  );
+  const [expandedDirectories, setExpandedDirectories] = useState(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
   /** 已点击的新文件立即进入等待态，正文读取期间仍可继续切换。 */
@@ -131,10 +159,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   /** 只有最近一次打开请求可以修改标签和审阅焦点。 */
   const pendingFileOpen = useRef<{ path: string } | null>(null);
   /** 目录连续开合共享同一次在途读取。 */
-  const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(() => new Set());
+  const [loadingDirectories, setLoadingDirectories] = useState(() => new Set(initialPreference.expandedDirectories));
   /** 先提交目录和标签选中态，再创建新文件的编辑器。 */
   const deferredActivePath = useDeferredValue(activePath);
-  const openingDocument = openingPath !== null || deferredActivePath !== activePath;
   /** 每个文件记住本次会话中的查看方式，不影响已有源码偏好。 */
   const [viewModes, setViewModes] = useState<Record<string, SourceViewMode>>({});
   /** 当前源码的查找入口也支持从效果预览切回编辑器。 */
@@ -157,11 +184,18 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ProjectSourceEntry[]>([]);
   const [searchTruncated, setSearchTruncated] = useState(false);
-  const [loadingTree, setLoadingTree] = useState(true);
+  /** 空目录也有根快照，只有首次读取结束前需要整棵树的等待提示。 */
+  const hasRoot = Boolean(directories['']);
+  const [readingRoot, setReadingRoot] = useState(true);
+  const loadingTree = directorySnapshot !== null && !hasRoot && readingRoot;
+  /** 标签恢复完成后才能把当前标签列表写回偏好。 */
+  const [tabsRestored, setTabsRestored] = useState(false);
+  /** 用户已关闭或移走的文件不再加入本次恢复的标签。 */
+  const pendingRestorePaths = useRef(new Set(initialPreference.openFiles));
   const [busyPath, setBusyPath] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  /** 只记录解码失败的内容版本；图片在磁盘更新后可自动重新预览。 */
+  /** 文件操作失败交给应用共享的错误反馈。 */
   const [error, setError] = useState<unknown>(null);
+  useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
   const [operation, setOperation] = useState<FileOperation>(null);
   const [operationName, setOperationName] = useState('');
   const [operationParent, setOperationParent] = useState('');
@@ -190,6 +224,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   tabsRef.current = tabs;
   activePathRef.current = activePath;
   const activeTab = tabs.find((tab) => tab.document.relativePath === activePath) ?? null;
+  /** 上次选中的文件正在恢复时，编辑区沿用现有的文件读取提示。 */
+  const openingDocument = openingPath !== null || deferredActivePath !== activePath || (!tabsRestored && hasRoot && activePath !== null && !activeTab);
   /** 只为可编辑且有实际效果的格式提供模式切换。 */
   const renderedPreviewKind = activeTab?.document.editable ? projectSourcePreviewKind(activeTab.document.relativePath) : null;
   /** 普通代码文件保持源码显示，预览文件首次打开也保留原编辑入口。 */
@@ -211,7 +247,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       setDirectories((current) => ({ ...current, [relativePath]: snapshot }));
       return snapshot;
     },
-    [bridge, props.project.id],
+    [bridge, props.project.id, setDirectories],
   );
 
   /** 预览跨入口定位与当前面包屑共用同一个文件树请求。 */
@@ -287,7 +323,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return;
       }
       if (!bridge?.readProjectSourceFile) {
-        setError(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.');
+        setError(new Error(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.'));
         return;
       }
       /** 同一文件也可能携带不同定位，新请求接管旧回执。 */
@@ -311,7 +347,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 ? current
                 : current.filter((tab) => tab.dirty || tab.document.relativePath !== current.find((candidate) => !candidate.dirty)?.document.relativePath);
           if (available.length >= 20) {
-            setError(zh ? '已打开 20 个文件，请先关闭一个标签。' : 'Twenty files are already open. Close a tab first.');
+            setError(new Error(zh ? '已打开 20 个文件，请先关闭一个标签。' : 'Twenty files are already open. Close a tab first.'));
             return current;
           }
           return [...available, { document, draft: document.content, dirty: false, saving: false, externalChange: false, revealLocation, cursorLine: line ?? 1, cursorColumn: column ?? 1 }];
@@ -364,7 +400,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               : candidate,
           ),
         );
-        setNotice(zh ? `已保存 ${relativePath}` : `Saved ${relativePath}`);
         return !editedWhileSaving;
       } catch (saveError) {
         setTabs((current) => current.map((candidate) => (candidate.document.relativePath === relativePath ? { ...candidate, saving: false, externalChange: true } : candidate)));
@@ -372,7 +407,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         return false;
       }
     },
-    [bridge, props.project.id, zh],
+    [bridge, props.project.id],
   );
 
   const saveAll = useCallback(async (): Promise<boolean> => {
@@ -389,6 +424,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   useEffect(() => props.onDirtyChange?.(dirty), [dirty, props.onDirtyChange]);
 
+  /** 只为仍存在的目录快照记住展开位置。 */
+  useLayoutEffect(() => {
+    if (tree.getSnapshot()?.['']) tree.expandedDirectories = expandedDirectories;
+  }, [tree, hasRoot, expandedDirectories]);
+
   useEffect(
     () => () => {
       props.onDirtyChange?.(false);
@@ -398,23 +438,52 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   useEffect(() => {
     let active = true;
-    setLoadingTree(true);
+    /** 用户手动刷新得到的新根目录优先于进入页面时发起的读取。 */
+    const previousRoot = directoriesRef.current[''];
     void (async () => {
       try {
         if (!bridge?.listProjectSourceDirectory) throw new Error(zh ? 'Zeus 的文件编辑服务尚未连接。' : 'Zeus has not connected to the file editing service yet.');
         const root = await bridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath: '' });
         if (!active) return;
-        setDirectories({ '': root });
-        const expandedSnapshots = await Promise.all(initialPreference.expandedDirectories.map((path) => bridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath: path }).catch(() => null)));
-        if (!active) return;
-        setDirectories((current) => ({
-          ...current,
-          ...Object.fromEntries(expandedSnapshots.filter((item): item is ProjectSourceDirectorySnapshot => Boolean(item)).map((item) => [item.relativePath, item])),
-        }));
-        const restoredDocuments = await Promise.all(initialPreference.openFiles.slice(0, 20).map((relativePath) => bridge.readProjectSourceFile({ projectId: props.project.id, relativePath }).catch(() => null)));
+        setDirectories((current) => (current[''] === previousRoot ? { ...current, '': root } : current));
+      } catch (loadError) {
+        if (active) setError(loadError);
+      } finally {
+        if (active) setReadingRoot(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [bridge, props.project.id, setDirectories]);
+
+  useEffect(() => {
+    if (!hasRoot || !bridge?.listProjectSourceDirectory) return;
+    const sourceBridge = bridge;
+    let active = true;
+    /** 后台恢复只替换进入页面时的快照，保留用户随后取得的更新。 */
+    const previousDirectories = directoriesRef.current;
+    for (const path of initialPreference.expandedDirectories) void refreshExpandedDirectory(path);
+    /** 单个展开目录读完就更新，失效目录移除旧快照。 */
+    async function refreshExpandedDirectory(path: string): Promise<void> {
+      const snapshot = await sourceBridge.listProjectSourceDirectory({ projectId: props.project.id, relativePath: path }).catch(() => null);
+      if (!active) return;
+      setDirectories((current) => {
+        if (current[path] !== previousDirectories[path]) return current;
+        if (snapshot) return { ...current, [path]: snapshot };
+        if (!current[path]) return current;
+        const next = { ...current };
+        delete next[path];
+        return next;
+      });
+      finishDirectoryRead(path);
+    }
+    void (async () => {
+      try {
+        const restoredDocuments = await Promise.all(initialPreference.openFiles.map((relativePath) => bridge.readProjectSourceFile({ projectId: props.project.id, relativePath }).catch(() => null)));
         if (!active) return;
         const restoredTabs = restoredDocuments
-          .filter((item): item is ProjectSourceDocument => Boolean(item))
+          .filter((item, index): item is ProjectSourceDocument => item !== null && pendingRestorePaths.current.has(initialPreference.openFiles[index]))
           .map((document) => ({
             document,
             draft: document.content,
@@ -435,13 +504,13 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       } catch (loadError) {
         if (active) setError(loadError);
       } finally {
-        if (active) setLoadingTree(false);
+        if (active) setTabsRestored(true);
       }
     })();
     return () => {
       active = false;
     };
-  }, [bridge, props.project.id]);
+  }, [bridge, hasRoot, initialPreference, props.project.id, setDirectories]);
 
   useEffect(() => {
     if (!bridge?.watchProjectSource || !bridge.onProjectSourceEvent) return undefined;
@@ -520,7 +589,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         }
       }
     }
-  }, [bridge, props.project.id]);
+  }, [bridge, props.project.id, setDirectories]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -541,7 +610,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }, [bridge, props.project.id, searchQuery]);
 
   useEffect(() => {
-    if (loadingTree) return undefined;
+    if (!tabsRestored) return undefined;
     const preference: ProjectCodeWorkspacePreference = {
       openFiles: tabs.map((tab) => tab.document.relativePath).slice(-20),
       activeFile: activePath,
@@ -550,7 +619,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     };
     const timer = window.setTimeout(() => props.onPreferenceChange?.(preference), 250);
     return () => window.clearTimeout(timer);
-  }, [activePath, expandedDirectories, loadingTree, props.onPreferenceChange, tabs, treeWidth]);
+  }, [activePath, expandedDirectories, tabsRestored, props.onPreferenceChange, tabs, treeWidth]);
 
   async function toggleDirectory(path: string): Promise<void> {
     setDirectoryToReveal(null);
@@ -577,12 +646,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       collapse();
       setError(loadError);
     } finally {
-      setLoadingDirectories((current) => {
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      });
+      finishDirectoryRead(path);
     }
+  }
+
+  /** 恢复和手动展开共用读取状态，完成后允许再次刷新该目录。 */
+  function finishDirectoryRead(path: string): void {
+    setLoadingDirectories((current) => {
+      const next = new Set(current);
+      next.delete(path);
+      return next;
+    });
   }
 
   /** 所有关闭入口共用未保存保护，保存期间不移除标签。 */
@@ -598,12 +672,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   /** 先计算相邻标签，再分别更新状态，避免在状态更新函数内触发另一份状态更新。 */
   function removeTab(path: string): void {
+    pendingRestorePaths.current.delete(path);
     /** 本次关闭之前的标签位置决定随后选择的相邻文件。 */
     const index = tabsRef.current.findIndex((candidate) => candidate.document.relativePath === path);
     /** 从当前标签快照移除文件，最后一个关闭后清空选择。 */
     const next = tabsRef.current.filter((candidate) => candidate.document.relativePath !== path);
     setTabs(next);
     if (activePathRef.current === path) setActivePath(next[Math.min(index, next.length - 1)]?.document.relativePath ?? null);
+  }
+
+  /** 移走或删除目录时，同时排除其下尚在读取的旧标签。 */
+  function forgetRestoringEntry(relativePath: string): void {
+    for (const path of pendingRestorePaths.current) {
+      if (isSameOrChild(path, relativePath)) pendingRestorePaths.current.delete(path);
+    }
   }
 
   /** 快捷键名称沿用当前平台，菜单与执行使用同一组组合键。 */
@@ -623,7 +705,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   /** 文件树菜单复制真实名称或完整路径，失败保留在当前工作区。 */
   async function copySourceEntry(entry: ProjectSourceEntry, path: boolean): Promise<void> {
     setContextMenu(null);
-    if (!(await copyText(path ? displayedFilePath(entry.relativePath, props.project.localPath) : entry.name))) setError(zh ? '复制失败，请重试。' : 'Could not copy. Please try again.');
+    if (!(await copyText(path ? displayedFilePath(entry.relativePath, props.project.localPath) : entry.name))) {
+      setError(new Error(zh ? '复制失败，请重试。' : 'Could not copy. Please try again.'));
+    }
   }
 
   /** 文件树和菜单共用快捷键；编辑器与输入框不参与文件删除操作。 */
@@ -693,7 +777,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const entry = await bridge.createProjectSourceEntry({ projectId: props.project.id, parentRelativePath: operationParent, name: operationName, kind: operation.kind === 'create-file' ? 'file' : 'directory' });
         await loadDirectory(operationParent);
         if (entry.kind === 'file') await openFile(entry.relativePath);
-        setNotice(zh ? `已创建 ${entry.relativePath}` : `Created ${entry.relativePath}`);
       } else if (operation.kind === 'save-as') {
         const sourceTab = tabsRef.current.find((tab) => tab.document.relativePath === operation.tabPath);
         if (!sourceTab) throw new Error(zh ? '原文件标签已经关闭。' : 'The source tab is already closed.');
@@ -711,10 +794,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         setTabs((current) => [...current, { document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }]);
         setActivePath(document.relativePath);
         await loadDirectory(operationParent);
-        setNotice(zh ? `已另存为 ${document.relativePath}` : `Saved as ${document.relativePath}`);
       } else if (operation.kind === 'rename' || operation.kind === 'move') {
         const entry = await bridge.moveProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath, targetParentRelativePath: operationParent, targetName: operationName });
         const oldPath = operation.entry.relativePath;
+        forgetRestoringEntry(oldPath);
         setTabs((current) => current.map((tab) => remapMovedTab(tab, oldPath, entry.relativePath, operation.entry.kind === 'directory')));
         setActivePath((current) => remapMovedPath(current, oldPath, entry.relativePath, operation.entry.kind === 'directory'));
         if (operation.entry.kind === 'directory') {
@@ -726,7 +809,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           });
         }
         await Promise.all([loadDirectory(parentPath(oldPath)), loadDirectory(operationParent)]);
-        setNotice(operation.kind === 'rename' ? (zh ? `已重命名为 ${entry.relativePath}` : `Renamed to ${entry.relativePath}`) : zh ? `已移动到 ${entry.relativePath}` : `Moved to ${entry.relativePath}`);
       } else {
         const affectedTabs = tabsRef.current.filter((tab) => isSameOrChild(tab.document.relativePath, operation.entry.relativePath));
         if (
@@ -735,6 +817,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         )
           return;
         await bridge.trashProjectSourceEntry({ projectId: props.project.id, relativePath: operation.entry.relativePath });
+        forgetRestoringEntry(operation.entry.relativePath);
         if (operation.entry.kind === 'directory') {
           const deletedPath = operation.entry.relativePath;
           // 删除成功后清除子目录缓存，避免同名目录重新创建时显示旧文件。
@@ -751,7 +834,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           setActivePath(remainingTabs[Math.min(nextIndex, remainingTabs.length - 1)]?.document.relativePath ?? null);
         }
         await loadDirectory(parentPath(operation.entry.relativePath));
-        setNotice(zh ? '已移入系统废纸篓，可在 Finder 中恢复。' : 'Moved to system Trash. You can restore it in Finder.');
       }
       setOperation(null);
     } catch (operationError) {
@@ -775,8 +857,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     const next = bounds.width > 0 && bounds.height > 0 ? { host, left: bounds.left, top, width: bounds.width, height: Math.max(0, bounds.bottom - top) } : null;
     setTreeResizeSurface((current) => (current?.host === next?.host && current?.left === next?.left && current?.top === next?.top && current?.width === next?.width && current?.height === next?.height ? current : next));
   }, []);
-  /** React 已知的宽度、底栏及提示变化立即同步，不等待下一帧观察通知。 */
-  useLayoutEffect(updateTreeResizeSurface, [treeWidth, notice, activeTab?.externalChange, updateTreeResizeSurface]);
+  /** 树宽变化后立即同步分隔面的坐标。 */
+  useLayoutEffect(updateTreeResizeSurface, [treeWidth, updateTreeResizeSurface]);
   useLayoutEffect(() => {
     /** 所有测量均来自当前源码页，项目切换后释放观察器。 */
     const track = treeResizeTrackRef.current;
@@ -865,34 +947,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties}
       data-tree-open={treeDrawerOpen ? 'true' : 'false'}
     >
-      {notice || activeTab?.externalChange ? (
-        <div className="project-source-message success" role="status">
-          <span>{notice ?? (zh ? '文件已在外部发生变化，请重新加载或另存为。' : 'The file changed externally. Reload it or save it as a new file.')}</span>
-          {activeTab?.externalChange ? (
-            <>
-              <Button unstyled type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
-                {zh ? '另存为' : 'Save as'}
-              </Button>
-              <Button unstyled type="button" onClick={() => reloadActiveTab()}>
-                {zh ? '重新加载' : 'Reload'}
-              </Button>
-            </>
-          ) : null}
-          <Button unstyled type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
-            <X aria-hidden="true" />
-          </Button>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="project-source-message" role="alert">
-          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          <Button unstyled type="button" aria-label={zh ? '关闭错误提示' : 'Dismiss error'} onClick={() => setError(null)}>
-            <X aria-hidden="true" />
-          </Button>
-        </div>
-      ) : null}
-
       {conflictComparison ? (
         <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)} role="dialog" aria-label={zh ? '比较变更' : 'Compare changes'}>
           <section className="project-source-conflict-comparison" data-modal-surface="dialog" onKeyDown={fileFindShortcut}>
@@ -1169,6 +1223,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </>
           )}
           <footer className="project-source-statusbar">
+            {!openingDocument && activeTab?.externalChange ? (
+              <div className="project-source-status-actions">
+                <strong role="status">{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong>
+                <Button size="compact" type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
+                  {zh ? '另存为' : 'Save as'}
+                </Button>
+                <Button size="compact" type="button" onClick={reloadActiveTab}>
+                  {zh ? '重新加载' : 'Reload'}
+                </Button>
+              </div>
+            ) : null}
             {openingDocument ? null : activeTab ? (
               !activeTab.document.editable ? (
                 <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
@@ -1200,7 +1265,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             ) : (
               <span>{zh ? '未打开文件' : 'No file open'}</span>
             )}
-            {!openingDocument && activeTab?.externalChange ? <strong>{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong> : null}
           </footer>
         </main>
       </div>

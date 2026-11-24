@@ -3,6 +3,7 @@ export { withGitRepositoryOperation } from './repositoryOperation.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -1148,14 +1149,37 @@ async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: s
   return true;
 }
 
+/** 已完成的工作树删除按真实根目录通知本进程的订阅方。 */
+const worktreeEvents = new EventEmitter<{ removed: [string] }>();
+
+/** 订阅已移除的工作树；取消订阅后不再持有服务实例。 */
+export function onGitWorktreeRemoved(listener: (root: string) => void): () => void {
+  worktreeEvents.on('removed', listener);
+  return () => worktreeEvents.off('removed', listener);
+}
+
+/** Git 成功移除登记后发布原来的真实路径，目录删除后无法再解析其符号链接。 */
+async function removeRegisteredWorktree(repositoryPath: string, worktreePath: string, force = false): Promise<void> {
+  const root = canonicalFilesystemPath(worktreePath);
+  await runGit(repositoryPath, ['worktree', 'remove', ...(force ? ['--force'] : []), worktreePath]);
+  worktreeEvents.emit('removed', root);
+}
+
+/** 无 Git 登记的清理路径由调用方核实，磁盘回收成功后才通知窗口。 */
+async function removeOrphanWorktree(worktreePath: string): Promise<void> {
+  const root = canonicalFilesystemPath(worktreePath);
+  await rm(worktreePath, { recursive: true, force: true });
+  worktreeEvents.emit('removed', root);
+}
+
 /** 精确回收本次刚创建的任务 worktree；只在创建失败回滚或用户显式回收时调用。 */
 export async function cleanupPreparedTaskWorktree(input: { repositoryPath: string; worktreePath: string; branchName: string; removeBranch: boolean }): Promise<void> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Task workspace repository is unavailable during cleanup.');
   const targetPath = canonicalFilesystemPath(input.worktreePath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === targetPath);
-  if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', registered.path]);
-  else await rm(input.worktreePath, { recursive: true, force: true });
+  if (registered) await removeRegisteredWorktree(context.topLevel, registered.path, true);
+  else await removeOrphanWorktree(input.worktreePath);
   if (input.removeBranch && context.localBranches.includes(input.branchName)) await runGit(context.topLevel, ['branch', '-D', input.branchName]);
 }
 
@@ -1676,7 +1700,7 @@ export async function reclaimTaskWorktree(input: {
   if (!registered.branch || (!registeredUnborn && registeredHeadSha !== review.headSha)) {
     throw gitCoreError('ZEUS_TASK_LOCAL_BRANCH_UNAVAILABLE', '本地任务分支未完整保留当前提交，不能回收工作目录。');
   }
-  await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
+  await removeRegisteredWorktree(context.topLevel, input.worktreePath, Boolean(input.ignoredPaths?.length));
   await rm(input.worktreePath, { recursive: true, force: true });
   return { headSha: review.headSha, remoteHeadSha: null, unchanged };
 }
@@ -1690,7 +1714,7 @@ export async function reclaimDeliveredTaskWorktree(input: { repositoryPath: stri
   const context = await getGitRepositoryContext(input.repositoryPath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
   if (!registered) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree is not registered in the project repository.');
-  await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
+  await removeRegisteredWorktree(context.topLevel, input.worktreePath, Boolean(input.ignoredPaths?.length));
   await rm(input.worktreePath, { recursive: true, force: true });
   return { headSha: review.headSha };
 }
@@ -1714,7 +1738,7 @@ export async function removeTaskWorktreeForTerminalStatus(input: { repositoryPat
     if (pathExists) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree path exists but is not registered in the project repository.');
     return { removed: false };
   }
-  await runGit(context.topLevel, ['worktree', 'remove', ...(input.force ? ['--force'] : []), registered.path]);
+  await removeRegisteredWorktree(context.topLevel, registered.path, input.force);
   await rm(registered.path, { recursive: true, force: true });
   return { removed: true };
 }
@@ -1735,7 +1759,7 @@ export async function discardTaskWorktree(input: {
   let removedWorktree = false;
   const registered = context.worktrees.find((entry) => entry.branch === input.branchName || (input.worktreePath && canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath)));
   if (registered) {
-    await runGit(context.topLevel, ['worktree', 'remove', '--force', registered.path]);
+    await removeRegisteredWorktree(context.topLevel, registered.path, true);
     await rm(registered.path, { recursive: true, force: true });
     removedWorktree = true;
   }
@@ -2158,7 +2182,7 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
     const context = await getGitRepositoryContext(input.repositoryPath);
     const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.integrationPath));
     if (registered) {
-      await runGit(context.topLevel, ['worktree', 'remove', input.integrationPath]);
+      await removeRegisteredWorktree(context.topLevel, input.integrationPath);
       await rm(input.integrationPath, { recursive: true, force: true });
     }
   }
@@ -2195,8 +2219,10 @@ export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: st
   const containerRoot = resolve(join(dirname(context.topLevel), '.zeus-worktrees'));
   if (!isPathInside(containerRoot, integrationPath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree is outside the Zeus worktree container.');
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
-  if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', registered.path]);
-  else {
+  if (registered) {
+    await removeRegisteredWorktree(context.topLevel, registered.path, true);
+    await rm(integrationPath, { recursive: true, force: true });
+  } else {
     const exists = await lstat(integrationPath).then(
       () => true,
       (error: unknown) => {
@@ -2206,8 +2232,8 @@ export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: st
     );
     if (!exists) return false;
     await assertOrphanTaskIntegrationPath(containerRoot, integrationPath);
+    await removeOrphanWorktree(integrationPath);
   }
-  await rm(integrationPath, { recursive: true, force: true });
   return true;
 }
 
@@ -2283,7 +2309,7 @@ async function captureTaskIntegrationLocalChanges(input: { repositoryPath: strin
     const commitSha = requireGitObjectId(await requireGitStdout(snapshotPath, ['commit-tree', treeSha, '-p', input.targetHeadSha, '-m', 'Zeus 来源工作区临时快照']), 'source snapshot commit');
     return { commitSha, treeSha, indexTreeSha: sourceIndexTreeSha, untrackedPaths: sourceUntrackedPaths };
   } finally {
-    if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', snapshotPath]).catch(() => undefined);
+    if (registered) await removeRegisteredWorktree(context.topLevel, snapshotPath, true).catch(() => undefined);
     await rm(snapshotRoot, { recursive: true, force: true });
   }
 }
@@ -2709,7 +2735,7 @@ async function createUnbornTaskWorktree(repositoryPath: string, worktreePath: st
   try {
     await runGit(worktreePath, ['checkout', '--orphan', branchName]);
   } catch (error) {
-    await runGit(repositoryPath, ['worktree', 'remove', '--force', worktreePath]).catch(() => undefined);
+    await removeRegisteredWorktree(repositoryPath, worktreePath, true).catch(() => undefined);
     throw error;
   }
 }

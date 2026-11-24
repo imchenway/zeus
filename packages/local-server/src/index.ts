@@ -30,7 +30,7 @@ import {
   readCodexModelCatalogCache,
   readCodexTurnItems,
 } from '@zeus/ai-runtime';
-import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
+import { onGitWorktreeRemoved, type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { resolveReleaseUpdateManifestUrl, type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
@@ -2961,6 +2961,16 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     broadcastRealtimeEvent(event);
     return event;
   }
+
+  /** 各窗口按实际删除的根目录释放快照，通知失败不改变 Git 已完成的结果。 */
+  const stopWorktreeRemovalNotifications = onGitWorktreeRemoved((worktreePath) => {
+    try {
+      publishRealtimeEvent('git.worktree.removed', { worktreePath });
+    } catch (error) {
+      console.error('工作树删除通知发送失败。', error);
+    }
+  });
+  server.addHook('onClose', async () => stopWorktreeRemovalNotifications());
 
   removeStorageWriteFaultListener = db.onWriteFault((snapshot) => {
     const fault = snapshot.fault;

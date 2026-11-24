@@ -17,6 +17,8 @@ export interface ProjectSourceEntry {
 }
 
 export interface ProjectSourceDirectorySnapshot {
+  /** 根快照携带解析符号链接后的真实目录，用于匹配磁盘工作树的删除回执。 */
+  worktreeRoot?: string;
   relativePath: string;
   entries: ProjectSourceEntry[];
 }

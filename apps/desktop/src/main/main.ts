@@ -1,4 +1,4 @@
-import { listProjectSourceWorktrees } from './projectSourceWorktrees.js';
+import { findMissingSourceRoots, listProjectSourceWorktrees } from './projectSourceWorktrees.js';
 import { registerFilePreview } from './filePreview.js';
 import { startInputSuggestionNetworkBridge } from './inputSuggestionNetworkBridge.js';
 import { getApplicationIcon } from './applicationIcon.js';
@@ -2429,6 +2429,20 @@ function setupIpc(): void {
     requireProjectSourceWorkspace(event);
     if (typeof projectId !== 'string' || !projectId.trim()) throw new TypeError('项目身份无效。');
     return listProjectSourceWorktrees(await loadProjectIdentity(projectId));
+  });
+  /** 只核对本窗口已获授权的项目或工作树身份，磁盘路径取自主进程。 */
+  ipcMain.handle('zeus:project-source:missing-worktrees', async (event, projectId: unknown, sourceIds: unknown) => {
+    requireProjectSourceWorkspace(event);
+    if (typeof projectId !== 'string' || !projectId.trim() || !Array.isArray(sourceIds) || !sourceIds.every((id) => typeof id === 'string')) throw new TypeError('源码工作树身份无效。');
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || owner.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw new Error('源码工作树核对请求来自不受信任窗口。');
+    const ids = new Set(sourceIds);
+    const roots = new Set<string>();
+    if (ids.has(projectId)) roots.add((await loadProjectIdentity(projectId)).localPath);
+    for (const workspace of fileSourceWorkspaces.get(owner)?.workspaces.values() ?? []) {
+      if (workspace.ownerProjectId === projectId && ids.has(workspace.project.id)) roots.add(workspace.project.localPath);
+    }
+    return findMissingSourceRoots(roots);
   });
   /** 切换只登记目录身份，不产生文件修改或 Git checkout。 */
   ipcMain.handle('zeus:project-source:select-worktree', async (event, input: { projectId?: unknown; worktreeId?: unknown }) => {
