@@ -1,4 +1,4 @@
-import type { CommandDefinition, CommandDefinitionInput, CommandRun } from '@zeus/shared';
+import type { CommandDefinition, CommandDefinitionInput, CommandRun, CommandRunHistoryPage } from '@zeus/shared';
 import type { CommandConfirmationResponse, CommandRunDetail, CommandRunTerminalOutput, CreateCommandConfirmationRequest, LoadCommandRunOptions, StartCommandRunRequest } from '../runtime/runtimeContracts.js';
 import { buildCommandCenterCommandRequest, commandCenterClientCommandTypes } from './commandCenterCommandClient.js';
 import type { LocalApiTransport } from '../../transport/localApiTransport.js';
@@ -14,7 +14,8 @@ export interface CommandCenterApiClient {
   deleteProjectCommand: (projectId: string, commandId: string, expectedRevision: number) => Promise<CommandDefinition>;
   createCommandConfirmation: (projectId: string, commandId: string, input: CreateCommandConfirmationRequest) => Promise<CommandConfirmationResponse>;
   startCommandRun: (projectId: string, commandId: string, input: StartCommandRunRequest) => Promise<CommandRun>;
-  loadCommandRuns: (projectId: string, limit?: number) => Promise<CommandRun[]>;
+  /** 按项目和命令读取一页执行历史。 */
+  loadCommandRunHistory: (projectId: string, commandId: string, cursor?: string) => Promise<CommandRunHistoryPage>;
   loadCommandRun: (runId: string, options?: LoadCommandRunOptions) => Promise<CommandRunDetail>;
   loadCommandRunTerminalOutput: (runId: string) => Promise<CommandRunTerminalOutput>;
   stopCommandRun: (runId: string) => Promise<CommandRun>;
@@ -113,7 +114,11 @@ export function createCommandCenterApiClient(transport: LocalApiTransport): Comm
       });
       return transport.request<CommandRun>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/runs`, { method: 'POST', body: JSON.stringify(body) });
     },
-    loadCommandRuns: (projectId, limit = 100) => transport.request<CommandRun[]>(`/api/projects/${encodeURIComponent(projectId)}/command-runs?limit=${encodeURIComponent(String(limit))}`),
+    loadCommandRunHistory: (projectId, commandId, cursor) => {
+      /** 首页从最新执行开始，后续页使用服务端返回的游标。 */
+      const query = cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+      return transport.request<CommandRunHistoryPage>(`/api/projects/${encodeURIComponent(projectId)}/commands/${encodeURIComponent(commandId)}/runs${query}`);
+    },
     loadCommandRun: (runId, options = {}) => {
       const params = new URLSearchParams();
       if (options.afterSeq !== undefined) params.set('afterSeq', String(options.afterSeq));

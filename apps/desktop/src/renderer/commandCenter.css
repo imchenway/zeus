@@ -433,6 +433,22 @@
   padding: 8px;
 }
 
+/* 分页反馈随列表滚动，窄窗口内保持可读。 */
+.command-run-pagination {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.command-run-list .command-run-pagination {
+  padding: 4px;
+}
+
+.command-run-pagination > .command-modal-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .command-run-list > li + li {
   margin-top: 4px;
 }
@@ -464,6 +480,8 @@
   background: var(--zeus-source-list-selected);
 }
 
+/* 借助同一焦点样式区分列表键盘滚动与记录选择。 */
+.command-run-list:focus-visible,
 .command-run-list > li > button:focus-visible {
   outline: 2px solid var(--zeus-focus-line);
   outline-offset: -2px;
