@@ -4,7 +4,7 @@ import type { AppShellSettings } from '../features/settings/settingsContracts.js
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { NativeControlRow } from '../features/workspace/workspaceSupport.js';
-import { presentModelOptions } from '../modelOptionPresentation.js';
+import { modelProviderOptionForRef, presentModelOptions } from '../modelOptionPresentation.js';
 import { selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierPickerValue, serviceTierWireOverride } from '../session/serviceTierSelection.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -109,7 +109,7 @@ export function AutomationModelSettings(props: {
           const options = [
             { value: '', label: zh ? '跟随当前会话' : 'Follow conversation' },
             ...presentation.options,
-            ...(selected && !model ? [{ value: selectedId, label: `${selectedId}${loading ? '' : zh ? '（目录不可用）' : ' (unavailable)'}`, disabled: true }] : []),
+            ...(selected && !model ? [{ value: selectedId, label: `${selectedId}${loading ? '' : zh ? '（目录不可用）' : ' (unavailable)'}`, disabled: true, ...modelProviderOptionForRef(selectedId) }] : []),
           ];
           /** 只有目录提供加速档位的固定模型才需要速度选择。 */
           const speedModel = { serviceTiers: model?.serviceTiers ?? [] };

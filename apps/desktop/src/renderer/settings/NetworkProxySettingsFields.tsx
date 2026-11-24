@@ -12,6 +12,7 @@ import type { DashboardClient, ModelConnectionRecord } from '../apiClient.js';
 import { NativeControlRow } from '../features/workspace/workspaceSupport.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
 
 /** 网络页只读取现有模型连接并调用各自最小真实请求诊断。 */
 type NetworkModelConnectionClient = Pick<DashboardClient, 'loadModelConnections' | 'diagnoseModelConnection' | 'diagnoseCodexConnection'>;
@@ -27,7 +28,7 @@ interface NetworkModelConnectionRow {
   /** 每一行独立推进，快结果不等待其他供应商。 */
   status: 'idle' | 'checking' | 'success' | 'failed';
   /** 未检查时为空，检查后同时提供文字结论与延迟。 */
-  result: { ok: boolean; latencyMs: number; message: string } | null;
+  result: { ok: boolean; latencyMs: number; message: string; testedModelId?: string | null } | null;
 }
 
 /** 浏览器与模型宿主各自拥有独立状态和回执。 */
@@ -236,6 +237,7 @@ export function NetworkProxySettingsFields(props: {
         /** 展示从 Renderer 发起到收到完整回执的墙钟时间，与用户实际等待一致。 */
         result: {
           ok: diagnostic.ok,
+          testedModelId: diagnostic.testedModelId,
           latencyMs: Math.max(0, Math.round(performance.now() - startedAt)),
           message: diagnostic.ok && !zh ? `Model ${diagnostic.testedModelId ?? target.name} completed a real request. This does not verify image or tool capabilities.` : diagnostic.message,
         },
@@ -536,7 +538,10 @@ export function NetworkProxySettingsFields(props: {
               {modelConnectionRows.map((row) => (
                 <li key={row.id} data-state={row.status}>
                   <strong>{row.name}</strong>
-                  <small>{describeModels(row.modelIds)}</small>
+                  <small className="model-provider-labelled">
+                    {row.modelIds.length ? <ModelProviderBadge sourceId={row.id} sourceName={row.name} /> : null}
+                    <span>{describeModels(row.modelIds)}</span>
+                  </small>
                   <div className="network-model-result">
                     <span role="status" aria-live="polite">
                       {row.status === 'checking'
@@ -555,7 +560,12 @@ export function NetworkProxySettingsFields(props: {
                             ? '尚未验证'
                             : 'Not verified'}
                     </span>
-                    {row.result ? <small>{row.result.message}</small> : null}
+                    {row.result ? (
+                      <small className="model-provider-labelled">
+                        {row.result.testedModelId ? <ModelProviderBadge sourceId={row.id} sourceName={row.name} /> : null}
+                        <span>{row.result.message}</span>
+                      </small>
+                    ) : null}
                   </div>
                 </li>
               ))}

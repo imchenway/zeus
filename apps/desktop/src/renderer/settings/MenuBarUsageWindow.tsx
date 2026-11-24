@@ -3,6 +3,8 @@ import { formatZeusDateTime, formatCodexCredits, hasPositiveCodexCredits, isCode
 import type { CodexOfficialRateWindow, KiloAccountUsage, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { compareModelNames } from '../modelOptionPresentation.js';
+import { ModelProviderBadge, useModelProviderAppearances } from '../modelProviderAppearance.js';
+import type { UsageModelProviderAppearance } from '@zeus/shared';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
 import { Button } from '../ui/Button.js';
@@ -439,6 +441,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               onClick={() => select(provider.providerId)}
               onKeyDown={handleTabKeyDown}
             >
+              <ModelProviderBadge sourceId={provider.sourceId} sourceName={provider.name} />
               {providerDisplayName(provider, true)}
             </Button>
           ))}
@@ -643,7 +646,10 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
               onClick={() => props.onSelect(provider.providerId)}
             >
               <span className="menu-bar-usage-provider-copy">
-                <strong data-icon-tooltip={provider.deleted ? fullName : undefined}>{fullName}</strong>
+                <strong className="model-provider-labelled" data-icon-tooltip={provider.deleted ? fullName : undefined}>
+                  <ModelProviderBadge sourceId={provider.sourceId} sourceName={fullName} />
+                  <span>{fullName}</span>
+                </strong>
                 {provider.deleted ? <small>{text.removedStatus}</small> : quotaLabel && <small>{quotaLabel}</small>}
               </span>
               <span className="menu-bar-usage-provider-trend" aria-hidden="true">
@@ -706,7 +712,7 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
 
       <dl className="menu-bar-usage-metrics">
         {metrics.map((metric) => (
-          <Metric key={metric.label} {...metric} language={language} />
+          <Metric key={metric.label} {...metric} language={language} provider={provider} />
         ))}
       </dl>
     </section>
@@ -951,12 +957,12 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
 }
 
 /** 菜单栏指标在名称右侧提供可点击的结构化明细。 */
-function Metric(props: MetricValue & { language: Language }) {
+function Metric(props: MetricValue & { language: Language; provider: UsageProviderSummary }) {
   return (
     <div>
       <dt>
         <span>{props.label}</span>
-        {props.detail ? <MetricDetailPopover detail={props.detail} language={props.language} /> : null}
+        {props.detail ? <MetricDetailPopover detail={props.detail} language={props.language} provider={props.provider} /> : null}
       </dt>
       <dd>{props.value}</dd>
     </div>
@@ -967,7 +973,9 @@ function Metric(props: MetricValue & { language: Language }) {
 type MenuBarUsageCostDetailPayload = Awaited<ReturnType<NonNullable<Window['zeus']>['getMenuBarUsageCostDetail']>>;
 
 /** 指标说明在独立透明窗口中从鼠标左下方展开，不改变菜单栏原生宽度。 */
-function MetricDetailPopover(props: { detail: MetricDetail; language: Language }) {
+function MetricDetailPopover(props: { detail: MetricDetail; language: Language; provider: UsageProviderSummary }) {
+  /** 独立浮窗使用菜单栏已读取的供应商外观。 */
+  const providerAppearance = useModelProviderAppearances().get(props.provider.sourceId);
   const text = copy[props.language];
   /** 每个指标拥有稳定身份，主进程用它保证多个费用指标互斥切换。 */
   const detailId = useId();
@@ -1000,12 +1008,13 @@ function MetricDetailPopover(props: { detail: MetricDetail; language: Language }
       const anchor = pointerAnchorRef.current ?? { x: window.screenX + triggerRect.right, y: window.screenY + triggerRect.bottom };
       pinnedRef.current = pinned;
       setOpen(true);
-      void showWindow({ id: detailId, language: props.language, appearance, anchor, pinned, ...props.detail }).catch((cause: unknown) => {
+      const provider = { sourceId: props.provider.sourceId, sourceName: props.provider.name, templateId: providerAppearance?.templateId, iconDataUrl: providerAppearance?.iconDataUrl };
+      void showWindow({ id: detailId, language: props.language, appearance, anchor, pinned, provider, ...props.detail }).catch((cause: unknown) => {
         setOpen(false);
         console.warn('菜单栏指标明细无法打开。', cause);
       });
     },
-    [detailId, props.detail, props.language],
+    [detailId, props.detail, props.language, props.provider.sourceId, props.provider.name, providerAppearance],
   );
 
   useEffect(() => {
@@ -1153,14 +1162,14 @@ export function MenuBarUsageCostDetailWindow(props: { initialPayload: MenuBarUsa
 function MetricDetailPanel(props: { payload: NonNullable<MenuBarUsageCostDetailPayload> }) {
   const { payload } = props;
   return payload.kind === 'cost' ? (
-    <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} equivalentCost={payload.equivalentCost} />
+    <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} equivalentCost={payload.equivalentCost} provider={payload.provider} />
   ) : (
-    <OutputRateBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} />
+    <OutputRateBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} provider={payload.provider} />
   );
 }
 
 /** 按模型和速度档位展示同一时间范围内加权后的请求输出速率。 */
-function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdown[]; label: string; language: Language }) {
+function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdown[]; label: string; language: Language; provider?: UsageModelProviderAppearance }) {
   /** 列名跟随菜单栏窗口的语言。 */
   const text = copy[props.language];
   return (
@@ -1178,7 +1187,12 @@ function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdow
           <tbody>
             {props.entries.map((entry) => (
               <tr key={JSON.stringify([entry.model, entry.serviceTier])}>
-                <th scope="row">{entry.model}</th>
+                <th scope="row">
+                  <span className="model-provider-labelled">
+                    {props.provider ? <ModelProviderBadge {...props.provider} /> : null}
+                    {entry.model}
+                  </span>
+                </th>
                 <td lang="en">{formatOutputRateServiceTier(entry.serviceTier)}</td>
                 <td>{formatOutputRate(entry.outputTokensPerSecond, props.language)}</td>
               </tr>
@@ -1219,7 +1233,7 @@ function compareModelPriceTiers(left: UsageModelCostBreakdown, right: UsageModel
 }
 
 /** 费用明细按原始模型 ID 分组，每行对应一个计费档位和价格快照。 */
-function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean }) {
+function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean; provider?: UsageModelProviderAppearance }) {
   /** 列名和辅助说明始终跟随当前语言。 */
   const text = copy[props.language];
   /** 独立窗口读取明确的计费口径，不通过标题文字猜测供应商类型。 */
@@ -1252,7 +1266,10 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
                   <tr key={`${model}-${index}`}>
                     {index === 0 ? (
                       <th scope="rowgroup" rowSpan={entries.length}>
-                        {model}
+                        <span className="model-provider-labelled">
+                          {props.provider ? <ModelProviderBadge {...props.provider} /> : null}
+                          {model}
+                        </span>
                       </th>
                     ) : null}
                     {showSpeedContext ? (

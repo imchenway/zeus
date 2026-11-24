@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { modelProviderOption, modelProviderOptionForRef } from '../modelOptionPresentation.js';
 import { defaultInputSuggestionSettings, isCodexServiceTierId, normalizeTaskBranchPrefix, type InputSuggestionModelOption } from '@zeus/shared';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import type { AppShellSettings } from '../apiClient.js';
@@ -230,8 +231,10 @@ export function GeneralSettingsPane(props: {
               }}
               options={[
                 { value: 'conversation', label: zh ? '跟随当前会话模型' : 'Use current conversation model' },
-                ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
-                ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
+                ...suggestionModels.map((model) => ({ value: model.id, label: model.label, ...modelProviderOption(model) })),
+                ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef)
+                  ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true, ...modelProviderOptionForRef(suggestions.modelRef) }]
+                  : []),
               ]}
             />
           </NativeControlRow>

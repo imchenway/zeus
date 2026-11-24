@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { CachedQuery } from '../cachedQuery.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
+import { resolveModelCapability } from '../session/modelSelection.js';
 import type { TaskApiClient } from '../features/tasks/taskApiClient.js';
 import type { CreateTaskStageRequest, TaskRecord, TaskStageDeliverableRecord, TaskStageRecord, TaskWorkflowSnapshot, UpdateTaskStageRequest } from '../features/tasks/taskContracts.js';
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { compareModelOptions } from '../modelOptionPresentation.js';
+import { compareModelOptions, modelProviderOption, modelProviderOptionForRef } from '../modelOptionPresentation.js';
 import { codexCapabilitiesChangedEvent, modelCatalogGeneration } from '../features/integrations/modelCatalogEvents.js';
 
 export type TaskWorkflowClient = Pick<
@@ -327,7 +328,9 @@ function TaskStageItem(props: {
   const [promptDraft, setPromptDraft] = useState(stage.prompt);
   useEffect(() => setPromptDraft(stage.prompt), [stage.id, stage.prompt]);
   const editable = !props.terminalReadOnly && (stage.status === 'pending' || stage.status === 'ready') && stage.attempts.length === 0;
-  const selectedModel = props.models.find((model) => model.id === stage.modelRef);
+  const selectedModel = resolveModelCapability(props.models, stage.modelRef);
+  /** 阶段保留已保存的模型引用，能查到目录时优先使用实际连接图标。 */
+  const selectedModelProvider = selectedModel ? modelProviderOption(selectedModel) : modelProviderOptionForRef(stage.modelRef);
   const latestAttempt = stage.attempts.at(-1);
   const currentDeliverable = [...stage.deliverables].reverse().find((deliverable) => deliverable.status === 'submitted' || deliverable.status === 'accepted');
   const canStart = !props.terminalReadOnly && Boolean(stage.modelRef) && (stage.status === 'ready' || stage.status === 'changes_requested' || stage.status === 'failed');
@@ -336,8 +339,10 @@ function TaskStageItem(props: {
   const modelOptions = props.models
     .filter((model) => model.available !== false)
     .sort(compareModelOptions)
-    .map((model) => ({ value: model.id, label: model.displayName ? `${model.displayName} · ${model.sourceName ?? model.agentKind ?? ''}` : model.id }));
-  if (stage.modelRef && !modelOptions.some((option) => option.value === stage.modelRef)) modelOptions.unshift({ value: stage.modelRef, label: `${stage.modelRef} · ${zh ? '当前配置' : 'Current'}` });
+    .map((model) => ({ value: model.id, label: model.displayName ? `${model.displayName} · ${model.sourceName ?? model.agentKind ?? ''}` : model.id, ...modelProviderOption(model) }));
+  if (stage.modelRef && !modelOptions.some((option) => option.value === stage.modelRef)) {
+    modelOptions.unshift({ value: stage.modelRef, label: `${stage.modelRef} · ${zh ? '当前配置' : 'Current'}`, ...selectedModelProvider });
+  }
   const effortOptions = selectedModel?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
 
   return (
@@ -435,7 +440,14 @@ function TaskStageItem(props: {
           </div>
         ) : (
           <div className="task-workflow-stage-meta">
-            <span>{stage.modelRef || (zh ? '尚未选择模型' : 'No model selected')}</span>
+            {stage.modelRef ? (
+              <span className="model-provider-labelled">
+                {selectedModelProvider.icon}
+                {stage.modelRef}
+              </span>
+            ) : (
+              <span>{zh ? '尚未选择模型' : 'No model selected'}</span>
+            )}
             <span>{stage.effort || (zh ? '默认强度' : 'Default effort')}</span>
             <span>{stage.advanceMode === 'manual' ? (zh ? '人工验收' : 'Manual') : zh ? '自动推进' : 'Auto'}</span>
           </div>

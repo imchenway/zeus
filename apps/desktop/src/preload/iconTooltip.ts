@@ -37,6 +37,8 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
   tooltip.setAttribute('popover', 'manual');
   /** 当前触发器包括工具栏的包裹层和直接标记的按钮。 */
   let active: HTMLElement | null = null;
+  /** 缓存已绘制内容，避免浮层自身的 DOM 变化反复触发更新。 */
+  let contentKey = '';
   /** 无障碍说明挂在实际可聚焦控件上。 */
   let described: HTMLElement | null = null;
   /** 鼠标所属触发器用于判断失焦后是否继续显示。 */
@@ -87,9 +89,20 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
   /** 实测尺寸后限制窗口边界；优先上方，顶部不足时改到下方。 */
   function update(): void {
     if (!active) return;
-    /** 只在文案变化时写入，避免观察器重复触发。 */
+    /** 只有显式标记的模型字段才复制共享图标，其他提示仍用纯文本。 */
     const label = active.getAttribute('data-icon-tooltip') ?? '';
-    if (tooltip.textContent !== label) tooltip.textContent = label;
+    const providerScope = active.getAttribute('data-icon-tooltip-provider') === 'parent' ? active.parentElement : active;
+    const badges = active.hasAttribute('data-icon-tooltip-provider') ? Array.from(providerScope?.querySelectorAll('.model-provider-badge') ?? []) : [];
+    const nextContent = JSON.stringify([label, ...badges.map((badge) => badge.outerHTML)]);
+    if (contentKey !== nextContent) {
+      contentKey = nextContent;
+      tooltip.toggleAttribute('data-model-provider', badges.length > 0);
+      if (badges.length) {
+        const text = document.createElement('span');
+        text.textContent = label;
+        tooltip.replaceChildren(...badges.map((badge) => badge.cloneNode(true)), text);
+      } else tooltip.textContent = label;
+    }
     /** 提示与图标之间留出八像素。 */
     const margin = 8;
     /** 当前触发器在视口中的位置。 */
@@ -128,7 +141,7 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
     tooltip.showPopover();
     update();
     observer.observe(root, { childList: true, subtree: true });
-    observer.observe(trigger, { attributes: true, attributeFilter: ['data-icon-tooltip'] });
+    observer.observe(trigger, { attributes: true, subtree: trigger.hasAttribute('data-icon-tooltip-provider'), attributeFilter: ['data-icon-tooltip', 'data-icon-tooltip-provider', 'data-brand', 'data-initial', 'src'] });
   }
 
   /** 已完整展示的同文提示没有补充信息；图标说明和被裁切的文字继续保留。 */

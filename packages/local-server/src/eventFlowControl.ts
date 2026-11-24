@@ -46,6 +46,7 @@ export const conversationEventTypeRegistry = {
     'conversation.submission.steered',
     'conversation.queue.changed',
     'conversation.settings.changed',
+    'conversation.next_turn_settings.changed',
     'conversation.provider.settings.updated',
     'conversation.provider.token_usage.updated',
     'conversation.goal.updated',

@@ -637,6 +637,7 @@ export function applyRuntimeEndedEventToConversation(conversation: ConversationH
 
 export const nativeConversationListLifecycleEventTypes = new Set([
   'conversation.title.changed',
+  'conversation.next_turn_settings.changed',
   'conversation.transport.changed',
   'conversation.thread.changed',
   'conversation.turn.started',

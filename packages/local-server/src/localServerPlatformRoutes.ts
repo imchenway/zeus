@@ -39,6 +39,7 @@ import {
   type ManagedAgentKind,
   listAiCliAdapters,
   type SelectableConnectionModel,
+  type ModelConnectionRecord,
   modelRef,
   parseModelRef,
 } from '@zeus/ai-runtime';
@@ -991,6 +992,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         id: model.id,
         model: model.model,
         label: `${model.sourceName} · ${model.displayName}`,
+        sourceId: model.sourceId,
         sourceName: model.sourceName,
         displayName: model.displayName,
         supports1MContext: model.supports1MContext,
@@ -1032,6 +1034,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             model: model.model,
             label: `Codex · ${model.displayName || model.model}`,
             sourceName: 'Codex',
+            sourceId: 'codex',
             displayName: model.displayName || model.model,
             supportedReasoningEfforts: model.supportedReasoningEfforts,
             defaultReasoningEffort: model.defaultReasoningEffort,
@@ -4626,7 +4629,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return { items: registry.listAll() };
   });
 
-  server.get('/api/model-connections', async () => ({ items: await modelConnections.list() }));
+  server.get<{ Querystring: { view?: string } }>('/api/model-connections', async (request) => {
+    // 行内图标只需供应商外观，避开密钥状态、价目和完整模型目录。
+    if (request.query.view === 'appearance') return { items: modelConnections.listMetadata().map(({ id, name, templateId, iconDataUrl }: ModelConnectionRecord) => ({ id, name, templateId, iconDataUrl })) };
+    return { items: await modelConnections.list() };
+  });
 
   server.get('/api/zentao-instances', async () => ({ items: await zentaoCredentials.list() }));
 

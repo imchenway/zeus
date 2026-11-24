@@ -17,7 +17,7 @@ import type {
 } from './integrationContracts.js';
 import { jsonRequest, ZeusApiError, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildIntegrationCommandRequest, integrationClientCommandTypes } from './integrationCommandClient.js';
-import { codexCapabilitiesChangedEvent } from './modelCatalogEvents.js';
+import { codexCapabilitiesChangedEvent, notifyModelProviderAppearanceChanged } from './modelCatalogEvents.js';
 
 /** 禅道配置或认证结果变化后，工作区重新读取同一服务端状态。 */
 export const zentaoInstancesChangedEvent = 'zeus-zentao-instances-changed';
@@ -26,6 +26,8 @@ export interface IntegrationApiClient {
   /** 自动识别整份价格页面，返回只读结果。 */
   refreshModelConnectionPricing: (connectionId: string) => Promise<ModelConnectionRecord>;
   loadModelConnections: () => Promise<ModelConnectionRecord[]>;
+  /** 读取供应商外观摘要，不触发凭据或用量查询。 */
+  loadModelConnectionAppearances: () => Promise<import('./integrationContracts.js').ModelConnectionAppearance[]>;
   createModelConnection: (input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   deleteModelConnection: (connectionId: string) => Promise<void>;
@@ -118,6 +120,7 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       background,
     );
     if (typeof window !== 'undefined') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+    if (operation === 'update' || operation === 'delete') notifyModelProviderAppearanceChanged();
     return result;
   };
 
@@ -176,6 +179,7 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     refreshModelConnectionPricing: (connectionId) =>
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionPricingRefresh, 'pricing_refresh', 'POST', '/pricing/refresh', {}) as ReturnType<IntegrationApiClient['refreshModelConnectionPricing']>,
     loadModelConnections: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadModelConnections']>> }>('/api/model-connections')).items,
+    loadModelConnectionAppearances: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadModelConnectionAppearances']>> }>('/api/model-connections?view=appearance')).items,
     createModelConnection: async (input) => {
       const body = await buildIntegrationCommandRequest({
         commandType: integrationClientCommandTypes.modelConnectionCreate,
@@ -184,7 +188,9 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
         operationPrefix: 'model_connection',
         value: input,
       });
-      return transport.request('/api/model-connections', jsonRequest('POST', body));
+      const connection = await transport.request<ModelConnectionRecord>('/api/model-connections', jsonRequest('POST', body));
+      notifyModelProviderAppearanceChanged();
+      return connection;
     },
     updateModelConnection: (connectionId, input) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionUpdate, 'update', 'PUT', '', input) as ReturnType<IntegrationApiClient['updateModelConnection']>,
     deleteModelConnection: (connectionId) => modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionDelete, 'delete', 'DELETE', '', {}) as ReturnType<IntegrationApiClient['deleteModelConnection']>,

@@ -26,6 +26,7 @@ import { modelSetupRequestedEvent, VisibleApplicationError } from '../ui/Applica
 import { Form } from '../ui/Form.js';
 import { Button } from '../ui/Button.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
+import { ModelProviderBadge, modelProviderMenuIcons, useModelProviderAppearanceQuery } from '../modelProviderAppearance.js';
 import { BrowserDownloadsPanel } from './BrowserDownloadsPanel.js';
 
 /** 浏览器正文保持原生视图，标签栏可挂到会话顶栏。 */
@@ -140,6 +141,7 @@ const copy = {
 /** 同步会话标签与原生网页，最后一个标签关闭时退出浏览器工作面。 */
 export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const labels = copy[props.language];
+  const providerQuery = useModelProviderAppearanceQuery();
   /** BrowserOS 直接打开 Chromium 原生管理页。 */
   const nativeBrowser = Boolean(window.zeus?.openNativeBrowserPage);
   const chinese = props.language === 'zh-CN';
@@ -366,6 +368,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     let openedSetup = false;
     setMoreOpen(true);
     try {
+      // 原生菜单使用同一份已保存外观，首次打开时复用在途读取。
+      const providers = await providerQuery?.load().catch(() => providerQuery.getSnapshot().value);
+      const providerIcons = await modelProviderMenuIcons(providers ?? new Map());
       const rect = trigger.getBoundingClientRect();
       const action = await window.zeus!.showBrowserMenu({
         x: rect.left,
@@ -375,6 +380,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         language: props.language,
         canSplit: props.canSplit !== false,
         expanded: Boolean(props.expanded),
+        providerIcons,
       });
       if (action && typeof action === 'object') await command(action);
       else if (action === 'new_tab') await addTab();
@@ -703,11 +709,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                       : labels.translate
               }
               aria-pressed={Boolean(activeTab.translation)}
+              data-icon-tooltip-provider={activeTab.translation?.state === 'ready' && Boolean(activeTab.translation.modelSourceId) ? true : undefined}
               aria-busy={activeTab.translation?.state === 'working'}
               disabled={activeTab.loading || activeTab.crashed || !/^(https?:|file:)/u.test(activeTab.url)}
               onClick={() => command({ action: activeTab.translation && activeTab.translation.state !== 'error' ? 'restore_original' : 'translate' })}
             >
               <Translate aria-hidden="true" weight={activeTab.translation ? 'fill' : 'regular'} />
+              {activeTab.translation?.state === 'ready' && activeTab.translation.modelSourceId ? (
+                <span hidden>
+                  <ModelProviderBadge sourceId={activeTab.translation.modelSourceId} />
+                </span>
+              ) : null}
             </Button>
             <Button
               unstyled

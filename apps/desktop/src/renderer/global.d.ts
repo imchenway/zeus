@@ -72,6 +72,8 @@ type MenuBarUsageDetailBridgeBase = {
   appearance: 'light' | 'dark' | 'system';
   anchor: { x: number; y: number };
   pinned: boolean;
+  /** 所有模型行共享同一个供应商图标，不按条目重复传输图片。 */
+  provider?: import('@zeus/shared').UsageModelProviderAppearance;
 };
 
 /** 费用或模型速率明细使用可判别联合，Renderer 不猜测条目结构。 */
@@ -462,6 +464,8 @@ declare global {
         language: 'zh-CN' | 'en-US';
         canSplit: boolean;
         expanded: boolean;
+        /** 以供应商连接 ID 索引的 2 倍 PNG，由应用 Renderer 绘制。 */
+        providerIcons?: Record<string, string>;
       }) => Promise<
         | 'new_tab'
         | 'close_tab'

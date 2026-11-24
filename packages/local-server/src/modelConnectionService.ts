@@ -10,6 +10,7 @@ import {
   modelConnectionTemplates,
   modelRef,
   normalizeModelConnection,
+  normalizeModelConnectionIcon,
   normalizeStoredModelConnections,
   auditConfiguredModelReasoningLevels,
   probeConfiguredModel,
@@ -203,6 +204,8 @@ export function createModelConnectionService(options: {
     const timestamp = now();
     const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
     if (input.apiKey !== undefined && !apiKey) throw serviceError('ZEUS_MODEL_API_KEY_INVALID', 'API Key 不能为空。', 400);
+    const iconDataUrl = input.iconDataUrl === undefined ? existing?.iconDataUrl : normalizeModelConnectionIcon(input.iconDataUrl);
+    if (input.iconDataUrl != null && !iconDataUrl) throw serviceError('ZEUS_MODEL_CONNECTION_ICON_INVALID', '供应商图标必须是 64 × 64 像素以内的 PNG。', 400);
     const pricingProfile = (input.pricingProfile ?? existing?.pricingProfile)?.trim();
     const pricingUrl = input.pricingUrl === undefined ? existing?.pricingUrl : input.pricingUrl;
     let profile: ReturnType<typeof parseModelPricingProfile> | undefined;
@@ -219,7 +222,7 @@ export function createModelConnectionService(options: {
     const oldPricingCredentialId = existing?.pricingCredentialId;
     const pricingCredentialId = pricingToken ? randomUUID() : profile?.source?.bearer && pricingUrl === existing?.pricingUrl ? oldPricingCredentialId : undefined;
     const record = normalizeModelConnection(
-      { ...input, pricingUrl, pricingProfile },
+      { ...input, pricingUrl, pricingProfile, iconDataUrl },
       {
         id,
         apiKeyConfigured: Boolean(apiKey || existing?.apiKeyConfigured),
@@ -233,16 +236,19 @@ export function createModelConnectionService(options: {
     if (requiresInsecureHttpConfirmation && input.allowInsecureHttp !== true) {
       throw serviceError('ZEUS_MODEL_CONNECTION_INSECURE_HTTP_CONFIRMATION_REQUIRED', 'HTTP 不会加密传输 API Key、请求内容或模型回复，请确认风险后再保存。', 409);
     }
-    const records = readStored();
-    const index = records.findIndex((candidate) => candidate.id === id);
-    if (index >= 0) records[index] = record;
-    else records.push(record);
     if (apiKey) {
       await options.secretStore.setSecret(modelConnectionSecretAccount(id), apiKey);
       credentialStatus.delete(id);
     }
     if (pricingToken && pricingCredentialId) await options.secretStore.setSecret(pricingSecretAccount(pricingCredentialId), pricingToken);
     try {
+      // 在异步凭据写入后合并当前配置，未修改图标的保存保留最新图标。
+      const records = readStored();
+      const index = records.findIndex((candidate) => candidate.id === id);
+      if (index >= 0) {
+        if (input.iconDataUrl === undefined) record.iconDataUrl = records[index]?.iconDataUrl;
+        records[index] = record;
+      } else records.push(record);
       await write(records);
     } catch (error) {
       if (pricingToken && pricingCredentialId) await options.secretStore.deleteSecret(pricingSecretAccount(pricingCredentialId)).catch(() => undefined);

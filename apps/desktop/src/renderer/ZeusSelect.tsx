@@ -11,6 +11,8 @@ export interface ZeusSelectOption<T extends string> {
   label: string;
   /** 身份类选项可提供头像，名称仍作为搜索与无障碍标签。 */
   icon?: ReactNode;
+  /** 模型选中值与展开项显示同一个供应商图标。 */
+  showIconInTrigger?: boolean;
   color?: string;
   disabled?: boolean;
   group?: string;
@@ -196,6 +198,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   const multiple = props.selectedValues !== undefined;
   const searchable = props.searchable ?? props.options.length > 8;
   const selectedOption = props.options.find((option) => option.value === props.value);
+  const triggerIcon = (selectedOption?.showIconInTrigger ? selectedOption.icon : undefined) ?? props.triggerIcon;
   const [open, setOpen] = useState(false);
   /** 下拉关闭立即结束交互，视觉内容在退出过渡结束后卸载。 */
   const { ref: popoverRef, present: popoverPresent } = useMotionPresence<HTMLSpanElement>(open);
@@ -589,6 +592,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                       disabled={option.disabled}
                       data-value={option.value}
                       data-icon-tooltip={optionLabel}
+                      data-icon-tooltip-provider={option.showIconInTrigger || undefined}
                       onFocus={() => setActiveValue(option.value)}
                       onClick={() => selectOption(option.value)}
                       onKeyDown={(event) => handleOptionKeyDown(event, option)}
@@ -614,6 +618,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                         className="zeus-select-pin"
                         aria-label={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
                         data-icon-tooltip={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
+                        data-icon-tooltip-provider={option.showIconInTrigger ? 'parent' : undefined}
                         aria-pressed={pinned}
                         onClick={(event) => togglePin(option, event.currentTarget)}
                       >
@@ -661,13 +666,14 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         aria-controls={props.pinning ? `${rootId}-dialog` : listboxId}
         aria-activedescendant={open && !props.pinning ? activeOptionId : undefined}
         data-icon-tooltip={props.triggerTooltip || props.triggerTitle}
+        data-icon-tooltip-provider={selectedOption?.showIconInTrigger || undefined}
         disabled={props.disabled}
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
         onKeyDown={handleTriggerKeyDown}
       >
-        {props.triggerIcon ? (
+        {triggerIcon ? (
           <span className="zeus-select-trigger-icon" aria-hidden="true">
-            {props.triggerIcon}
+            {triggerIcon}
           </span>
         ) : null}
         {selectedOption?.color ? <span className="zeus-select-value-color" style={{ backgroundColor: selectedOption.color }} aria-hidden="true" /> : null}

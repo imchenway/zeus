@@ -18,6 +18,7 @@ export * from './codexUsage.js';
 /** 会话和独立生成入口共用 Codex 加速档位。 */
 export * from './codexServiceTier.js';
 export * from './modelPricing.js';
+export * from './modelRef.js';
 export * from './meteredPricing.js';
 export * from './modelPricingProfile.js';
 export * from './commandEnvelope.js';

@@ -2,6 +2,8 @@ import { describeUserFacingError } from '@zeus/shared';
 import { Profiler, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
+import { ModelProviderAppearanceScope } from './modelProviderAppearance.js';
+import './modelProviderAppearance.css';
 import { createDashboardClient, type DashboardClient, type WorkspaceSnapshot, type ExecutionHostTransition, type ReadOnlyValidationIdentity, ZeusApiError } from './apiClient.js';
 import { openSourceInMain, revealProjectInFinderInMain } from './appShellBridge.js';
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
@@ -64,7 +66,7 @@ async function renderWithClient(
   startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   reactRoot.render(
-    <>
+    <ModelProviderAppearanceScope client={client}>
       {readOnlyValidation ? (
         <aside
           data-zeus-read-only-validation="true"
@@ -329,7 +331,7 @@ async function renderWithClient(
         <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
-    </>,
+    </ModelProviderAppearanceScope>,
   );
 }
 
@@ -341,13 +343,13 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
   startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
-    <>
+    <ModelProviderAppearanceScope client={client}>
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'MenuBarUsageWindow')}>
         <MenuBarUsageWindow client={client} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} />
         <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
-    </>,
+    </ModelProviderAppearanceScope>,
   );
 }
 
@@ -421,13 +423,13 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
   startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
-    <>
+    <ModelProviderAppearanceScope client={client}>
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'TaskGitDeliveryWindow')}>
         <TaskGitDeliveryWindow client={client} scope={scope} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} initialCurrentContext={currentContext} />
         <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
-    </>,
+    </ModelProviderAppearanceScope>,
   );
 }
 

@@ -99,7 +99,7 @@ import {
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, readDesktopReleaseUpdateStatus, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { completeWindowsReleaseInstall } from './windowsReleaseInstaller.js';
 import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
-import { businessProcessEnvironment, codexRemoteControlBootstrapTimeoutMs, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
+import { businessProcessEnvironment, codexRemoteControlBootstrapTimeoutMs, normalizeModelConnectionIcon, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget, type ReserveAutomaticCodexUpdate } from './automaticUpdateScheduler.js';
@@ -476,6 +476,8 @@ type MenuBarUsageCostDetailPayload = {
   pinned: boolean;
   /** 明确传递 Codex 订阅的等价费用口径，独立明细窗口不猜测标题语义。 */
   equivalentCost: boolean;
+  /** 模型用量表的供应商身份及可选本地图标。 */
+  provider?: import('@zeus/shared').UsageModelProviderAppearance;
 };
 
 /** 托盘所在屏幕、锚点来源和计算后的原生窗口边界。 */
@@ -3340,6 +3342,17 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
   if (typeof candidate.pinned !== 'boolean') throw new TypeError('菜单栏费用明细固定状态无效。');
   if (candidate.equivalentCost !== undefined && typeof candidate.equivalentCost !== 'boolean') throw new TypeError('菜单栏费用明细计费口径无效。');
   if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > 256 * 1024) throw new TypeError('菜单栏费用明细数据过大。');
+  const rawProvider = candidate.provider && typeof candidate.provider === 'object' && !Array.isArray(candidate.provider) ? (candidate.provider as Record<string, unknown>) : null;
+  /** 明细允许缺失供应商，只有明确身份与安全的本地图片才传给独立窗口。 */
+  const provider =
+    rawProvider && typeof rawProvider.sourceId === 'string' && typeof rawProvider.sourceName === 'string'
+      ? {
+          sourceId: rawProvider.sourceId.slice(0, 240),
+          sourceName: rawProvider.sourceName.slice(0, 200),
+          templateId: typeof rawProvider.templateId === 'string' ? rawProvider.templateId.slice(0, 24) : undefined,
+          iconDataUrl: normalizeModelConnectionIcon(rawProvider.iconDataUrl),
+        }
+      : undefined;
   return {
     id,
     label,
@@ -3350,6 +3363,7 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
     anchor: { x: anchor.x, y: anchor.y },
     pinned: candidate.pinned,
     equivalentCost: candidate.equivalentCost === true,
+    provider,
   };
 }
 

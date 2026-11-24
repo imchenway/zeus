@@ -180,9 +180,11 @@ export function registerConversationCommandRoutes(options: {
         resourceId: request.params.conversationId,
         mutateBusinessState: () => {
           const conversation = requireNativeConversation(request.params, true);
-          const previousPermissionMode = options.conversations.getNextTurnSettings(conversation.id)?.permissionMode ?? conversation.permissionMode;
+          const previous = options.conversations.getNextTurnSettings(conversation.id);
+          const previousPermissionMode = previous?.permissionMode ?? conversation.permissionMode;
           if (previousPermissionMode !== settings.permissionMode) options.conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, false);
           options.conversations.updateNextTurnSettings(conversation.id, settings);
+          if (previous?.model !== settings.model) options.publishNativeEvent('conversation.next_turn_settings.changed', { conversationId: conversation.id, projectId: conversation.projectId });
           return settings;
         },
       });

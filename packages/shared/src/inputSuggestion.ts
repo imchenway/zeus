@@ -28,6 +28,8 @@ export interface InputSuggestionModelOption {
   model?: string;
   /** 供应商名称，用于列表分组。 */
   sourceName?: string;
+  /** 供应商连接 ID，用于区分同名模型的图标。 */
+  sourceId?: string;
   /** 模型名称，不含供应商前缀。 */
   displayName?: string;
   /** 目录确认是否支持百万 Token 上下文。 */

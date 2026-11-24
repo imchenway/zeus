@@ -1,10 +1,15 @@
 import { TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
+import { parseModelRef } from '@zeus/shared';
+import { ModelProviderBadge } from '../../modelProviderAppearance.js';
 import type { TaskWorkPreview } from './digitalEmployeeContracts.js';
 
 /** 展示服务端解析结果，界面不重新计算配置或记忆。 */
 export function EmployeeExecutionPreview(props: { preview: TaskWorkPreview; language: 'zh-CN' | 'en-US' }) {
   /** 来源来自本次服务端预检。 */
   const sources = (props.preview.entrypoint?.configurationSources ?? {}) as Record<string, string>;
+  /** 已解析的模型配置提供实际供应商身份。 */
+  const model = props.preview.model;
+  const modelSource = typeof model?.sourceId === 'string' ? model.sourceId : parseModelRef(typeof model?.id === 'string' ? model.id : '')?.sourceId;
   /** 预览使用会话相同的权限名称，避免展示内部枚举。 */
   const permissionLabels: Record<string, string> = { 'read-only': '只读', auto: '请求批准', 'auto-review': '替我批准', 'full-access': '完全访问' };
   /** 最终值与来源并排，便于核对节点覆盖。 */
@@ -31,7 +36,16 @@ export function EmployeeExecutionPreview(props: { preview: TaskWorkPreview; lang
           {values.map(([key, label, value]) => (
             <tr key={key}>
               <th scope="row">{label}</th>
-              <td>{String(value ?? '默认')}</td>
+              <td>
+                {key === 'modelOverride' && model ? (
+                  <span className="model-provider-labelled">
+                    <ModelProviderBadge sourceId={modelSource} />
+                    {String(value ?? '默认')}
+                  </span>
+                ) : (
+                  String(value ?? '默认')
+                )}
+              </td>
               <td>{sources[key] ?? '项目或模型默认'}</td>
             </tr>
           ))}

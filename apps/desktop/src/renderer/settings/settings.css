@@ -857,6 +857,36 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* 图标和名称共用行首，较窄面板只收缩名称。 */
+  .model-connection-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-inline-size: 0;
+  }
+  .model-connection-name > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .model-connection-list > button small {
+    padding-inline-start: 28px;
+  }
+  .model-connection-icon-editor {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .model-connection-icon-editor .model-provider-badge {
+    --model-provider-size: 28px;
+  }
+  .model-connection-icon-editor > p {
+    flex: 1 0 100%;
+    margin: 0;
+    color: var(--zeus-product-danger, #b4232d);
+    font-size: 12px;
+  }
   .model-connection-list > button em {
     font-size: 11px;
     font-style: normal;

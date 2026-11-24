@@ -35,7 +35,7 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { presentModelOptions } from '../modelOptionPresentation.js';
+import { modelProviderOptionForRef, presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
@@ -773,7 +773,9 @@ export function TaskModelPushModal(props: {
   const runtimeCapabilities = props.capabilities ?? props.runtimeCapabilities;
   const codexAccount = props.runtimeCapabilities?.codexAccount ?? props.capabilities?.codexAccount;
   const requestedModel = resolveModelCapability(runtimeCapabilities?.models, props.form.model);
-  const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], requestedModel?.id ?? props.form.model, props.language), [props.form.model, props.language, requestedModel?.id, runtimeCapabilities?.models]);
+  /** 目录选项使用稳定引用，历史型号已解析时也用它匹配选中项。 */
+  const modelValue = requestedModel?.id ?? props.form.model;
+  const modelPresentation = useMemo(() => presentModelOptions(runtimeCapabilities?.models ?? [], modelValue, props.language), [modelValue, props.language, runtimeCapabilities?.models]);
   // 目录变化不能静默替换用户选中的模型；失效时保留原选择并请求处理。
   const selectedModel = requestedModel?.available === false ? undefined : requestedModel;
   if (!props.open || !props.task) return null;
@@ -942,10 +944,11 @@ export function TaskModelPushModal(props: {
                 <ZeusSelect
                   size="regular"
                   ariaLabel={zh ? '模型' : 'Model'}
-                  value={props.form.model}
+                  value={modelValue}
                   options={modelPresentation.options}
                   pinning={modelPresentation.pinning}
                   triggerLabel={selectedModel ? modelPresentation.triggerLabel : props.form.model || (zh ? '选择或接入模型' : 'Choose or connect a model')}
+                  triggerIcon={modelValue ? modelProviderOptionForRef(modelValue).icon : undefined}
                   onChange={onModelChange}
                   disabled={!runtimeCapabilities || modelPresentation.options.length === 0 || busy || Boolean(props.form.stageId)}
                   searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}

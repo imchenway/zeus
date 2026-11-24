@@ -92,7 +92,7 @@ export interface ZeusBrowserTabSnapshot {
   crashed: boolean;
   annotationMode: boolean;
   /** 译文只属于当前文档；刷新或导航后重新由用户开启。 */
-  translation?: { state: 'working' | 'ready' | 'error'; serviceLabel: string; message?: string };
+  translation?: { state: 'working' | 'ready' | 'error'; serviceLabel: string; modelSourceId?: string; message?: string };
   comments: ZeusBrowserComment[];
   createdAt: string;
   updatedAt: string;

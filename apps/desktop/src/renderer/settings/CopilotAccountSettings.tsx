@@ -5,6 +5,7 @@ import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { ModelProviderIdentity } from './ModelProviderIdentity.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
 import { copyText } from '../ui/clipboard.js';
 
 /** 模型供应商页内的 GitHub Copilot 账号和设备码登录入口。 */
@@ -279,7 +280,12 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
           </strong>
           <ul>
             {availableModels.map((model) => (
-              <li key={model.id}>{model.name || model.id}</li>
+              <li key={model.id}>
+                <span className="model-provider-labelled">
+                  <ModelProviderBadge sourceId="copilot" />
+                  {model.name || model.id}
+                </span>
+              </li>
             ))}
           </ul>
         </section>
