@@ -176,8 +176,7 @@ export const defaultTaskManagementStatusLabels: Record<'zh-CN' | 'en-US', Record
 /** 优先使用内置待发布状态；旧配置可能使用同名的自定义状态。 */
 export function findAwaitingReleaseTaskStatus(statuses: readonly TaskManagementStatusDefinition[]): TaskManagementStatusDefinition | undefined {
   return (
-    statuses.find((status) => status.id === 'awaiting_release') ??
-    statuses.find(({ label }) => label === defaultTaskManagementStatusLabels['zh-CN'].awaiting_release || label === defaultTaskManagementStatusLabels['en-US'].awaiting_release)
+    statuses.find((status) => status.id === 'awaiting_release') ?? statuses.find(({ label }) => label === defaultTaskManagementStatusLabels['zh-CN'].awaiting_release || label === defaultTaskManagementStatusLabels['en-US'].awaiting_release)
   );
 }
 

@@ -1214,8 +1214,7 @@ const costServiceTierRanks = new Map<UsageModelCostBreakdown['serviceTier'], num
 /** 模型内先按速度、再按上下文排序；相同组合保留账本传入的明细顺序。 */
 function compareModelPriceTiers(left: UsageModelCostBreakdown, right: UsageModelCostBreakdown): number {
   /** 未知档位排在已知档位之后，再按其供应商标识排列。 */
-  const rankDifference = (costServiceTierRanks.get(left.serviceTier) ?? costServiceTierRanks.size) -
-    (costServiceTierRanks.get(right.serviceTier) ?? costServiceTierRanks.size);
+  const rankDifference = (costServiceTierRanks.get(left.serviceTier) ?? costServiceTierRanks.size) - (costServiceTierRanks.get(right.serviceTier) ?? costServiceTierRanks.size);
   return rankDifference || (left.serviceTier ?? '').localeCompare(right.serviceTier ?? '', 'en') || Number(left.longContext) - Number(right.longContext);
 }
 
@@ -1251,7 +1250,11 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
                 const estimatedCost = formatModelEstimatedCost(entry, props.language);
                 return (
                   <tr key={`${model}-${index}`}>
-                    {index === 0 ? <th scope="rowgroup" rowSpan={entries.length}>{model}</th> : null}
+                    {index === 0 ? (
+                      <th scope="rowgroup" rowSpan={entries.length}>
+                        {model}
+                      </th>
+                    ) : null}
                     {showSpeedContext ? (
                       <td lang="en">
                         {entry.serviceTier ? <span>{formatModelPriceTier(entry.serviceTier)}</span> : null}
