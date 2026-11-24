@@ -9,6 +9,7 @@ import {
   normalizeSidebarConversationFilters,
   normalizeTaskBranchPrefix,
   normalizeTaskManagementStatusConfig,
+  taskManagementStatusOrder,
   type NetworkProxySettings,
   type ProjectCodeWorkspacePreference,
   type SidebarConversationFilters,
@@ -129,7 +130,7 @@ const legacyTaskTableColumnWidthScale = {
 } as const;
 const defaultTaskTableEnumSortOrders: TaskTableEnumSortOrders = {
   priority: ['p0', 'p1', 'p2', 'p3', 'p4'],
-  managementStatus: ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'],
+  managementStatus: [...taskManagementStatusOrder],
   runStatus: ['not_started', 'connecting', 'reconnecting', 'running', 'waiting_user', 'waiting_approval', 'paused', 'idle', 'failed', 'legacy_readonly'],
 };
 const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [

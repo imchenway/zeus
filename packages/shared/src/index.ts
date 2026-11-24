@@ -132,8 +132,8 @@ export interface TaskWorkspaceConflictRecovery {
 /** 任务管理阶段与 Coding Agent 执行状态严格分离；状态标识由全局配置持有，不再限制为固定联合类型。 */
 export type TaskManagementStatus = string;
 
-/** 旧项目与新项目默认模板继续沿用现有七个状态，保存行为兼容且不改变用户已有任务。 */
-export const taskManagementStatusOrder = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'] as const;
+/** 内置状态按任务管理阶段排列，待发布位于完成之前。 */
+export const taskManagementStatusOrder = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'awaiting_release', 'completed', 'cancelled'] as const;
 
 export interface TaskManagementStatusDefinition {
   id: TaskManagementStatus;
@@ -155,21 +155,31 @@ export interface TaskManagementStatusConfig {
   roles: TaskManagementStatusRoles;
 }
 
+/** 内置状态的主色，用于菜单色点和状态选中样式。 */
 const defaultTaskManagementStatusColors: Record<(typeof taskManagementStatusOrder)[number], string> = {
   todo: '#6b7280',
   in_development: '#3b82f6',
   in_testing: '#8b5cf6',
   awaiting_acceptance: '#d97706',
   blocked: '#dc2626',
+  awaiting_release: '#0891b2',
   completed: '#16a34a',
   cancelled: '#6b7280',
 };
 
 /** 内置状态的默认文案；空文案与这两种已保存的默认文案表达同一状态。 */
 export const defaultTaskManagementStatusLabels: Record<'zh-CN' | 'en-US', Record<string, string>> = {
-  'zh-CN': { todo: '待开始', in_development: '开发中', in_testing: '测试中', awaiting_acceptance: '待验收', blocked: '已阻塞', completed: '已完成', cancelled: '已取消' },
-  'en-US': { todo: 'To do', in_development: 'In development', in_testing: 'In testing', awaiting_acceptance: 'Awaiting acceptance', blocked: 'Blocked', completed: 'Completed', cancelled: 'Cancelled' },
+  'zh-CN': { todo: '待开始', in_development: '开发中', in_testing: '测试中', awaiting_acceptance: '待验收', blocked: '已阻塞', awaiting_release: '待发布', completed: '已完成', cancelled: '已取消' },
+  'en-US': { todo: 'To do', in_development: 'In development', in_testing: 'In testing', awaiting_acceptance: 'Awaiting acceptance', blocked: 'Blocked', awaiting_release: 'Awaiting release', completed: 'Completed', cancelled: 'Cancelled' },
 };
+
+/** 优先使用内置待发布状态；旧配置可能使用同名的自定义状态。 */
+export function findAwaitingReleaseTaskStatus(statuses: readonly TaskManagementStatusDefinition[]): TaskManagementStatusDefinition | undefined {
+  return (
+    statuses.find((status) => status.id === 'awaiting_release') ??
+    statuses.find(({ label }) => label === defaultTaskManagementStatusLabels['zh-CN'].awaiting_release || label === defaultTaskManagementStatusLabels['en-US'].awaiting_release)
+  );
+}
 
 /** 新建状态在用户命名前使用系统提供的占位名。 */
 export const newTaskManagementStatusLabels = { 'zh-CN': '新状态', 'en-US': 'New status' } as const;
@@ -281,8 +291,8 @@ export function normalizeTaskManagementStatusConfig(value: unknown, fallback: Ta
     const color = typeof definition.color === 'string' && taskManagementStatusColorPattern.test(definition.color) ? definition.color.toLowerCase() : '#6b7280';
     statuses.push({ id: definition.id, label, color });
     seen.add(definition.id);
-    // 全局集合需容纳旧项目各自最多 32 项的状态，避免统一时丢失已有自定义状态。
-    if (statuses.length >= 3232) break;
+    // 全局集合保留原有状态容量，并为待发布状态留出一项。
+    if (statuses.length >= 3233) break;
   }
   if (statuses.length === 0) return normalizedFallback;
   const firstStatusId = statuses[0].id;

@@ -1,4 +1,4 @@
-import { describeUserFacingError, type UserFacingErrorLanguage } from '@zeus/shared';
+import { describeUserFacingError, formatTaskManagementStatusLabel, type UserFacingErrorLanguage } from '@zeus/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve } from 'node:path';
@@ -2288,17 +2288,11 @@ function positiveSafeInteger(value: string | undefined): number | null {
   return Number.isSafeInteger(number) ? number : null;
 }
 
+/** 保留 Telegram 的待开始和阻塞文案，其余状态与桌面共享默认名称。 */
 function formatTaskManagementStatus(language: UserFacingErrorLanguage, status: string): string {
-  const labels: Record<string, string> = {
-    todo: imText(language, '待开始', 'Not started'),
-    in_development: imText(language, '开发中', 'In development'),
-    in_testing: imText(language, '测试中', 'In testing'),
-    awaiting_acceptance: imText(language, '待验收', 'Awaiting acceptance'),
-    blocked: imText(language, '需要处理', 'Needs attention'),
-    completed: imText(language, '已完成', 'Completed'),
-    cancelled: imText(language, '已取消', 'Cancelled'),
-  };
-  return labels[status] ?? status;
+  if (status === 'todo') return imText(language, '待开始', 'Not started');
+  if (status === 'blocked') return imText(language, '需要处理', 'Needs attention');
+  return formatTaskManagementStatusLabel({ id: status, label: null }, language === 'zh-CN' ? 'zh-CN' : 'en-US');
 }
 
 function formatTaskRuntimeStatus(language: UserFacingErrorLanguage, status: ZeusTaskRecord['status']): string {

@@ -1,4 +1,4 @@
-import { matchesTaskDeadline, isTaskDeadlineFilter, type TaskDeadlineFilter } from '@zeus/shared';
+import { defaultTaskManagementStatusConfig, findAwaitingReleaseTaskStatus, matchesTaskDeadline, isTaskDeadlineFilter, type TaskDeadlineFilter } from '@zeus/shared';
 import './task-deadline.css';
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
@@ -32,7 +32,6 @@ import {
   resolveTaskAgentRunStatus,
   resolveTaskBranchStatus,
   type TaskAgentRunStatus,
-  taskManagementStatuses,
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
 import { TaskDataTable } from './TaskDataTable.js';
@@ -311,9 +310,10 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     }),
     [props.copy],
   );
-  const configuredStatusOptions = props.statusDefinitions.map((status) => status.id);
-  const bulkStatusOptions = configuredStatusOptions.length > 0 ? configuredStatusOptions : taskManagementStatuses;
-  const statusColorById = new Map(props.statusDefinitions.map((status) => [status.id, status.color]));
+  /** 状态配置尚未加载时，筛选与批量操作沿用内置状态。 */
+  const statusDefinitions = props.statusDefinitions.length ? props.statusDefinitions : defaultTaskManagementStatusConfig.statuses;
+  const bulkStatusOptions = statusDefinitions.map((status) => status.id);
+  const statusColorById = new Map(statusDefinitions.map((status) => [status.id, status.color]));
   const statusLabel = (status: TaskStatusFilter) =>
     status === 'unfinished' ? props.copy.unfinishedStatusFilter : status === '' ? props.statusLabels[''] || (props.copy.taskCountPrefix === 'Tasks' ? 'All' : '全部') : props.statusLabels[status] || formatTaskManagementStatus(status);
   const bulkTargetEligibility = model.bulkStatusEligibility[bulkTargetStatus] ?? { targetStatus: bulkTargetStatus, eligibleTaskIds: [], skippedTaskIds: [] };
@@ -328,7 +328,11 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     [props.conversationRunStatuses, props.taskConversations, props.tasks],
   );
   const boardBranchStatuses = useMemo(() => Object.fromEntries(props.tasks.map((task) => [task.id, resolveTaskBranchStatus(props.taskConversations?.[task.id] ?? [])])), [props.taskConversations, props.tasks]);
-  const statusSegmentOptions: TaskStatusFilter[] = [...(props.statusOptions.includes('') ? ([''] as const) : []), ...(props.statusOptions.includes('unfinished') ? (['unfinished'] as const) : []), ...bulkStatusOptions].slice(0, 5);
+  /** 保留前五个快捷筛选，并补上排在后面的待发布状态。 */
+  const statusSegmentOptions: TaskStatusFilter[] = [...props.statusOptions.filter((status) => status === '' || status === 'unfinished'), ...bulkStatusOptions].slice(0, 5);
+  /** 使用配置中的实际标识筛选同名自定义状态下的任务。 */
+  const releaseStatus = findAwaitingReleaseTaskStatus(statusDefinitions);
+  if (releaseStatus && !statusSegmentOptions.includes(releaseStatus.id)) statusSegmentOptions.push(releaseStatus.id);
   const isEnglishCopy = props.copy.taskCountPrefix === 'Tasks';
   const showTaskStatusLine = taskListLoading || taskListError;
   const statusLineTitle = taskListLoading ? props.copy.taskListLoadingTitle : props.copy.taskListErrorTitle;
