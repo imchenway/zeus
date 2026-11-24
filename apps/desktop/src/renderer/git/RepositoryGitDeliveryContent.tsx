@@ -13,7 +13,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
-import { notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
+import { notifyProjectGitChanged, unavailableGitRepositoriesNotice, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import { useGitDeliveryRefresh } from './useGitDeliveryRefresh.js';
 import { useGitDiffReadAhead, useGitDeliveryFileDiff, type GitDiffRead, type GitDiffReadTarget } from './gitDiffReadAhead.js';
 import {
@@ -85,6 +85,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   }
   /** 仓库快照在原生交付窗口内读取，包含当前分支、文件和提交事实。 */
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
+  /** 复用现有状态栏显示未能读取的工作树。 */
+  const unavailableNotice = unavailableGitRepositoriesNotice(snapshot, zh);
   /** 每个仓库独立保存窗口内的显式目标，刷新不覆盖用户选择。 */
   const [selectedTargetBranches, setSelectedTargetBranches] = useState<Record<string, string>>({});
   /** 接纳结果未知时，相同输入复用原请求身份。 */
@@ -567,9 +569,9 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
           </Button>
         </div>
       ) : null}
-      {snapshot && error ? (
-        <div className="task-git-merge-status is-error" role="alert">
-          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+      {snapshot && (error || unavailableNotice) ? (
+        <div className={`task-git-merge-status ${error ? 'is-error' : 'is-warning'}`} role={error ? 'alert' : 'status'}>
+          {error ? <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} /> : <span style={{ overflowWrap: 'anywhere' }}>{unavailableNotice}</span>}
           <Button variant="secondary" size="compact" onClick={() => refresh()} disabled={Boolean(busyAction)}>
             {zh ? '重新读取' : 'Retry'}
           </Button>

@@ -164,31 +164,36 @@ export async function removeConversationWorktrees(db: ZeusDatabase, plans: Conve
 }
 
 /** 恢复会话或续发时重建已回收的 Git 成员，已有目录交回原有身份校验。 */
-export async function restoreConversationWorktrees(ports: ConversationWorktreeLifecyclePorts, conversation: ZeusConversationRecord): Promise<void> {
+export async function restoreConversationWorktrees(ports: ConversationWorktreeLifecyclePorts, conversation: ZeusConversationRecord, beforeWorkspaceWrite?: () => void): Promise<void> {
   if (conversation.workspaceId || conversation.environmentId) return;
   const context = conversationExecutionWorkspace(conversation.id, ports.conversationSubmissions);
   if (context?.executionWorkspaceMode === 'direct' || typeof context?.projectLocalPath !== 'string') return;
   const recovery = new ConversationWorktreeRecoveryRepository(ports.db);
   const plans = recovery.list(conversation.projectId, resolve(context.projectLocalPath));
   if (!plans.length) return;
+  /** 恢复条件不满足时保留原原因，让任务命令识别可跳过的自动恢复目标。 */
+  const unavailable = (message: string, cause?: unknown) => Object.assign(new Error(message, { cause }), { code: 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE' });
   const project = ports.projects.getById(conversation.projectId);
-  if (!project) throw new Error('会话所属项目不存在，无法恢复工作树。');
+  if (!project) throw unavailable('会话所属项目不存在，无法恢复工作树。');
   /** 项目目录变更后必须重新验证来源，不能凭历史快照恢复到其他项目仓库。 */
-  const sources = await discoverGitRepositories(project.localPath);
-  if (plans.some((plan) => !sources.some((source) => resolve(source.localPath) === resolve(plan.repositoryPath)))) throw new Error('来源仓库已变化，无法恢复会话工作树。');
+  const sources = await discoverGitRepositories(project.localPath).catch((cause: unknown) => {
+    throw unavailable('来源仓库不可用，无法恢复会话工作树。', cause);
+  });
+  if (plans.some((plan) => !sources.some((source) => resolve(source.localPath) === resolve(plan.repositoryPath)))) throw unavailable('来源仓库已变化，无法恢复会话工作树。');
   for (const plan of plans) {
     if (await pathExists(plan.worktreePath)) {
       /** 文件和符号链接不能作为恢复目标，避免写入其他目录。 */
-      if (!(await lstat(plan.worktreePath)).isDirectory()) throw new Error('原工作树目录已被其他内容占用，恢复记录已保留。');
+      if (!(await lstat(plan.worktreePath)).isDirectory()) throw unavailable('原工作树目录已被其他内容占用，恢复记录已保留。');
       /** 父仓检出会生成空的子模块目录；空目录继续重建，非空目录必须已有 Git 根身份。 */
       if ((await readdir(plan.worktreePath)).length > 0) {
         const repository = await getGitRepositoryContext(plan.worktreePath);
-        if (!repository.isRepository || resolve(repository.topLevel) !== resolve(plan.worktreePath)) throw new Error('原工作树目录已被其他内容占用，恢复记录已保留。');
+        if (!repository.isRepository || resolve(repository.topLevel) !== resolve(plan.worktreePath)) throw unavailable('原工作树目录已被其他内容占用，恢复记录已保留。');
         continue;
       }
     }
     if (plan.branchName) {
       const source = await getGitRepositoryContext(plan.repositoryPath);
+      beforeWorkspaceWrite?.();
       await prepareTaskWorktree({
         repositoryPath: plan.repositoryPath,
         repositoryContext: source,
@@ -204,11 +209,13 @@ export async function restoreConversationWorktrees(ports: ConversationWorktreeLi
         existingBranch: true,
       });
     } else {
+      beforeWorkspaceWrite?.();
       await execute('git', ['worktree', 'add', '--detach', plan.worktreePath, plan.headSha], { cwd: plan.repositoryPath, timeout: 30_000 });
     }
   }
   await resolveConversationGitWorkspace(project, conversation.id, ports.conversations, ports.conversationSubmissions);
   /** 全部工作树恢复并核验后，释放已结束回收记录的提交引用。 */
+  beforeWorkspaceWrite?.();
   for (const plan of plans) {
     const { stdout } = await execute('git', ['for-each-ref', '--format=%(refname)', recoveryReferencePrefix(plan)], { cwd: plan.repositoryPath, timeout: 30_000 });
     for (const reference of stdout.trim().split(/\r?\n/).filter(Boolean)) {

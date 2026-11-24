@@ -810,6 +810,8 @@ const taskEventCopy: Readonly<Record<string, readonly [string, string]>> = {
   'task.model_push.started': ['任务已加入 AI 对话', 'Task added to an AI conversation'],
   'task.model_push.turn_not_started': ['对话已创建，AI 尚未开始处理', 'Conversation created; AI processing has not started'],
   'task.conversation.worktree.rehydrated': ['任务工作目录已恢复', 'Task working folder restored'],
+  /** 仅自动恢复中确认目录不可用的会话保持归档。 */
+  'task.conversation.restore.skipped': ['工作目录不可用，相关会话保持归档', 'Conversations remain archived because their working folders are unavailable'],
   'task.work_item.automation_created': ['自动化已创建工作项', 'Automation created a work item'],
   'task.digital_employee.started': ['数字员工已开始处理任务', 'Digital employee started the task'],
   'task.digital_employee.stage_output_ready': ['阶段方案已生成，等待确认', 'Stage plan ready for review'],

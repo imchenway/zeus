@@ -774,6 +774,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['contextWindowExceeded', 'context_length_exceeded'],
     ['对话内容超过了模型可处理的长度，无法继续这次请求。请缩短输入或选择容量更大的模型。', 'The conversation exceeds the model’s length limit. Shorten the input or choose a model with a larger context window.', 'choose_model'],
   ],
+  [['ZEUS_CODEX_INPUT_TOO_LONG'], ['本次输入超过了 Codex 的长度上限。请减少输入内容。', 'This input exceeds the Codex length limit. Reduce the amount of input.']],
+  [['ZEUS_CODEX_CYBER_POLICY'], ['Codex 安全策略已阻止这次请求。', 'Codex security policy blocked this request.']],
   [
     ['httpConnectionFailed', 'responseStreamConnectionFailed'],
     ['未能连接 AI 服务。请检查网络和连接设置后重试。', 'Could not connect to the AI service. Check the network and connection settings, then retry.', 'model_settings'],

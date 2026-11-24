@@ -355,7 +355,9 @@ export class WorkManagementCommandApplication {
     externalOperationId: string;
     mutatePreparedBusinessState?(): void;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TInvoked>;
+    /** 调用方在实际资源修改之前记录同一个写出标记。 */
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TInvoked>;
     mutateAcceptedBusinessState(result: TInvoked): TResult;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -375,7 +377,9 @@ export class WorkManagementCommandApplication {
     externalOperationId: string;
     mutatePreparedBusinessState?(): void;
     beforeWrite?(): Promise<void>;
-    invoke(): Promise<TInvoked>;
+    /** 需要先检查工作目录的操作由执行端决定写出时机。 */
+    manualExternalWriteStart?: boolean;
+    invoke(markExternalWriteStarted: () => void): Promise<TInvoked>;
     mutateAcceptedBusinessState(result: TInvoked): TResult;
     mutateFailureBusinessState?(outcome: Exclude<CommandDeliveryOutcome, 'accepted'>, error: unknown): void;
     isExplicitRejection?(error: unknown): boolean;
@@ -397,11 +401,16 @@ export class WorkManagementCommandApplication {
     }
 
     let writeStarted = false;
-    try {
-      await input.beforeWrite?.();
+    /** 一个命令可以恢复多个资源，首个写入前记录一次即可。 */
+    const markExternalWriteStarted = () => {
+      if (writeStarted) return;
       this.options.deliveries.markExternalWriteStarted({ outboxId: preparation.outbox.id, occurredAt: this.options.now().toISOString() });
       writeStarted = true;
-      const invoked = await input.invoke();
+    };
+    try {
+      await input.beforeWrite?.();
+      if (!input.manualExternalWriteStart) markExternalWriteStarted();
+      const invoked = await input.invoke(markExternalWriteStarted);
       let result: TResult | undefined;
       this.options.db.durableTransactionSync(() => {
         result = input.mutateAcceptedBusinessState(invoked);

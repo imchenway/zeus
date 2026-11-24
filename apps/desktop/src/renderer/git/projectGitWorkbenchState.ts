@@ -2,6 +2,13 @@ import type { GitFileStatusSummary, ProjectGitRepositoryWorkbenchItem, ProjectGi
 import type { ProjectGitBranchSelection } from '@zeus/git-core';
 import { CachedQuery } from '../cachedQuery.js';
 
+/** 工作台只展示可核验的仓库，提示被跳过的相对路径和交付限制。 */
+export function unavailableGitRepositoriesNotice(snapshot: ProjectGitWorkbenchSnapshot | null, zh: boolean): string | null {
+  const names = snapshot?.unavailableRepositories?.join(zh ? '、' : ', ');
+  if (!names) return null;
+  return zh ? `工作树已失效（${names}）。可查看其余仓库，交付前需修复这些工作树。` : `Worktrees unavailable (${names}). You can view the other repositories. Restore these worktrees before delivery.`;
+}
+
 /** 源码与搜索共用项目相对路径，拒绝将上一项目的快照套到当前项目。 */
 export function projectGitFileStatuses(snapshot: ProjectGitWorkbenchSnapshot | null | undefined, projectId: string): Record<string, GitFileStatusSummary['category']> {
   if (snapshot?.projectId !== projectId) return {};

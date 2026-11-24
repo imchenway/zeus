@@ -8,7 +8,7 @@ export function beginGitDiffSelection(path: string): void {
   selection = { path, startedAt: performance.now() };
 }
 
-/** 交付窗体与内容各自报告绘制状态，让原生窗口在可读后显示。 */
+/** 外壳绘制帧用于显示原生窗口，内容绘制帧用于记录数据就绪耗时。 */
 export function useGitDeliveryWindowFrame(ready: boolean, kind: 'surface' | 'window' = 'window'): void {
   useEffect(() => {
     if (!ready || document.body.dataset.surface !== 'task-git-delivery') return;

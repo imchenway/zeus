@@ -62,7 +62,7 @@ import {
 } from '@zeus/git-core';
 import { commandCenterCommandTypes } from './commandCenterCommandApplication.js';
 import { AutomationMutationApplication } from './automationMutationApplication.js';
-import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { matchesConversationRepositoryId, resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { readCommitFingerprint } from './gitCommitContext.js';
 import { buildGitConflictIntentContext } from './taskConflictAi.js';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
@@ -1607,8 +1607,9 @@ export class GitDeliveryExecution {
         name: workspace.repositoryName || workspace.repositoryRelativePath || project.name,
       };
     }
-    const workspace = await resolveConversationGitWorkspace(project, input.scope.conversationId, this.options.conversations, this.options.conversationSubmissions);
-    const member = workspace.repositories.find((repository) => repository.id === selection.repositoryId);
+    const { conversationId } = input.scope;
+    const workspace = await resolveConversationGitWorkspace(project, conversationId, this.options.conversations, this.options.conversationSubmissions);
+    const member = workspace.repositories.find((repository) => matchesConversationRepositoryId(selection.repositoryId, conversationId, repository));
     if (member) return { path: member.localPath, repositoryPath: member.repositoryPath, name: member.name };
     if (workspace.workspaceMode !== 'direct') throw deliveryError('不能扩大会话工作树的交付范围。');
     const repositories = await discoverGitRepositories(workspace.localPath);

@@ -1,4 +1,4 @@
-import { buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, prepareTaskWorktree } from '@zeus/git-core';
+import { buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, getGitRepositoryContext, prepareTaskWorktree } from '@zeus/git-core';
 import { restoreConversationWorktrees } from './conversationWorktreeLifecycle.js';
 import {
   ConversationExpertRepository,
@@ -22,9 +22,9 @@ import {
   type ZeusTaskRecord,
   type ZeusTaskWorkspaceRecord,
 } from '@zeus/storage';
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { parseJsonObject } from './localServerPlatformSupport.js';
+import { mapWithConcurrency, parseJsonObject } from './localServerPlatformSupport.js';
 import { isPathInsideRoot } from './conversationResourcePreview.js';
 import { matchesTaskConflictAiConversationTitle } from './taskConflictAi.js';
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
@@ -229,6 +229,8 @@ export function createConversationExecutionContextOperations(dependencies: Conve
   async function ensureNativeConversationExecutionContext(input: {
     conversationId: string;
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
+    /** 任务恢复在首个工作树写入前记录命令回执。 */
+    beforeWorkspaceWrite?: () => void;
   }): Promise<{ projectLocalPath: string; writableRoots: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null> {
     const lockConversation = conversations.getById(input.conversationId);
     if (!lockConversation) return null;
@@ -280,7 +282,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       // 归档是产品会话的继续边界；Provider 内部归档和任务状态不代替这个判断。
       if (conversation.archived && input.mode !== 'restore') throw nativeApiError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
       if (usesProjectConversationWorkspace(conversation)) {
-        await restoreConversationWorktrees({ db, projects, conversations, conversationSubmissions }, conversation);
+        await restoreConversationWorktrees({ db, projects, conversations, conversationSubmissions }, conversation, input.beforeWorkspaceWrite);
         /** 项目会话同样使用所属项目或已记录的路径，Pi 重启后不能退回宿主启动目录。 */
         const executionRoot = resolveNativeConversationExecutionRoot(conversation);
         if (!executionRoot || !existsSync(executionRoot) || !statSync(executionRoot).isDirectory()) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录不存在或不可用。');
@@ -363,7 +365,24 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       const sharedPaths = projectSharedPaths.listByProject(project.id);
       const needsEnvironmentContainer = members.length > 1 || members.some((member) => member.repositoryRelativePath !== '.') || sharedPaths.length > 0;
       const createdEnvironmentRoot = needsEnvironmentContainer && !existsSync(environmentRoot);
+      /** 所有来源先按真实 Git 根核对，已移除的子仓库不能退回到仍存在的父仓库。 */
+      const sources = await mapWithConcurrency(members, async (member) => {
+        const repositoryPath = resolve(member.repositoryPath || project.localPath);
+        const repositoryContext = await getGitRepositoryContext(repositoryPath);
+        if (!repositoryContext.isRepository || realpathSync(repositoryContext.topLevel) !== realpathSync(repositoryPath)) {
+          throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `任务工作目录的来源仓库已不可用：${member.repositoryRelativePath || '.'}`);
+        }
+        const memberRelativePath = member.repositoryRelativePath || '.';
+        const memberWorktreePath = resolve(join(environmentRoot, memberRelativePath));
+        if (memberWorktreePath === projectRoot || !isPathInsideRoot(memberWorktreePath, worktreeContainerRoot)) {
+          throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace path is outside the isolated worktree root: ${memberRelativePath}`);
+        }
+        const sourceRef = member.sourceHeadSha || member.headSha;
+        if (!sourceRef) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace has no recoverable source commit: ${member.branchName}`);
+        return { member, repositoryPath, repositoryContext, memberWorktreePath, sourceRef };
+      });
       const prepared: Array<{ workspace: ZeusTaskWorkspaceRecord; prepared: Awaited<ReturnType<typeof prepareTaskWorktree>> }> = [];
+      input.beforeWorkspaceWrite?.();
       try {
         if (createdEnvironmentRoot) {
           mkdirSync(environmentRoot, { recursive: true });
@@ -371,17 +390,10 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         } else if (needsEnvironmentContainer) {
           mkdirSync(environmentRoot, { recursive: true });
         }
-        for (const member of members) {
-          const repositoryPath = resolve(member.repositoryPath || project.localPath);
-          const memberRelativePath = member.repositoryRelativePath || '.';
-          const memberWorktreePath = resolve(join(environmentRoot, memberRelativePath));
-          if (memberWorktreePath === projectRoot || !isPathInsideRoot(memberWorktreePath, worktreeContainerRoot)) {
-            throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace path is outside the isolated worktree root: ${memberRelativePath}`);
-          }
-          const sourceRef = member.sourceHeadSha || member.headSha;
-          if (!sourceRef) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', `Task workspace has no recoverable source commit: ${member.branchName}`);
+        for (const { member, repositoryPath, repositoryContext, memberWorktreePath, sourceRef } of sources) {
           const restored = await prepareTaskWorktree({
             repositoryPath,
+            repositoryContext,
             projectSlug: project.slug,
             taskCode: task.taskCode,
             taskTitle: task.title,

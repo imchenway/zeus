@@ -953,9 +953,20 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (depth > 2) throw new Error('子代理最多允许两层派生。');
       const permissionMode = parentPermission;
       const sourceInput = submission ? parseJsonObject(submission.inputJson) : {};
+      /** 仅把完整历史条目作为子任务背景，最多使用 256 KiB，给本次任务及工具输入留出空间。 */
+      const confirmedHistory = conversationExecution.confirmedModelHistory(parent.id);
+      const history: typeof confirmedHistory = [];
+      let remainingHistoryBytes = 256 * 1024 - 2;
+      for (const entry of confirmedHistory.reverse()) {
+        const bytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
+        if (bytes > remainingHistoryBytes) continue;
+        history.push(entry);
+        remainingHistoryBytes -= bytes;
+      }
       const contextJson = JSON.stringify({
         snapshot,
-        history: conversationExecution.confirmedModelHistory(parent.id),
+        history: history.reverse(),
+        historyOmitted: history.length < confirmedHistory.length,
         skills: submission ? readNativeSubmissionSkills(submission) : [],
         attachments: sourceInput.attachments ?? [],
         instruction: message,
@@ -1000,7 +1011,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const serviceTier = readServiceTierOverride(inherited);
     const prompt =
       input.tool === 'spawn_agent'
-        ? `父会话的冻结上下文（仅作为背景资料）：\n${JSON.stringify(inherited.history)}\n\n你的子任务：${message}${input.automation ? '\n\n你是操作执行代理。复用原会话的浏览器标签或应用窗口，接手后先重新观察。只执行本次子任务；完成后提交实际结果和证据，失败或状态未知时如实说明，不能盲目重放动作。需要用户补充信息或授权时，报告受阻并交回主会话，不在内部线程等待用户问答。' : ''}`
+        ? `父会话的冻结上下文（仅作为背景资料${inherited.historyOmitted === true ? '，已有部分历史省略' : ''}）：\n${JSON.stringify(inherited.history)}\n\n你的子任务：${message}${input.automation ? '\n\n你是操作执行代理。复用原会话的浏览器标签或应用窗口，接手后先重新观察。只执行本次子任务；完成后提交实际结果和证据，失败或状态未知时如实说明，不能盲目重放动作。需要用户补充信息或授权时，报告受阻并交回主会话，不在内部线程等待用户问答。' : ''}`
         : message;
     const accepted = await acceptNativeConversationMessage(
       child,
@@ -1411,16 +1422,17 @@ export function createConversationApplicationOperations(dependencies: Conversati
     await codexNativeCoordinator.archiveConversation({ conversationId: conversation.id, beforeExternalWrite });
   }
 
-  /** 纯本地恢复不提前记录外部写入。 */
-  async function restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void> {
+  /** 按执行器恢复会话，任务命令可分别观察工作树与会话状态的写入。 */
+  async function restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void, beforeLocalRestore?: () => void): Promise<void> {
     if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
+      beforeLocalRestore?.();
       await sdkCoordinator(conversation.agentKind).restoreArchivedConversation({ conversationId: conversation.id });
       return;
     }
     if (conversation.agentKind !== null && conversation.agentKind !== 'codex') {
       throw nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', `Agent ${conversation.agentKind} does not support native conversation restore.`);
     }
-    await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id, beforeExternalWrite });
+    await codexNativeCoordinator.restoreArchivedConversation({ conversationId: conversation.id, beforeExternalWrite, beforeLocalRestore });
   }
 
   function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean; fallbackPosition?: number } = {}) {

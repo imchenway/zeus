@@ -99,12 +99,12 @@ export function registerWorkManagementTaskCommandRoutes<TStatusPlan, TStatusResu
   bindStatusPostCommit(result: TStatusResult, effect: PreparedTaskStatusTelegramEffect | null): void;
   prepareManagementStatus(taskId: string, input: UpdateTaskManagementStatusCommandInput): Promise<PreparedConditionalTaskOperation<TManagementPlan>>;
   beforeManagementStatusWrite?(plan: TManagementPlan): Promise<void>;
-  invokeManagementStatus(plan: TManagementPlan): Promise<TManagementEffect>;
+  invokeManagementStatus(plan: TManagementPlan, beforeExternalWrite: () => void): Promise<TManagementEffect>;
   mutateManagementStatus(plan: TManagementPlan, effect: TManagementEffect | null, context: WorkManagementTaskCommandContext): TManagementResult;
   mutateManagementStatusFailure?(plan: TManagementPlan, outcome: FailureOutcome, error: unknown, context: WorkManagementTaskCommandContext): void;
   prepareTaskBoardMove(projectId: string, input: TaskBoardMoveRequest): Promise<PreparedConditionalTaskOperation<TBoardPlan>>;
   beforeTaskBoardMoveWrite?(plan: TBoardPlan): Promise<void>;
-  invokeTaskBoardMove(plan: TBoardPlan): Promise<TBoardEffect>;
+  invokeTaskBoardMove(plan: TBoardPlan, beforeExternalWrite: () => void): Promise<TBoardEffect>;
   mutateTaskBoardMove(plan: TBoardPlan, effect: TBoardEffect | null, context: WorkManagementTaskCommandContext): TBoardResult;
   mutateTaskBoardMoveFailure?(plan: TBoardPlan, outcome: FailureOutcome, error: unknown, context: WorkManagementTaskCommandContext): void;
   prepareRuntimeAction(action: TaskRuntimeCommandAction, taskId: string): Promise<PreparedTaskOperation<TRuntimePlan>>;
@@ -186,7 +186,8 @@ export function registerWorkManagementTaskCommandRoutes<TStatusPlan, TStatusResu
           resourceId: prepared.resourceId,
           externalOperationId: `task-management-status:${parsed.operationIdentity}`,
           beforeWrite: () => options.beforeManagementStatusWrite?.(prepared.state) ?? Promise.resolve(),
-          invoke: () => options.invokeManagementStatus(prepared.state),
+          manualExternalWriteStart: true,
+          invoke: (beforeExternalWrite) => options.invokeManagementStatus(prepared.state, beforeExternalWrite),
           mutateAcceptedBusinessState: (effect) => options.mutateManagementStatus(prepared.state, effect, contextOf(parsed)),
           mutateFailureBusinessState: (outcome, error) => options.mutateManagementStatusFailure?.(prepared.state, outcome, error, contextOf(parsed)),
           isExplicitRejection: options.isExplicitRejection,
@@ -230,7 +231,8 @@ export function registerWorkManagementTaskCommandRoutes<TStatusPlan, TStatusResu
           resourceId: prepared.resourceId,
           externalOperationId: `task-board-move:${parsed.operationIdentity}`,
           beforeWrite: () => options.beforeTaskBoardMoveWrite?.(prepared.state) ?? Promise.resolve(),
-          invoke: () => options.invokeTaskBoardMove(prepared.state),
+          manualExternalWriteStart: true,
+          invoke: (beforeExternalWrite) => options.invokeTaskBoardMove(prepared.state, beforeExternalWrite),
           mutateAcceptedBusinessState: (effect) => options.mutateTaskBoardMove(prepared.state, effect, contextOf(parsed)),
           mutateFailureBusinessState: (outcome, error) => options.mutateTaskBoardMoveFailure?.(prepared.state, outcome, error, contextOf(parsed)),
           isExplicitRejection: options.isExplicitRejection,
@@ -360,7 +362,6 @@ function contextOf(parsed: ReturnType<WorkManagementCommandApplication['parse']>
 }
 
 function sendError(reply: FastifyReply, error: unknown, mapDomainError?: (error: unknown) => ErrorMapping | null): unknown {
-  if (error instanceof WorkManagementRouteError) return reply.code(error.statusCode).send(error.payload);
   const externalOutcome = workManagementExternalOutcome(error);
   if (externalOutcome === 'outcome_unknown_after_write') {
     return reply.code(503).send({
@@ -371,6 +372,7 @@ function sendError(reply: FastifyReply, error: unknown, mapDomainError?: (error:
       recoveryRequired: true,
     });
   }
+  if (error instanceof WorkManagementRouteError) return reply.code(error.statusCode).send(error.payload);
   const commandError = workManagementCommandHttpError(error);
   if (commandError) return reply.code(commandError.statusCode).send(commandError.payload);
   const domainError = mapDomainError?.(error);

@@ -88,7 +88,12 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   /** 独立产物目录，用于登记完成答复里的 HTML 预览。 */
   htmlArtifactsDirectory?: string;
   getProjectRoot: (projectId: string) => string | null;
-  ensureExecutionContext: (input: { conversationId: string; mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore' }) => Promise<{
+  ensureExecutionContext: (input: {
+    conversationId: string;
+    mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
+    /** 恢复命令在工作树发生实际修改前记回执。 */
+    beforeWorkspaceWrite?: () => void;
+  }) => Promise<{
     projectLocalPath: string;
     writableRoots?: string[];
     executionWorkspaceMode?: 'direct' | 'worktree';
@@ -539,6 +544,8 @@ export interface RestoreArchivedConversationInput {
   conversationId: string;
   /** 第一次实际外部动作前记录父命令写出标记。 */
   beforeExternalWrite?: () => void;
+  /** 任务状态命令在独立的会话归档状态提交前记回执。 */
+  beforeLocalRestore?: () => void;
 }
 
 /** 归档使用执行证据门禁，实际 Provider 调用前才记录写出。 */

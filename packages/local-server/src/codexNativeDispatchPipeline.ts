@@ -739,10 +739,13 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         });
       }
       return accepted(submission, 'active', providerThreadId, turn.id);
-    } catch (error) {
+    } catch (cause) {
+      /** 输入已被明确拒绝，重试同一内容只会掩盖长度错误。 */
+      const inputTooLong = cause instanceof Error && isRuntimeRejected(cause) && /^Input exceeds the maximum length of \d+ characters\.?$/u.test(cause.message);
+      const error = inputTooLong ? Object.assign(coordinatorError('ZEUS_CODEX_INPUT_TOO_LONG', cause.message), { cause, dispatchDisposition: 'runtime_rejected' }) : cause;
       const fallbackTier = !serviceTierFallbackAttempted && isCodexServiceTierId(context.serviceTier) && isServiceTierUnavailableError(error, context.serviceTier) ? context.serviceTier : null;
-      /** 新线程明确拒绝首轮时，保留一次原线程重试。 */
-      const retryStart = !fallbackTier && !turnStartRetryAttempted && threadStartedForSubmission && isRuntimeRejected(error);
+      /** 需要恢复首轮线程时仍可重试一次；长度拒绝必须减少输入。 */
+      const retryStart = !inputTooLong && !fallbackTier && !turnStartRetryAttempted && threadStartedForSubmission && isRuntimeRejected(error);
       if (!dispatchStopped(submission.id) && (fallbackTier || retryStart)) {
         /** 先持久化拒绝回执，再允许同一提交身份预备下一次派发。 */
         if (segmentLifecycle) await segmentLifecycle.rejectBeforeAcceptance(error, now(), { retry: true });

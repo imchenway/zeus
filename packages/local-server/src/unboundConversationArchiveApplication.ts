@@ -79,8 +79,9 @@ export async function archiveUnboundConversationLocally(ports: UnboundConversati
 }
 
 /** 未绑定会话没有 Provider 或 worktree 恢复动作；只恢复本地归档标记，避免伪造外部写入。 */
-export async function restoreUnboundConversationLocally(ports: UnboundConversationArchivePorts, conversation: ZeusConversationWithMessagesRecord, onRestored: () => void): Promise<boolean> {
+export async function restoreUnboundConversationLocally(ports: UnboundConversationArchivePorts, conversation: ZeusConversationWithMessagesRecord, onRestored: () => void, beforeLocalRestore?: () => void): Promise<boolean> {
   if (!conversation.archived || !hasUnwrittenConversationEvidence(ports, conversation)) return false;
+  beforeLocalRestore?.();
   ports.conversations.restore(conversation.id);
   onRestored();
   await ports.db.save();

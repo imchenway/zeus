@@ -8,7 +8,7 @@ export function createGitDeliveryWindowPresentation(window: BrowserWindow, owner
   let reduceMotion = true;
   /** 区分可操作窗体、透明等待和正在关闭的窗体。 */
   let phase: 'hidden' | 'opening' | 'visible' | 'closing' = 'hidden';
-  /** 首屏过慢时展示已经绘制的加载状态，时间单位为毫秒。 */
+  /** 页面迟迟没有回报绘制帧时，显示窗口当前的加载或错误状态。 */
   let revealDeadline: ReturnType<typeof setTimeout> | undefined;
   /** 同一窗口只运行一段原生过渡。 */
   let opacityTimer: ReturnType<typeof setInterval> | undefined;
@@ -92,10 +92,10 @@ export function createGitDeliveryWindowPresentation(window: BrowserWindow, owner
       revealDeadline = setTimeout(present, 1200);
       window.webContents.send('zeus:task-git-delivery:request-frame');
     },
-    /** 首次差异或终态已经绘制，再交由原生窗体呈现。 */
-    frame(kind: 'surface' | 'window', prefersReducedMotion: boolean): void {
+    /** 窗口外壳已经绘制时即可呈现，稍后到达的内容帧由窗口状态去重。 */
+    frame(prefersReducedMotion: boolean): void {
       reduceMotion = prefersReducedMotion;
-      if (kind === 'window') present();
+      present();
     },
     /** 保留正文直到退出过渡结束，再隐藏窗体并交还焦点。 */
     hide(complete?: () => void): void {
