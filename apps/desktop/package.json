@@ -1,6 +1,6 @@
 {
   "name": "@zeus/desktop",
-  "version": "0.4.94",
+  "version": "0.4.95",
   "type": "module",
   "license": "GPL-3.0-only",
   "main": "dist/main/main.js",
