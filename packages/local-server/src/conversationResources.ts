@@ -16,16 +16,15 @@ interface ResourceCandidateBase {
   displayName: string;
 }
 
-interface FileResourceCandidate extends ResourceCandidateBase {
+/** 会话文件拥有工作区授权，目录外的 Markdown 链接只拥有单个打开目标。 */
+type FileResourceCandidate = ResourceCandidateBase & {
   kind: 'file';
   absolutePath: string;
   projectRelativePath: string;
-  projectRoot: string;
-  allowedRoot: string;
   location?: ConversationFileLocation;
   mimeType?: string;
   iconKind: ConversationFileIconKind;
-}
+} & ({ projectRoot: string; allowedRoot: string; externalReference?: never } | { externalReference: string; projectRoot?: never; allowedRoot?: never });
 
 interface WebsiteResourceCandidate extends ResourceCandidateBase {
   kind: 'website';
@@ -194,6 +193,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
         projectRoot: input.projectRoot,
         registeredProjectRoot: input.registeredProjectRoot,
         managedArtifactsDirectory,
+        allowSystemFileOpen: !link.image,
       });
     if (candidate) {
       candidates.push(candidate);
@@ -681,11 +681,14 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     const iconKind = fileIconKindValue(display.iconKind);
     if (!projectRelativePath || !iconKind) return null;
     const location = normalizeLocation(display.location);
+    /** 旧记录沿用项目路径匹配，外部链接保留完整的 Markdown 目标。 */
+    const externalReference = stringValue(display.externalReference);
     return {
       ...base,
       kind: 'file',
       projectRelativePath,
       iconKind,
+      ...(externalReference ? { externalReference } : {}),
       ...(location ? { location } : {}),
       ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
     } satisfies ConversationFileResource;
@@ -813,6 +816,8 @@ function normalizeLinkedResource(input: {
   registeredProjectRoot?: string;
   /** 完成答复可引用独立产物目录内的受支持文件。 */
   managedArtifactsDirectory?: string;
+  /** 普通文件链接可以显式打开任意绝对路径。 */
+  allowSystemFileOpen: boolean;
 }): ResourceCandidate | null {
   const website = normalizeWebsiteUrl(input.href);
   if (website) {
@@ -826,7 +831,26 @@ function normalizeLinkedResource(input: {
     };
   }
   const parsedFile = parseFileReference(input.href, input.projectRoot, input.registeredProjectRoot) ?? parseManagedArtifactReference(input.href, input.managedArtifactsDirectory, true);
-  if (!parsedFile) return null;
+  if (!parsedFile) {
+    /** 图片引用走原图片授权，普通链接只登记显式提供的绝对路径。 */
+    const reference = input.allowSystemFileOpen ? parseFileReferencePath(input.href) : null;
+    if (!reference || !isAbsolute(reference.path)) return null;
+    /** 按路径登记链接，文件有效性由用户打开时检查。 */
+    const absolutePath = resolve(reference.path);
+    /** 盘符根路径本身也可以交给文件管理器打开。 */
+    const name = basename(absolutePath) || absolutePath;
+    return {
+      kind: 'file',
+      sourceIndex: input.sourceIndex,
+      presentation: input.presentation,
+      displayName: input.label || name,
+      absolutePath,
+      projectRelativePath: name,
+      externalReference: input.href,
+      location: reference.location,
+      iconKind: iconKindForPath(absolutePath),
+    };
+  }
   return {
     kind: 'file',
     sourceIndex: input.sourceIndex,
@@ -863,7 +887,7 @@ export function isConversationBrowserFileAllowed(url: URL, scope: BrowserLocalFi
 }
 
 function localHtmlArtifactCard(candidate: ResourceCandidate, sourceIndex: number): FileResourceCandidate | null {
-  if (candidate.kind !== 'file' || candidate.iconKind !== 'html') return null;
+  if (candidate.kind !== 'file' || candidate.externalReference || candidate.iconKind !== 'html') return null;
   return {
     ...candidate,
     sourceIndex,
@@ -1015,8 +1039,8 @@ function normalizeStructuredResource(input: {
   };
 }
 
-/** 文件引用沿用任务入口授权；共享目录的真实路径必须能映射回同一文件。 */
-function parseFileReference(rawReference: string, projectRoot: string, registeredProjectRoot?: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
+/** 解读 Markdown 的本机路径和行号，按协议只做一次路径解码。 */
+function parseFileReferencePath(rawReference: string): { path: string; location?: ConversationFileLocation } | null {
   let reference = rawReference.trim();
   if (!reference || reference.includes('\0')) return null;
   let location: ConversationFileLocation | undefined;
@@ -1044,6 +1068,15 @@ function parseFileReference(rawReference: string, projectRoot: string, registere
       return null;
     }
   }
+  return reference && !reference.includes('\0') ? { path: reference, location } : null;
+}
+
+/** 文件预览沿用任务入口授权；共享目录的真实路径必须能映射回同一文件。 */
+function parseFileReference(rawReference: string, projectRoot: string, registeredProjectRoot?: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
+  /** 路径解析和工作区授权适用于不同入口。 */
+  const parsed = parseFileReferencePath(rawReference);
+  if (!parsed) return null;
+  const { path: reference, location } = parsed;
   const root = resolve(projectRoot);
   /** 外部共享引用先转换为任务已有入口，再使用原有授权规则。 */
   let absolutePath = resolve(isAbsolute(reference) ? reference : resolve(root, reference));
@@ -1147,6 +1180,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
       displayName: candidate.displayName,
       projectRelativePath: candidate.projectRelativePath,
       iconKind: candidate.iconKind,
+      ...(candidate.externalReference ? { externalReference: candidate.externalReference } : {}),
       ...(candidate.location ? { location: candidate.location } : {}),
       ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
     };
@@ -1175,20 +1209,21 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
 
 function targetForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
   if (candidate.kind === 'website') return { url: candidate.url };
-  return {
-    absolutePath: candidate.absolutePath,
-    ...(candidate.kind === 'file' ? { projectRoot: candidate.projectRoot, projectRelativePath: candidate.projectRelativePath, location: candidate.location ?? null } : {}),
-  };
+  if (candidate.kind === 'attachment' || candidate.externalReference) return { absolutePath: candidate.absolutePath };
+  return { absolutePath: candidate.absolutePath, projectRoot: candidate.projectRoot, projectRelativePath: candidate.projectRelativePath, location: candidate.location ?? null };
 }
 
 function authorityForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
   if (candidate.kind === 'website') return { allowedSchemes: ['http:', 'https:', 'mailto:'] };
+  if (candidate.kind === 'file' && candidate.externalReference) return { systemOpenOnly: true };
   return { allowedRoot: candidate.allowedRoot, ...(candidate.kind === 'attachment' && candidate.imageArchive ? { imageArchive: candidate.imageArchive } : {}) };
 }
 
 function digestResourceCandidate(candidate: ResourceCandidate): string {
+  /** 同一文件的绝对路径写法和 file URL 都需要保留各自的链接身份。 */
+  const reference = candidate.kind === 'file' ? candidate.externalReference : undefined;
   return createHash('sha256')
-    .update(JSON.stringify({ kind: candidate.kind, target: targetForCandidate(candidate) }))
+    .update(JSON.stringify({ kind: candidate.kind, target: targetForCandidate(candidate), ...(reference ? { reference } : {}) }))
     .digest('hex');
 }
 

@@ -2930,12 +2930,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (!record || record.projectId !== input.projectId || record.conversationId !== input.conversationId) throw new Error('会话资源不属于当前会话。');
         const grant = toConversationResourceOpenIntent(record);
         if (grant.kind === 'website') throw new Error('网站不是文件预览资源。');
+        if (typeof grant.authority.allowedRoot !== 'string') throw new Error('此文件由会话链接交给系统打开。');
         /** 已登记位置随通用预览返回，不依赖标题中的行号文字。 */
         const resource = toConversationResource(record);
         const review = resource?.kind === 'file' ? { location: resource.location } : undefined;
         // 预览格式依据真实文件名，正文链接标题可能完全省略扩展名。
         /** 当前文件位置完全来自会话授权，渲染层不能另指定路径。 */
-        const root = String(grant.authority.allowedRoot || '');
+        const root = grant.authority.allowedRoot;
         /** 工作树文件与资源展示名称分别保存。 */
         const path = String(grant.target.absolutePath || '');
         if (input.comparison !== undefined && input.comparison !== 'head') throw new Error('会话文件比较范围无效。');
