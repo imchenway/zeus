@@ -255,8 +255,9 @@ export function isNativeApiRecord(value: unknown): value is Record<string, unkno
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 已失效的 GPT 家族预设档位按当前模型默认档位处理。 */
+/** Antigravity 的显式档位按原样核验。失效的 GPT 家族预设仍交给默认规则。 */
 function requestedEffortForModel(model: ConversationCapabilityModel, requested: string | null): string | null {
+  if (model.agentKind === 'antigravity' && requested && !model.supportedReasoningEfforts.includes(requested)) throw nativeApiError('ZEUS_AGY_EFFORT_UNAVAILABLE', 'Antigravity 当前目录未开放所选思考档位。');
   if (model.agentKind === 'pi' && isGptReasoningModelId(model.model) && (model.supportedReasoningEfforts.length === 0 || (requested === 'minimal' && !model.supportedReasoningEfforts.includes(requested)))) return null;
   return requested;
 }
@@ -1806,8 +1807,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const contextCapacityTokens = frozenCapacity ?? null;
     assertContextCapacity(contextCapacityTokens);
     if (contextCapacityTokens !== null && !selectedModel.contextCapacity?.choices.includes(contextCapacityTokens)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(selectedModel.contextCapacity));
-    const requestedEffort = typeof input.settings.effort === 'string' && input.settings.effort.trim() ? input.settings.effort.trim() : null;
-    // 档位只认模型自己的档位清单：认不出（旧配置、旧版本遗留值）就按默认档归一，不报错。
+    const requestedEffort = requestedEffortForModel(selectedModel, typeof input.settings.effort === 'string' && input.settings.effort.trim() ? input.settings.effort.trim() : null);
+    // 其他供应商的陈旧档位按模型默认归一。
     // 界面能给出来的档位一定在清单里，所以这条兜底只会作用在陈旧数据上。
     const effort =
       requestedEffort && selectedModel.supportedReasoningEfforts.some((candidate) => candidate === requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
@@ -3285,9 +3286,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (input.agentKind === 'antigravity') {
       const account = antigravityNativeCoordinator.antigravityDriver?.readAccount();
       if (account?.status === 'verification_required') throw nativeApiError('ZEUS_AGY_VERIFICATION_REQUIRED', account.message ?? '请在设置的 Google Antigravity 账号卡片中完成验证后重试。');
-      if (input.modelSourceId !== 'antigravity' || account?.status !== 'ready' || !account.models.some((model) => model.id === input.modelId)) {
+      const model = account?.models.find((candidate) => candidate.id === input.modelId);
+      if (input.modelSourceId !== 'antigravity' || account?.status !== 'ready' || !model) {
         throw nativeApiError('ZEUS_MODEL_NOT_READY', '请在模型供应商中检查 Google 登录和 Antigravity 模型。');
       }
+      if (input.effort && !model.supportedReasoningEfforts?.includes(input.effort)) throw nativeApiError('ZEUS_AGY_EFFORT_UNAVAILABLE', 'Antigravity 当前目录未开放所选思考档位。');
     }
     if (input.agentKind === 'copilot' && input.modelSourceId !== 'copilot') throw nativeApiError('ZEUS_CONVERSATION_ROUTE_CHANGED', 'Copilot 模型来源与运行时不一致。');
     const copilotModel = input.agentKind === 'copilot' ? copilotRuntimeManager.readModels().find((candidate) => candidate.id === input.modelId) : undefined;
@@ -4209,8 +4212,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         }
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);
-        const requestedEffort = typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null;
-        // 同上：陈旧档位按默认档归一，不因为配置过时就拦住用户。
+        const requestedEffort = requestedEffortForModel(selectedModel, typeof body.effort === 'string' && body.effort.trim() ? body.effort.trim() : null);
+        // 其他供应商的陈旧档位按模型默认归一。
         const selectedEffort = requestedEffort && selectedModel.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
         /** 新会话保存原任务的精确环境与仓库身份，不重新准备或重开工作树。 */

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent, type AntigravityAccountCatalog } from '../features/codex/codexApiClient.js';
 import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
@@ -8,6 +8,9 @@ import { ModelProviderIdentity } from './ModelProviderIdentity.js';
 
 /** 修改当前 Antigravity 接入状态的账号操作。 */
 type AccountAction = 'login' | 'refresh' | 'cancel' | 'logout';
+
+/** Google 验证完成后可能短暂仍返回挑战，回到前台最多复查三次。 */
+const verificationRetryDelaysMs = [1_500, 3_000];
 
 /** Antigravity 的官方 Google 登录和当前可用模型状态。 */
 export function AntigravityAccountSettings({
@@ -27,6 +30,10 @@ export function AntigravityAccountSettings({
   const [catalog, setCatalog] = useState<AntigravityAccountCatalog | null>(null);
   /** 当前操作决定哪个按钮显示进度，其他按钮在此期间停用。 */
   const [busyAction, setBusyAction] = useState<AccountAction | 'verify' | null>(null);
+  /** 自动检查与按钮操作共用同步锁，避免同一帧发出两个请求。 */
+  const actionInFlight = useRef(false);
+  /** 发起验证后才复查。监听已在账号卡片挂载时建立。 */
+  const awaitingVerification = useRef(false);
   const busy = busyAction !== null;
   /** 保留当前操作的可读错误。 */
   const [error, setError] = useState<string | null>(null);
@@ -77,34 +84,89 @@ export function AntigravityAccountSettings({
   }, [busy, checking, client, connecting]);
 
   /** 账号操作完成后更新卡片状态及模型目录。 */
-  async function changeAccount(action: AccountAction): Promise<void> {
-    if (!client || busy) return;
+  async function changeAccount(action: AccountAction): Promise<AntigravityAccountCatalog | null> {
+    if (!client || actionInFlight.current) return null;
+    actionInFlight.current = true;
     setBusyAction(action);
     setError(null);
     try {
       const update = { login: client.startAntigravityLogin, refresh: client.refreshAntigravityAccount, cancel: client.cancelAntigravityLogin, logout: client.logoutAntigravityAccount };
-      setCatalog(await update[action]());
+      /** Core 回执同时决定是否仍需等待验证。 */
+      const next = await update[action]();
+      setCatalog(next);
+      if (next.status !== 'verification_required') awaitingVerification.current = false;
       if (action === 'refresh' || action === 'logout') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+      return next;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return null;
     } finally {
+      actionInFlight.current = false;
       setBusyAction(null);
     }
   }
 
+  /** 复用显式刷新，确保界面和模型目录消费同一次 Core 检查。 */
+  const refreshAfterVerification = useEffectEvent(() => changeAccount('refresh'));
+  useEffect(() => {
+    const bridge = window.zeus;
+    if (!client || !bridge?.getRequestingWindowForeground || !bridge.onRequestingWindowForegroundChanged) return;
+    let active = true;
+    let foreground: boolean | undefined;
+    let attempt = 0;
+    let timer: number | undefined;
+    let checkingAccount = false;
+    /** 上一轮完成后才可重试，切到后台时取消等待中的重试。 */
+    const check = async (): Promise<void> => {
+      if (!active || !foreground || !awaitingVerification.current || checkingAccount) return;
+      checkingAccount = true;
+      const next = await refreshAfterVerification();
+      checkingAccount = false;
+      if (!active || !foreground || !awaitingVerification.current || (next && next.status !== 'verification_required')) return;
+      const delay = verificationRetryDelaysMs[attempt++];
+      if (delay !== undefined) timer = window.setTimeout(() => void check(), delay);
+    };
+    /** 使用 Electron 主进程报告的前台状态，避免隐藏窗口发起轮询。 */
+    const observeForeground = (next: boolean): void => {
+      if (!active || foreground === next) return;
+      foreground = next;
+      window.clearTimeout(timer);
+      if (next) {
+        attempt = 0;
+        void check();
+      }
+    };
+    const unsubscribe = bridge.onRequestingWindowForegroundChanged(observeForeground);
+    void bridge.getRequestingWindowForeground().then(
+      ({ foreground: current }) => {
+        if (active && foreground === undefined) foreground = current;
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [client]);
+
   /** 通过系统浏览器打开 Google 的账号验证页面。 */
   async function openVerification(): Promise<void> {
-    if (!client || busy) return;
+    if (!client || actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusyAction('verify');
     setError(null);
     try {
       const { url } = await client.loadAntigravityVerification();
       if (!url) throw new Error(zh ? '验证链接已失效，请刷新状态。' : 'The verification link is unavailable. Refresh status.');
+      awaitingVerification.current = true;
       const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url });
       if (!result.opened) throw new Error(zh ? '无法打开 Google 验证页面。' : 'Could not open the Google verification page.');
     } catch (cause) {
+      awaitingVerification.current = false;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
+      actionInFlight.current = false;
       setBusyAction(null);
     }
   }

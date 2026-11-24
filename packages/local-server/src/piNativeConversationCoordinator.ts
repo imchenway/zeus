@@ -14,6 +14,7 @@ import {
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
   AntigravityRuntimeDriver,
+  type AntigravityRuntimeOptions,
   CopilotRuntimeDriver,
   type ManagedAgentKind,
   type CopilotRuntimeManager,
@@ -172,6 +173,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   runtimeKind?: ManagedAgentKind;
   /** Copilot 运行时由 Core 创建并拥有，普通 Pi 会话不读取该端口。 */
   copilotRuntimeManager?: CopilotRuntimeManager;
+  /** Antigravity 原生规则引用和账号模型目录通知均由 Core 管理。 */
+  antigravity?: AntigravityRuntimeOptions;
   /** 各模型共用工作目录恢复与产品归档边界。 */
   ensureExecutionContext: CreateCodexNativeConversationCoordinatorOptions['ensureExecutionContext'];
   /** 原生会话操作前校验实际模型预算。 */
@@ -411,6 +414,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           },
           (input) => broker.respond!(input),
           options.now,
+          options.antigravity!,
         )
       : null;
   const driver =

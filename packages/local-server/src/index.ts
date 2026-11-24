@@ -1615,6 +1615,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       modelConnections,
       usageLedger: codexUsageLedger,
       agentDirectory: runtimeKind === 'antigravity' ? dataLayout.root : runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
+      antigravity:
+        runtimeKind === 'antigravity'
+          ? {
+              agentRulesDirectory: dataLayout.agentRules,
+              onAccountCatalogChanged: () => publishRealtimeEvent('antigravity.models.changed', {}),
+            }
+          : undefined,
       loadSkills: loadConversationSkills,
       processes: createConversationToolProcesses({
         runtime: () => aiRuntimeManager,
@@ -1679,7 +1686,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
         await db.save();
       },
-      /** agy 管理项目上下文，ACP 目录没有可核验的模型窗口用于额外资料注入。 */
+      /** agy 原生加载项目与 Zeus 规则，额外资料仍需可核验的 ACP 模型窗口。 */
       compileDispatchContext: runtimeKind === 'antigravity' ? undefined : compileProviderDispatchContext,
     });
   const piNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('pi');
@@ -2384,17 +2391,25 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const driver = antigravityNativeCoordinator.antigravityDriver;
         const cached = driver?.readAccount();
         const account = cached?.status === 'ready' ? cached : driver ? await driver.refreshAccount() : null;
+        /** 模型资格变动时保留队列中的原档位，交给用户决定如何重试。 */
+        const model = account?.models.find((candidate) => candidate.id === frozen.modelId);
+        const effortUnavailable = Boolean(frozen.effort && model && !model.supportedReasoningEfforts?.includes(frozen.effort));
         if (
           frozen.connectionId ||
           frozen.credentialSlotId !== 'antigravity-managed-account' ||
           frozen.endpointIdentity !== 'antigravity://managed-account' ||
           frozen.protocolFamily !== 'antigravity_acp' ||
-          !account?.models.some((model) => model.id === frozen.modelId)
+          account?.status !== 'ready' ||
+          !model ||
+          effortUnavailable
         ) {
           const pausedAt = now().toISOString();
           conversationSubmissions.updateStatus(head.id, 'paused', {
             pausedReason: 'semantic_route_changed',
-            error: { code: 'ZEUS_CONVERSATION_ROUTE_CHANGED', message: account?.message ?? '请检查 Google 登录和 Antigravity 模型目录。' },
+            error: {
+              code: 'ZEUS_CONVERSATION_ROUTE_CHANGED',
+              message: account?.message ?? (effortUnavailable ? 'Antigravity 不再提供队列中的思考档位，请重新选择档位。' : '请检查 Google 登录和 Antigravity 模型目录。'),
+            },
             updatedAt: pausedAt,
           });
           conversationExecution.pauseQueueBehindHead(conversationId, head.id, pausedAt);

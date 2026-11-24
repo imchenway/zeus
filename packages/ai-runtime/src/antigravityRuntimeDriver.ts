@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, open, rm } from 'node:fs/promises';
+import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -29,6 +29,10 @@ import type { PiSdkRuntimeDriver, PiZeusToolRequest } from './piSdkRuntimeDriver
 export interface AntigravityModel {
   id: string;
   name: string;
+  /** 当前型号选中后，agy 返回的原生 thought_level 值。 */
+  supportedReasoningEfforts?: string[];
+  /** 探测会话切换至该型号后，agy 选定的档位。 */
+  defaultReasoningEffort?: string | null;
 }
 
 /** 浏览器授权和模型目录的公开状态，凭据始终留在 agy。 */
@@ -40,6 +44,14 @@ export interface AntigravityAccountCatalog {
   /** 仅在准备受管 CLI 时公开具体阶段。 */
   installation?: AntigravityInstallProgress;
   message?: string;
+}
+
+/** 由 Zeus 提供的规则真源目录和账号目录变更通知。 */
+export interface AntigravityRuntimeOptions {
+  /** 固定的 Zeus 规则真源目录，凭据和 CLI 个人配置沿用原生存储。 */
+  agentRulesDirectory: string;
+  /** 账号探测确认目录变化后再通知选择器失效。 */
+  onAccountCatalogChanged(): void;
 }
 
 /** 与一条官方 ACP 请求对应的回执。 */
@@ -159,6 +171,9 @@ interface SessionBinding {
 /** Zeus 接受的 Google 账号授权方式。 */
 const googleLoginMethod = 'oauth-personal';
 
+/** agy 在选中模型后返回的独立思考档位配置。 */
+const thoughtLevelConfig = 'thought_level';
+
 /** agy 在 ACP 正文中返回的账号验证提示。 */
 const verificationNotice = '⚠ Verification Required';
 
@@ -199,6 +214,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     private readonly approve: (request: PiZeusToolRequest, tool: Record<string, unknown>) => Promise<boolean>,
     private readonly respond: (input: RespondAgentInteractionInput) => Promise<void>,
     private readonly now: () => string,
+    private readonly options: AntigravityRuntimeOptions,
   ) {}
 
   /** 读取缓存的状态，无副作用。 */
@@ -314,7 +330,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return this.bind(connection, input.nativeSessionId, config);
   }
 
-  /** 先冻结模型和操作模式，持久接纳成功后才发送提示词。 */
+  /** 模型、操作模式与思考档位确认后才持久接纳并发送提示词。 */
   async startRun(input: StartAgentRunInput): Promise<AcceptedAgentRun> {
     const connection = await this.requireAccount();
     const session = this.requireSession(input.session);
@@ -322,7 +338,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     const sessionId = session.identity.nativeSessionId;
     const config = selectConfig(session.config, 'model');
     if (input.model && config) {
-      if (!config.models.some((model) => model.id === input.model?.modelId)) throw agyError('ZEUS_AGY_MODEL_UNAVAILABLE', '当前 Google 账号无法使用所选模型。');
+      if (!config.options.some((model) => model.id === input.model?.modelId)) throw agyError('ZEUS_AGY_MODEL_UNAVAILABLE', '当前 Google 账号无法使用所选模型。');
       if (config.current !== input.model.modelId) await this.setConfig(connection, session, config.id, input.model.modelId);
     } else if (input.model) {
       const models = record(session.config.models);
@@ -334,7 +350,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     }
     const mode = selectConfig(session.config, 'mode');
     const modeId = input.workMode === 'plan' || input.permissionMode === 'read-only' ? 'plan' : 'default';
-    if (mode?.models.some((item) => item.id === modeId)) {
+    if (mode?.options.some((item) => item.id === modeId)) {
       if (mode.current !== modeId) await this.setConfig(connection, session, mode.id, modeId);
     } else if (modeId === 'plan') {
       const modes = record(session.config.modes);
@@ -345,6 +361,16 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       await connection.request('session/set_mode', { sessionId, modeId });
       record(session.config.modes).currentModeId = modeId;
     }
+    if (input.thinkingLevel) {
+      /** agy 在模型或模式切换时可能重算档位，使用此时的回执核验。 */
+      const thinking = selectConfig(session.config, thoughtLevelConfig);
+      if (!thinking?.options.some((option) => option.id === input.thinkingLevel)) throw agyError('ZEUS_AGY_EFFORT_UNAVAILABLE', 'Antigravity 当前会话未开放所选思考档位。');
+      if (thinking.current !== input.thinkingLevel) {
+        await this.setConfig(connection, session, thinking.id, input.thinkingLevel);
+        if (selectConfig(session.config, thoughtLevelConfig)?.current !== input.thinkingLevel) throw agyError('ZEUS_AGY_EFFORT_UNCONFIRMED', 'Antigravity 未确认所选思考档位，消息尚未发送。');
+      }
+    }
+    if (connection !== this.connection) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已断开，消息尚未发送。');
     const acceptance = { nativeRunId: randomUUID(), acceptedAt: this.now() };
     /** 该轮持有 ACP 原生会话内的正文和工具状态。 */
     const run: NonNullable<SessionBinding['run']> = { id: acceptance.nativeRunId, messageId: randomUUID(), text: '', verificationNotice: null, abort: new AbortController(), tools: new Set<string>() };
@@ -472,11 +498,11 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return () => this.listeners.delete(listener);
   }
 
-  /** 登录仅调用官方个人账号方法，建立探测会话只读取模型目录。 */
-  private checkAccount(login: boolean): Promise<AntigravityAccountCatalog> {
+  /** 登录走官方个人账号，后台探测期间保留已有的可用目录。 */
+  private checkAccount(login: boolean, background = false): Promise<AntigravityAccountCatalog> {
     const revision = ++this.accountRevision;
     const needsInstallation = login && !readManagedAntigravity(this.probeDirectory);
-    this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
+    if (!background) this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
     const operation = (async () => {
       /** 同一连接的诊断也用于识别授权或建探测会话时的验证要求。 */
       let connection: AcpConnection | undefined;
@@ -503,9 +529,16 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           this.googleAccountSelected = true;
         }
         const probe = record(await connection.request('session/new', { cwd: this.probeDirectory, mcpServers: [] }));
-        if (typeof probe.sessionId === 'string') await connection.request('session/close', { sessionId: probe.sessionId }).catch(() => undefined);
-        const models = selectConfig(probe, 'model')?.models ?? legacyModels(record(probe.models));
         const verification = await connection.readVerification();
+        const options = selectConfig(probe, 'model');
+        let models = options?.options ?? legacyModels(record(probe.models));
+        if (typeof probe.sessionId === 'string') {
+          try {
+            if (options && !verification) models = await this.readModelReasoningEfforts(connection, probe.sessionId, probe, options);
+          } finally {
+            await connection.request('session/close', { sessionId: probe.sessionId }).catch(() => undefined);
+          }
+        }
         if (revision === this.accountRevision) {
           if (connection !== this.connection) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已断开。');
           if (verification) this.requireVerification(models, verification.url);
@@ -524,6 +557,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           }
           this.verificationUrl = null;
           const code = record(error).code;
+          if (background && this.catalog.status === 'ready' && code !== 'ZEUS_AGY_AUTH_REQUIRED') return this.catalog;
           this.catalog = {
             status: code === 'ZEUS_AGY_MISSING' ? 'missing_cli' : code === 'ZEUS_AGY_AUTH_REQUIRED' ? 'sign_in_required' : 'unavailable',
             models: [],
@@ -540,10 +574,54 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return operation;
   }
 
+  /** 在账号探测会话里逐型号读取档位，正式会话和模型目录均沿用 agy 的值。 */
+  private async readModelReasoningEfforts(
+    connection: AcpConnection,
+    sessionId: string,
+    probe: Record<string, unknown>,
+    modelConfig: NonNullable<ReturnType<typeof selectConfig>>,
+  ): Promise<AntigravityModel[]> {
+    let config = probe;
+    const models: AntigravityModel[] = [];
+    for (const model of modelConfig.options) {
+      if (selectConfig(config, 'model')?.current !== model.id) {
+        try {
+          config = record(await connection.request('session/set_config_option', { sessionId, configId: modelConfig.id, value: model.id }));
+        } catch (error) {
+          if (connection !== this.connection || record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') throw error;
+          models.push(model);
+          continue;
+        }
+      }
+      const thinking = selectConfig(config, 'model')?.current === model.id ? selectConfig(config, thoughtLevelConfig) : undefined;
+      const efforts = thinking?.options.map((option) => option.id) ?? [];
+      const current = thinking?.current;
+      models.push(efforts.length ? { ...model, supportedReasoningEfforts: efforts, defaultReasoningEffort: current && efforts.includes(current) ? current : null } : model);
+    }
+    return models;
+  }
+
   /** 账号已授权，Google 需要验证后才接受模型请求。 */
   private requireVerification(models: AntigravityModel[], url: string | null): void {
     this.verificationUrl = url;
     this.catalog = { status: 'verification_required', models, verificationAvailable: Boolean(url), message: antigravityVerificationError().message };
+  }
+
+  /** 会话的模型或可选档位变化时，用账号探测结果刷新公共目录。 */
+  private updateSessionConfig(session: SessionBinding, configOptions: unknown): void {
+    if (!Array.isArray(configOptions)) return;
+    const previousModel = selectConfig(session.config, 'model');
+    const previousEfforts = selectConfig(session.config, thoughtLevelConfig)?.options;
+    session.config.configOptions = configOptions;
+    if (this.catalog.status !== 'ready' || this.accountOperation) return;
+    const nextModel = selectConfig(session.config, 'model');
+    const modelOptionsChanged = JSON.stringify(previousModel?.options) !== JSON.stringify(nextModel?.options);
+    const effortOptionsChanged = previousModel?.current === nextModel?.current && JSON.stringify(previousEfforts) !== JSON.stringify(selectConfig(session.config, thoughtLevelConfig)?.options);
+    if (!modelOptionsChanged && !effortOptionsChanged) return;
+    const catalogBefore = this.catalog;
+    void this.checkAccount(false, true).then((catalog) => {
+      if (catalog.status !== catalogBefore.status || JSON.stringify(catalog.models) !== JSON.stringify(catalogBefore.models)) this.options.onAccountCatalogChanged();
+    });
   }
 
   /** 过滤替代认证环境，使用 Zeus 持有的官方 CLI 启动 ACP。 */
@@ -561,13 +639,26 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       /** 独占诊断目录只在子进程存活期间保留，避免读取其他 agy 实例的账号挑战。 */
       const diagnosticDirectory = await mkdtemp(join(tmpdir(), 'zeus-antigravity-'));
       const diagnosticPath = join(diagnosticDirectory, 'acp.log');
-      if (this.disposed) {
-        await rm(diagnosticDirectory, { recursive: true, force: true });
-        throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已关闭。');
+      /** 独立的附加目录只有规则引用，使用相对路径读取 Zeus 当前保存的规则。 */
+      let rulesDirectory: string | undefined;
+      /** 进程退出或准备失败时清理这一代进程的本地文件。 */
+      const removeProcessFiles = () => Promise.allSettled([rm(diagnosticDirectory, { recursive: true, force: true }), ...(rulesDirectory ? [rm(rulesDirectory, { recursive: true, force: true })] : [])]);
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        rulesDirectory = await mkdtemp(join(this.options.agentRulesDirectory, '.antigravity-'));
+        await writeFile(
+          join(rulesDirectory, 'AGENTS.md'),
+          '# Zeus session rules\n\nUse the Zeus global rules below and the current project rules for this session. Personal global rules from the host Antigravity profile do not apply to this Zeus session.\n\n@[Zeus global rules](../AGENTS.md)\n',
+          { mode: 0o400, flag: 'wx' },
+        );
+        if (this.disposed) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已关闭。');
+        const invocation = resolveExecutableInvocation(executable, ['acp', '--sandbox', '--add-dir', rulesDirectory, '--log-file', diagnosticPath], { env, cwd: this.probeDirectory });
+        child = spawn(invocation.command, invocation.args, { cwd: this.probeDirectory, env: invocation.env, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, stdio: 'pipe' });
+      } catch (error) {
+        await removeProcessFiles();
+        throw error;
       }
-      const invocation = resolveExecutableInvocation(executable, ['acp', '--sandbox', '--log-file', diagnosticPath], { env, cwd: this.probeDirectory });
-      const child = spawn(invocation.command, invocation.args, { cwd: this.probeDirectory, env: invocation.env, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, stdio: 'pipe' });
-      child.once('close', () => void rm(diagnosticDirectory, { recursive: true, force: true }).catch(() => undefined));
+      child.once('close', () => void removeProcessFiles());
       const connection = new AcpConnection(
         child,
         diagnosticPath,
@@ -622,7 +713,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 保存 agy 确认过的可选值和当前值。 */
   private async setConfig(connection: AcpConnection, session: SessionBinding, configId: string, value: string): Promise<void> {
     const response = record(await connection.request('session/set_config_option', { sessionId: session.identity.nativeSessionId, configId, value }));
-    if (Array.isArray(response.configOptions)) session.config.configOptions = response.configOptions;
+    this.updateSessionConfig(session, response.configOptions);
   }
 
   /** 处理实时文本、工具进度与官方权限请求。 */
@@ -643,7 +734,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     }
     if (message.method !== 'session/update' || !session) return;
     const update = record(params.update);
-    if (update.sessionUpdate === 'config_option_update' && Array.isArray(update.configOptions)) session.config.configOptions = update.configOptions;
+    if (update.sessionUpdate === 'config_option_update') this.updateSessionConfig(session, update.configOptions);
     const run = session.run;
     if (!run) return;
     if (update.sessionUpdate === 'agent_message_chunk') {
@@ -797,11 +888,11 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-/** 读取 ACP 的模型或模式选择项，包括分组目录。 */
-function selectConfig(result: Record<string, unknown>, category: string): { id: string; current: string | null; models: AntigravityModel[] } | undefined {
-  const config = Array.isArray(result.configOptions) ? result.configOptions.map(record).find((item) => item.category === category && item.type === 'select') : undefined;
+/** 读取 ACP 的分组选项。agy 的 thought_level 也可由配置 ID 识别。 */
+function selectConfig(result: Record<string, unknown>, category: 'model' | 'mode' | typeof thoughtLevelConfig): { id: string; current: string | null; options: AntigravityModel[] } | undefined {
+  const config = Array.isArray(result.configOptions) ? result.configOptions.map(record).find((item) => item.type === 'select' && (item.category === category || item.id === category)) : undefined;
   if (!config || typeof config.id !== 'string' || !Array.isArray(config.options)) return undefined;
-  const models = config.options
+  const options = config.options
     .flatMap((item: unknown) => {
       const option = record(item);
       return Array.isArray(option.options) ? option.options : [option];
@@ -810,7 +901,7 @@ function selectConfig(result: Record<string, unknown>, category: string): { id: 
       const option = record(item);
       return typeof option.value === 'string' && typeof option.name === 'string' ? [{ id: option.value, name: option.name }] : [];
     });
-  return { id: config.id, current: typeof config.currentValue === 'string' ? config.currentValue : null, models };
+  return { id: config.id, current: typeof config.currentValue === 'string' ? config.currentValue : null, options };
 }
 
 /** agy 也可通过 ACP 的 models 扩展返回可选模型。 */
