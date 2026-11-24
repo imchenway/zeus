@@ -17,7 +17,7 @@ export interface PreparePiProviderCommandInput {
 }
 
 interface PiProviderCommandPayload extends Record<string, unknown> {
-  provider: 'pi' | 'copilot';
+  provider: 'pi' | 'copilot' | 'antigravity';
   operation: PiProviderCommandOperation;
   resourceId: string;
   requestSha256: string;
@@ -40,7 +40,7 @@ export class PiProviderCommandAttempt {
     readonly outboxId: string,
     readonly traceIdentity: string | null,
     private readonly providerGenerationId: string | null,
-    private readonly providerKind: 'pi' | 'copilot',
+    private readonly providerKind: 'pi' | 'copilot' | 'antigravity',
     private readonly now: () => string,
     private readonly redactSensitiveText: (value: string) => { text: string },
   ) {}
@@ -177,7 +177,7 @@ export class PiProviderCommandApplicationService {
     private readonly commandDeliveries: CommandDeliveryRepository,
     private readonly now: () => string,
     private readonly redactSensitiveText: (value: string) => { text: string },
-    private readonly providerKind: 'pi' | 'copilot' = 'pi',
+    private readonly providerKind: 'pi' | 'copilot' | 'antigravity' = 'pi',
   ) {}
 
   prepare(input: PreparePiProviderCommandInput): PiProviderCommandAttempt {
@@ -233,7 +233,7 @@ function parseStoredEnvelope(serialized: string, expected: CommandEnvelope<PiPro
   return parsed;
 }
 
-function commandType(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation): string {
+function commandType(providerKind: 'pi' | 'copilot' | 'antigravity', operation: PiProviderCommandOperation): string {
   switch (operation) {
     case 'session_open':
       return `provider.${providerKind}.session.open`;
@@ -248,11 +248,11 @@ function commandType(providerKind: 'pi' | 'copilot', operation: PiProviderComman
   }
 }
 
-function stableCommandId(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation, scopeKind: string, scopeId: string, commandKey: string): string {
+function stableCommandId(providerKind: 'pi' | 'copilot' | 'antigravity', operation: PiProviderCommandOperation, scopeKind: string, scopeId: string, commandKey: string): string {
   return `command_${providerKind}_${operation}_${sha256(canonicalJson([scopeKind, scopeId, commandKey])).slice(0, 32)}`;
 }
 
-function stableIdempotencyKey(providerKind: 'pi' | 'copilot', operation: PiProviderCommandOperation, value: string): string {
+function stableIdempotencyKey(providerKind: 'pi' | 'copilot' | 'antigravity', operation: PiProviderCommandOperation, value: string): string {
   return `${providerKind}:${operation}:${sha256(value)}`;
 }
 

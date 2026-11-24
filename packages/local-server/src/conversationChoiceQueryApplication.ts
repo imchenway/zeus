@@ -343,7 +343,7 @@ export class ConversationChoiceQueryApplication {
       agent: {
         kind: conversation.agentKind,
         transport: conversation.agentTransport,
-        supportStatus: conversation.agentKind === 'codex' && this.ports.codexNativeEnabled ? 'verified' : conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? 'experimental' : 'unavailable',
+        supportStatus: conversation.agentKind === 'codex' && this.ports.codexNativeEnabled ? 'verified' : conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' || conversation.agentKind === 'antigravity' ? 'experimental' : 'unavailable',
         capabilitySnapshotId: conversation.capabilitySnapshotId,
       },
       model: { sourceId: conversation.modelSourceId, id: conversation.modelId ?? conversation.providerModel },

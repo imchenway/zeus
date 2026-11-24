@@ -27,6 +27,15 @@
   background: var(--zeus-card-background) !important;
 }
 
+/* Google 的开源字形仅用于供应商名称，离线时也使用相同样式。 */
+@font-face {
+  font-family: 'Google Sans Flex';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('../assets/model-providers/google-sans-flex-latin.woff2') format('woff2');
+}
+
 /* 所有设置控件和分组在一个作用域内定义，避免各页面继续叠加卡片主题覆盖。 */
 .macos-ai-app.zeus-shell .settings-reference-shell {
   /* 分组卡片共用圆角和内边距，窄窗口只收紧内边距。 */
@@ -250,7 +259,7 @@
     .settings-card,
     .network-runtime-summary,
     .network-settings-group,
-    .model-setup-account,
+    .model-provider-accounts,
     .model-connection-editor,
     .codex-usage-section,
     .memory-scope-controls,
@@ -927,7 +936,10 @@
     inset: auto;
     top: anchor(bottom);
     left: anchor(left);
-    position-try-fallbacks: flip-inline, flip-block, flip-inline flip-block;
+    position-try-fallbacks:
+      flip-inline,
+      flip-block,
+      flip-inline flip-block;
     inline-size: max-content;
     max-inline-size: min(740px, calc(100vw - 24px));
     max-block-size: min(340px, calc(100dvh - 24px));
@@ -1242,74 +1254,68 @@
     flex: 0 0 34px;
     padding: 6px;
   }
-  .model-setup-account {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 8px 20px;
-    margin: 0;
-    padding: var(--settings-card-padding);
+  /* 一组订阅账号共用外框，只有相邻账号之间绘制分隔线。 */
+  .model-provider-accounts {
+    container: model-provider-accounts / inline-size;
   }
-  .model-setup-account > p {
+  /* 保留标识和名称的空间，账号有多个操作时只在操作区换行。 */
+  .model-provider-accounts > .model-setup-account {
+    grid-template-columns: minmax(0, 1fr) fit-content(58%);
+  }
+  .model-provider-accounts > .model-setup-account + .model-setup-account {
+    border-block-start: 1px solid var(--zeus-product-line-soft) !important;
+  }
+  .model-provider-accounts > .model-setup-account > p {
+    grid-column: 1 / -1;
     color: var(--zeus-product-muted);
     font-size: 12px;
-    grid-column: 1 / -1;
   }
-  .model-setup-account .model-setup-actions {
-    grid-column: 2;
-    grid-row: 1;
-    display: flex;
-    gap: 8px;
+  .model-provider-accounts .model-provider-account-detail {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 4px;
+    padding-inline-start: 55px;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+  }
+  .model-provider-accounts .model-provider-account-detail > p {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  /* 新建和账号操作共用宽度、点击高度及右侧边距。 */
+  .model-connections-heading {
     align-items: center;
+    padding-inline-end: calc(var(--settings-card-padding) + 1px);
+  }
+  :is(.model-provider-accounts .model-setup-actions, .model-connections-heading > .settings-heading-actions) > .zeus-button {
+    flex: none;
+    inline-size: 108px;
+    min-block-size: var(--zeus-control-height, 34px);
+    padding-inline: 8px;
+  }
+  .model-provider-accounts .codex-update-row {
     flex-wrap: wrap;
-    justify-content: flex-end;
+    padding-inline-start: 55px;
+  }
+  .model-provider-accounts .managed-cli-progress {
+    margin-inline-start: 55px;
+  }
+  @container model-provider-accounts (max-width: 490px) {
+    .model-provider-accounts > .model-setup-account {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .model-provider-accounts .managed-cli-progress {
+      margin-inline-start: 0;
+    }
+    .model-provider-accounts :is(.model-provider-account-detail, .codex-update-row) {
+      padding-inline-start: 0;
+    }
   }
   .codex-update-row {
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-  .codex-update-state {
-    flex: 0 1 auto;
-    margin: 0;
-    color: var(--zeus-product-muted);
-    font-size: 12px;
-  }
-  .codex-update-progress {
-    grid-column: 1 / -1;
-    display: grid;
-    gap: 6px;
-  }
-  .codex-update-progress-copy {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--zeus-product-muted);
-    font-size: 12px;
-  }
-  .codex-update-progress-copy strong {
-    color: var(--zeus-product-text);
-    font-variant-numeric: tabular-nums;
-  }
-  .codex-update-progress-track {
-    position: relative;
-    overflow: hidden;
-    block-size: 4px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--zeus-product-accent) 16%, transparent);
-  }
-  .codex-update-progress-track > span {
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: 0;
-    border-radius: inherit;
-    background: var(--zeus-product-accent);
-    transition: inline-size 180ms ease-out;
-  }
-  .codex-update-progress-track[data-indeterminate='true'] > span {
-    inline-size: 36%;
-    animation: codex-update-progress-indeterminate 1.1s ease-in-out infinite;
   }
   .codex-available-models {
     grid-column: 1 / -1;
@@ -1715,14 +1721,6 @@
     .model-connections-layout {
       grid-template-columns: 144px minmax(0, 1fr);
       gap: 18px;
-    }
-    .model-setup-account {
-      grid-template-columns: 1fr;
-    }
-    .model-setup-account .model-setup-actions {
-      grid-row: auto;
-      grid-column: 1;
-      justify-content: flex-start;
     }
     :where(.settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row, .release-update-command-row, .release-update-version-row, .release-update-artifact-row) {
       grid-template-columns: 180px minmax(0, 1fr);
@@ -2352,18 +2350,183 @@
   margin: 0;
 }
 
-@keyframes codex-update-progress-indeterminate {
+/* 设置页和接入弹窗共用供应商品牌及账号布局。 */
+.model-provider-identity {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-inline-size: 0;
+}
+.model-provider-identity-copy {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.model-provider-identity-copy strong {
+  font-size: 16px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  line-height: 1.2;
+}
+.model-provider-identity[data-provider='antigravity'] strong {
+  font-family: 'Google Sans Flex', system-ui, sans-serif;
+  font-weight: 580;
+}
+.model-provider-symbol {
+  display: grid;
+  flex: 0 0 42px;
+  place-items: center;
+  inline-size: 42px;
+  block-size: 42px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+  color: var(--zeus-product-text);
+  background: var(--zeus-product-panel-muted);
+}
+.model-provider-symbol::before {
+  display: block;
+  inline-size: 24px;
+  block-size: 24px;
+  content: '';
+}
+.model-provider-symbol[data-provider='codex']::before {
+  inline-size: 30px;
+  block-size: 30px;
+  background: url('../assets/model-providers/openai-mark.svg') center / contain no-repeat;
+}
+.model-provider-symbol[data-provider='copilot']::before {
+  mask: url('../assets/model-providers/copilot.svg') center / contain no-repeat;
+  background: currentColor;
+}
+.model-provider-symbol[data-provider='antigravity']::before {
+  inline-size: 36px;
+  block-size: 36px;
+  background: url('../assets/model-providers/antigravity.svg') center / contain no-repeat;
+}
+.model-provider-symbol[data-provider='custom']::before {
+  display: none;
+}
+.model-provider-identity .account-sign-in-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.model-provider-identity .account-sign-in-state::before {
+  flex: 0 0 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+.model-provider-identity .account-sign-in-state[data-pending='true']::before {
+  background: var(--zeus-product-accent);
+}
+.model-provider-identity .account-sign-in-state[data-signed-in='true'] {
+  color: var(--zeus-status-success-text);
+}
+
+.macos-ai-app :is(.model-provider-accounts, .model-setup-subscription) > .model-setup-account {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 20px;
+  min-block-size: 78px;
+  margin: 0;
+  padding: 16px var(--settings-card-padding, 16px);
+}
+.macos-ai-app :is(.model-provider-accounts, .model-setup-subscription) .model-setup-actions {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@container model-provider-accounts (max-width: 490px) {
+  .macos-ai-app :is(.model-provider-accounts, .model-setup-subscription) > .model-setup-account {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .macos-ai-app :is(.model-provider-accounts, .model-setup-subscription) .model-setup-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+}
+
+/* 设置页和订阅登录弹窗共用同一进度表面。 */
+.managed-cli-progress {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  min-inline-size: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--zeus-product-accent) 5%, var(--zeus-card-background));
+}
+.managed-cli-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  font-weight: 560;
+  overflow-wrap: anywhere;
+}
+.managed-cli-progress-amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 10px;
+  color: var(--zeus-product-muted);
+  font-variant-numeric: tabular-nums;
+}
+.managed-cli-progress-amount strong {
+  color: var(--zeus-product-text);
+  font-weight: 650;
+}
+.managed-cli-progress-track {
+  position: relative;
+  overflow: hidden;
+  block-size: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--zeus-product-accent) 14%, var(--zeus-card-background));
+}
+.managed-cli-progress-track > span {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--zeus-product-accent) 75%, white), var(--zeus-product-accent));
+  transition: inline-size 170ms ease-out;
+}
+.managed-cli-progress-track[data-indeterminate='true'] > span {
+  inline-size: 32%;
+  animation: managed-cli-progress-indeterminate 1.6s ease-in-out infinite;
+}
+
+@keyframes managed-cli-progress-indeterminate {
   from {
-    transform: translateX(-110%);
+    transform: translateX(-105%);
   }
   to {
-    transform: translateX(310%);
+    transform: translateX(320%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .codex-update-progress-track[data-indeterminate='true'] > span {
+  .managed-cli-progress-track > span {
+    transition: none;
+  }
+  .managed-cli-progress-track[data-indeterminate='true'] > span {
     animation: none;
-    transform: none;
+    transform: translateX(105%);
   }
 }

@@ -1,3 +1,4 @@
+import { registerAntigravityAccountRoutes } from './antigravityAccountRoutes.js';
 import { invokeWorkflowPluginTool } from './workflowToolAdapter.js';
 import { GitDeliveryExecution } from './gitDeliveryExecution.js';
 import { GitEnvironmentSummaryService } from './gitEnvironmentSummary.js';
@@ -34,6 +35,8 @@ import {
   createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
   isNonCodexAiCliAdapterId,
+  isManagedAgentKind,
+  type ManagedAgentKind,
   listAiCliAdapters,
   type SelectableConnectionModel,
   modelRef,
@@ -301,7 +304,7 @@ async function checkPublishedCodexUpdate(adapter: AiCliAdapterStatus, checkedAt:
 }
 
 /** 读取固定官方来源的安装脚本；Zeus 管理的 standalone 无法通过 CLI 自更新。 */
-async function readOfficialCodexInstaller(onProgress: (progress: number | null, stage: string) => void): Promise<Buffer> {
+async function readOfficialCodexInstaller(onProgress: (progress: number | null, stage: string) => void, firstInstall: boolean): Promise<Buffer> {
   onProgress(null, 'preparing');
   /** 安装脚本和资产下载共用更新总等待上限。 */
   const signal = AbortSignal.timeout(codexUpdateTimeoutMs);
@@ -320,16 +323,26 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
   if (script.byteLength > codexInstallerMaximumBytes) throw Object.assign(new Error('Codex 官方安装脚本超过读取上限。'), { code: 'ZEUS_CODEX_UPDATE_UNAVAILABLE' });
   /** 成功状态不能替代脚本身份，拒绝 HTML 或未知正文。 */
   const header = script.subarray(0, Math.min(script.byteLength, 4_096)).toString('utf8');
+  let source = script.toString('utf8');
   if (process.platform === 'win32') {
     if (!script.toString('utf8').includes('$ReleasesBaseUri = "https://releases.openai.com/codex"') || !script.toString('utf8').includes('CODEX_RELEASE'))
       throw Object.assign(new Error('Codex 官方 Windows 安装脚本格式无法识别。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
-    return script;
+    if (!firstInstall) return script;
+    /** 官方脚本完成程序落盘后才进入用户 PATH 和冲突安装处理，首次托管只执行前半段。 */
+    const integration = source.indexOf('\nMaybe-HandleConflictingInstall -Conflict $conflictingInstall');
+    if (integration < 0) throw Object.assign(new Error('无法确认 Windows 官方安装器的受管安装边界。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
+    return Buffer.from(source.slice(0, integration + 1));
   }
   if (!header.startsWith('#!/bin/sh\n') || !header.includes('RELEASES_BASE_URL="https://releases.openai.com/codex"')) {
     throw Object.assign(new Error('Codex 官方安装脚本格式无法识别。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
   }
+  if (firstInstall) {
+    /** 首装使用 Zeus 的绝对可执行路径，保留官方校验并跳过外部终端配置。 */
+    const shellSetup = '\nadd_to_path\nverify_visible_command\n';
+    if (!source.includes(shellSetup)) throw Object.assign(new Error('无法确认官方 Codex 安装器的受管安装边界。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
+    source = source.replace(shellSetup, '\nverify_visible_command\n');
+  }
   /** 只为真实资产下载打开 curl 原生进度；元数据与校验文件继续静默。 */
-  const source = script.toString('utf8');
   /** 修改范围严格限制在官方 download_file 函数。 */
   const downloadFunctionStart = source.indexOf('download_file() {');
   /** download_text 是相邻的下一个官方函数。 */
@@ -347,11 +360,11 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
   return Buffer.from(`${source.slice(0, downloadFunctionStart)}${instrumentedDownloadFunction}${source.slice(downloadFunctionEnd + 2)}`);
 }
 
-/** 只调用受管安装的官方安装器；全局程序不会被当作更新命令执行。 */
-async function runCodexSelfUpdate(commandPath: string, codexHome: string | undefined, targetVersion: string, onProgress: (progress: number | null, stage: string) => void): Promise<void> {
+/** 安装和升级均使用官方安装器，仅写入 Zeus 的受管目录。 */
+async function runManagedCodexInstaller(commandPath: string, codexHome: string | undefined, targetVersion: string | undefined, onProgress: (progress: number | null, stage: string) => void): Promise<void> {
   if (!isManagedCodexStandalone(commandPath, codexHome)) throw Object.assign(new Error('Zeus 不管理这份 Codex。'), { code: 'ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION' });
-  /** 受管脚本只作为标准输入交给系统 sh，目标版本固定为用户确认的版本。 */
-  const installer = await readOfficialCodexInstaller(onProgress);
+  /** 更新使用已确认版本，首次安装使用官方最新稳定版。 */
+  const installer = await readOfficialCodexInstaller(onProgress, targetVersion === undefined);
   /** 更新命令只继承当前服务环境，并显式固定 Zeus 的 Codex 数据目录。 */
   const environment = {
     ...process.env,
@@ -504,6 +517,8 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
   copilotRuntimeManager: CopilotRuntimeManager;
   copilotNativeCoordinator: ReturnType<typeof createPiNativeConversationCoordinator>;
+  /** Antigravity 会话和账号共用同一官方 ACP 进程。 */
+  antigravityNativeCoordinator: ReturnType<typeof createPiNativeConversationCoordinator>;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
   conversationExperts: ConversationExpertRepository;
@@ -718,6 +733,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     parseTelegramSecuritySettingsInput,
     piNativeCoordinator,
     copilotNativeCoordinator,
+    antigravityNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
     prepareWorkspaceGitCommand,
@@ -1282,6 +1298,82 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 安装请求串行执行，后到请求仍需重新核对用户确认的版本。 */
   let codexUpdateChain: Promise<void> = Promise.resolve();
 
+  /** CLI 安装和更新共用实际的阶段与下载比例。 */
+  const reportCodexProgress = (progress: number | null, stage: string): void => {
+    publishRealtimeEvent('codex.update.progress', { progress, stage });
+  };
+
+  /** 首次安装显式触发，同时沿用现有持久回执和独占维护窗口。 */
+  server.post('/api/runtime/adapters/codex/install', async (request: FastifyRequest<{ Body: SettingsCommandRequest<Record<string, never>> }>, reply) => {
+    try {
+      const parsed = settingsCommands.parse<Record<string, never>>({
+        value: request.body,
+        commandType: settingsCommandTypes.codexRuntimeInstall,
+        scopeKind: 'settings',
+        expectedScopeId: () => 'codex-runtime-install',
+      });
+      if (Object.keys(parsed.input).length !== 0) return reply.code(400).send({ error: 'ZEUS_CODEX_INSTALL_INVALID_REQUEST', message: '首次安装使用官方稳定版。' });
+      if (readOnlyValidation) throw nativeApiError('ZEUS_CODEX_INSTALL_NOT_AVAILABLE', '只读验证模式不能安装 Codex。');
+
+      const operation = codexUpdateChain.then(async () => {
+        reportCodexProgress(null, 'checking');
+        const detected = await runtimeQueries.checkAdapter('codex');
+        if (detected.available) return detected;
+        const runMaintenance = codexAppServerManager.runExclusiveMaintenance?.bind(codexAppServerManager);
+        if (!runMaintenance) throw nativeApiError('ZEUS_CODEX_INSTALL_NOT_AVAILABLE', '当前 Codex 运行服务不支持托管安装。');
+        reportCodexProgress(null, 'waiting');
+        return runMaintenance(async () => {
+          const adapter = await runtimeQueries.checkAdapter('codex');
+          if (adapter.available) return adapter;
+          const commandPath = adapter.resolvedCommandPath;
+          if (!commandPath || adapter.installationIssue !== 'not_found' || !isManagedCodexStandalone(commandPath, dependencies.codexHome)) {
+            throw nativeApiError('ZEUS_CODEX_INSTALL_NOT_AVAILABLE', '当前程序不能作为首次安装处理，请重新检测或查看官方安装指南。');
+          }
+          const result = await settingsCommands.executeExternal({
+            parsed,
+            destinationId: 'codex_runtime_install',
+            resourceId: 'codex-runtime',
+            externalOperationId: `${parsed.operationIdentity}:codex-install`,
+            invoke: async () => {
+              await runManagedCodexInstaller(commandPath, dependencies.codexHome, undefined, reportCodexProgress);
+              reportCodexProgress(null, 'verifying');
+              const installed = await runtimeQueries.checkAdapter('codex');
+              if (!installed.available || !isManagedCodexStandalone(installed.resolvedCommandPath, dependencies.codexHome)) {
+                throw nativeApiError('ZEUS_CODEX_INSTALL_NOT_APPLIED', 'Codex 安装结束，但尚未确认受管程序已就绪，请重新检测。');
+              }
+              return installed;
+            },
+            mutateAcceptedBusinessState: (installed) => {
+              appendAuditLog({
+                actorType: 'local_api',
+                action: 'settings.codex_runtime.installed',
+                resourceType: 'settings',
+                resourceId: 'codex-runtime',
+                payload: { version: installed.version },
+              });
+            },
+          });
+          /** 重放时以当前磁盘为准，不能把历史安装回执当作当前就绪状态。 */
+          const installed = result.replayed ? await runtimeQueries.checkAdapter('codex') : result.result;
+          if (!installed.available) throw nativeApiError('ZEUS_CODEX_INSTALL_NOT_APPLIED', '历史安装已完成，当前未找到可运行的受管程序，请重新检测。');
+          return installed;
+        });
+      });
+      codexUpdateChain = operation.then(
+        () => undefined,
+        () => undefined,
+      );
+      const installed = await operation;
+      reportCodexProgress(1, 'completed');
+      return installed;
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : '';
+      if (code.startsWith('ZEUS_CODEX_')) return sendNativeConversationApiError(reply, error);
+      const mapped = settingsCommandHttpError(error, redactSensitiveText);
+      return reply.code(mapped.statusCode).send(mapped.body);
+    }
+  });
+
   /** 更新属于可恢复的外部写入：先记录命令，再调用官方 CLI，最后热切换运行实例。 */
   server.post('/api/runtime/adapters/codex/update', async (request: FastifyRequest<{ Body: SettingsCommandRequest<{ targetVersion: string }> }>, reply) => {
     try {
@@ -1298,11 +1390,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (readOnlyValidation) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '只读验证模式不能更新 Codex。');
       /** 当前请求进入串行队列，前一轮完成后会重新检测是否仍需更新。 */
       const operation = codexUpdateChain.then(async () => {
-        /** 进度只在真实阶段完成时推进，不使用计时器估算。 */
-        const reportProgress = (progress: number | null, stage: string): void => {
-          publishRealtimeEvent('codex.update.progress', { progress, stage });
-        };
-        reportProgress(null, 'checking');
+        reportCodexProgress(null, 'checking');
         /** 安装请求先重新检查，归属或目标版本变化时不得进入维护窗口。 */
         const detected = await runtimeQueries.checkCodexUpdate();
         assertCodexUpdateTarget(detected, parsed.input.targetVersion);
@@ -1316,17 +1404,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             ? detectedRuntimeState.type !== 'ready' || (Boolean(detected.adapter.version) && detectedRuntimeVersion !== detected.adapter.version)
             : detectedRuntimeState.type === 'ready' && Boolean(detected.adapter.version) && detectedRuntimeVersion !== detected.adapter.version;
         if (detected.status !== 'available' && !runtimeRepairRequired) {
-          reportProgress(1, 'completed');
+          reportCodexProgress(1, 'completed');
           return detected;
         }
         /** 只有多世代运行管理器能原子阻止新任务进入维护窗口。 */
         const runMaintenance = codexAppServerManager.runExclusiveMaintenance?.bind(codexAppServerManager);
         if (!runMaintenance) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '当前 Codex 运行服务不支持安全在线更新。');
         /** 已有轮次、目标和授权自然收口；设置页明确展示等待，不把排队误报成失败。 */
-        reportProgress(null, 'waiting');
+        reportCodexProgress(null, 'waiting');
         /** 取得维护窗口后不接纳新的 Codex 写操作；已有查询仍可返回。 */
         const result = await runMaintenance(async (maintenance: CodexRuntimeMaintenanceControl) => {
-          reportProgress(null, 'preparing');
+          reportCodexProgress(null, 'preparing');
           /** 服务端重新读取实际程序和官方版本，不信任界面上一次检测结果。 */
           const available = await runtimeQueries.checkCodexUpdate();
           assertCodexUpdateTarget(available, parsed.input.targetVersion);
@@ -1345,8 +1433,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               resourceId: 'codex-runtime',
               externalOperationId: `${parsed.operationIdentity}:codex-update`,
               invoke: async (): Promise<CodexRuntimeUpdateStatus> => {
-                await runCodexSelfUpdate(commandPath, dependencies.codexHome, available.latestVersion!, reportProgress);
-                reportProgress(null, 'verifying');
+                await runManagedCodexInstaller(commandPath, dependencies.codexHome, available.latestVersion!, reportCodexProgress);
+                reportCodexProgress(null, 'verifying');
                 /** 成功退出后重新探测同一配置，不能把 CLI 的文字提示当成更新成功。 */
                 const adapter = await runtimeQueries.checkAdapter('codex');
                 if (!adapter.available || adapter.version !== parsed.input.targetVersion) {
@@ -1399,7 +1487,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             (currentRuntimeState.type === 'ready' && Boolean(targetVersion) && currentRuntimeVersion !== targetVersion);
           if (!runtimeSwitchRequired) return updated;
           if (!targetVersion || !updated.adapter.resolvedCommandPath) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_APPLIED', 'Codex 更新后无法确认可运行的程序版本。');
-          reportProgress(null, 'switching');
+          reportCodexProgress(null, 'switching');
           try {
             /** 新程序可能改变共享状态；先关闭空闲旧实例，失败后也不能自动继续使用旧程序。 */
             await maintenance.deactivateCurrentGeneration();
@@ -1420,7 +1508,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           }
           return updated;
         });
-        reportProgress(1, 'completed');
+        reportCodexProgress(1, 'completed');
         /** 安装和运行实例核验完成后发布实际版本；请求方断线不影响已打开设置页刷新。 */
         publishRealtimeEvent('codex.update.checked', { ...result });
         return result;
@@ -1484,6 +1572,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,
       listSelectableModels: (selectedModelRef) => modelConnections.listSelectableModels(selectedModelRef),
     },
+    readAntigravityModels: () => antigravityNativeCoordinator.antigravityDriver?.readAccount().models ?? [],
     copilotCatalog: {
       readAccount: () => copilotRuntimeManager.readAccount(),
       readModels: () => copilotRuntimeManager.readModels(),
@@ -1922,6 +2011,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     sendNativeError: sendNativeConversationApiError,
   });
   registerCopilotAccountRoutes({ server, manager: copilotRuntimeManager, readOnlyValidation });
+  registerAntigravityAccountRoutes({ server, driver: antigravityNativeCoordinator.antigravityDriver, settings, persist: () => db.save() });
+  /** 停止、继续与工具审批返回会话原有的 Provider。 */
+  const managedCoordinatorFor = (kind: ManagedAgentKind) => (kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator);
+  /** 原生 app-server 与托管客户端共用产品队列和对话操作。 */
+  const conversationCoordinatorFor = (kind: unknown) => (isManagedAgentKind(kind) ? managedCoordinatorFor(kind) : codexNativeCoordinator);
   registerZeusPluginRoutes({
     server,
     plugins: zeusPluginService,
@@ -1991,35 +2085,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     goals: conversationGoals,
     codex: {
       ...codexNativeCoordinator,
-      readGoal: (input) =>
-        (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal(
-          input,
-        ),
-      setGoal: (input) =>
-        (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot' ? copilotNativeCoordinator : conversations.getRecordById(input.conversationId)?.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).setGoal(
-          input,
-        ),
-      pauseGoal: (input) =>
-        (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot'
-          ? copilotNativeCoordinator
-          : conversations.getRecordById(input.conversationId)?.agentKind === 'pi'
-            ? piNativeCoordinator
-            : codexNativeCoordinator
-        ).pauseGoal(input),
-      resumeGoal: (input) =>
-        (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot'
-          ? copilotNativeCoordinator
-          : conversations.getRecordById(input.conversationId)?.agentKind === 'pi'
-            ? piNativeCoordinator
-            : codexNativeCoordinator
-        ).resumeGoal(input),
-      clearGoal: (input) =>
-        (conversations.getRecordById(input.conversationId)?.agentKind === 'copilot'
-          ? copilotNativeCoordinator
-          : conversations.getRecordById(input.conversationId)?.agentKind === 'pi'
-            ? piNativeCoordinator
-            : codexNativeCoordinator
-        ).clearGoal(input),
+      readGoal: (input) => conversationCoordinatorFor(conversations.getRecordById(input.conversationId)?.agentKind).readGoal(input),
+      setGoal: (input) => conversationCoordinatorFor(conversations.getRecordById(input.conversationId)?.agentKind).setGoal(input),
+      pauseGoal: (input) => conversationCoordinatorFor(conversations.getRecordById(input.conversationId)?.agentKind).pauseGoal(input),
+      resumeGoal: (input) => conversationCoordinatorFor(conversations.getRecordById(input.conversationId)?.agentKind).resumeGoal(input),
+      clearGoal: (input) => conversationCoordinatorFor(conversations.getRecordById(input.conversationId)?.agentKind).clearGoal(input),
     },
     archiveNativeConversation,
     prepareConversationArchive,
@@ -2087,7 +2157,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       /** 从同一入口把指定轮次交给当前会话的 Provider。 */
       queueSendNow: async ({ params, expectedTurnId, operationIdentity, providerWriteLifecycle }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).sendQueuedNow({
+        const operation = await conversationCoordinatorFor(conversation.agentKind).sendQueuedNow({
           conversationId: conversation.id,
           submissionId: params.submissionId,
           expectedTurnId,
@@ -2112,8 +2182,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             const childTurn = conversationTurns.getLatestActiveByConversation(execution.childConversationId);
             if (child && childTurn?.providerTurnId) {
               try {
-                if (child.agentKind === 'pi' || child.agentKind === 'copilot')
-                  await (child.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation: child, providerTurnId: childTurn.providerTurnId });
+                if (isManagedAgentKind(child.agentKind)) await managedCoordinatorFor(child.agentKind).interruptTurn({ conversation: child, providerTurnId: childTurn.providerTurnId });
                 else await codexNativeCoordinator.interruptTurn({ conversationId: child.id, providerTurnId: childTurn.providerTurnId });
               } catch {
                 // 父轮次的停止意图仍需耐久收口；子 Provider 的迟到结果会被终态门禁丢弃。
@@ -2143,10 +2212,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           return toNativeInterruptAcceptance(operationIdentity, params.turnId, updatedConversation, submission);
         }
         await stopConversationSubagents(conversation.id);
-        const operation =
-          conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
-            ? await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
-            : await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: turn.providerTurnId! });
+        const operation = isManagedAgentKind(conversation.agentKind)
+          ? await managedCoordinatorFor(conversation.agentKind).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+          : await codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId: turn.providerTurnId! });
         const updatedConversation = conversations.getById(conversation.id);
         const submission = operation.submissionId ? conversationSubmissions.getById(operation.submissionId) : undefined;
         if (!updatedConversation) throw nativeApiError('ZEUS_NATIVE_ACCEPTANCE_NOT_DURABLE', 'Native interrupt acceptance was not persisted.');
@@ -2165,7 +2233,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       planImplementationRespond: async ({ params, action, feedback, attachments, operationIdentity }) => {
         const conversation = requireNativeQueueConversation(params);
-        const operation = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
+        const operation = await conversationCoordinatorFor(conversation.agentKind).respondToPlanImplementationRequest({
           conversationId: conversation.id,
           requestId: params.requestId,
           action,
@@ -2187,8 +2255,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       queueResume: async ({ params }) => {
         const conversation = requireNativeQueueConversation(params);
-        if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
-          await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).resumeQueue({ conversationId: conversation.id, reason: 'interrupted' });
+        if (isManagedAgentKind(conversation.agentKind)) {
+          await managedCoordinatorFor(conversation.agentKind).resumeQueue({ conversationId: conversation.id, reason: 'interrupted' });
           return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
         }
         return codexNativeCoordinator.resumeInterruptedQueue({ conversationId: conversation.id });
@@ -2196,14 +2264,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       queueRecover: async ({ params, intent }) => {
         const conversation = requireNativeQueueConversation(params);
         // 检查只返回已有 Pi 事实；不重启执行器或重新准备合入目录。
-        if (intent === 'check' && (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot')) return toNativeQueueApiSnapshot(conversation);
+        if (intent === 'check' && isManagedAgentKind(conversation.agentKind)) return toNativeQueueApiSnapshot(conversation);
         const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
         if (intent === 'continue' && conflictAttempt?.state === 'failed') {
           await retryTaskIntegrationAiPreparation(conversation, conflictAttempt);
           return toNativeQueueApiSnapshot(conversation);
         }
-        if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') {
-          await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).resumeQueue({ conversationId: conversation.id, reason: 'recovery_required' });
+        if (isManagedAgentKind(conversation.agentKind)) {
+          await managedCoordinatorFor(conversation.agentKind).resumeQueue({ conversationId: conversation.id, reason: 'recovery_required' });
           return toNativeQueueApiSnapshot(conversations.getById(conversation.id)!);
         }
         return codexNativeCoordinator.recoverQueue({ conversationId: conversation.id, intent });
@@ -2309,7 +2377,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       };
     }
     try {
-      const goal = await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).readGoal({ conversationId: conversation.id });
+      const goal = await conversationCoordinatorFor(conversation.agentKind).readGoal({ conversationId: conversation.id });
       return { goal, timeline: conversationGoals.listEvents(conversation.id), capability: conversationGoalCapability(conversation) };
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
@@ -3360,10 +3428,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: turn.providerTurnId,
           externalOperationId: `provider-turn-interrupt:${turn.providerTurnId}`,
           invoke: async () => {
-            const operation =
-              conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
-                ? await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
-                : await codexNativeCoordinator.interruptTurn({ conversationId, providerTurnId: turn.providerTurnId! });
+            const operation = isManagedAgentKind(conversation.agentKind)
+              ? await managedCoordinatorFor(conversation.agentKind).interruptTurn({ conversation, providerTurnId: turn.providerTurnId! })
+              : await codexNativeCoordinator.interruptTurn({ conversationId, providerTurnId: turn.providerTurnId! });
             return { operation, acknowledged: true };
           },
           isExplicitRejection: isExplicitConversationStartRejection,
@@ -3372,7 +3439,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       },
       resumeConversation: async ({ projectId, conversationId, operationIdentity }) => {
         const conversation = conversations.getRecordById(conversationId);
-        if (!conversation || conversation.projectId !== projectId || conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') return false;
+        if (!conversation || conversation.projectId !== projectId || isManagedAgentKind(conversation.agentKind)) return false;
         const value: Record<string, never> = {};
         const request = imInternalCommandRequest({
           commandType: conversationDispatchCommandTypes.queueResume,
@@ -3523,7 +3590,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           resourceId: requestId,
           externalOperationId: `plan-implementation-response:${requestId}`,
           invoke: () =>
-            (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : conversation.agentKind === 'pi' ? piNativeCoordinator : codexNativeCoordinator).respondToPlanImplementationRequest({
+            conversationCoordinatorFor(conversation.agentKind).respondToPlanImplementationRequest({
               conversationId,
               requestId,
               action,
@@ -5227,6 +5294,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
     try {
       await copilotNativeCoordinator.close();
+      await antigravityNativeCoordinator.close();
     } catch (error) {
       cleanupErrors.push(error);
     }

@@ -4,10 +4,11 @@ import type { CopilotAccountCatalog, CopilotLoginStep } from '../features/codex/
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
+import { ModelProviderIdentity } from './ModelProviderIdentity.js';
 import { copyText } from '../ui/clipboard.js';
 
 /** 模型供应商页内的 GitHub Copilot 账号和设备码登录入口。 */
-export function CopilotAccountSettings(props: { client: NativeConversationAppClient | null; language: 'zh-CN' | 'en-US' }): React.JSX.Element {
+export function CopilotAccountSettings(props: { client: NativeConversationAppClient | null; language: 'zh-CN' | 'en-US'; onChooseModel?: () => Promise<void>; choosingModel?: boolean }): React.JSX.Element {
   /** UI 文案随应用语言切换。 */
   const zh = props.language === 'zh-CN';
   /** 目录状态只取当前 SDK 账号的服务端快照。 */
@@ -204,40 +205,42 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
   const accountQuotas = catalog?.quotas.filter((quota) => quota.observationKind === 'account_snapshot' && quota.acquisitionStatus === 'succeeded' && quota.quantityKind === 'authoritative_budget') ?? [];
   return (
     <section className="settings-product-section model-setup-account" aria-label={zh ? 'GitHub Copilot 订阅' : 'GitHub Copilot subscription'}>
-      <header className="settings-section-heading">
-        <strong>GitHub Copilot</strong>
-        <span className="account-sign-in-state" data-signed-in={catalog?.account?.authenticated || undefined}>
-          {catalog?.account?.authenticated
+      <ModelProviderIdentity provider="copilot" name="GitHub Copilot" connected={catalog?.account?.authenticated} busy={accountLoading || Boolean(loginId)}>
+        {catalog?.account?.authenticated
+          ? zh
+            ? `已登录 · ${catalog.account.login ?? 'GitHub'}`
+            : `Signed in · ${catalog.account.login ?? 'GitHub'}`
+          : catalog
             ? zh
-              ? `已登录 · ${catalog.account.login ?? 'GitHub'}`
-              : `Signed in · ${catalog.account.login ?? 'GitHub'}`
-            : catalog
+              ? '未登录'
+              : 'Not signed in'
+            : !props.client
               ? zh
-                ? '未登录'
-                : 'Not signed in'
-              : !props.client
+                ? '账号状态尚未检查'
+                : 'Account status not checked'
+              : accountLoading
                 ? zh
-                  ? '账号状态尚未检查'
-                  : 'Account status not checked'
-                : accountLoading
-                  ? zh
-                    ? '正在读取账号状态…'
-                    : 'Loading account status…'
-                  : zh
-                    ? '暂时无法读取账号状态'
-                    : 'Account status is temporarily unavailable'}
-        </span>
-      </header>
+                  ? '正在读取账号状态…'
+                  : 'Loading account status…'
+                : zh
+                  ? '暂时无法读取账号状态'
+                  : 'Account status is temporarily unavailable'}
+      </ModelProviderIdentity>
       <div className="model-setup-actions">
         {catalog?.account?.authenticated ? (
           <Button variant="secondary" disabled={busy} onClick={() => logout()}>
             {zh ? '退出登录' : 'Sign out'}
           </Button>
         ) : (
-          <Button variant="primary" busy={busy && !accountLoading} disabled={busy || !props.client || Boolean(loginId)} onClick={() => beginLogin()}>
-            {zh ? '登录 GitHub Copilot' : 'Sign in to GitHub Copilot'}
+          <Button variant="primary" aria-label={zh ? '登录 GitHub Copilot' : 'Sign in to GitHub Copilot'} busy={busy && !accountLoading} disabled={busy || !props.client || Boolean(loginId)} onClick={() => beginLogin()}>
+            {props.onChooseModel ? (zh ? '登录 GitHub Copilot' : 'Sign in to GitHub Copilot') : zh ? '登录' : 'Sign in'}
           </Button>
         )}
+        {catalog?.account?.authenticated && props.onChooseModel ? (
+          <Button variant="primary" disabled={busy} busy={props.choosingModel} onClick={props.onChooseModel}>
+            {zh ? '选择模型' : 'Choose a model'}
+          </Button>
+        ) : null}
         {loginId ? (
           <Button variant="secondary" disabled={busy} onClick={() => cancelLogin()}>
             {zh ? '取消登录' : 'Cancel sign-in'}
@@ -269,7 +272,7 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
           )}
         </div>
       ) : null}
-      {catalog?.account?.authenticated ? (
+      {catalog?.account?.authenticated && !props.onChooseModel ? (
         <section className="codex-available-models">
           <strong>
             {zh ? '当前可用模型' : 'Available models'} · {availableModels.length}
@@ -281,7 +284,7 @@ export function CopilotAccountSettings(props: { client: NativeConversationAppCli
           </ul>
         </section>
       ) : null}
-      {catalog?.account?.authenticated && accountQuotas.length > 0 ? (
+      {catalog?.account?.authenticated && !props.onChooseModel && accountQuotas.length > 0 ? (
         <section className="codex-available-models" aria-label={zh ? 'Copilot 官方额度' : 'Official Copilot quota'}>
           <strong>{zh ? '官方额度' : 'Official quota'}</strong>
           <ul>

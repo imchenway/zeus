@@ -41,7 +41,7 @@ const modelHistoryReadColumns = `id, conversation_id, sequence, turn_id, submiss
   reasoning_source_json, tool_pair_id, capability_loss_json, confirmed_at`;
 
 /** 执行片段使用实际 Provider 身份决定恢复和归档边界。 */
-export type ConversationRuntimeKind = 'codex' | 'pi' | 'copilot';
+export type ConversationRuntimeKind = 'codex' | 'pi' | 'copilot' | 'antigravity';
 export type ConversationSegmentState = 'provisional' | 'current' | 'sealed' | 'abandoned';
 export type ConversationSwitchState = 'preflight' | 'provisional' | 'outcome_unknown' | 'accepted' | 'failed' | 'cancelled';
 /** 处理过程区分规则上下文更新、模型摘要和实际执行活动。 */
@@ -1807,7 +1807,8 @@ export class ConversationExecutionRepository {
       stringOrNull(input.toolPairId) ??
       (content.agentKind === 'pi' ||
       content.agentKind === 'copilot' ||
-      ['pi', 'copilot'].includes(this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind ?? '')
+      content.agentKind === 'antigravity' ||
+      ['pi', 'copilot', 'antigravity'].includes(this.db.get<{ runtime_kind: string }>(`SELECT runtime_kind FROM conversation_runtime_segments WHERE id = ?`, [input.segmentId])?.runtime_kind ?? '')
         ? stringOrNull(content.stageId)
         : null) ??
       stringOrNull(reasoning.itemId) ??
@@ -2020,7 +2021,7 @@ function sealLegacyProviderSessions(db: ZeusDatabasePort, migratedAt: string): v
     `SELECT id, agent_kind, provider_id, provider_thread_id, provider_thread_path, provider_model,
             provider_protocol_version, provider_binary_version, native_session_path, created_at
        FROM conversations
-      WHERE provider_thread_id IS NOT NULL AND agent_kind IN ('codex', 'pi', 'copilot')
+      WHERE provider_thread_id IS NOT NULL AND agent_kind IN ('codex', 'pi', 'copilot', 'antigravity')
       ORDER BY created_at, id`,
   );
   for (const row of rows) {

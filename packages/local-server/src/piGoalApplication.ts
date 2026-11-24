@@ -15,7 +15,7 @@ import type {
 /** Pi 使用 Zeus 的目标与提交记录，模型回合结束只触发检查，不代表目标完成。 */
 export function createPiGoalApplication(options: {
   /** 目标控制归属真实 SDK 运行时。 */
-  runtimeKind?: 'pi' | 'copilot';
+  runtimeKind?: 'pi' | 'copilot' | 'antigravity';
   db: ZeusDatabase;
   goals: ConversationGoalRepository;
   controls: ConversationRuntimeRepository;

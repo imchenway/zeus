@@ -9,6 +9,8 @@ export const settingsClientCommandTypes = {
   runtimeSettingsPut: 'settings.runtime.put',
   /** 设置页手动操作与主进程静默调度共用的 Codex 官方程序更新。 */
   codexRuntimeUpdate: 'settings.codex_runtime.update',
+  /** 首次安装受管 Codex 程序，版本取官方安装器的稳定版。 */
+  codexRuntimeInstall: 'settings.codex_runtime.install',
   appShellSettingsPut: 'settings.app_shell.put',
   /** 全局规则文件的手动保存。 */
   agentsPut: 'settings.agents.put',

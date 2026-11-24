@@ -1,3 +1,4 @@
+import type { AntigravityAccountCatalog } from '@zeus/ai-runtime';
 import { codexCapabilitiesChangedEvent } from '../integrations/modelCatalogEvents.js';
 import type {
   AgentCatalogSnapshot,
@@ -29,6 +30,9 @@ import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPub
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from '../git/workspaceGitCommandClient.js';
 import { type LocalApiTransport, ZeusApiError } from '../../transport/localApiTransport.js';
+
+/** Zeus 只接收 agy 公开的连接状态和模型目录。 */
+export type { AntigravityAccountCatalog } from '@zeus/ai-runtime';
 
 /** Copilot 账号身份只取自托管 SDK 当前登录状态。 */
 export interface CopilotAccountStatus {
@@ -91,6 +95,14 @@ export interface CodexRuntimeUpdateProgress {
 }
 
 export interface CodexApiClient {
+  /** 读取 agy 已观察到的 Google 账号状态。 */
+  loadAntigravityAccount: () => Promise<AntigravityAccountCatalog>;
+  /** 从 agy 刷新登录和可选模型。 */
+  refreshAntigravityAccount: () => Promise<AntigravityAccountCatalog>;
+  /** 发起官方个人 Google 账号授权。 */
+  startAntigravityLogin: () => Promise<AntigravityAccountCatalog>;
+  /** 停止当前尚未完成的授权。 */
+  cancelAntigravityLogin: () => Promise<AntigravityAccountCatalog>;
   /** 只读已缓存的 Copilot 登录和模型状态。 */
   loadCopilotAccount: () => Promise<CopilotAccountCatalog>;
   /** 主动从 Copilot SDK 刷新账号和模型目录。 */
@@ -226,6 +238,10 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
   };
 
   return {
+    loadAntigravityAccount: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account'),
+    refreshAntigravityAccount: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/refresh', { method: 'POST', body: '{}' }),
+    startAntigravityLogin: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/login', { method: 'POST', body: '{}' }),
+    cancelAntigravityLogin: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/cancel', { method: 'POST', body: '{}' }),
     loadCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account'),
     refreshCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/refresh', { method: 'POST', body: '{}' }),
     startCopilotLogin: () => transport.request<{ loginId: string; step: CopilotLoginStep }>('/api/copilot/account/login', { method: 'POST', body: '{}' }),

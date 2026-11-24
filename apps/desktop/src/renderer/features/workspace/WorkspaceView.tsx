@@ -90,6 +90,8 @@ const ModelSetupDialog = lazy(() => import('../../settings/ModelSetup.js').then(
 /** 账户设置与接入对话框复用同一按需模块。 */
 const CodexAccountSettings = lazy(() => import('../../settings/ModelSetup.js').then((module) => ({ default: module.CodexAccountSettings })));
 /** Copilot 设置按需载入，避免常驻工作面启动账号查询。 */
+/** 模型供应商页复用原生账号区块。 */
+const AntigravityAccountSettings = lazy(() => import('../../settings/AntigravityAccountSettings.js').then((module) => ({ default: module.AntigravityAccountSettings })));
 const CopilotAccountSettings = lazy(() => import('../../settings/CopilotAccountSettings.js').then((module) => ({ default: module.CopilotAccountSettings })));
 /** GlobalAgentSettingsPane 仅在对应页面打开时加载。 */
 const GlobalAgentSettingsPane = lazy(() => import('../../settings/GlobalAgentSettingsPane.js').then((module) => ({ default: module.GlobalAgentSettingsPane })));
@@ -2187,12 +2189,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <header className="settings-page-heading">
                           <span>
                             <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.models}</h2>
-                            <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理模型服务与可用模型。' : 'Manage model providers and available models.'}</p>
                           </span>
                           <SettingsSaveStatus status={modelSaveState} language={appShellSettings.appLanguage} />
                         </header>
-                        <CodexAccountSettings controller={modelSetup} />
-                        <CopilotAccountSettings client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} />
+                        <section className="model-provider-accounts" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '订阅账号' : 'Subscription accounts'}>
+                          <CodexAccountSettings controller={modelSetup} />
+                          <CopilotAccountSettings client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} />
+                          <AntigravityAccountSettings client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} />
+                        </section>
                         <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} onSaveStateChange={setModelSaveState} />
                       </>
                     ) : null}

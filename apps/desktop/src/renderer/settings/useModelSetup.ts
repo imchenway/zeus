@@ -37,9 +37,17 @@ export interface ConversationModelSetupContext {
   projectId: string;
   /** 草稿卸载或切换项目时失效，不保留待发送请求。 */
   signal: AbortSignal;
+  /** 请求当前项目的模型能力，始终使用实际可运行的模型引用。 */
+  loadModels: () => Promise<readonly CodexTaskPushModelCapability[]>;
   /** 刷新草稿的可选模型，等待用户再次发送。 */
   onComplete: (modelRef: string | null) => Promise<void>;
 }
+
+/** 新会话支持的原生订阅供应商。 */
+export type SubscriptionSetupProvider = 'codex' | 'copilot' | 'antigravity';
+
+/** 接入各步骤都在同一模态面，模型选择沿用当前供应商。 */
+type ModelSetupStep = 'choose' | 'custom' | 'config' | 'select_model' | SubscriptionSetupProvider;
 
 /** 只展示当前原生 Codex 目录确认可运行的模型，第三方供应商留在独立区域。 */
 function availableCodexModels(models: CodexTaskPushModelCapability[]): CodexTaskPushModelCapability[] {
@@ -58,13 +66,19 @@ export function useModelSetup(input: {
   settingsActive?: boolean;
 }) {
   /** 接入只由用户操作打开，不在启动时打断工作。 */
-  const [step, setStep] = useState<'choose' | 'custom' | 'codex' | 'config' | null>(null);
+  const [step, setStep] = useState<ModelSetupStep | null>(null);
+  /** 只保存当前会话能力查询返回的订阅模型。 */
+  const [subscriptionSelection, setSubscriptionSelection] = useState<{ provider: SubscriptionSetupProvider; models: CodexTaskPushModelCapability[] } | null>(null);
   /** 接入目标冻结到发起操作，迟到结果不能改变另一项任务。 */
   const targetRef = useRef<TaskModelSetupContext | ConversationModelSetupContext | null>(null);
   /** 异步阶段阻止重复提交，认证等待仍允许取消。 */
   const [operation, setOperation] = useState<'idle' | 'detecting' | 'configuring' | 'inspecting' | 'authenticating' | 'activating' | 'authenticated' | 'importing' | 'saving' | 'checking' | 'checking_update' | 'updating'>('idle');
   /** 安装状态只来自主动检测，账号状态与程序就绪分别展示。 */
   const [installationCheck, setInstallationCheck] = useState<AiRuntimeAdapterStatus | null>(null);
+  /** 首装独立于授权弹窗生命周期，关闭弹窗不会丢失进度。 */
+  const [installingCodex, setInstallingCodex] = useState(false);
+  /** 同一工作面只接纳一个正在进行的首次安装。 */
+  const codexInstallPending = useRef(false);
   /** 官方认证已完成时，只重试模型准备，不要求用户重复登录。 */
   const [modelsPending, setModelsPending] = useState(false);
   /** 普通提示保留原文；失败保留脱敏原因，供统一错误出口展示摘要和详情。 */
@@ -114,6 +128,7 @@ export function useModelSetup(input: {
   function open(next: 'choose' | 'codex' | 'custom' = 'choose', target: TaskModelSetupContext | ConversationModelSetupContext | null = null): void {
     invalidate();
     targetRef.current = target;
+    setSubscriptionSelection(null);
     setOperation('idle');
     setError(null);
     setInstallationCheck(null);
@@ -267,8 +282,8 @@ export function useModelSetup(input: {
     setError(null);
     try {
       if (target) {
-        if (reference) {
-          /** 供应商中已启用的模型全局可用；这里只核对引用可用，不再写项目级白名单。 */
+        if (reference && !('signal' in target)) {
+          /** 任务配置信任已有自定义模型目录；新会话由原草稿按项目能力复验。 */
           const catalog = await current.client.loadSelectablePiModels();
           if (!isCurrent()) return;
           const available = new Set(catalog.filter((model) => model.available).map((model) => model.id));
@@ -321,7 +336,29 @@ export function useModelSetup(input: {
     setOperation('idle');
     setPreview(null);
     setError(null);
-    setStep('choose');
+    setStep(step === 'select_model' ? (subscriptionSelection?.provider ?? 'choose') : step === 'config' ? 'codex' : 'choose');
+  }
+
+  /** 授权后读取项目真实目录，只给出本次选中供应商的就绪模型。 */
+  async function chooseSubscriptionModels(provider: SubscriptionSetupProvider): Promise<void> {
+    const target = targetRef.current;
+    if (!target || !('signal' in target) || target.signal.aborted) return;
+    const request = ++requestRef.current;
+    const isCurrent = (): boolean => requestRef.current === request && isTargetCurrent(target);
+    setOperation('activating');
+    setError(null);
+    try {
+      const catalog = await target.loadModels();
+      if (!isCurrent()) return;
+      const models = catalog.filter((model) => model.sourceId === provider && model.available !== false);
+      if (!models.length) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+      setSubscriptionSelection({ provider, models });
+      setStep('select_model');
+    } catch (failure) {
+      if (isCurrent()) setError(userFacingErrorCause(failure));
+    } finally {
+      if (isCurrent()) setOperation('idle');
+    }
   }
 
   /** 读取本次登录真正使用的程序，取消后的检测不再修改界面。 */
@@ -336,6 +373,7 @@ export function useModelSetup(input: {
 
   /** 打开订阅页或点击重新检测时只准备程序，不自动打开授权网页。 */
   async function checkInstallation(): Promise<void> {
+    if (codexInstallPending.current) return;
     /** 新检测替换当前等待，迟到结果不能恢复已关闭的引导。 */
     const request = ++requestRef.current;
     setOperation('detecting');
@@ -351,11 +389,30 @@ export function useModelSetup(input: {
     }
   }
 
+  /** 首次安装与官方授权分别接纳，程序就绪后回到原登录入口。 */
+  async function installCodex(): Promise<void> {
+    const client = currentInputRef.current.client;
+    if (!client || operation !== 'idle' || codexInstallPending.current || installationCheck?.installationIssue !== 'not_found') return;
+    codexInstallPending.current = true;
+    setInstallingCodex(true);
+    setUpdateProgress({ stage: 'preparing', progress: null });
+    setError(null);
+    try {
+      const adapter = await client.installCodex();
+      if (client === currentInputRef.current.client) setInstallationCheck(adapter);
+    } catch (failure) {
+      if (client === currentInputRef.current.client) setError(userFacingErrorCause(failure));
+    } finally {
+      codexInstallPending.current = false;
+      setInstallingCodex(false);
+    }
+  }
+
   /** 检查和安装是两个明确动作；安装只使用用户已看到的目标版本。 */
   async function refreshCodexOverview(action: 'refresh' | 'check_update' | 'install_update'): Promise<void> {
     /** 每次操作读取最新客户端，避免设置页切换后写回旧连接。 */
     const client = currentInputRef.current.client;
-    if (!client || operation !== 'idle') return;
+    if (!client || operation !== 'idle' || codexInstallPending.current) return;
     /** 点击安装时冻结页面上的目标，后台检查不能替换本次确认内容。 */
     const targetVersion = action === 'install_update' && updateCheck?.status === 'available' && updateCheck.managedInstallation ? updateCheck.latestVersion : null;
     if (action === 'install_update' && !targetVersion) return;
@@ -449,7 +506,8 @@ export function useModelSetup(input: {
         setOperation('authenticated');
       },
       continueOriginalAction: () => {
-        void finish(null).catch(() => undefined);
+        if (targetRef.current && 'signal' in targetRef.current) void chooseSubscriptionModels('codex');
+        else void finish(null).catch(() => undefined);
       },
       recordActivationError: () => console.warn('[Zeus] 登录已成功，窗口自动激活未完成。'),
     };
@@ -479,7 +537,7 @@ export function useModelSetup(input: {
 
   /** 所有认证动作先检查程序；缺少时留在安装步骤，不发起登录。 */
   async function login(): Promise<void> {
-    if (!input.client) return;
+    if (!input.client || codexInstallPending.current) return;
     /** 记录本次操作身份，忽略取消后的迟到回执。 */
     const request = ++requestRef.current;
     setStep('codex');
@@ -662,11 +720,15 @@ export function useModelSetup(input: {
     input,
     step,
     setStep,
+    subscriptionSelection,
+    chooseSubscriptionModels,
     open,
     taskTarget: targetRef.current && 'taskId' in targetRef.current ? targetRef.current : null,
     conversationTarget: targetRef.current && 'signal' in targetRef.current ? targetRef.current : null,
     operation,
     installationCheck,
+    installingCodex,
+    installCodex,
     checkInstallation,
     modelsPending,
     retrySubscriptionModels,

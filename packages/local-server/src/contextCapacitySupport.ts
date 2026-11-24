@@ -4,13 +4,14 @@ import type { CodexCapabilitiesSnapshot, ModelConnectionRecord } from '@zeus/ai-
 
 /** 选项由引擎窗口配置能力及模型目录上限共同决定。 */
 export function readContextCapacitySupport(identity: {
-  runtime: 'codex' | 'pi' | 'copilot';
+  runtime: 'codex' | 'pi' | 'copilot' | 'antigravity';
   runtimeVersion: string | null;
   sourceId: string;
   sourceRevision: string;
   modelId: string;
   contextWindow: number | null;
 }): ContextCapacityCapability {
+  if (identity.runtime === 'antigravity') return { choices: [], reason: 'Antigravity 由 agy 管理上下文容量。' };
   if (identity.runtime === 'copilot') return { choices: [], reason: 'Copilot SDK 当前只报告模型窗口，不提供修改上下文容量的会话配置。' };
   const maximum = identity.contextWindow;
   const choices = maximum && identity.runtimeVersion ? [...new Set([...contextCapacityChoices.filter((capacity) => capacity <= maximum), maximum])].sort((a, b) => a - b) : [];
@@ -18,13 +19,13 @@ export function readContextCapacitySupport(identity: {
 }
 
 /** 新建、恢复、下一轮及界面共用同一容量来源。 */
-export function resolveContextCapacityPolicy(native: CodexCapabilitiesSnapshot | null, connection: ModelConnectionRecord | undefined, modelId: string, runtime: 'codex' | 'pi' | 'copilot', managedContextWindow: number | null = null) {
+export function resolveContextCapacityPolicy(native: CodexCapabilitiesSnapshot | null, connection: ModelConnectionRecord | undefined, modelId: string, runtime: 'codex' | 'pi' | 'copilot' | 'antigravity', managedContextWindow: number | null = null) {
   const model = connection?.models.find((candidate) => candidate.id === modelId);
   const budget = native?.modelBudgets[modelId];
   const contextWindow = model?.contextWindow ?? (runtime === 'codex' ? (budget?.maximumContextWindowTokens ?? budget?.contextWindowTokens) : runtime === 'copilot' ? managedContextWindow : null) ?? null;
   const identity = {
     runtime,
-    runtimeVersion: runtime === 'pi' ? piSdkBinaryVersion : runtime === 'copilot' ? 'copilot-sdk' : (native?.providerVersion ?? null),
+    runtimeVersion: runtime === 'pi' ? piSdkBinaryVersion : runtime === 'copilot' ? 'copilot-sdk' : runtime === 'antigravity' ? 'acp' : (native?.providerVersion ?? null),
     sourceId: connection?.id ?? runtime,
     sourceRevision: connection?.updatedAt ?? `${runtime}-managed-account`,
     modelId,

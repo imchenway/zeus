@@ -29,6 +29,8 @@ export interface RuntimeApiClient {
   /** 只检查 Zeus 当前实际使用的 Codex 稳定版更新。 */
   checkCodexUpdate: () => Promise<CodexRuntimeUpdateStatus>;
   /** 只安装用户已看到并确认的受管 Codex 版本。 */
+  /** 用户显式触发首次安装，等待受管程序的真实回执。 */
+  installCodex: () => Promise<AiRuntimeAdapterStatus>;
   updateCodex: (targetVersion: string) => Promise<CodexRuntimeUpdateStatus>;
   loadRuntimeSessions: (input?: LoadRuntimeSessionsRequest) => Promise<AiRuntimeSession[]>;
   createRuntimeConfirmation: (input: CreateRuntimeConfirmationRequest) => Promise<RuntimeOperationConfirmation>;
@@ -59,10 +61,14 @@ export function createRuntimeApiClient(transport: LocalApiTransport): RuntimeApi
     loadRuntimeAdapters: () => transport.request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),
     checkRuntimeAdapter: (adapterId) => transport.request<AiRuntimeAdapterStatus>(`/api/runtime/adapters/${adapterId}/check`),
     checkCodexUpdate: () => transport.request<CodexRuntimeUpdateStatus>('/api/runtime/adapters/codex/update'),
+    installCodex: async () => {
+      const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.codexRuntimeInstall, scopeKind: 'settings', scopeId: 'codex-runtime-install', operationPrefix: 'codex_runtime_install', value: {} });
+      return transport.request<AiRuntimeAdapterStatus>('/api/runtime/adapters/codex/install', { ...jsonRequest('POST', body), waitForLateReceipt: true });
+    },
     updateCodex: async (targetVersion) => {
       /** 写请求使用持久命令身份，连接中断时不会静默重复执行更新。 */
       const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.codexRuntimeUpdate, scopeKind: 'settings', scopeId: 'codex-runtime-update', operationPrefix: 'codex_runtime_update', value: { targetVersion } });
-      return transport.request<CodexRuntimeUpdateStatus>('/api/runtime/adapters/codex/update', jsonRequest('POST', body));
+      return transport.request<CodexRuntimeUpdateStatus>('/api/runtime/adapters/codex/update', { ...jsonRequest('POST', body), waitForLateReceipt: true });
     },
     loadRuntimeSessions: (input) => transport.request<AiRuntimeSession[]>(`/api/runtime/sessions${toRuntimeSessionQuery(input)}`),
     createRuntimeConfirmation: async (input) => {

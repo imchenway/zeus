@@ -1202,6 +1202,7 @@ function providerRoleLabel(item: NativeSessionItemBuffer, role: ThreadItemRole, 
   const agentKind = primitiveText(item.payload.agentKind);
   if (agentKind === 'pi') return 'Pi';
   if (agentKind === 'copilot') return 'GitHub Copilot';
+  if (agentKind === 'antigravity') return 'Google Antigravity';
   if (agentKind === 'claude') return 'Claude';
   if (agentKind === 'codex') return 'Codex';
   return fallback?.trim() || null;

@@ -1024,7 +1024,7 @@ export interface NativeConversationChoice {
 }
 
 export interface NativeAgentIdentity {
-  kind: 'codex' | 'pi' | 'copilot' | 'claude' | null;
+  kind: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude' | null;
   transport: 'app_server' | 'rpc' | 'sdk' | null;
   supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
   capabilitySnapshotId: string | null;
@@ -1041,7 +1041,7 @@ export interface NativeSessionIdentity {
 }
 
 export interface AgentCatalogItem {
-  kind: 'codex' | 'pi' | 'copilot' | 'claude';
+  kind: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   displayName: string;
   transport: 'app_server' | 'rpc' | 'sdk';
   supportStatus: 'unavailable' | 'framework_only' | 'experimental' | 'verified';
@@ -1088,7 +1088,7 @@ export interface CodexTaskPushModelCapability {
   id: string;
   model: string;
   displayName?: string;
-  agentKind?: 'codex' | 'pi' | 'copilot';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity';
   sourceId?: string;
   sourceName?: string;
   available?: boolean;
@@ -1469,7 +1469,7 @@ export interface TaskIntegrationConflictFile {
 
 export interface TaskIntegrationConflictAiSession {
   path: string;
-  agentKind: 'codex' | 'pi' | 'copilot';
+  agentKind: 'codex' | 'pi' | 'copilot' | 'antigravity';
   modelSourceId: string | null;
   modelId: string;
   conversationId: string;
@@ -1500,7 +1500,7 @@ export interface NativeTurnSettingsSelection {
   /** 下一轮选择的上下文容量。 */
   contextCapacityTokens?: number | null;
   model: string;
-  agentKind?: 'codex' | 'pi' | 'copilot';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity';
   effort?: string;
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;
@@ -1521,7 +1521,7 @@ export interface PluginSkillReference {
 export interface StartTaskModelPushRequest {
   /** 上下文窗口容量；空值使用默认。 */
   contextCapacityTokens?: number | null;
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   mode: 'create';
   source: 'task_push';
   stageId?: string;
@@ -1581,7 +1581,7 @@ export type StartNativeConversationRequest =
       effort?: string;
       idempotencyKey: string;
       clientUserMessageId: string;
-      agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
       goalObjective?: string;
       pluginReferences?: PluginSkillReference[];
       expertMentions?: Array<{ employeeId: string }>;
@@ -1596,7 +1596,7 @@ export type StartNativeConversationRequest =
       collaborationMode: NativeCollaborationMode;
       idempotencyKey: string;
       clientUserMessageId: string;
-      agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
     }
   | {
       mode: 'reference_legacy';
@@ -1607,7 +1607,7 @@ export type StartNativeConversationRequest =
       collaborationMode: NativeCollaborationMode;
       idempotencyKey: string;
       clientUserMessageId: string;
-      agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+      agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
     };
 
 export interface StartProjectConversationRequest {
@@ -1625,7 +1625,7 @@ export interface StartProjectConversationRequest {
   inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;
   workspaceMode?: 'direct' | 'worktree';
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   mode: 'create';
   content: string;
   attachments: NativeConversationAttachment[];
@@ -1651,7 +1651,7 @@ export interface SendNativeMessageRequest {
   contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   content: string;
   displayText?: string;
   composerDraft?: string;

@@ -13,7 +13,9 @@ import {
   type AgentProviderPayloadDiagnostic,
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
+  AntigravityRuntimeDriver,
   CopilotRuntimeDriver,
+  type ManagedAgentKind,
   type CopilotRuntimeManager,
   createPiRuntimeWorkerDriver,
   isPiToolImageReference,
@@ -167,7 +169,7 @@ interface RequestPriceCapture {
 
 export interface CreatePiNativeConversationCoordinatorOptions {
   /** 共享 SDK 会话编排的实际 Provider 身份；Pi 调用保持默认。 */
-  runtimeKind?: 'pi' | 'copilot';
+  runtimeKind?: ManagedAgentKind;
   /** Copilot 运行时由 Core 创建并拥有，普通 Pi 会话不读取该端口。 */
   copilotRuntimeManager?: CopilotRuntimeManager;
   /** 各模型共用工作目录恢复与产品归档边界。 */
@@ -282,15 +284,21 @@ const piHistoryCompactionInstructions = '只压缩 Zeus 导入的不可信既有
 
 /** Pi SDK 会话的 Zeus 宿主：会话、消息、工具和审批都以 Zeus 为权威状态。 */
 export function createPiNativeConversationCoordinator(options: CreatePiNativeConversationCoordinatorOptions) {
-  /** 两个 SDK 运行时共用持久派发和工具 broker，但保持各自的账户与原生会话。 */
+  /** 托管运行时共用持久派发，原生会话和账户分别绑定。 */
   const runtimeKind = options.runtimeKind ?? 'pi';
   if (runtimeKind === 'copilot' && !options.copilotRuntimeManager) throw new Error('Copilot SDK 会话缺少托管运行时。');
+  /** 记录真实的原生协议来源。 */
+  const messageSource = runtimeKind === 'antigravity' ? 'antigravity_acp' : runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk';
+  /** 身份和版本均来自当前原生运行时。 */
+  const protocolVersion = runtimeKind === 'antigravity' ? 'acp' : runtimeKind === 'copilot' ? 'copilot-sdk' : piRuntimeWorkerProtocolVersion;
+  /** 托管模型在响应与会话列表中显示的供应商。 */
+  const providerName = runtimeKind === 'antigravity' ? 'Google Antigravity' : runtimeKind === 'copilot' ? 'GitHub Copilot' : 'Pi';
   /** Provider ID 不借用 Pi 的模型连接身份。 */
-  const managedProviderId = (sourceId: string | null): string => (runtimeKind === 'copilot' ? 'copilot' : `pi:${sourceId ?? 'custom'}`);
+  const managedProviderId = (sourceId: string | null): string => (runtimeKind === 'pi' ? `pi:${sourceId ?? 'custom'}` : runtimeKind);
   /** Pi 的实时增量与完成消息共用同一来源说明，避免显示阶段切换时身份漂移。 */
   function piProviderPresentation(run: PiRunContext) {
     /** 来源名称只用于展示，稳定关联仍使用 sourceId 与 modelId。 */
-    const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? (runtimeKind === 'copilot' ? 'GitHub Copilot' : 'Pi');
+    const modelSourceName = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId)?.name ?? providerName;
     return { agentKind: runtimeKind, modelSourceId: run.sourceId, modelSourceName, modelId: run.modelId } as const;
   }
 
@@ -382,7 +390,22 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       pending.resolve(input.response);
     },
   };
-  const driver =
+  /** ACP 权限请求进入与其他运行时相同的持久交互，保留单次人工决定。 */
+  const antigravityDriver = runtimeKind === 'antigravity'
+    ? new AntigravityRuntimeDriver(options.agentDirectory, async (request, tool) => {
+        const context = contexts.get(request.session.nativeSessionId);
+        if (!context || context.permissionMode === 'read-only' || context.workMode === 'plan') return false;
+        const kind = tool.kind === 'edit' || tool.kind === 'delete' || tool.kind === 'move' ? 'file' : 'command';
+        const label = typeof tool.title === 'string' ? tool.title : request.toolName;
+        return readApprovalDecision(await requestInteraction(context, request, kind, {
+          toolName: request.toolName,
+          ...(kind === 'file' ? { path: stringArg(request.args.path, label) } : { command: stringArg(request.args.command, label) }),
+          args: redactArgs(request.args),
+          availableDecisions: ['accept', 'decline', 'cancel'],
+        }));
+      }, (input) => broker.respond!(input), options.now)
+    : null;
+  const driver = antigravityDriver ?? (
     runtimeKind === 'copilot'
       ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
       : createPiRuntimeWorkerDriver({
@@ -393,7 +416,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           toolBroker: broker,
           ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
           now: options.now,
-        });
+        })
+  );
   /** 同轮图片落盘、消息投影和终态按原事件顺序完成，不阻塞其他会话。 */
   const eventTails = new Map<string, Promise<void>>();
   const unsubscribe = driver.subscribe((event) => {
@@ -424,7 +448,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   });
 
   /** 将模型配置投影为运行诊断使用的协议、实际认证方式与端点。 */
-  function adapterRouteForModel(model: AgentModelIdentity): { api: ReturnType<typeof modelProtocolApi> | 'copilot-sdk'; authenticationScheme: 'bearer' | 'x_api_key' | 'github_oauth'; endpoint: string | null } {
+  function adapterRouteForModel(model: AgentModelIdentity): { api: ReturnType<typeof modelProtocolApi> | 'copilot-sdk' | 'acp'; authenticationScheme: 'bearer' | 'x_api_key' | 'github_oauth' | 'google_oauth'; endpoint: string | null } {
+    if (runtimeKind === 'antigravity') return { api: 'acp', authenticationScheme: 'google_oauth', endpoint: 'antigravity://managed-account' };
     if (runtimeKind === 'copilot') return { api: 'copilot-sdk', authenticationScheme: 'github_oauth', endpoint: 'copilot://managed-account' };
     const connection = model.sourceId ? options.modelConnections.listMetadata().find((candidate) => candidate.id === model.sourceId) : undefined;
     const configuredModel = connection?.models.find((candidate) => candidate.id === model.modelId);
@@ -437,7 +462,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** 优先读取排队时冻结的协议族，避免运行中模型目录变更造成展示语义漂移。 */
-  function projectionProtocolFamily(run: PiRunContext, segment: { executionSnapshotId: string | null }): ModelProtocolFamily | 'copilot_sdk' {
+  function projectionProtocolFamily(run: PiRunContext, segment: { executionSnapshotId: string | null }): ModelProtocolFamily | 'copilot_sdk' | 'antigravity_acp' {
+    if (runtimeKind === 'antigravity') return 'antigravity_acp';
     if (runtimeKind === 'copilot') return 'copilot_sdk';
     const frozenProtocol = segment.executionSnapshotId ? options.execution.getExecutionSnapshot(segment.executionSnapshotId)?.protocolFamily : null;
     if (frozenProtocol === 'anthropic_messages' || frozenProtocol === 'openai_responses' || frozenProtocol === 'openai_completions' || frozenProtocol === 'openai_images') return frozenProtocol;
@@ -545,7 +571,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           ...(input.taskId ? { taskId: input.taskId } : {}),
           ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
           ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || (runtimeKind === 'copilot' ? 'Copilot 会话' : 'Pi 会话'),
+          title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || `${providerName} 会话`,
           summary: input.prompt.slice(0, 240),
           status: 'starting',
           transportKind: 'codex_native',
@@ -621,7 +647,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.taskId ? { taskId: input.taskId } : {}),
         ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || (runtimeKind === 'copilot' ? 'Copilot 会话' : 'Pi 会话'),
+        title: input.conversationTitle?.trim().slice(0, 80) || input.taskTitle || input.prompt.slice(0, 80) || `${providerName} 会话`,
         summary: input.prompt.slice(0, 240),
         status: 'starting',
         transportKind: 'codex_native',
@@ -730,7 +756,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerPrompt = pluginResult.prompt;
       }
       providerMetadata = { ...piPluginMetadata(pluginPreparation, historyCompaction ? null : input.segmentLifecycle?.portableContext), zeusSkills: skillCatalog };
-      compiledDispatchContext = options.compileDispatchContext
+      compiledDispatchContext = runtimeKind !== 'antigravity' && options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: runtimeKind,
             conversationId: input.conversationId,
@@ -811,8 +837,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 nativeSessionPath: session.nativeSessionPath,
                 providerId: managedProviderId(input.model.sourceId),
                 providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
-                providerProtocolVersion: runtimeKind === 'copilot' ? 'copilot-sdk' : piRuntimeWorkerProtocolVersion,
-                providerBinaryVersion: runtimeKind === 'copilot' ? null : piSdkBinaryVersion,
+                providerProtocolVersion: protocolVersion,
+                providerBinaryVersion: runtimeKind === 'pi' ? piSdkBinaryVersion : null,
                 observedAt: createdAt,
               });
               return;
@@ -824,8 +850,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               ...(session.nativeSessionPath ? { providerThreadPath: session.nativeSessionPath } : {}),
               providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
               providerState: 'active',
-              providerProtocolVersion: runtimeKind === 'copilot' ? 'copilot-sdk' : piRuntimeWorkerProtocolVersion,
-              providerBinaryVersion: runtimeKind === 'copilot' ? null : piSdkBinaryVersion,
+              providerProtocolVersion: protocolVersion,
+              providerBinaryVersion: runtimeKind === 'pi' ? piSdkBinaryVersion : null,
               modelSourceId: input.model.sourceId,
               modelId: input.model.modelId,
             });
@@ -881,7 +907,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         await historyCompaction.lifecycle.completeContextCompaction({
           summary: imported.summary,
           usage: imported.usage,
-          evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', method: 'AgentSession.compact', batches: imported.batches, plannedInputTokens: historyCompaction.plan.estimatedInputTokens },
+          evidence: { adapter: messageSource, method: 'AgentSession.compact', batches: imported.batches, plannedInputTokens: historyCompaction.plan.estimatedInputTokens },
           completedAt: options.now(),
         });
         compactionFinished = true;
@@ -934,6 +960,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         ...(attachmentInput.images.length > 0 ? { images: attachmentInput.images } : {}),
         preflightResult: () => undefined,
+        permissionMode: input.permissionMode,
         durableTransactionSync: (acceptance) => {
           /** 读回证据在打开 Provider 传输闸门前随现有接纳事务落盘。 */
           if (acceptance.contextCapacity)
@@ -942,14 +969,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               submissionId: submission.id,
               layer: 'runtime_acknowledged',
               configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
-              evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', readback: acceptance.contextCapacity },
+              evidence: { adapter: messageSource, readback: acceptance.contextCapacity },
               observedAt: acceptance.acceptedAt,
             });
           if (input.segmentLifecycle) {
             acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
               providerTurnId: acceptance.nativeRunId,
               acceptedAt: acceptance.acceptedAt,
-              runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
+              runtimeEvidence: { source: runtimeKind === 'antigravity' ? 'acp_prompt_prepared' : 'pi_preflight_result', accepted: true },
             });
           } else {
             runCommand!.recordTurnAcceptedAtomically(
@@ -957,7 +984,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 nativeSessionId: session.nativeSessionId,
                 nativeTurnId: acceptance.nativeRunId,
                 acceptedAt: acceptance.acceptedAt,
-                evidence: { source: 'pi_preflight_result', accepted: true },
+                evidence: { source: runtimeKind === 'antigravity' ? 'acp_prompt_prepared' : 'pi_preflight_result', accepted: true },
               },
               {
                 durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
@@ -1005,7 +1032,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-                  { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  { adapter: messageSource, ...adapterRouteForModel(input.model), cacheDiagnostic },
                   options.now(),
                 ),
             }
@@ -1182,8 +1209,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         )
       : null;
     const providerMetadata = { ...piPluginMetadata(pluginPreparation), zeusSkills: skillCatalog };
+    if (runtimeKind === 'antigravity' && context && driver.getRuntimeHealth().generationId !== context.session.runtimeInstanceId) {
+      contexts.delete(context.session.nativeSessionId);
+      context = undefined;
+    }
     if (!context) {
-      if (!input.conversation.nativeSessionId || !input.conversation.nativeSessionPath) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', 'Pi 会话缺少可恢复的会话文件。');
+      if (!input.conversation.nativeSessionId || (runtimeKind !== 'antigravity' && !input.conversation.nativeSessionPath)) throw piError('ZEUS_PI_SESSION_UNAVAILABLE', `${providerName} 会话缺少可恢复的原生身份。`);
       const session = await driver.resumeSession({
         nativeSessionId: input.conversation.nativeSessionId,
         nativeSessionPath: input.conversation.nativeSessionPath,
@@ -1240,7 +1271,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           }),
         );
       }
-      compiledDispatchContext = options.compileDispatchContext
+      compiledDispatchContext = runtimeKind !== 'antigravity' && options.compileDispatchContext
         ? await options.compileDispatchContext({
             provider: runtimeKind,
             conversationId: input.conversation.id,
@@ -1298,6 +1329,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         },
         ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
         preflightResult: () => undefined,
+        permissionMode: input.permissionMode,
         durableTransactionSync: (acceptance) => {
           /** 读回证据在打开 Provider 传输闸门前随现有接纳事务落盘。 */
           if (acceptance.contextCapacity)
@@ -1306,14 +1338,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               submissionId: submission.id,
               layer: 'runtime_acknowledged',
               configuration: { kind: 'context_capacity', contextCapacityTokens: acceptance.contextCapacity.contextCapacityTokens },
-              evidence: { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', readback: acceptance.contextCapacity },
+              evidence: { adapter: messageSource, readback: acceptance.contextCapacity },
               observedAt: acceptance.acceptedAt,
             });
           if (input.segmentLifecycle) {
             acceptedTurnId = input.segmentLifecycle.acceptSynchronously({
               providerTurnId: acceptance.nativeRunId,
               acceptedAt: acceptance.acceptedAt,
-              runtimeEvidence: { source: 'pi_preflight_result', accepted: true },
+              runtimeEvidence: { source: runtimeKind === 'antigravity' ? 'acp_prompt_prepared' : 'pi_preflight_result', accepted: true },
             });
           } else {
             runCommand!.recordTurnAcceptedAtomically(
@@ -1321,7 +1353,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 nativeSessionId: context.session.nativeSessionId,
                 nativeTurnId: acceptance.nativeRunId,
                 acceptedAt: acceptance.acceptedAt,
-                evidence: { source: 'pi_preflight_result', accepted: true },
+                evidence: { source: runtimeKind === 'antigravity' ? 'acp_prompt_prepared' : 'pi_preflight_result', accepted: true },
               },
               {
                 durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
@@ -1372,7 +1404,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               providerPayloadObserved: (cacheDiagnostic: AgentProviderPayloadDiagnostic) =>
                 input.segmentLifecycle!.adapterSerialized(
                   { model: input.model.modelId, sourceId: input.model.sourceId, thinkingLevel: input.thinkingLevel ?? null },
-                  { adapter: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk', ...adapterRouteForModel(input.model), cacheDiagnostic },
+                  { adapter: messageSource, ...adapterRouteForModel(input.model), cacheDiagnostic },
                   options.now(),
                 ),
             }
@@ -2103,7 +2135,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           conversationId: run.conversationId,
           role: 'assistant',
           content: text,
-          source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
+          source: messageSource,
           metadata: { ...itemPayload, phase },
           createdAt: event.createdAt,
           providerThreadId: event.nativeSessionId ?? run.providerThreadId,
@@ -2168,7 +2200,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const failed = event.type === 'runtime_error';
       const warning = failed && payload.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
       const outcomeUnknown = failed && payload.code === 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN';
-      const interrupted = interruptedRuns.delete(event.nativeRunId);
+      const interrupted = interruptedRuns.delete(event.nativeRunId) || (runtimeKind === 'antigravity' && payload.cancelled === true);
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
       /** 失败和中断仍以本轮终态提醒。 */
       const operationHandoff = status === 'completed' && options.isOperationHandoff?.(run.conversationId, run.turnId) === true;
@@ -2326,7 +2358,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       conversationId,
       role: 'user',
       content,
-      source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
+      source: messageSource,
       metadata: {
         clientUserMessageId: clientMessageId,
         agentKind: runtimeKind,
@@ -2767,7 +2799,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     let repaired = 0;
     for (const conversation of options.conversations.listNativeBound()) {
       for (const message of conversation.messages) {
-        if (message.role !== 'assistant' || message.source !== (runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk') || !message.providerThreadId || !message.providerItemId) continue;
+        if (message.role !== 'assistant' || message.source !== messageSource || !message.providerThreadId || !message.providerItemId) continue;
         const item = options.providerItems.getByProvider(message.providerThreadId, message.providerItemId);
         if (!item || item.agentKind !== runtimeKind || item.itemType !== 'agentMessage' || item.status !== 'completed' || item.textContent === message.content) continue;
         options.providerItems.replaceCompletedPiAgentMessage({
@@ -2841,7 +2873,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       conversationId: context.conversationId,
       role: 'assistant',
       content: text,
-      source: runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk',
+      source: messageSource,
       metadata,
       createdAt: timestamp,
       providerThreadId: run.providerThreadId,
@@ -3218,6 +3250,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     recoverGoals: () => options.goals.recover(),
     /** 空闲子会话也可能有背景进程，父会话停止时必须清理。 */
     stopOwnedProcesses: (conversationId: string) => options.processes.stopOwned(conversationId),
+    /** 当前会话运行时所使用的官方账号目录。 */
+    antigravityDriver,
     async recoverRuntime() {
       return driver.recoverRuntime({ reason: 'explicit_user_action' });
     },
@@ -3694,8 +3728,8 @@ function isPathInsideDirectory(path: string, directory: string): boolean {
   }
 }
 
-function isPersistedPiMessageEvidence(message: { source: string; providerThreadId: string | null; metadataJson: string }, nativeSessionId: string, runtimeKind: 'pi' | 'copilot'): boolean {
-  if (message.source !== (runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk') || message.providerThreadId !== nativeSessionId) return false;
+function isPersistedPiMessageEvidence(message: { source: string; providerThreadId: string | null; metadataJson: string }, nativeSessionId: string, runtimeKind: ManagedAgentKind): boolean {
+  if (message.source !== (runtimeKind === 'antigravity' ? 'antigravity_acp' : runtimeKind === 'copilot' ? 'copilot_sdk' : 'pi_sdk') || message.providerThreadId !== nativeSessionId) return false;
   try {
     return asRecord(JSON.parse(message.metadataJson)).agentKind === runtimeKind;
   } catch {
