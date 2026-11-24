@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as 
 import { formatZeusDateTime, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
 import type { CodexOfficialRateWindow, KiloAccountUsage, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
+import { compareModelNames } from '../modelOptionPresentation.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
 import { Button } from '../ui/Button.js';
@@ -86,6 +87,8 @@ const copy = {
     showCostDetail: '查看模型、单价和 Token 明细',
     showOutputRateDetail: '按模型和速度档位查看请求输出速率',
     model: '模型',
+    /** 费用明细的速度档位和长上下文列。 */
+    costSpeedContext: '速率 / 上下文',
     unitPrice: '单价 / 每百万',
     consumedTokens: '消耗 Token',
     estimatedCost: '费用',
@@ -170,6 +173,8 @@ const copy = {
     showCostDetail: 'Show model, rate, and token details',
     showOutputRateDetail: 'Show request output rates by model and speed',
     model: 'Model',
+    /** 英文费用明细中速度档位和长上下文的列名。 */
+    costSpeedContext: 'Speed / Context',
     unitPrice: 'Rate / million',
     consumedTokens: 'Tokens',
     estimatedCost: 'Cost',
@@ -1199,12 +1204,31 @@ function formatOutputRateServiceTier(tier: string | null): string {
   }
 }
 
-/** 菜单栏和独立窗口共用同一份费用表结构，避免两套文案与格式漂移。 */
+/** 常见计费档位按速度从低到高排列。 */
+const costServiceTierRanks = new Map<UsageModelCostBreakdown['serviceTier'], number>([
+  ['standard', 0],
+  ['fast', 1],
+  ['ultrafast', 2],
+]);
+
+/** 模型内先按速度、再按上下文排序；相同组合保留账本传入的明细顺序。 */
+function compareModelPriceTiers(left: UsageModelCostBreakdown, right: UsageModelCostBreakdown): number {
+  /** 未知档位排在已知档位之后，再按其供应商标识排列。 */
+  const rankDifference = (costServiceTierRanks.get(left.serviceTier) ?? costServiceTierRanks.size) -
+    (costServiceTierRanks.get(right.serviceTier) ?? costServiceTierRanks.size);
+  return rankDifference || (left.serviceTier ?? '').localeCompare(right.serviceTier ?? '', 'en') || Number(left.longContext) - Number(right.longContext);
+}
+
+/** 费用明细按原始模型 ID 分组，每行对应一个计费档位和价格快照。 */
 function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean }) {
   /** 列名和辅助说明始终跟随当前语言。 */
   const text = copy[props.language];
   /** 独立窗口读取明确的计费口径，不通过标题文字猜测供应商类型。 */
   const costLabel = props.equivalentCost ? text.equivalentCost : text.estimatedCost;
+  /** 只有存在档位或长上下文数据时才需要这一列。 */
+  const showSpeedContext = props.entries.some((entry) => entry.serviceTier || entry.longContext);
+  /** 同名模型使用同一个行组，数字段按数值升序排列。 */
+  const modelGroups = [...Map.groupBy(props.entries, (entry) => entry.model)].sort(([left], [right]) => compareModelNames(left, right, 'ascending'));
   return (
     <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
       <strong>{props.label}</strong>
@@ -1213,49 +1237,55 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
           <thead>
             <tr>
               <th scope="col">{text.model}</th>
+              {showSpeedContext ? <th scope="col">{text.costSpeedContext}</th> : null}
               <th scope="col">{text.unitPrice}</th>
               <th scope="col">{props.equivalentCost ? `${text.tokens} / ${costLabel}` : text.usageAndEstimatedCost}</th>
             </tr>
           </thead>
-          <tbody>
-            {props.entries.map((entry, index) => {
-              /** 可见值与读屏标签共用同一格式的 Token 数量。 */
-              const tokens = formatTokens(entry.usage.totalTokens, props.language);
-              /** 金额为空时，结果列只保留 Token 数量。 */
-              const estimatedCost = formatModelEstimatedCost(entry, props.language);
-              return (
-                <tr key={`${entry.model}-${index}`}>
-                  <th scope="row">
-                    {entry.model}
-                    {entry.serviceTier || entry.longContext ? <span className="menu-bar-usage-model-price-tier">{formatModelPriceTier(entry)}</span> : null}
-                  </th>
-                  <td>
-                    {formatModelRate(entry, props.language).map((line) => (
-                      <span key={line}>{line}</span>
-                    ))}
-                    {entry.pricePeriod ? (
-                      <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
-                        {formatPricePeriod(entry.pricePeriod, props.language)}
-                      </span>
+          {modelGroups.map(([model, entries]) => (
+            <tbody key={model}>
+              {entries.sort(compareModelPriceTiers).map((entry, index) => {
+                /** 可见值与读屏标签共用同一格式的 Token 数量。 */
+                const tokens = formatTokens(entry.usage.totalTokens, props.language);
+                /** 金额为空时，结果列只保留 Token 数量。 */
+                const estimatedCost = formatModelEstimatedCost(entry, props.language);
+                return (
+                  <tr key={`${model}-${index}`}>
+                    {index === 0 ? <th scope="rowgroup" rowSpan={entries.length}>{model}</th> : null}
+                    {showSpeedContext ? (
+                      <td lang="en">
+                        {entry.serviceTier ? <span>{formatModelPriceTier(entry.serviceTier)}</span> : null}
+                        {entry.longContext ? <span className="menu-bar-usage-long-context">LongContext</span> : null}
+                      </td>
                     ) : null}
-                  </td>
-                  <td aria-label={`${text.consumedTokens} ${tokens}${estimatedCost ? `；${costLabel} ${estimatedCost}` : ''}`}>
-                    <span>{tokens}</span>
-                    {estimatedCost ? <span className="menu-bar-usage-model-estimated-cost">{estimatedCost}</span> : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+                    <td className="menu-bar-usage-unit-price">
+                      {formatModelRate(entry, props.language).map((line) => (
+                        <span key={line}>{line}</span>
+                      ))}
+                      {entry.pricePeriod ? (
+                        <span className="menu-bar-usage-price-period" aria-label={`${text.pricePeriod} ${formatPricePeriod(entry.pricePeriod, props.language)}`}>
+                          {formatPricePeriod(entry.pricePeriod, props.language)}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td aria-label={`${text.consumedTokens} ${tokens}${estimatedCost ? `；${costLabel} ${estimatedCost}` : ''}`}>
+                      <span>{tokens}</span>
+                      {estimatedCost ? <span className="menu-bar-usage-model-estimated-cost">{estimatedCost}</span> : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          ))}
         </table>
       </div>
     </section>
   );
 }
 
-/** 服务档位使用通用英文名称，长上下文与速度档位同时存在时并列展示。 */
-function formatModelPriceTier(entry: UsageModelCostBreakdown): string {
-  return [entry.serviceTier ? entry.serviceTier.charAt(0).toUpperCase() + entry.serviceTier.slice(1) : null, entry.longContext ? 'Long context' : null].filter(Boolean).join(' · ');
+/** 计费档位的英文名称使用首字母大写。 */
+function formatModelPriceTier(tier: string): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
 /** 单价按普通输入输出、缓存读写压成两行，缺少费率时留空。 */

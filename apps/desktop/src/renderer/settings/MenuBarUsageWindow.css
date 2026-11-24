@@ -702,7 +702,7 @@ body:has(.menu-bar-usage-root),
   user-select: auto;
 }
 
-/* 费用明细由三列内容决定自然宽度，640px 只作为上限，避免短内容被机械拉宽。 */
+/* 明细按列内容决定自然宽度，面板上限为 640px，窄窗口内允许换行。 */
 .menu-bar-usage-cost-detail-window {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -785,6 +785,7 @@ body:has(.menu-bar-usage-root),
   padding: 6px 5px;
   border-block-start: 1px solid var(--usage-line);
   overflow-wrap: anywhere;
+  text-align: start;
   vertical-align: top;
   white-space: normal;
 }
@@ -800,14 +801,6 @@ body:has(.menu-bar-usage-root),
   font-weight: 550;
 }
 
-.menu-bar-usage-cost-detail th:first-child {
-  text-align: start;
-}
-
-.menu-bar-usage-cost-detail th:nth-child(2) {
-  text-align: start;
-}
-
 .menu-bar-usage-cost-detail th:last-child,
 .menu-bar-usage-cost-detail td:last-child {
   text-align: end;
@@ -817,17 +810,13 @@ body:has(.menu-bar-usage-root),
   font-weight: 600;
 }
 
-/* 计费档位放在模型名下方，与单价和金额保持次级文字层级。 */
-.menu-bar-usage-model-price-tier {
-  display: block;
-  color: var(--usage-muted);
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1.45;
+/* 模型名在其涵盖的全部费用明细中垂直居中。 */
+.menu-bar-usage-cost-detail th[scope='rowgroup'] {
+  vertical-align: middle;
 }
 
 /* 长列表统一最小行高，让滚动阈值稳定对应八条记录，短列表仍按内容收缩。 */
-.menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody th,
+.menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody th[scope='row'],
 .menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody td {
   block-size: 58px;
 }
@@ -838,18 +827,19 @@ body:has(.menu-bar-usage-root),
   line-height: 1.45;
 }
 
-/* 单价沿用较小字号，两组费率均由单元格的单行约束保证不拆分。 */
-.menu-bar-usage-cost-detail td:nth-child(2) span {
+/* 长上下文标记与单价使用次级字号，按语义定位，适配跨行的模型列。 */
+.menu-bar-usage-cost-detail .menu-bar-usage-long-context,
+.menu-bar-usage-cost-detail .menu-bar-usage-unit-price span {
   font-size: 10px;
 }
 
 /* 第三行只说明价格目录周期，使用次级颜色避免与单价争夺层级。 */
-.menu-bar-usage-cost-detail td:nth-child(2) .menu-bar-usage-price-period {
+.menu-bar-usage-cost-detail .menu-bar-usage-unit-price .menu-bar-usage-price-period {
   color: var(--usage-muted);
   font-size: 9px;
 }
 
-/* 每行金额与 Token 共用结果列，和两行单价对齐，避免窄浮窗被第四列挤碎。 */
+/* 每行金额与 Token 共用结果列，金额使用主文字颜色和较粗字重。 */
 .menu-bar-usage-cost-detail td .menu-bar-usage-model-estimated-cost {
   color: var(--usage-text);
   font-weight: 650;

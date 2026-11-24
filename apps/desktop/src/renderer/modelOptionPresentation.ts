@@ -46,8 +46,9 @@ function modelName(model: ModelOptionSource): string {
 /** 固定英文排序避免系统语言改变 A–Z 顺序，忽略大小写及名称分隔符。 */
 const modelNameCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base', ignorePunctuation: true });
 
-/** 文本按 A–Z，数字及点分数字段按降序；不把点分型号转成小数。 */
-export function compareModelNames(left: string, right: string): number {
+/** 文本按 A–Z，数字段默认降序；点分型号按各段数值比较。 */
+export function compareModelNames(left: string, right: string, numericOrder: 'ascending' | 'descending' = 'descending'): number {
+  if (numericOrder === 'ascending') return modelNameCollator.compare(left, right);
   /** 连续点分数字作为一个型号段，确保 6.10 在 6.2 和 6 之前。 */
   const leftParts = left.match(/\d+(?:\.\d+)*|[^\d]+/g) ?? [];
   /** 保留文本段以维持同一型号内的名称升序。 */
