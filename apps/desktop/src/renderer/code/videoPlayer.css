@@ -1,108 +1,208 @@
-/* 画面与控件共享一个边框，播放进度不会盖住录屏内容。 */
+/* 将宽度和高度限制在对话区域内，画面本身保持原始宽高比。 */
 .zeus-video-player {
-  --video-line: color-mix(in srgb, var(--zeus-product-text) 14%, transparent);
-  background: var(--zeus-product-canvas);
-  border: 1px solid var(--video-line);
+  background: #111217;
+  border: 1px solid color-mix(in srgb, var(--zeus-product-text) 14%, transparent);
   border-radius: 12px;
   box-sizing: border-box;
-  color: var(--zeus-product-text);
   container-type: inline-size;
-  inline-size: 100%;
+  inline-size: min(100%, calc(56vh * var(--zeus-video-ratio)));
   overflow: hidden;
+  position: relative;
 }
 
 .zeus-video-player > video {
-  aspect-ratio: 16 / 9;
-  background: var(--zeus-product-panel);
+  aspect-ratio: var(--zeus-video-ratio);
+  cursor: pointer;
   display: block;
   inline-size: 100%;
-  max-block-size: 56vh;
   object-fit: contain;
 }
 
+/* 默认只显示右下角的播放入口。 */
 .zeus-video-controls {
+  /* 深色浮层上的焦点轮廓。 */
+  --zeus-focus-line: #c5bbff;
+  --zeus-field-focus-line: var(--zeus-focus-line);
   align-items: center;
-  border-block-start: 1px solid var(--video-line);
+  backdrop-filter: blur(12px);
+  background: rgb(26 27 34 / 91%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 18px;
+  box-shadow: 0 2px 8px rgb(8 9 19 / 13%);
+  box-sizing: border-box;
+  color: #f9f9fb;
   display: flex;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: 4px;
+  inset-block-end: 10px;
+  inset-inline-end: 10px;
+  max-inline-size: calc(100% - 20px);
+  min-block-size: 36px;
+  position: absolute;
+  transition: opacity 140ms ease, translate 140ms ease;
 }
 
+/* 在宽度允许时为画面中央留出空间，拖动滑杆时保持展开。 */
+.zeus-video-controls:is([data-revealed], :has(:focus-visible, input:active)) {
+  inline-size: min(302px, max(192px, calc(50% - 36px)));
+  padding: 2px 3px;
+}
+
+.zeus-video-controls[data-audio]:is([data-revealed], :has(:focus-visible, input:active)) {
+  inline-size: min(382px, max(246px, calc(50% - 36px)));
+}
+
+.zeus-video-controls:is([data-revealed], :has(:focus-visible, input:active)) .zeus-video-duration,
+.zeus-video-controls:not([data-revealed], :has(:focus-visible, input:active)) > :not(.zeus-video-play) {
+  display: none;
+}
+
+.zeus-video-player[data-playing] .zeus-video-controls:not([data-revealed], :has(:focus-visible, input:active)) {
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 3px;
+}
+
+/* 图标按钮使用同一高度，收起时播放按钮的点击区域包含时长。 */
 .zeus-video-player .zeus-video-controls > button {
   align-items: center;
   background: transparent;
+  block-size: 30px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 50%;
   color: inherit;
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 30px;
-  block-size: 30px;
   justify-content: center;
   padding: 0;
 }
 
+.zeus-video-player .zeus-video-controls:not([data-revealed], :has(:focus-visible, input:active)) > .zeus-video-play {
+  block-size: 34px;
+  border-radius: 17px;
+  flex: 0 0 auto;
+  gap: 9px;
+  padding-inline: 11px;
+}
+
 .zeus-video-player .zeus-video-controls > button:hover {
-  background: var(--zeus-interaction-hover);
+  background: rgb(255 255 255 / 12%);
 }
 
-.zeus-video-controls > :is(button, input):focus-visible {
-  outline: 2px solid var(--zeus-brand-text);
-  outline-offset: 1px;
+.zeus-video-player .zeus-video-controls > :is(button, input):focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--zeus-focus-line);
+  outline-offset: -2px;
 }
 
-.zeus-video-controls > input[type='range'] {
-  accent-color: var(--zeus-product-accent);
+.zeus-video-duration,
+.zeus-video-time {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.zeus-video-duration,
+.zeus-video-total {
+  color: #dddde6;
+}
+
+/* 滑杆保留原生输入和可点击高度，轨道独立绘制。 */
+.zeus-video-player .zeus-video-controls > input[type='range'] {
+  appearance: none;
   background: transparent;
+  block-size: 26px;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
   flex: 1 1 0;
-  margin: 0;
+  margin: 0 4px;
   min-inline-size: 0;
   padding: 0;
 }
 
-.zeus-video-controls > .zeus-video-volume[type='range'] {
-  flex: 0 1 52px;
-  min-inline-size: 26px;
+.zeus-video-player .zeus-video-controls > .zeus-video-volume[type='range'] {
+  flex: 0 1 36px;
+  min-inline-size: 24px;
 }
 
-.zeus-video-time {
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.zeus-video-controls > input[type='range']::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #b7abff var(--zeus-video-progress), rgb(255 255 255 / 29%) var(--zeus-video-progress));
+  block-size: 3px;
+  border-radius: 2px;
 }
 
-/* 极窄时进度独占第一行，音量与全屏操作仍可用。 */
+.zeus-video-controls > input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  background: #e5e0ff;
+  block-size: 7px;
+  border-radius: 50%;
+  inline-size: 7px;
+  margin-block-start: -2px;
+}
+
+.zeus-video-controls > input[type='range']:disabled {
+  opacity: 0.5;
+}
+
+/* 窄窗口里的进度独占一行，时间、音量与全屏仍可操作。 */
 @container (max-width: 280px) {
-  .zeus-video-controls {
+  .zeus-video-controls:is([data-revealed], :has(:focus-visible, input:active)) {
     flex-wrap: wrap;
   }
 
-  .zeus-video-controls > input[type='range']:not(.zeus-video-volume) {
-    flex: 0 0 100%;
+  .zeus-video-player .zeus-video-controls > .zeus-video-seek[type='range'] {
+    flex: 0 0 calc(100% - 8px);
     order: -1;
+  }
+
+  .zeus-video-total {
+    display: none;
   }
 }
 
 .zeus-video-player:fullscreen {
+  block-size: 100%;
   border: 0;
   border-radius: 0;
-  display: flex;
-  flex-direction: column;
+  inline-size: 100%;
 }
 
 .zeus-video-player:fullscreen > video {
-  flex: 1;
-  max-block-size: none;
-  min-block-size: 0;
+  block-size: 100%;
 }
 
-.zeus-video-player:not(:fullscreen) .zeus-video-exit-fullscreen,
-.zeus-video-player:fullscreen .zeus-video-enter-fullscreen {
-  display: none;
+.zeus-video-player:fullscreen .zeus-video-controls {
+  inset-block-end: 18px;
+  inset-inline-end: 18px;
 }
 
-.zeus-video-player > small {
-  display: block;
-  padding: 0 12px 8px;
+.zeus-video-error {
+  background: rgb(26 27 34 / 91%);
+  border-radius: 6px;
+  color: #f9f9fb;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
+  max-inline-size: calc(100% - 16px);
+  padding: 4px 8px;
+  position: absolute;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zeus-video-controls {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .zeus-video-controls > input[type='range']::-webkit-slider-runnable-track {
+    background: ButtonText;
+  }
+
+  .zeus-video-controls > input[type='range']::-webkit-slider-thumb {
+    background: Highlight;
+  }
 }
