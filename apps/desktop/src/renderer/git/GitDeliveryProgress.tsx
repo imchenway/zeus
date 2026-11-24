@@ -1,10 +1,16 @@
-import { describeUserFacingError, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep } from '@zeus/shared';
+import { createContext, useContext } from 'react';
+import { describeUserFacingError, redactUserFacingErrorDetails, type CommandRun, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep } from '@zeus/shared';
+import { ArrowRightIcon } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { StopIcon } from '@phosphor-icons/react/dist/csr/Stop';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 import './gitDeliveryProgress.css';
+
+/** 工作台用既有命令页展示步骤指向的原执行记录。 */
+export const GitDeliveryCommandRunContext = createContext<((run: Pick<CommandRun, 'id' | 'projectId'>) => void) | null>(null);
 
 /** 操作按钮与进度共用步骤名称，执行前可标明压缩合入。 */
 export function gitDeliveryActionLabel(action: GitDeliveryStep['action'], zh: boolean, mode?: GitDeliveryInput['mode']): string {
@@ -41,8 +47,21 @@ function gitDeliveryStepErrorSummary(step: GitDeliveryStep, zh: boolean): string
   return zh ? `AI 生成提交说明失败 · ${reason}\nGit 提交尚未执行。` : `AI commit message generation failed · ${reason}\nGit commit has not run.`;
 }
 
+/** 发布报告按行记录阶段和原因，侧栏优先显示具体文件与诊断。 */
+function describeGitDeliveryCommandFailure(step: GitDeliveryStep, zh: boolean) {
+  const release = /^(发布失败|发布结果未确认)\n阶段：([^\n]+)\n原因：([\s\S]+?)(?=\n(?:影响|下一步|技术详情)：|$)/u.exec(redactUserFacingErrorDetails(step.message ?? ''));
+  const reason = release?.[3]?.trim();
+  const diagnostic = reason?.match(/^(.+?):(\d+):[ \t]+([^\n]+)$/mu);
+  const file = diagnostic && `${diagnostic[1]!.split(/[/\\]/u).at(-1)}:${diagnostic[2]}`;
+  return {
+    title: step.state === 'unknown' ? (zh ? '命令结果待核对' : 'Command outcome unconfirmed') : release ? `${release[1]} · ${release[2]}` : zh ? '命令执行失败' : 'Command failed',
+    reason: diagnostic?.[3] ?? reason ?? gitDeliveryStepErrorSummary(step, zh),
+    file,
+  };
+}
+
 /** 结果待核对时用业务状态作摘要，原始命令与连接错误留在完整说明中。 */
-export function GitDeliveryStepError({ step, zh, summary }: { step: GitDeliveryStep; zh: boolean; summary?: string }) {
+export function GitDeliveryStepError({ step, zh, summary, commandRunLinked = false }: { step: GitDeliveryStep; zh: boolean; summary?: string; commandRunLinked?: boolean }) {
   /** 首屏使用当前界面语言，详情保留真实错误链。 */
   const language = zh ? 'zh-CN' : 'en';
   const visibleSummary = summary ?? (step.state === 'unknown' || step.commitMessageFailed ? gitDeliveryStepErrorSummary(step, zh) : (step.message ?? undefined));
@@ -50,11 +69,23 @@ export function GitDeliveryStepError({ step, zh, summary }: { step: GitDeliveryS
   if (!cause) return visibleSummary;
   /** 持久步骤已确认写入状态未知，底层连接错误不能覆盖这一事实。 */
   const error = step.state === 'unknown' ? { code: 'ZEUS_GIT_DELIVERY_OUTCOME_UNKNOWN', message: visibleSummary, details: describeUserFacingError(cause, language).details } : cause;
+  if (step.action === 'command' && !step.stopped && (step.state === 'attention' || step.state === 'unknown')) {
+    const failure = describeGitDeliveryCommandFailure(step, zh);
+    return (
+      <span className="git-delivery-command-error">
+        <strong>{failure.title}</strong>
+        {failure.file ? <code>{failure.file}</code> : null}
+        {commandRunLinked ? <span className="git-delivery-command-error-reason">{failure.reason}</span> : <VisibleApplicationError error={error} summary={failure.reason} title={step.repositoryName} language={language} />}
+      </span>
+    );
+  }
   return <VisibleApplicationError error={error} summary={visibleSummary} title={`${step.repositoryName} · ${gitDeliveryActionLabel(step.action, zh)}`} language={language} />;
 }
 
 /** 两个入口显示同一已完成步数，等待和异常不虚增进度。 */
 export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { run: GitDeliveryRun; zh: boolean; showErrorSummaries?: boolean }) {
+  /** 点击时间线命令时交给工作台原有的执行详情入口。 */
+  const openCommandRun = useContext(GitDeliveryCommandRunContext);
   /** 待处理原因优先于其他仓库正在执行的步骤。 */
   const step = run.steps.find((item) => item.state === 'attention' || item.state === 'unknown') ?? run.steps.find((item) => item.state === 'running' || item.state === 'waiting') ?? run.steps.find((item) => item.state === 'pending');
   /** 进度以已成功的持久步骤为单位。 */
@@ -114,10 +145,20 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
     'aria-valuenow': completed,
     'aria-valuetext': [label, detail, countLabel].filter(Boolean).join(' · '),
   };
-  /** 同类动作按首次出现顺序汇总，多仓步骤全部成功后才显示完成勾选。 */
-  const groups = [...new Set(run.steps.map((item) => item.action))].map((action) => {
-    /** 当前动作包含的仓库或命令步骤。 */
-    const steps = run.steps.filter((item) => item.action === action);
+  /** 多仓 Git 动作汇总为一行，每个命令保留自己可点击的运行身份。 */
+  const stepsByGroup = new Map<string, GitDeliveryStep[]>();
+  for (const item of run.steps) {
+    const key = item.action === 'command' ? item.id : item.action;
+    const group = stepsByGroup.get(key);
+    if (group) group.push(item);
+    else stepsByGroup.set(key, [item]);
+  }
+  const groups = [...stepsByGroup].map(([key, steps]) => {
+    const first = steps[0]!;
+    const { action } = first;
+    const current = steps.some((item) => item.id === step?.id);
+    const commandRunId = action === 'command' ? first.commandRunId : undefined;
+    const label = action === 'command' ? `${gitDeliveryActionLabel(action, zh)} · ${first.repositoryName}` : current ? detail : gitDeliveryActionLabel(action, zh);
     /** 分组计数与总进度采用相同的成功状态口径。 */
     const completed = steps.filter((item) => item.state === 'succeeded').length;
     /** 异常优先于活动状态，部分完成不等同于整组完成。 */
@@ -139,7 +180,8 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
         const reason = gitDeliveryStepErrorSummary(item, zh);
         return reason ? [{ step: item, summary: steps.length > 1 || action !== step?.action ? `${item.repositoryName} · ${reason}` : reason }] : [];
       });
-    return { action, completed, total: steps.length, state, errors };
+    const tooltip = !showErrorSummaries && action !== 'command' && errors.length ? errors.map((error) => error.summary).join('\n') : undefined;
+    return { key, label, current, commandRunId, completed, total: steps.length, state, errors, tooltip };
   });
   return (
     <span className="git-delivery-progress" data-delivery-state={stopped ? 'stopped' : attention ? 'attention' : run.state}>
@@ -156,11 +198,11 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
               className="git-delivery-progress-step"
               role="listitem"
               data-step-state={group.state}
-              aria-current={group.action === step?.action && run.state !== 'queued' && !stopped ? 'step' : undefined}
-              key={group.action}
-              data-icon-tooltip={!showErrorSummaries && group.errors.length ? group.errors.map((error) => error.summary).join('\n') : undefined}
-              tabIndex={!showErrorSummaries && group.errors.length ? 0 : undefined}
-              title={group.errors.length ? undefined : `${gitDeliveryActionLabel(group.action, zh)} · ${group.completed}/${group.total}`}
+              aria-current={group.current && run.state !== 'queued' && !stopped ? 'step' : undefined}
+              key={group.key}
+              data-icon-tooltip={group.tooltip}
+              tabIndex={group.tooltip ? 0 : undefined}
+              title={group.errors.length ? undefined : `${group.label} · ${group.completed}/${group.total}`}
             >
               <span className="git-delivery-progress-step-marker" aria-hidden="true">
                 {group.state === 'succeeded' ? (
@@ -175,12 +217,25 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
                   <span className="git-delivery-progress-step-dot" />
                 )}
               </span>
-              <span>
-                {group.action === step?.action ? detail : gitDeliveryActionLabel(group.action, zh)}
+              <span className="git-delivery-progress-step-body">
+                {group.commandRunId && openCommandRun ? (
+                  <Button
+                    unstyled
+                    className="git-delivery-command-link"
+                    aria-haspopup="dialog"
+                    aria-label={`${group.label} · ${zh ? '查看执行记录' : 'Open execution history'}`}
+                    onClick={() => openCommandRun({ id: group.commandRunId!, projectId: run.projectId })}
+                  >
+                    <span>{group.label}</span>
+                    <ArrowRightIcon aria-hidden="true" />
+                  </Button>
+                ) : (
+                  group.label
+                )}
                 {showErrorSummaries
                   ? group.errors.map(({ step, summary }) => (
                       <span key={step.id} className="git-delivery-progress-step-error">
-                        {step.state === 'unknown' ? <GitDeliveryStepError step={step} zh={zh} summary={summary} /> : summary}
+                        {step.state === 'unknown' || step.action === 'command' ? <GitDeliveryStepError step={step} zh={zh} summary={summary} commandRunLinked={Boolean(group.commandRunId && openCommandRun)} /> : summary}
                       </span>
                     ))
                   : null}

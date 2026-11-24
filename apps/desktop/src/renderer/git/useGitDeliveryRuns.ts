@@ -90,5 +90,9 @@ export function useGitDeliveryRuns(client: DeliveryProgressClient | undefined, p
 
   /** 关闭卡片后停止订阅；重新打开前也不借用其他范围的结果。 */
   const current = snapshot && snapshot.client === client && snapshot.projectId === projectId && snapshot.scopeId === scopeId ? snapshot : null;
-  return { runs: current?.runs ?? emptyRuns, error: current?.error ?? null, refresh, acceptRun };
+  /** 先取最新记录，再隐藏已经完成或确认终止的流程，避免较早的运行重新出现。 */
+  const latestRuns = current?.runs ?? emptyRuns;
+  const latestRun = latestRuns[0];
+  const activeRuns = latestRun?.state === 'succeeded' || (latestRun?.stopped && !latestRun.stopping) ? emptyRuns : latestRuns;
+  return { runs: activeRuns, error: current?.error ?? null, refresh, acceptRun };
 }

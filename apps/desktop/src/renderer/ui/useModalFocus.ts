@@ -1,4 +1,5 @@
 import { useLayoutEffect, type RefObject } from 'react';
+import { browserAnnotationOverlayRootId } from '@zeus/shared';
 
 /** 活动模态层按打开顺序排列，只有最上层接受键盘焦点。 */
 const layersByDocument = new WeakMap<Document, HTMLElement[]>();
@@ -54,13 +55,18 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       (elements.find((element) => element.hasAttribute('autofocus')) ?? elements[0] ?? root).focus({ preventScroll: true });
     };
     focusFirst();
+    /** 浏览器批注编辑器属于宿主，封闭影子根中的焦点对页面表现为宿主节点。 */
+    const isBrowserAnnotationTarget = (target: EventTarget | null): boolean => {
+      const annotation = document.getElementById(browserAnnotationOverlayRootId);
+      return annotation?.parentElement === document.documentElement && target === annotation;
+    };
     /** 仅最上层阻止程序性焦点穿透。 */
     const containFocus = (event: FocusEvent) => {
-      if (layers.at(-1) === root && event.target && !root.contains(event.target as Node)) focusFirst();
+      if (layers.at(-1) === root && event.target && !root.contains(event.target as Node) && !isBrowserAnnotationTarget(event.target)) focusFirst();
     };
     /** Tab 在可操作控件间循环，嵌套模态只处理一次。 */
     const containTab = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.key !== 'Tab' || layers.at(-1) !== root) return;
+      if (event.defaultPrevented || event.key !== 'Tab' || layers.at(-1) !== root || isBrowserAnnotationTarget(event.target)) return;
       const elements = focusableElements(root);
       const first = elements[0];
       const last = elements.at(-1);

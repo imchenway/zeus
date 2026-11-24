@@ -95,9 +95,6 @@ export function GitDeliveryRunControl(props: {
   /** 当前是否有已接纳运行。 */
   const running = runs.some((run) => run.state === 'queued' || run.state === 'running');
 
-  /** 只显示最后一次交付，较早的失败不能重新成为可继续流程。 */
-  const visibleRuns = runs.slice(0, 1).filter((run) => run.state !== 'succeeded');
-
   /** 两个交付入口读取同一命令目录，聚焦或定义变化时重新核对可用项。 */
   useEffect(() => {
     let disposed = false;
@@ -372,7 +369,7 @@ export function GitDeliveryRunControl(props: {
             </Button>
           </div>
         ) : null}
-        {visibleRuns.map((run) => {
+        {runs.map((run) => {
           /** 进度摘要已显示当前动作，只为异常、冲突和附加原因保留详情行。 */
           const detailedSteps = run.steps.filter(
             (step) =>

@@ -1,5 +1,8 @@
 import { isCodexServiceTierId, type CodexServiceTierId } from './codexServiceTier.js';
 
+/** 内置浏览器在文档根挂载的批注层，由页面预加载和弹窗焦点管理共用。 */
+export const browserAnnotationOverlayRootId = 'zeus-browser-annotation-root';
+
 /** 内置浏览器页面中的矩形；坐标均以当前 frame viewport 为参照。 */
 export interface ZeusBrowserRect {
   x: number;

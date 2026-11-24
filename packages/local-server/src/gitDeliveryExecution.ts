@@ -22,6 +22,7 @@ import {
   type GitDeliveryRun,
 } from '@zeus/shared';
 import {
+  boundGitDeliveryCommandRunId,
   GitDeliveryRepository,
   CommandDeliveryRepository,
   CommandDefinitionRepository,
@@ -139,9 +140,7 @@ function deliveryIdentity(value: string): string {
 
 /** 已发出的请求使用原运行身份，新尝试的身份可安全用于命令日志路径。 */
 function postPushCommandRunId(step: GitDeliveryStepRecord): string {
-  const pending = step.result?.pendingCommand as { body?: { command?: { scope?: { kind: string; id: string } } } } | undefined;
-  const scope = pending?.body?.command?.scope;
-  return scope?.kind === 'command_run' && scope.id ? scope.id : `command_run_${deliveryIdentity(`${step.id}:${step.attempt}:confirmation`)}`;
+  return boundGitDeliveryCommandRunId(step.result) ?? `command_run_${deliveryIdentity(`${step.id}:${step.attempt}:confirmation`)}`;
 }
 
 /** 内部调用和 Renderer 使用同一命令信封协议。 */

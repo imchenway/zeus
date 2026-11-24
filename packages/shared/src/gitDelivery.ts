@@ -96,6 +96,8 @@ export interface GitDeliveryStep {
   repositoryId: string | null;
   /** 命令步骤绑定定义身份，其他步骤为空或缺项。 */
   commandDefinitionId?: string | null;
+  /** 已持久接纳的命令执行身份，用于打开该次执行的记录。 */
+  commandRunId?: string;
   /** 可读仓库名；命令步骤使用命令标题。 */
   repositoryName: string;
   /** 固定操作类型。 */

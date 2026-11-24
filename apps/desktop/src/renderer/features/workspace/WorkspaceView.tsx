@@ -6,7 +6,7 @@ import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { toolPages } from '../../tooling/index.js';
-import { compareConversationWorkStartedDesc, faultReportContext, temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
+import { compareConversationWorkStartedDesc, faultReportContext, temporaryWorkspaceId, type CommandRun } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
@@ -52,6 +52,7 @@ import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
+import { GitDeliveryCommandRunContext } from '../../git/GitDeliveryProgress.js';
 import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
@@ -115,6 +116,8 @@ const MemorySettingsPane = lazy(() => import('../memory/MemorySettingsPane.js').
 const ImRobotSettingsPane = lazy(() => import('../telegram/ImRobotSettingsPane.js').then((module) => ({ default: module.ImRobotSettingsPane })));
 /** CommandCenterPanel 仅在对应页面打开时加载。 */
 const CommandCenterPanel = lazy(() => import('../../CommandCenterPanel.js').then((module) => ({ default: module.CommandCenterPanel })));
+/** 通知、项目入口和交付记录共用同一项目命令弹窗。 */
+const ProjectCommandDialog = lazy(() => import('../../CommandCenterPanel.js').then((module) => ({ default: module.ProjectCommandDialog })));
 /** DigitalEmployeeTemplatesSettings 仅在对应页面打开时加载。 */
 const DigitalEmployeeTemplatesSettings = lazy(() => import('../digital-employees/DigitalEmployeeTemplatesSettings.js').then((module) => ({ default: module.DigitalEmployeeTemplatesSettings })));
 /** CodexConfigImportSettings 仅在对应页面打开时加载。 */
@@ -142,12 +145,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   useEffect(() => {
     if (state.taskCreateForm.zentao && !zentaoInstances.some((instance) => instance.id === state.taskCreateForm.zentao?.instanceId)) state.setTaskCreateForm((current) => ({ ...current, zentao: undefined }));
   }, [zentaoInstances, state.taskCreateForm.zentao?.instanceId, state.setTaskCreateForm]);
-  /** 命令通知复用原命令弹窗，不切换底层页面或丢弃未保存内容。 */
-  const [notificationCommand, setNotificationCommand] = useState<CommandRunNotification | null>(null);
+  /** 通知和交付时间线打开同一命令详情，底层会话保留原位置。 */
+  const [commandRunTarget, setCommandRunTarget] = useState<Pick<CommandRun, 'id' | 'projectId'> | null>(null);
   /** 详情组件回传真实可见身份，加载失败或关闭不会提前已读。 */
   const [visibleNotificationCommandRun, setVisibleNotificationCommandRun] = useState<CommandRun | null>(null);
   /** 项目以当前目录为准，删除后不继续展示可操作详情。 */
-  const notificationCommandProject = state.snapshot.projects.find((project) => project.id === notificationCommand?.projectId);
+  const commandRunProject = state.snapshot.projects.find((project) => project.id === commandRunTarget?.projectId);
   /** 进入会话后通知状态仍驻留，等待准确正文可见再确认已读。 */
   const notifications = useNotifications({
     client: state.props.commandClient ?? null,
@@ -174,12 +177,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       openSearchedTask(task.id, task.projectId);
     },
     visibleCommandRun: visibleNotificationCommandRun,
-    commandContentVisible: state.zeusWindowForeground && Boolean(notificationCommand && notificationCommandProject),
+    commandContentVisible: state.zeusWindowForeground && Boolean(commandRunTarget && commandRunProject),
     /** 只叠加原详情弹窗，同一已打开执行保留真实可见回执。 */
     onOpenCommand: async (item) => {
       if (!state.props.commandClient) throw new Error('命令服务尚未连接。');
       if (!state.snapshot.projects.some((project) => project.id === item.projectId)) throw new Error('命令所属项目不可用。');
-      setNotificationCommand(item);
+      setCommandRunTarget(item);
     },
   });
   useEffect(
@@ -864,7 +867,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openProjectSection(project, 'tasks');
   }
 
-  return (
+  /** 会话与停靠侧栏中的命令详情共用工作台弹窗。 */
+  const workspace = (
     <main
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${upstreamMainLayout ? ' main-layout-upstream' : ' main-layout-current'}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'digital-teams' ? ' digital-teams-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${sessionCodexParityVisible ? ' session-codex-parity-v1' : ''}${projectSessionSourceListVisible ? ' project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
       data-theme={appShellSettings.appearance}
@@ -896,38 +900,24 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       />
       <MotionPresence>
         {commandsProject && props.commandClient ? (
-          <ModalPortal role="dialog" aria-label={`${commandsProject.name} · ${codeWorkspaceZh ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={() => setProjectCommandsProjectId(null)}>
-            <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
-              <Suspense fallback={null}>
-                <CommandCenterPanel key={commandsProject.id} mode="project" project={commandsProject} client={props.commandClient} language={appShellSettings.appLanguage} onClose={() => setProjectCommandsProjectId(null)} />
-              </Suspense>
-            </section>
-          </ModalPortal>
+          <Suspense fallback={null}>
+            <ProjectCommandDialog key={commandsProject.id} project={commandsProject} client={props.commandClient} language={appShellSettings.appLanguage} onClose={() => setProjectCommandsProjectId(null)} />
+          </Suspense>
         ) : null}
       </MotionPresence>
       <MotionPresence>
-        {notificationCommand && notificationCommandProject && props.commandClient ? (
-          <ModalPortal
-            role="dialog"
-            aria-label={`${notificationCommandProject.name} · ${appShellSettings.appLanguage === 'zh-CN' ? '命令' : 'Commands'}`}
-            rootClassName="project-command-portal"
-            onDismiss={() => setNotificationCommand(null)}
-          >
-            <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
-              <Suspense fallback={null}>
-                <CommandCenterPanel
-                  key={notificationCommand.id}
-                  mode="project"
-                  project={notificationCommandProject}
-                  client={props.commandClient}
-                  language={appShellSettings.appLanguage}
-                  initialRunId={notificationCommand.id}
-                  onRunDetailVisible={setVisibleNotificationCommandRun}
-                  onClose={() => setNotificationCommand(null)}
-                />
-              </Suspense>
-            </section>
-          </ModalPortal>
+        {commandRunTarget && commandRunProject && props.commandClient ? (
+          <Suspense fallback={null}>
+            <ProjectCommandDialog
+              key={commandRunTarget.id}
+              project={commandRunProject}
+              client={props.commandClient}
+              language={appShellSettings.appLanguage}
+              initialRunId={commandRunTarget.id}
+              onRunDetailVisible={setVisibleNotificationCommandRun}
+              onClose={() => setCommandRunTarget(null)}
+            />
+          </Suspense>
         ) : null}
       </MotionPresence>
       <Suspense fallback={null}>
@@ -2487,4 +2477,5 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       {projectToolRail}
     </main>
   );
+  return <GitDeliveryCommandRunContext.Provider value={props.commandClient ? setCommandRunTarget : null}>{workspace}</GitDeliveryCommandRunContext.Provider>;
 }

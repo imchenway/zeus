@@ -5,7 +5,7 @@ import { installMarkdownListInput } from './markdownListInput.js';
 import { selectionCommentIcons } from './selectionCommentIcons.js';
 import selectionCommentStyles from '../renderer/session/selectionComment.css?inline';
 import { createBrowserPageTranslation, translationSourceElement, sourceText, isTranslationNode } from './browserTranslation.js';
-import type { BrowserTranslationSegment } from '@zeus/shared';
+import { browserAnnotationOverlayRootId as overlayRootId, type BrowserTranslationSegment } from '@zeus/shared';
 import { installBrowserPasswordAutofill } from './browserPasswordAutofill.js';
 
 function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 'zeus:browser-page:save-comment'): Promise<unknown> {
@@ -89,7 +89,6 @@ type SpeechRecognitionLike = {
 };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-const overlayRootId = 'zeus-browser-annotation-root';
 const state = {
   enabled: false,
   comments: [] as BrowserComment[],
