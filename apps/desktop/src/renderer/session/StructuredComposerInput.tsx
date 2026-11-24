@@ -301,6 +301,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
       const next = `${props.value.slice(0, trigger.start)}${props.value.slice(trigger.end)}`;
       const nextTokens = reconcileTokens(props.value, next, tokens);
       setTokens(nextTokens);
+      // 选择模式后编辑器可能卸载，切换前同步保存去掉触发词后的引用位置。
+      if (props.tokenDraft) props.tokenDraft.current = nextTokens;
       props.onSelectionChange(selectionFromTokens(next, nextTokens));
       setTrigger(null);
       props.onValueChange(next);
@@ -471,7 +473,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
 }
 
 /** 按标签原位置保留显式调用意图，并继续独立提交展示文本和结构化引用。 */
-function selectionFromTokens(value: string, tokens: StructuredToken[]): StructuredComposerSelection {
+export function selectionFromTokens(value: string, tokens: StructuredToken[]): StructuredComposerSelection {
   const ordered = [...tokens].sort((left, right) => left.start - right.start);
   let cursor = 0;
   let promptText = '';
@@ -500,7 +502,9 @@ function findTrigger(value: string, caret: number): TriggerRange | null {
   return { kind: match[2] as '@' | '/', start, end: caret, query: match[3] ?? '' };
 }
 
-function reconcileTokens(previousValue: string, nextValue: string, tokens: StructuredToken[]): StructuredToken[] {
+/** 保留正文编辑范围外的引用，并更新后续标签的位置。 */
+export function reconcileTokens(previousValue: string, nextValue: string, tokens: StructuredToken[]): StructuredToken[] {
+  if (tokens.length === 0) return tokens;
   let prefix = 0;
   while (prefix < previousValue.length && prefix < nextValue.length && previousValue[prefix] === nextValue[prefix]) prefix += 1;
   let suffix = 0;

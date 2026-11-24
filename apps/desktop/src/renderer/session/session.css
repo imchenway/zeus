@@ -12083,14 +12083,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font-weight: 600;
 }
 
-.session-codex-parity-v1 .session-goal-compose-context > small {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .session-codex-parity-v1 .session-goal-compose-count {
   color: var(--session-text-muted);
   flex: 0 0 auto;
