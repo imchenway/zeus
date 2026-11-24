@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { userFacingErrorCause, type GitDeliveryAction, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep, type GitDeliveryNotification, type GitDeliveryScope, type NotificationPosition } from '@zeus/shared';
 import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 import { CommandDeliveryRepository } from './commandDeliveryStore.js';
+import { CommandRunRepository } from './commands.js';
 
 /** 普通会话的隔离合入事实仅存于 Core，不暴露绝对目录。 */
 export interface GitDeliveryMergeResult {
@@ -31,6 +32,13 @@ export interface GitDeliveryStepRecord extends GitDeliveryStep {
   commandId: string | null;
   /** 已确认结果或普通会话合入快照。 */
   result: Record<string, unknown> | null;
+}
+
+/** 读取步骤快照已经绑定的执行身份，继续交付和查看历史使用同一次运行。 */
+export function boundGitDeliveryCommandRunId(result: GitDeliveryStepRecord['result']): string | undefined {
+  const pending = result?.pendingCommand as { body?: { command?: { scope?: { kind: string; id: string } } } } | undefined;
+  const scope = pending?.body?.command?.scope;
+  return scope?.kind === 'command_run' && typeof scope.id === 'string' && scope.id ? scope.id : undefined;
 }
 
 /** 运行内部保存初始管理状态，避免覆盖用户的后续选择。 */
@@ -297,6 +305,8 @@ export class GitDeliveryRepository {
 
   /** 对外投影排除命令恢复快照和工作目录。 */
   view(run: GitDeliveryRunRecord): GitDeliveryRun {
+    /** 只有实际存在并与这次交付匹配的执行记录才提供跳转身份。 */
+    const commandRuns = new CommandRunRepository(this.db);
     return {
       id: run.id,
       projectId: run.projectId,
@@ -306,21 +316,26 @@ export class GitDeliveryRepository {
       stopped: run.steps.some((step) => step.result?.deliveryStopped === true),
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
-      steps: run.steps.map(({ id, repositoryId, repositoryName, action, commandDefinitionId, state, message, conversationId, integrationId, result, commandId }) => ({
-        id,
-        repositoryId,
-        repositoryName,
-        action,
-        commandDefinitionId,
-        state,
-        message: result?.deliveryStopped === true && message === '已终止，可继续未完成步骤。' ? null : message,
-        ...(result?.commitMessageFailed === true && state === 'attention' ? { commitMessageFailed: true } : {}),
-        ...(result?.deliveryStopped === true ? { stopped: true } : {}),
-        error: result?.commitMessageFailed !== true && (state === 'attention' || state === 'unknown') ? this.commandError(commandId) : undefined,
-        conversationId,
-        integrationId,
-        ...(result?.cleanupConfirmation ? { cleanupConfirmation: result.cleanupConfirmation as NonNullable<GitDeliveryStep['cleanupConfirmation']> } : {}),
-      })),
+      steps: run.steps.map(({ id, repositoryId, repositoryName, action, commandDefinitionId, state, message, conversationId, integrationId, result, commandId }) => {
+        const runId = action === 'command' ? boundGitDeliveryCommandRunId(result) : undefined;
+        const commandRun = runId ? commandRuns.getById(runId) : undefined;
+        return {
+          id,
+          repositoryId,
+          repositoryName,
+          action,
+          commandDefinitionId,
+          ...(commandRun?.projectId === run.projectId && commandRun.commandId === commandDefinitionId ? { commandRunId: commandRun.id } : {}),
+          state,
+          message: result?.deliveryStopped === true && message === '已终止，可继续未完成步骤。' ? null : message,
+          ...(result?.commitMessageFailed === true && state === 'attention' ? { commitMessageFailed: true } : {}),
+          ...(result?.deliveryStopped === true ? { stopped: true } : {}),
+          error: result?.commitMessageFailed !== true && (state === 'attention' || state === 'unknown') ? this.commandError(commandId) : undefined,
+          conversationId,
+          integrationId,
+          ...(result?.cleanupConfirmation ? { cleanupConfirmation: result.cleanupConfirmation as NonNullable<GitDeliveryStep['cleanupConfirmation']> } : {}),
+        };
+      }),
     };
   }
 

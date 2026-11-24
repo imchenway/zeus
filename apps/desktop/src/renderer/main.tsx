@@ -410,7 +410,7 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
     throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
   /** 控制器能力由真实记录选择，原生窗口壳与交付视图保持一致。 */
   const scope: import('./task/TaskGitDeliveryWindow.js').GitDeliveryWindowScope = task
-    ? { kind: 'task', task, projectName: project?.name }
+    ? { kind: 'task', task, project }
     : repositoryId
       ? { kind: 'repository', project: project!, repositoryId, pathPrefix }
       : conversation

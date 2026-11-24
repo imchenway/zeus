@@ -202,8 +202,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const deliveryScopeId = deliveryTarget.taskId ?? deliveryTarget.conversationId ?? null;
   /** 只在卡片可见时订阅交付事件，不增加 Git 文件变化订阅。 */
   const { runs: deliveryRuns, error: deliveryProgressError, refresh: refreshDelivery } = useGitDeliveryRuns(gitClient, props.conversation.projectId, deliveryScopeId, cardVisible);
-  /** 最后一次成功后不回显旧失败，环境卡片和交付窗口使用同一条记录。 */
-  const deliveryRun = deliveryRuns[0]?.state === 'succeeded' ? undefined : deliveryRuns[0];
+  /** 环境卡片只显示当前仍需展示的交付。 */
+  const deliveryRun = deliveryRuns[0];
   /** 浮动快捷面板退场不延长数据订阅；常驻模式继续保持原组件身份。 */
   const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLDivElement>(cardMounted);
   const popoverOpen = cardVisible && !persistent;

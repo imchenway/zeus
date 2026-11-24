@@ -55,6 +55,17 @@ export interface CommandCenterPanelProps {
   language: 'zh-CN' | 'en-US';
 }
 
+/** 工作台与独立交付窗口共用项目命令弹窗，可直接选择原执行记录。 */
+export function ProjectCommandDialog(props: Omit<CommandCenterPanelProps, 'mode'> & { project: ProjectRecord; onClose: () => void }) {
+  return (
+    <ModalPortal role="dialog" aria-label={`${props.project.name} · ${props.language === 'zh-CN' ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={props.onClose}>
+      <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
+        <CommandCenterPanel {...props} mode="project" />
+      </section>
+    </ModalPortal>
+  );
+}
+
 interface CommandDraft {
   name: string;
   aliases: string;
