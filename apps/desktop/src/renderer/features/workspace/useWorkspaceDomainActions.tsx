@@ -612,9 +612,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (props.nativeConversationClient && (event.type === 'conversation.submission.accepted' || event.type === 'runtime.session.created')) {
           void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-refresh', error));
         }
-        if (event.type === 'codex.models.changed') {
+        if (event.type === 'codex.models.changed' || event.type === 'antigravity.models.changed') {
           // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
-          if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+          if (event.type === 'antigravity.models.changed' || event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
           return;
         }
         if (event.type === 'codex.update.checked') {
