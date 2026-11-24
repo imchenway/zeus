@@ -959,15 +959,18 @@ function isMarkstreamNode(value: unknown): value is MarkstreamNode {
 
 /** 正文渲染与缺失资源检测共用匹配规则，打开仍使用登记身份。 */
 export function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
+  /** 完整引用优先于旧记录的相对路径匹配，同名文件可以各自打开。 */
+  const reference = normalizeConversationResourceReference(href);
   /** 图片按完整来源匹配，同说明不能替代资源身份。 */
-  const exactImage = resources.find(
-    (candidate) => candidate.presentation === 'inline' && candidate.kind === 'attachment' && candidate.sourceReference && normalizeConversationResourceReference(candidate.sourceReference) === normalizeConversationResourceReference(href),
-  );
+  const exactImage = resources.find((candidate) => candidate.presentation === 'inline' && candidate.kind === 'attachment' && candidate.sourceReference && normalizeConversationResourceReference(candidate.sourceReference) === reference);
+  /** 目录外文件以完整 Markdown 目标登记，避免不同目录出现同名串链。 */
+  const exactExternalFile = resources.find((candidate) => candidate.presentation === 'inline' && candidate.kind === 'file' && candidate.externalReference && normalizeConversationResourceReference(candidate.externalReference) === reference);
   /** 旧记录若存在同说明图片则拒绝猜测；新记录始终按完整引用匹配。 */
   const legacyImages = resources.filter((candidate) => candidate.kind === 'attachment' && !candidate.sourceReference && candidate.displayName === label);
   const candidates = legacyImages.length > 1 ? resources.filter((candidate) => !legacyImages.includes(candidate)) : resources;
   const resource =
     exactImage ??
+    exactExternalFile ??
     candidates.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??
     candidates.find((candidate) => candidate.presentation === 'inline' && inlineResourceMatches(candidate, label, href));
   if (!resource) return null;
@@ -986,7 +989,7 @@ function inlineResourceHrefMatches(resource: ConversationResource, href: string)
       return false;
     }
   }
-  if (resource.kind === 'attachment') return false;
+  if (resource.kind === 'attachment' || resource.externalReference) return false;
   const reference = decodeReferencePath(href);
   // 带目录的引用按完整路径匹配，只有裸文件名才允许省略目录。
   return reference === resource.projectRelativePath || reference.endsWith(`/${resource.projectRelativePath}`) || (!reference.includes('/') && reference === resource.projectRelativePath.split('/').at(-1));

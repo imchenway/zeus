@@ -193,6 +193,14 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
     return { resourceId: intent.id, targets };
   }
 
+  /** 目录外的链接只有系统级文件操作，项目资源另有预览、编辑器及终端选项。 */
+  const systemFileTargets: ConversationResourceOpenTarget[] = [
+    { id: 'system_default', label: 'System default', available: true, exactLocation: false },
+    { id: 'file_manager', label: process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Finder', available: true, exactLocation: false },
+    { id: 'copy_path', label: 'Copy path', available: true, exactLocation: false },
+  ];
+  if (intent.kind === 'file' && intent.authority.systemOpenOnly === true) return { resourceId: intent.id, targets: systemFileTargets };
+
   const file = await authorizedFile(intent);
   const sourcePreviewable = isConversationSourcePreviewable(file.absolutePath);
   const imagePreviewable = isImagePreviewable(file.absolutePath);
@@ -246,9 +254,7 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
       ...(!available ? { reason: 'application_not_installed' } : {}),
     });
   }
-  targets.push({ id: 'system_default', label: 'System default', available: true, exactLocation: false });
-  targets.push({ id: 'file_manager', label: process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Finder', available: true, exactLocation: false });
-  targets.push({ id: 'copy_path', label: 'Copy path', available: true, exactLocation: false });
+  targets.push(...systemFileTargets);
   return { resourceId: intent.id, targets };
 }
 
@@ -291,7 +297,8 @@ async function openResourceIntent(
     }
   }
 
-  const file = await authorizedFile(intent);
+  /** 系统文件链接在用户操作时才访问磁盘，且只访问已登记的目标。 */
+  const file = intent.kind === 'file' && intent.authority.systemOpenOnly === true ? { absolutePath: await systemFileLinkPath(intent.target.absolutePath) } : await authorizedFile(intent);
   if (target === 'zeus_source') {
     return { opened: true, resourceId: intent.id, target, mode: 'zeus_source' };
   }
@@ -453,6 +460,17 @@ async function authorizedFile(intent: ConversationResourceOpenIntent): Promise<{
     throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_FORBIDDEN', 'Conversation file resource resolves outside its authorized root.');
   }
   return { absolutePath: fileRealPath, allowedRoot: rootRealPath };
+}
+
+/** 系统只打开实际存在的本机文件或目录，路径来自当前会话的资源登记。 */
+async function systemFileLinkPath(target: unknown): Promise<string> {
+  if (typeof target !== 'string' || !isAbsolute(target)) {
+    throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_INVALID', 'Conversation file link is not an absolute path.');
+  }
+  /** 复用原生文件与目录类型检查，过期引用在点击时反馈。 */
+  const absolutePath = await realPath(target);
+  if (!absolutePath) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_PATH_UNAVAILABLE', 'The conversation file or its folder is unavailable.');
+  return absolutePath;
 }
 
 async function realPath(path: string): Promise<string | null> {

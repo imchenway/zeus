@@ -311,7 +311,7 @@ export function ConversationInlineResource(
         type="button"
         className="session-inline-resource"
         data-file-path={props.resource.kind === 'file' ? props.resource.projectRelativePath : undefined}
-        data-icon-tooltip={props.resource.kind === 'file' ? label : title}
+        data-icon-tooltip={props.resource.kind === 'file' ? (props.resource.externalReference ?? label) : title}
         aria-label={`${label}${location ? ` ${location}` : ''}`}
         aria-busy={busy || undefined}
         data-error={Boolean(error) || undefined}
@@ -955,17 +955,18 @@ function focusAdjacentDocumentControl(trigger: HTMLButtonElement | null, backwar
 /** 会话文件交由统一入口选择预览容器，网页进入内置浏览器；邮件链接交给邮件应用。 */
 export function defaultOpenTarget(resource: ConversationResource): ConversationOpenTarget {
   if (resource.kind === 'website') return resource.url.startsWith('mailto:') ? 'system_default' : 'zeus_browser';
+  if (resource.kind === 'file' && resource.externalReference) return 'system_default';
   return resource.iconKind === 'html' ? 'zeus_browser' : 'zeus_source';
 }
 
 export function isImageResource(resource: ConversationResource): boolean {
-  return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && resource.iconKind === 'image';
+  return resource.kind === 'attachment' ? resource.previewKind === 'image' : resource.kind === 'file' && !resource.externalReference && resource.iconKind === 'image';
 }
 
 /** 视频类型沿用文件预览器的格式范围，项目文件以真实的相对路径为准。 */
 export function isVideoResource(resource: ConversationResource): boolean {
   if (resource.kind === 'website') return false;
-  if (resource.kind === 'file') return filePreviewKind(filePreviewMime(resource.projectRelativePath)) === 'video';
+  if (resource.kind === 'file') return !resource.externalReference && filePreviewKind(filePreviewMime(resource.projectRelativePath)) === 'video';
   return [resource.mimeType ?? '', filePreviewMime(resource.attachmentRef), filePreviewMime(resource.displayName)].some((mime) => filePreviewKind(mime) === 'video');
 }
 

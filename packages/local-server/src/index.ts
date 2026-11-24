@@ -987,7 +987,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
   /** 升级时补齐历史 HTML 预览与可重试的图片归档请求。 */
-  const conversationResourceBackfillRevision = 'assistant_html_artifact_links';
+  const conversationResourceBackfillRevision = 'absolute_markdown_file_links';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
