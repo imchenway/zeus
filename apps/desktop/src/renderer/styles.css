@@ -16678,7 +16678,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 4px;
 }
 
-/* 分支、命令和任务状态共用标签列，选择器占用剩余宽度。 */
+/* 收尾选项左侧是标签和开关，右侧选择器占用剩余宽度。 */
 .macos-ai-app .task-git-delivery-field-row {
   display: grid;
   grid-template-columns: clamp(86px, 36%, 144px) minmax(0, 1fr);
