@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { isMacOSPlatform } from '../../platform.js';
 import { conversationGitDeliveryTarget } from '../../git/conversationGitDeliveryTarget.js';
 import { isDurableNativeConversationAcceptance } from '../../session/SessionWorkspace.js';
 import { clearPendingConflictAiStart, listPendingConflictAiStarts } from '../../task/TaskGitMergeModal.js';
 import { ZeusApiError } from '../../apiClient.js';
+import { commandDefinitionsQuery } from '../command-center/commandDefinitionsQuery.js';
 import { errorToLocalUiMessage, redactLocalUiErrorMessage } from './WorkspaceChrome.js';
 import { completeNativeConversationChoiceTaskLoad, executionHostSupportsConversationSource, failNativeConversationChoiceTaskLoad, isDefinitiveNativeConversationStartRejection } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
@@ -14,6 +16,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
   const {
     activeNavTarget,
     activeProjectSection,
+    activeProjectId,
     activeProjectIdRef,
     archivedConversationLoadState,
     codexConfigImportLoading,
@@ -200,6 +203,19 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     window.addEventListener('keydown', onCodeDeliveryShortcut);
     return () => window.removeEventListener('keydown', onCodeDeliveryShortcut);
   }, [openTaskGitDelivery, recordLocalError, selectedNativeConversation, sessionDrawerReady, activeNavTarget, activeProjectSection]);
+  /** 空闲时预读当前项目的命令定义，弹窗可直接复用缓存值或在途请求。 */
+  useEffect(() => {
+    /** 命令定义与弹窗使用同一客户端和项目范围。 */
+    const client = props.commandClient;
+    if (!client || !activeProjectId || activeProjectId === temporaryWorkspaceId) return;
+    /** 项目切换时取消尚未开始的预读。 */
+    const idle = window.requestIdleCallback(() => {
+      void commandDefinitionsQuery(client, 'project', activeProjectId)
+        .load()
+        .catch(() => undefined);
+    });
+    return () => window.cancelIdleCallback(idle);
+  }, [activeProjectId, props.commandClient]);
   useEffect(() => {
     /** 保留原有快捷键，源码整页、Git 侧栏与命令弹窗共用鼠标入口语义。 */
     function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
