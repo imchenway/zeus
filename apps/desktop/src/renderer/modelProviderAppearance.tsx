@@ -35,10 +35,12 @@ export function ModelProviderAppearanceScope({ client, children }: { client: Pic
   const [websiteIcons, setWebsiteIcons] = useState<ReadonlyMap<string, string>>(() => new Map());
   const items = useMemo(() => {
     if (!value || !websiteIcons.size) return value ?? emptyAppearances;
-    return new Map(Array.from(value, ([id, item]) => {
-      const websiteIconDataUrl = item.websiteIconOrigin && websiteIcons.get(item.websiteIconOrigin);
-      return [id, websiteIconDataUrl ? { ...item, websiteIconDataUrl } : item] as const;
-    }));
+    return new Map(
+      Array.from(value, ([id, item]) => {
+        const websiteIconDataUrl = item.websiteIconOrigin && websiteIcons.get(item.websiteIconOrigin);
+        return [id, websiteIconDataUrl ? { ...item, websiteIconDataUrl } : item] as const;
+      }),
+    );
   }, [value, websiteIcons]);
   const context = useMemo(() => ({ items, query }), [items, query]);
   useEffect(() => {

@@ -4453,8 +4453,7 @@ export function NewConversationComposer(props: {
     const structured = goalDraft === undefined ? structuredSelectionRef.current : selectionFromTokens(goalDraft, tokenDraft.current);
     const submittedContent = goalDraft ?? structured.promptText;
     const submittedDisplayText =
-      (goalDraft ?? structured.displayText) ||
-      (browserDraft.submission ? (props.language === 'zh-CN' ? `${browserDraft.submission.comments.length} 条网页批注` : `${browserDraft.submission.comments.length} browser comments`) : '');
+      (goalDraft ?? structured.displayText) || (browserDraft.submission ? (props.language === 'zh-CN' ? `${browserDraft.submission.comments.length} 条网页批注` : `${browserDraft.submission.comments.length} browser comments`) : '');
     const submittedGoal = goalDraft?.trim();
     if (
       !props.owner ||
@@ -4719,13 +4718,7 @@ export function NewConversationComposer(props: {
             <Target aria-hidden="true" weight="regular" />
             <strong>{copy.createGoal}</strong>
             <span className={goalCount > 4_000 ? 'session-goal-compose-count is-invalid' : 'session-goal-compose-count'}>{goalCount} / 4000</span>
-            <Button
-              unstyled
-              type="button"
-              aria-label={copy.exitGoal}
-              onClick={() => changeGoalInput(false)}
-              disabled={submitting}
-            >
+            <Button unstyled type="button" aria-label={copy.exitGoal} onClick={() => changeGoalInput(false)} disabled={submitting}>
               <X aria-hidden="true" weight="bold" />
             </Button>
           </div>

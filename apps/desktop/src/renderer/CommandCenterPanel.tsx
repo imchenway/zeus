@@ -1236,7 +1236,9 @@ function CommandRunHistoryModal(props: {
             historyError ? (
               <div className="command-center-empty command-run-pagination">{pageControls}</div>
             ) : nextCursor === undefined ? (
-              <p className="command-center-empty" role="status">{zh ? '正在读取执行记录…' : 'Loading run records…'}</p>
+              <p className="command-center-empty" role="status">
+                {zh ? '正在读取执行记录…' : 'Loading run records…'}
+              </p>
             ) : (
               <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
             )
