@@ -1,0 +1,24 @@
+/* 小图也为切换后的源码留出至少两行的阅读空间。 */
+.session-mermaid-content > .session-mermaid-preview:not([hidden]) {
+  min-block-size: 5rem;
+}
+
+/* 仅在源码视图建立定位容器，预览的缩放锚点仍在底部工具栏。 */
+.session-mermaid-content:has(> .session-mermaid-preview[inert]:not([hidden])) {
+  position: relative;
+}
+
+/* 图表继续占据原有高度，避免切换时移动按钮和附近的消息。 */
+.session-mermaid-content > .session-mermaid-preview[inert] {
+  opacity: 0;
+}
+
+/* 源码贴近底部按钮，长内容在当前区域内滚动。 */
+.session-mermaid-content > .session-mermaid-preview[inert]:not([hidden]) + pre {
+  box-sizing: border-box;
+  inset: auto 0 0;
+  margin: 0;
+  max-block-size: min(100%, 60vh);
+  overflow: auto;
+  position: absolute;
+}
