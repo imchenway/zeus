@@ -1021,13 +1021,7 @@ export function ModelConnectionsSettingsPane(props: {
                 size="compact"
                 onClick={() => completeSetup()}
                 disabled={
-                  busy ||
-                  !current?.apiKeyConfigured ||
-                  !current.enabled ||
-                  !defaultModelRef ||
-                  Boolean(draft.apiKey) ||
-                  pricingUrlChanged ||
-                  JSON.stringify(createSaveInput()) !== JSON.stringify(createSaveInput({ ...current, apiKey: '' }))
+                  busy || !current?.apiKeyConfigured || !current.enabled || !defaultModelRef || Boolean(draft.apiKey) || pricingUrlChanged || JSON.stringify(createSaveInput()) !== JSON.stringify(createSaveInput({ ...current, apiKey: '' }))
                 }
               >
                 {zh ? '完成接入' : 'Finish setup'}
