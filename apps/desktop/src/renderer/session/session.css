@@ -2782,8 +2782,10 @@
 
 .session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block[data-source='true'] {
   background: var(--session-code);
-  border: 1px solid var(--session-line);
   border-radius: 12px;
+  /* 边界绘制在块内，源码切换前后的图表宽高一致。 */
+  outline: 1px solid var(--session-line);
+  outline-offset: -1px;
 }
 
 .session-codex-parity-v1 .session-mermaid-block .mermaid-block {
@@ -2806,10 +2808,6 @@
   justify-content: flex-end;
   min-block-size: 34px;
   padding: 4px 8px;
-}
-
-.session-codex-parity-v1 .session-mermaid-block:not([data-source]) > .session-mermaid-toolbar {
-  order: 1;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -2971,7 +2969,7 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block > pre {
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-content > pre {
   padding: 14px;
 }
 

@@ -6,6 +6,7 @@ import type { ConversationFileLocation, ConversationOpenTarget, ConversationReso
 import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, filePreviewLimits, normalizeConversationResourceReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, ParagraphNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
+import './conversationMermaid.css';
 // 公式与字体资源随应用打包，供所有 Markdown 展示入口共用。
 import 'katex/dist/katex.min.css';
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
@@ -758,7 +759,7 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     let restore: (() => void) | undefined;
     /** 当前源码保持横排字号所需的最小可用宽度。 */
     let minimumWidth = verticalWidth;
-    /** 跟随预览列宽度跨过字号阈值，源码视图隐藏图表时保留布局。 */
+    /** 跟随预览列宽度跨过字号阈值，视口退出布局时保留已有方向。 */
     const updateLayout = () => {
       if (responsiveSource === undefined || minimumWidth === undefined) return;
       /** 预览横向内边距为零，列宽即 SVG 的适配宽度。 */
@@ -857,6 +858,22 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
       data-error={diagnostic ? 'true' : undefined}
       aria-busy={streaming || undefined}
     >
+      <div className="session-mermaid-content">
+        <div ref={previewRef} className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={Boolean(diagnostic)} inert={showSource}>
+          {/* 重建后的图从整体视图开始，宽度测量读取当前布局的 SVG。 */}
+          <MermaidBlockNode key={previewKey} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
+        </div>
+        {showSource || diagnostic ? (
+          <pre>
+            <code>{props.node.code}</code>
+          </pre>
+        ) : null}
+      </div>
+      {diagnostic ? (
+        <small className="session-markdown-code-truncated" role="status">
+          {diagnostic}
+        </small>
+      ) : null}
       <div className="session-mermaid-toolbar">
         {/* 为已有缩放控件保留同行位置，由图表范围内的 CSS 锚点定位。 */}
         {!showSource && !diagnostic ? <span className="session-mermaid-zoom-slot" aria-hidden="true" /> : null}
@@ -868,20 +885,6 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
         ) : null}
         <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
       </div>
-      <div ref={previewRef} className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={showSource || Boolean(diagnostic)}>
-        {/* 重建后的图从整体视图开始，宽度测量读取当前布局的 SVG。 */}
-        <MermaidBlockNode key={previewKey} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
-      </div>
-      {showSource || diagnostic ? (
-        <pre>
-          <code>{props.node.code}</code>
-        </pre>
-      ) : null}
-      {diagnostic ? (
-        <small className="session-markdown-code-truncated" role="status">
-          {diagnostic}
-        </small>
-      ) : null}
     </div>
   );
 }
