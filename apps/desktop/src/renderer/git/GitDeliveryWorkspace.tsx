@@ -942,7 +942,7 @@ export function GitDeliveryActions(props: {
           </section>
           <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
             <div className="task-git-delivery-step-heading">
-              <strong>{props.zh ? '合入分支' : 'Merge branches'}</strong>
+              <strong>{props.zh ? '合入目标分支' : 'Merge targets'}</strong>
               <Button
                 variant="secondary"
                 size="compact"
@@ -963,36 +963,33 @@ export function GitDeliveryActions(props: {
                 {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
               </Button>
             </div>
-            <div className="task-git-delivery-field-row">
-              <span>{props.zh ? '目标分支' : 'Target'}</span>
-              <div className="task-git-delivery-targets">
-                {props.mergeTargets.map((target) => (
-                  <div className="task-git-delivery-source-branch" key={target.repositoryId}>
-                    <ZeusSelect
+            <div className="task-git-delivery-targets">
+              {props.mergeTargets.map((target) => (
+                <div className="task-git-delivery-source-branch" key={target.repositoryId}>
+                  <ZeusSelect
+                    size="compact"
+                    ariaLabel={`${target.label} · ${props.zh ? '合入目标分支' : 'Merge target branch'}`}
+                    value={target.value}
+                    options={[
+                      ...(!target.value || !target.branches.includes(target.value) ? [{ value: target.value, label: target.value || (props.zh ? '选择目标分支' : 'Choose target branch'), disabled: true }] : []),
+                      ...target.branches.map((branch) => ({ value: branch, label: props.mergeTargets.length > 1 ? `${target.label}: ${branch}` : branch })),
+                    ]}
+                    onChange={(branch) => props.onMergeTargetChange(target.repositoryId, branch)}
+                    disabled={busy || !target.branches.length}
+                  />
+                  {target.value && props.onCopyBranch ? (
+                    <Button
+                      variant="secondary"
                       size="compact"
-                      ariaLabel={`${target.label} · ${props.zh ? '合入目标分支' : 'Merge target branch'}`}
-                      value={target.value}
-                      options={[
-                        ...(!target.value || !target.branches.includes(target.value) ? [{ value: target.value, label: target.value || (props.zh ? '选择目标分支' : 'Choose target branch'), disabled: true }] : []),
-                        ...target.branches.map((branch) => ({ value: branch, label: props.mergeTargets.length > 1 ? `${target.label}: ${branch}` : branch })),
-                      ]}
-                      onChange={(branch) => props.onMergeTargetChange(target.repositoryId, branch)}
-                      disabled={busy || !target.branches.length}
-                    />
-                    {target.value && props.onCopyBranch ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        aria-label={copiedTargetBranch === target.value ? (props.zh ? '已复制目标分支名' : 'Target branch name copied') : props.zh ? '复制目标分支名' : 'Copy target branch name'}
-                        data-icon-tooltip={props.zh ? '复制目标分支名' : 'Copy target branch name'}
-                        onClick={async () => setCopiedTargetBranch((await props.onCopyBranch?.(target.value)) ? target.value : null)}
-                      >
-                        {copiedTargetBranch === target.value ? <CheckIcon aria-hidden="true" /> : <CopySimpleIcon aria-hidden="true" />}
-                      </Button>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+                      aria-label={copiedTargetBranch === target.value ? (props.zh ? '已复制目标分支名' : 'Target branch name copied') : props.zh ? '复制目标分支名' : 'Copy target branch name'}
+                      data-icon-tooltip={props.zh ? '复制目标分支名' : 'Copy target branch name'}
+                      onClick={async () => setCopiedTargetBranch((await props.onCopyBranch?.(target.value)) ? target.value : null)}
+                    >
+                      {copiedTargetBranch === target.value ? <CheckIcon aria-hidden="true" /> : <CopySimpleIcon aria-hidden="true" />}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
             </div>
             {props.mergeIssues}
             {props.mergeFeedback}
