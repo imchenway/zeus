@@ -263,7 +263,8 @@ export interface TranscriptViewportAnchor {
   neighbors?: Array<{ itemKey: string; topOffset: number }>;
 }
 
-export function captureTranscriptViewportAnchor(container: HTMLElement): TranscriptViewportAnchor {
+/** 解析视口首条真实内容和它所在的虚拟行。 */
+function findTranscriptViewportAnchor(container: HTMLElement) {
   const containerRect = container.getBoundingClientRect();
   /** 先锚定过程组内的真实条目，找不到时再退回虚拟行。 */
   const visible = (element: HTMLElement): boolean => {
@@ -272,9 +273,20 @@ export function captureTranscriptViewportAnchor(container: HTMLElement): Transcr
   };
   const itemElements = [...container.querySelectorAll<HTMLElement>('[data-transcript-item-key]')];
   const itemElement = itemElements.find(visible);
-  const itemIndex = itemElement ? itemElements.indexOf(itemElement) : -1;
   const anchorElement = itemElement ?? [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find(visible);
   const rowElement = anchorElement?.closest<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]');
+  return { containerRect, itemElements, itemElement, anchorElement, rowElement };
+}
+
+/** 滚动时只需要行身份，避免为导航刻度测量所有邻近条目的偏移。 */
+export function transcriptViewportReadingRowKey(container: HTMLElement): string | null {
+  return findTranscriptViewportAnchor(container).rowElement?.dataset.transcriptRowKey ?? null;
+}
+
+/** 记录一次恢复所需的条目身份和屏内坐标。 */
+export function captureTranscriptViewportAnchor(container: HTMLElement): TranscriptViewportAnchor {
+  const { containerRect, itemElements, itemElement, anchorElement, rowElement } = findTranscriptViewportAnchor(container);
+  const itemIndex = itemElement ? itemElements.indexOf(itemElement) : -1;
   return {
     itemKey: itemElement?.dataset.transcriptItemKey ?? null,
     rowKey: rowElement?.dataset.transcriptRowKey ?? null,
@@ -289,8 +301,8 @@ export function captureTranscriptViewportAnchor(container: HTMLElement): Transcr
   };
 }
 
-/** 历史分页和异步高度测量共用同一条稳定行补偿规则。 */
-export function compensateTranscriptViewportAnchor(container: HTMLElement, anchor: TranscriptViewportAnchor): number {
+/** 恢复会话阅读点或顶端前插前的可见内容。 */
+export function restoreTranscriptViewportAnchor(container: HTMLElement, anchor: TranscriptViewportAnchor): void {
   let anchorElement = anchor.itemKey
     ? [...container.querySelectorAll<HTMLElement>('[data-transcript-item-key]')].find((item) => item.dataset.transcriptItemKey === anchor.itemKey)
     : anchor.rowKey
@@ -310,14 +322,12 @@ export function compensateTranscriptViewportAnchor(container: HTMLElement, ancho
     anchorElement = [...container.querySelectorAll<HTMLElement>('.session-transcript-window-row[data-transcript-row-key]')].find((row) => row.dataset.transcriptRowKey === anchor.rowKey);
     topOffset = anchor.rowTopOffset;
   }
-  const previousScrollTop = container.scrollTop;
   if (anchorElement && topOffset !== null) {
     const nextOffset = anchorElement.getBoundingClientRect().top - container.getBoundingClientRect().top;
     container.scrollTop += nextOffset - topOffset;
   } else {
     container.scrollTop = anchor.scrollTop + (container.scrollHeight - anchor.scrollHeight);
   }
-  return container.scrollTop - previousScrollTop;
 }
 
 export function useTranscriptViewportVirtualizer(input: {
@@ -326,11 +336,9 @@ export function useTranscriptViewportVirtualizer(input: {
   pinnedRowKeys: ReadonlySet<string>;
   containerRef: RefObject<HTMLElement | null>;
   isFollowingLatest?: () => boolean;
-  getReadingAnchor?: () => TranscriptViewportAnchor | null;
   onFollowingLatestGeometryChange?: () => void;
   /** 当前行的内容与展开元数据签名。 */
   rowLayoutSignature?: (rowKey: string) => string;
-  suspendAutomaticAnchor?: boolean;
 }) {
   const scopeRef = useRef(input.scopeKey);
   const layoutSignatureRef = useRef(input.rowLayoutSignature);
@@ -344,10 +352,6 @@ export function useTranscriptViewportVirtualizer(input: {
   const updateFrameRef = useRef<number | null>(null);
   /** 动画帧暂停时仍提交待处理行高，不留下过期的空白占位窗口。 */
   const updateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 行高与滚动位置可以在同一帧变化，两项更新必须分别保留。 */
-  const pendingMeasurementRef = useRef(false);
-  const pendingViewportRef = useRef<{ scrollTop: number; viewportHeight: number } | null>(null);
-  const measurementAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [viewport, setViewport] = useState<{ scopeKey: string | null; scrollTop: number | null; viewportHeight: number }>({ scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 });
 
@@ -356,15 +360,13 @@ export function useTranscriptViewportVirtualizer(input: {
     bindingsRef.current.clear();
     cacheRef.current = conversationMeasurementCache(input.scopeKey).measurements;
     layoutRef.current = new TranscriptViewportLayout();
-    measurementAnchorRef.current = null;
     scopeRef.current = input.scopeKey;
   }
   const layout = layoutRef.current;
   layout.syncKeys(input.rowKeys, cacheRef.current);
 
-  /** 合并一帧内的测量与滚动更新，不能让滚动同步吞掉行高变化。 */
-  const scheduleUpdate = useCallback((measurementChanged = false) => {
-    pendingMeasurementRef.current ||= measurementChanged;
+  /** 一帧内多行的高度变化只提交一次占位投影。 */
+  const scheduleMeasurementUpdate = useCallback(() => {
     if (updateFrameRef.current !== null) return;
     /** 动画帧与后备定时器只允许其中一个提交本批测量。 */
     const flush = (): void => {
@@ -372,19 +374,7 @@ export function useTranscriptViewportVirtualizer(input: {
       if (updateTimerRef.current !== null) clearTimeout(updateTimerRef.current);
       updateFrameRef.current = null;
       updateTimerRef.current = null;
-      const pending = pendingViewportRef.current;
-      pendingViewportRef.current = null;
-      if (pending) {
-        setViewport((current) =>
-          current.scopeKey === scopeRef.current && current.scrollTop === pending.scrollTop && current.viewportHeight === pending.viewportHeight
-            ? current
-            : { scopeKey: scopeRef.current, scrollTop: pending.scrollTop, viewportHeight: pending.viewportHeight },
-        );
-      }
-      if (pendingMeasurementRef.current) {
-        pendingMeasurementRef.current = false;
-        setLayoutRevision((revision) => revision + 1);
-      }
+      setLayoutRevision((revision) => revision + 1);
     };
     updateFrameRef.current = requestAnimationFrame(flush);
     updateTimerRef.current = setTimeout(flush, transcriptViewportUpdateFallbackMs);
@@ -400,21 +390,11 @@ export function useTranscriptViewportVirtualizer(input: {
       const cache = conversationMeasurementCache(scopeRef.current);
       if (layoutSignatureRef.current) cache.signatures.set(rowKey, layoutSignatureRef.current(rowKey));
       while (cache.signatures.size > transcriptViewportMeasurementCacheLimit) cache.signatures.delete(cache.signatures.keys().next().value!);
-      const container = input.containerRef.current;
-      const followingLatest = Boolean(input.isFollowingLatest?.());
-      const candidateAnchor = !measurementAnchorRef.current && !input.suspendAutomaticAnchor && !followingLatest && container ? (input.getReadingAnchor?.() ?? captureTranscriptViewportAnchor(container)) : null;
       if (!layoutRef.current.updateMeasuredHeight(rowKey, height, cacheRef.current)) return;
-      // 可见行尚未挂载时没有可守住的阅读位置；不能把任意行高变化当作历史前插。
-      measurementAnchorRef.current ??= candidateAnchor?.rowKey ? candidateAnchor : null;
-      // 已挂载内容先在本次绘制前补偿；占位层提交后仍沿用同一锚点核对剩余差值。
-      if (container && measurementAnchorRef.current && !input.suspendAutomaticAnchor && !followingLatest) {
-        compensateTranscriptViewportAnchor(container, measurementAnchorRef.current);
-        pendingViewportRef.current = { scrollTop: container.scrollTop, viewportHeight: positiveMetric(container.clientHeight, 720) };
-      }
-      scheduleUpdate(true);
-      if (followingLatest) input.onFollowingLatestGeometryChange?.();
+      scheduleMeasurementUpdate();
+      if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
     },
-    [input.containerRef, input.getReadingAnchor, input.isFollowingLatest, input.onFollowingLatestGeometryChange, input.suspendAutomaticAnchor, scheduleUpdate],
+    [input.isFollowingLatest, input.onFollowingLatestGeometryChange, scheduleMeasurementUpdate],
   );
 
   useLayoutEffect(() => {
@@ -520,6 +500,8 @@ export function useTranscriptViewportVirtualizer(input: {
     () => () => {
       if (updateFrameRef.current !== null) cancelAnimationFrame(updateFrameRef.current);
       if (updateTimerRef.current !== null) clearTimeout(updateTimerRef.current);
+      updateFrameRef.current = null;
+      updateTimerRef.current = null;
     },
     [],
   );
@@ -553,26 +535,8 @@ export function useTranscriptViewportVirtualizer(input: {
   const synchronizeViewport = useCallback((container: HTMLElement): void => {
     const scrollTop = container.scrollTop;
     const viewportHeight = positiveMetric(container.clientHeight, 720);
-    // 当前真实位置优先于此前测量留下的坐标。
-    pendingViewportRef.current = null;
     setViewport((current) => (current.scopeKey === scopeRef.current && current.scrollTop === scrollTop && current.viewportHeight === viewportHeight ? current : { scopeKey: scopeRef.current, scrollTop, viewportHeight }));
   }, []);
-
-  useLayoutEffect(() => {
-    const container = input.containerRef.current;
-    if (!container) return;
-    const cancelAnchor = (): void => {
-      measurementAnchorRef.current = null;
-    };
-    container.addEventListener('wheel', cancelAnchor, { passive: true });
-    container.addEventListener('pointerdown', cancelAnchor, { passive: true });
-    container.addEventListener('keydown', cancelAnchor);
-    return () => {
-      container.removeEventListener('wheel', cancelAnchor);
-      container.removeEventListener('pointerdown', cancelAnchor);
-      container.removeEventListener('keydown', cancelAnchor);
-    };
-  }, [input.containerRef]);
 
   const windowRef = useCallback((element: HTMLElement | null): void => {
     if (windowElementRef.current) windowObserverRef.current?.unobserve(windowElementRef.current);
@@ -583,15 +547,11 @@ export function useTranscriptViewportVirtualizer(input: {
   const effectiveViewport = viewport.scopeKey === input.scopeKey ? viewport : { scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 };
   /** 跟随最新内容时按当前行高定位末尾，避免旧 scrollTop 将末尾行移出渲染窗口。 */
   const projectionScrollTop = input.isFollowingLatest?.() ? null : effectiveViewport.scrollTop;
-  const projection = useMemo(() => {
-    const anchorRowKey = measurementAnchorRef.current?.rowKey;
-    const pinnedRowKeys = anchorRowKey ? new Set([...input.pinnedRowKeys, anchorRowKey]) : input.pinnedRowKeys;
-    return layout.project({
-      scrollTop: projectionScrollTop,
-      viewportHeight: effectiveViewport.viewportHeight,
-      pinnedRowKeys,
-    });
-  }, [projectionScrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision]);
+  /** 测量值和行集合变化后，按当前滚动位置重算可见行与占位。 */
+  const projection = useMemo(
+    () => layout.project({ scrollTop: projectionScrollTop, viewportHeight: effectiveViewport.viewportHeight, pinnedRowKeys: input.pinnedRowKeys }),
+    [projectionScrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision],
+  );
 
   useLayoutEffect(() => {
     // 行测量会先修改高度树、再提交新的 spacer/窗口投影。必须在投影真正进入 DOM 后
@@ -599,17 +559,6 @@ export function useTranscriptViewportVirtualizer(input: {
     if (input.isFollowingLatest?.()) input.onFollowingLatestGeometryChange?.();
     else if (input.containerRef.current) synchronizeViewport(input.containerRef.current);
   }, [input.containerRef, input.isFollowingLatest, input.onFollowingLatestGeometryChange, projection, synchronizeViewport]);
-
-  useLayoutEffect(() => {
-    const anchor = measurementAnchorRef.current;
-    const container = input.containerRef.current;
-    if (!anchor || !container) return;
-    measurementAnchorRef.current = null;
-    if (input.suspendAutomaticAnchor || input.isFollowingLatest?.()) return;
-    compensateTranscriptViewportAnchor(container, anchor);
-    pendingViewportRef.current = { scrollTop: container.scrollTop, viewportHeight: positiveMetric(container.clientHeight, 720) };
-    scheduleUpdate();
-  }, [input.containerRef, input.isFollowingLatest, input.suspendAutomaticAnchor, projection, scheduleUpdate]);
 
   return {
     projection,

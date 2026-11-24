@@ -12962,10 +12962,22 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-transcript {
   /* 自动跟随由滚动控制器逐帧收敛；不能再被全局 smooth 变成延迟滚动。 */
   scroll-behavior: auto;
-  /* 虚拟列表统一补偿阅读锚点，浏览器不能再对同一高度变化重复纠偏。 */
+  /* 跟随最新消息时，由滚动控制器随内容增高定位末尾。 */
   overflow-anchor: none;
   /* 总计约三行正文高度，让最新消息与 composer 之间保留稳定的可滚动安全区。 */
   padding-block-end: 72px;
+}
+
+/* 历史阅读保留屏内正文，浏览器在布局时将高度变化与输入滚动分别处理。 */
+.session-codex-parity-v1 .session-transcript[data-reading-history='true'] {
+  overflow-anchor: auto;
+}
+
+/* 占位行和分页标记会进入或离开文档，不能作为稳定阅读点。 */
+.session-codex-parity-v1
+  .session-transcript
+  :where(.session-transcript-window-spacer, .session-transcript-window-row:has(> .session-navigation-placeholder), .session-v2-history-sentinel, .session-turn-process-page-sentinel, .session-latest-content-marker) {
+  overflow-anchor: none;
 }
 
 .session-codex-parity-v1 .session-activity-group[data-active='true'] > .session-activity-live .session-activity-item-icon,
