@@ -3284,6 +3284,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }) {
     if (input.agentKind === 'antigravity') {
       const account = antigravityNativeCoordinator.antigravityDriver?.readAccount();
+      if (account?.status === 'verification_required') throw nativeApiError('ZEUS_AGY_VERIFICATION_REQUIRED', account.message ?? '请在设置的 Google Antigravity 账号卡片中完成验证后重试。');
       if (input.modelSourceId !== 'antigravity' || account?.status !== 'ready' || !account.models.some((model) => model.id === input.modelId)) {
         throw nativeApiError('ZEUS_MODEL_NOT_READY', '请在模型供应商中检查 Google 登录和 Antigravity 模型。');
       }
