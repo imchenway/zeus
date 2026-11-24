@@ -3,8 +3,8 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 
-/** 公开价格页面的读取上限，避免页面占用无限内存。 */
-const maximumBytes = 2_000_000;
+/** 公开价格页面的默认读取上限，单位为字节。 */
+const maximumPricingBytes = 2_000_000;
 /** 公网抓取禁止连接本机、内网、组播、保留地址。 */
 const excluded = new BlockList();
 for (const [address, prefix] of [
@@ -32,39 +32,50 @@ export function normalizePricingUrl(value: string): string {
   return url.href;
 }
 
-/** 每次解析与重定向都校验，并固定本次实际连接地址以防 DNS 重绑定。 */
+/** 价格读取保留文本、限额和认证请求的原有契约。 */
 export async function readPricingDocument(value: string, signal?: AbortSignal, redirects = 0, pricingToken?: string): Promise<string> {
+  const { body } = await readPublicHttpResource(value, { signal, redirects, pricingToken });
+  return body.toString('utf8');
+}
+
+/** 公网文档和图标共用地址校验、重定向限制及有界字节读取。 */
+export async function readPublicHttpResource(
+  value: string,
+  options: { signal?: AbortSignal; redirects?: number; pricingToken?: string; maxBytes?: number; accept?: string; label?: string },
+): Promise<{ url: URL; contentType: string; body: Buffer }> {
+  const { signal, redirects = 0, pricingToken, maxBytes = maximumPricingBytes, accept = 'application/json,text/html,text/plain', label = '价格页面' } = options;
+  signal?.throwIfAborted();
   const url = new URL(normalizePricingUrl(value));
   if (pricingToken && url.protocol !== 'https:') throw new Error('认证价目必须使用 HTTPS。');
   const hostname = url.hostname.replace(/^\[|\]$/gu, '');
   const addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await lookup(hostname, { all: true });
-  if (!addresses.length || addresses.some(({ address, family }) => (family === 4 ? excluded.check(address) : !/^[23][0-9a-f]{3}:/iu.test(address) || excluded.check(address, 'ipv6')))) throw new Error('价格页面只能访问公网地址。');
+  if (!addresses.length || addresses.some(({ address, family }) => (family === 4 ? excluded.check(address) : !/^[23][0-9a-f]{3}:/iu.test(address) || excluded.check(address, 'ipv6')))) throw new Error(label + '只能访问公网地址。');
   const address = addresses[0]!;
-  const response = await new Promise<{ status: number; location?: string; text: string }>((resolve, reject) => {
+  const response = await new Promise<{ status: number; location?: string; contentType: string; body: Buffer }>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(
       url,
       {
         family: address.family,
-        headers: { Accept: 'application/json,text/html,text/plain', 'Accept-Encoding': 'identity', ...(pricingToken ? { Authorization: 'Bearer ' + pricingToken } : {}) },
+        headers: { Accept: accept, 'Accept-Encoding': 'identity', ...(pricingToken ? { Authorization: 'Bearer ' + pricingToken } : {}) },
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
         lookup: (_hostname, _options, callback) => callback(null, address.address, address.family),
       },
       (incoming) => {
         incoming.on('data', (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > maximumBytes) request.destroy(new Error('价格页面超过读取上限。'));
+          if (bytes > maxBytes) request.destroy(new Error(label + '超过读取上限。'));
           else chunks.push(chunk);
         });
         incoming.on('error', reject);
-        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0, location: incoming.headers.location, text: Buffer.concat(chunks).toString('utf8') }));
+        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0, location: incoming.headers.location, contentType: incoming.headers['content-type'] ?? '', body: Buffer.concat(chunks) }));
       },
     );
     request.on('error', reject);
     request.end();
   });
-  if (!pricingToken && response.status >= 300 && response.status < 400 && response.location && redirects < 3) return readPricingDocument(new URL(response.location, url).href, signal, redirects + 1);
-  if (response.status !== 200) throw new Error(`价格页面读取失败（HTTP ${response.status}）。`);
-  return response.text;
+  if (!pricingToken && response.status >= 300 && response.status < 400 && response.location && redirects < 3) return readPublicHttpResource(new URL(response.location, url).href, { ...options, redirects: redirects + 1 });
+  if (response.status !== 200) throw new Error(`${label}读取失败（HTTP ${response.status}）。`);
+  return { url, contentType: response.contentType.split(';', 1)[0]!.trim().toLowerCase(), body: response.body };
 }

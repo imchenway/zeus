@@ -12239,9 +12239,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   max-inline-size: 100% !important;
 }
 
-/* 宽输入框显示模型文字，窄输入框才启用同一按钮内的模型图标。 */
+/* 模型名截断时保留供应商图标的完整宽度。 */
 .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-trigger-icon {
-  display: none;
+  flex: none;
 }
 
 .session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] > .session-composer-dropdown-trigger .zeus-select-chevron {
@@ -12367,10 +12367,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-value,
   .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-chevron {
     display: none;
-  }
-
-  .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-trigger-icon {
-    display: inline-flex;
   }
 }
 

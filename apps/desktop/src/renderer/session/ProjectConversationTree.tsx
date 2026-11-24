@@ -267,12 +267,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             >
               {workspaceMode === 'worktree' ? <GitBranch aria-hidden="true" /> : workspaceMode === 'direct' ? <Folder aria-hidden="true" /> : null}
             </span>
-            {modelId ? (
-              <span className="session-conversation-model" data-icon-tooltip={modelTooltip} data-icon-tooltip-provider="parent">
-                {sourceName ? <span className="visually-hidden">{sourceName} / </span> : null}
-                {modelId.split('/').at(-1)}
-              </span>
-            ) : null}
             <span className="session-conversation-title" data-icon-tooltip={displayTitle}>
               {displayTitle}
             </span>

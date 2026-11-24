@@ -5,6 +5,7 @@ import type {
   ModelReasoningOverrideOption,
   ModelConnectionDiagnostic,
   ModelConnectionRecord,
+  ModelConnectionWebsiteIcon,
   SaveModelConnectionRequest,
   SecuritySecretsSnapshot,
   SelectablePiModel,
@@ -28,6 +29,8 @@ export interface IntegrationApiClient {
   loadModelConnections: () => Promise<ModelConnectionRecord[]>;
   /** 读取供应商外观摘要，不触发凭据或用量查询。 */
   loadModelConnectionAppearances: () => Promise<import('./integrationContracts.js').ModelConnectionAppearance[]>;
+  /** 读取保存地址的公开标签图标，由调用方在后台解码。 */
+  loadModelConnectionWebsiteIcon: (connectionId: string, faviconOnly?: boolean) => Promise<ModelConnectionWebsiteIcon | null>;
   createModelConnection: (input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   updateModelConnection: (connectionId: string, input: SaveModelConnectionRequest) => Promise<ModelConnectionRecord>;
   deleteModelConnection: (connectionId: string) => Promise<void>;
@@ -180,6 +183,7 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       modelConnectionCommand(connectionId, integrationClientCommandTypes.modelConnectionPricingRefresh, 'pricing_refresh', 'POST', '/pricing/refresh', {}) as ReturnType<IntegrationApiClient['refreshModelConnectionPricing']>,
     loadModelConnections: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadModelConnections']>> }>('/api/model-connections')).items,
     loadModelConnectionAppearances: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadModelConnectionAppearances']>> }>('/api/model-connections?view=appearance')).items,
+    loadModelConnectionWebsiteIcon: (connectionId, faviconOnly) => transport.request<ModelConnectionWebsiteIcon | null>(modelConnectionPath(connectionId) + '/website-icon' + (faviconOnly ? '?faviconOnly=true' : '')),
     createModelConnection: async (input) => {
       const body = await buildIntegrationCommandRequest({
         commandType: integrationClientCommandTypes.modelConnectionCreate,

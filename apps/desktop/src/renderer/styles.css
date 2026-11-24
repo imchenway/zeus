@@ -10320,7 +10320,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border: 1px solid transparent;
   border-radius: 7px;
   display: flex;
-  /* 状态图标浮在末尾，剩余空间由型号与标题使用。 */
+  /* 状态图标浮在末尾，剩余空间留给会话标题。 */
   gap: var(--zeus-sidebar-label-gap, 6px);
   inline-size: 100%;
   min-block-size: 38px;
@@ -10335,17 +10335,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .session-conversation-tree-row .session-conversation-workspace-icon {
   inline-size: var(--zeus-sidebar-icon-column, 18px);
-}
-
-.macos-ai-app .session-conversation-model {
-  max-inline-size: 38%;
-  min-inline-size: 0;
-  overflow: hidden;
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-  font-weight: 580;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .macos-ai-app .session-conversation-tree-item {
@@ -12320,7 +12309,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 .macos-ai-app.zeus-shell .project-first-sidebar,
 .macos-ai-app.zeus-shell.ai-native-shell .project-first-sidebar {
   padding-block-start: max(var(--zeus-hidden-titlebar-safe-top), var(--zeus-traffic-light-no-content-zone));
-  padding-inline: 10px;
+  padding-inline: 6px 10px;
   padding-block-end: 10px;
 }
 
