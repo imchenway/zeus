@@ -22751,13 +22751,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .model-setup-dialog {
   display: flex;
   flex-direction: column;
-  width: min(760px, calc(100vw - 40px));
+  width: min(720px, calc(100vw - 40px));
   max-height: calc(100dvh - 64px);
   padding: 24px;
-  gap: 22px;
+  gap: 24px;
   border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 18px;
+  border-radius: 14px;
   box-shadow: 0 24px 80px #0003;
+  animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
 }
 .macos-ai-app .model-setup-heading,
 .macos-ai-app .model-setup-actions {
@@ -22767,12 +22768,37 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   flex-wrap: wrap;
   gap: 12px;
 }
+/* 首屏的稍后设置与其他弹窗的取消操作一样靠右对齐。 */
+.macos-ai-app .model-setup-dialog > .model-setup-actions-end {
+  justify-content: flex-end;
+}
 .macos-ai-app .model-setup-heading {
   align-items: flex-start;
   flex-wrap: nowrap;
 }
-.macos-ai-app .model-setup-heading strong {
+.macos-ai-app .model-setup-heading-content {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  gap: 12px;
+}
+.macos-ai-app .model-setup-heading h2 {
+  margin: 0;
   font-size: 22px;
+  font-weight: 630;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+}
+.macos-ai-app .model-setup-heading p {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+.macos-ai-app .model-setup-dialog .model-setup-heading .zeus-button.model-setup-close {
+  flex: 0 0 32px;
+  inline-size: 32px;
+  block-size: 32px;
+  min-block-size: 32px;
+  padding: 0;
 }
 .macos-ai-app .model-setup-heading p,
 .macos-ai-app .model-setup-account p,
@@ -22786,29 +22812,81 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* 有足够空间时并列供应商，窄窗口内保持完整的品牌名和点击区域。 */
 .macos-ai-app .model-setup-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr));
+  gap: 12px;
+  padding: 2px;
 }
-.macos-ai-app .model-setup-options > button {
+.macos-ai-app .model-setup-dialog .model-setup-options > .zeus-button.model-setup-provider-option {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   height: auto;
-  min-height: 120px;
-  padding: 22px;
-  gap: 10px;
+  min-block-size: 84px;
+  padding: 14px;
+  gap: 12px;
+  border-color: var(--zeus-product-line-soft);
+  border-radius: 12px;
+  background: var(--zeus-product-panel);
   text-align: start;
   white-space: normal;
 }
-.macos-ai-app .model-setup-options span {
-  font-weight: 400;
+.macos-ai-app .model-setup-dialog .model-setup-options > .zeus-button.model-setup-provider-option:is(:hover, :focus-visible) {
+  border-color: var(--zeus-product-accent);
+  background: var(--zeus-product-panel-muted);
+}
+.macos-ai-app .model-setup-option-copy {
+  display: grid;
+  min-inline-size: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .model-setup-option-copy strong {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+.macos-ai-app .model-setup-provider-option[data-provider='antigravity'] strong {
+  font-family: 'Google Sans Flex', system-ui, sans-serif;
+  font-weight: 580;
+}
+.macos-ai-app .model-setup-option-copy small,
+.macos-ai-app .model-setup-option-arrow {
   color: var(--zeus-product-muted);
+}
+.macos-ai-app .model-setup-option-copy small {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.macos-ai-app .model-setup-subscription,
+.macos-ai-app .model-setup-select-model {
+  border: 1px solid var(--zeus-product-line-soft);
+  border-radius: 12px;
+}
+.macos-ai-app .model-setup-subscription {
+  container: model-provider-accounts / inline-size;
+}
+.macos-ai-app .model-setup-subscription > .model-setup-account > p,
+.macos-ai-app .model-setup-subscription .codex-update-row {
+  grid-column: 1 / -1;
+}
+.macos-ai-app .model-setup-select-model {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
 }
 .macos-ai-app .model-setup-codex {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+}
+.macos-ai-app .model-setup-codex > .managed-cli-progress {
+  flex: 1 1 100%;
 }
 .macos-ai-app .model-setup-codex p {
   flex-basis: 100%;
@@ -22823,6 +22901,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   padding: 18px;
   border: 0;
   border-radius: 12px;
+  background: var(--zeus-product-panel-muted);
 }
 /* 程序状态和版本在窄窗口中允许自然换行。 */
 .macos-ai-app .model-setup-installation-heading {
@@ -22901,9 +22980,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   display: none;
 }
 @media (max-width: 600px) {
-  .macos-ai-app .model-setup-options {
-    grid-template-columns: 1fr;
-  }
   .macos-ai-app .model-setup-dialog {
     padding: 18px;
     width: calc(100vw - 24px);
@@ -23008,21 +23084,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   grid-column: 1 / -1;
 }
 .macos-ai-app .task-create-modal-header strong,
-.macos-ai-app .task-model-push-header strong,
-.macos-ai-app .model-setup-heading strong {
+.macos-ai-app .task-model-push-header strong {
   font-size: 22px;
   font-weight: 600;
   line-height: 1.4;
-}
-.macos-ai-app .model-setup-dialog {
-  width: min(720px, calc(100vw - 40px));
-  border-radius: 14px;
-  gap: 24px;
-  animation: zeus-popover-enter 180ms var(--zeus-motion-ease-out);
-}
-.macos-ai-app .model-setup-heading p {
-  margin: 8px 0 0;
-  font-size: 14px;
 }
 .macos-ai-app .model-setup-task-context {
   display: block;
@@ -23030,28 +23095,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   font-size: 12px;
   color: var(--zeus-product-muted);
   overflow-wrap: anywhere;
-}
-.macos-ai-app .model-setup-options {
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-.macos-ai-app .model-setup-options > button {
-  min-height: 88px;
-  padding: 18px 20px;
-  justify-items: start;
-  gap: 6px;
-  border-radius: 10px;
-}
-.macos-ai-app .model-setup-options strong {
-  font-size: 14px;
-  font-weight: 500;
-}
-.macos-ai-app .model-setup-options span {
-  font-size: 12px;
-  line-height: 1.6;
-}
-.macos-ai-app .model-setup-actions small {
-  font-size: 12px;
 }
 /* 窄窗口按左栏、工作区顺序统一滚动，保留同一份表单和控件。 */
 @media (width < 1100px) {

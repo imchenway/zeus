@@ -5,7 +5,7 @@ export interface PortableHistoryEntry {
   role: PortableHistoryRole;
   content: unknown;
   sourceSegmentId: string;
-  sourceRuntime: 'codex' | 'pi' | 'copilot';
+  sourceRuntime: 'codex' | 'pi' | 'copilot' | 'antigravity';
   toolPairId?: string;
   convertedReasoning?: boolean;
 }

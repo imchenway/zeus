@@ -14,3 +14,11 @@ dependency manifests and lockfile in dist/licenses/zeus-source.tar.gz inside
 app.asar. They also include this NOTICE, COPYING and the original Zeus LICENSE.
 The source snapshot contains the modified KISS implementation and its upstream
 provenance. Dependencies retain their own licenses and pinned source references.
+
+Model provider marks identify their respective services. The OpenAI mark is
+from https://openai.com/favicon.svg and the Google Antigravity icon is from
+https://antigravity.google/press/. The GitHub Copilot icon is from Primer
+Octicons (https://github.com/primer/octicons) under the MIT license. Google Sans
+Flex (https://github.com/googlefonts/googlesans-flex) is distributed under the
+SIL Open Font License 1.1. The asset license texts accompany the corresponding
+source in apps/desktop/src/renderer/assets/model-providers.

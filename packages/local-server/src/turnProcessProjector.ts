@@ -11,7 +11,7 @@ interface TurnIdentity {
 /** SDK 事件进入 Zeus 会话语义时携带冻结协议与展示阶段。 */
 interface PiTurnIdentity extends TurnIdentity {
   /** 本次执行快照冻结的线协议族。 */
-  protocolFamily: ModelProtocolFamily | 'copilot_sdk';
+  protocolFamily: ModelProtocolFamily | 'copilot_sdk' | 'antigravity_acp';
   /** 当前 Assistant 响应对应的稳定展示阶段；旧事件允许为空。 */
   stageId: string | null;
 }

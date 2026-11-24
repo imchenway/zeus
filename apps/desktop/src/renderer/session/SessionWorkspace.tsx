@@ -186,7 +186,7 @@ export interface SessionWorkspaceStartInput {
   serviceTierSelection: NativeServiceTierSelection;
   model?: string;
   effort?: string;
-  agentKind?: 'codex' | 'pi' | 'copilot';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity';
   goalObjective?: string;
   skillId?: string;
   pluginReferences?: PluginSkillReference[];
@@ -361,7 +361,7 @@ type StartNativeConversationPayload =
       serviceTier?: string | null;
       model?: string;
       effort?: string;
-      agentKind?: 'codex' | 'pi' | 'copilot';
+      agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity';
       goalObjective?: string;
       skillId?: string;
       pluginReferences?: PluginSkillReference[];
@@ -1799,7 +1799,7 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
           typeof request.model === 'string' &&
           Boolean(request.model) &&
           (request.effort === undefined || typeof request.effort === 'string') &&
-          (request.agentKind === 'codex' || request.agentKind === 'pi' || request.agentKind === 'copilot'))) &&
+          (request.agentKind === 'codex' || request.agentKind === 'pi' || request.agentKind === 'copilot' || request.agentKind === 'antigravity'))) &&
       permissionModeField(request.permissionMode) !== undefined &&
       (request.collaborationMode === 'default' || request.collaborationMode === 'plan') &&
       serviceTierOverrideField(request.serviceTier) &&
@@ -4444,7 +4444,7 @@ export function NewConversationComposer(props: {
     )
       return;
     /** Codex 和 Copilot 依赖远端服务；自定义模型仍可通过本机端点运行。 */
-    if (window.navigator.onLine === false && (selectedModel?.sourceId === 'codex' || selectedModel?.sourceId === 'copilot')) {
+    if (window.navigator.onLine === false && (selectedModel?.sourceId === 'codex' || selectedModel?.sourceId === 'copilot' || selectedModel?.sourceId === 'antigravity')) {
       setOfflineSubmission('blocked');
       return;
     }
@@ -4455,10 +4455,15 @@ export function NewConversationComposer(props: {
       /** 同一次接入只刷新此项目和此草稿，不自动创建会话或发送消息。 */
       const request = new AbortController();
       modelSetupRequestRef.current = request;
-      /** 显式选中的供应商模型加入项目后，刷新目录并预选供用户确认。 */
+      /** 接入目录和完成回调始终使用打开弹窗时的项目。 */
       const conversationContext: ConversationModelSetupContext = {
         projectId: props.owner.projectId,
         signal: request.signal,
+        loadModels: async () => {
+          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
+          if (!refreshed) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+          return refreshed.models;
+        },
         onComplete: async (reference) => {
           /** 读取最新目录；失败保留引导和全部草稿内容。 */
           const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);

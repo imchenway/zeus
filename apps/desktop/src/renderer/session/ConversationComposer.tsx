@@ -47,7 +47,7 @@ export interface ComposerRuntimeSettings {
   /** 下一轮选择的上下文容量。 */
   contextCapacityTokens?: number | null;
   model: string;
-  agentKind?: 'codex' | 'pi' | 'copilot';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity';
   effort?: string;
   serviceTier?: string | null;
   permissionMode: NativePermissionMode;
@@ -201,7 +201,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = settingsLoading && !selectedModel ? '' : modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
-  const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'copilot' ? 'GitHub Copilot' : selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
+  const providerLabel = selectedCapability?.sourceName?.trim() || (selectedCapability?.agentKind === 'antigravity' ? 'Google Antigravity' : selectedCapability?.agentKind === 'copilot' ? 'GitHub Copilot' : selectedCapability?.agentKind === 'pi' ? 'Pi' : 'Codex');
   const inputLabel = copy.input(providerLabel);
   const settingsWritable = !settingsLoading && props.readOnly !== true && props.inputBlocked !== true && Boolean(selectedCapability);
   const modelSelectionWritable = !settingsLoading && props.readOnly !== true && props.inputBlocked !== true && modelPresentation.options.length > 0;
@@ -903,6 +903,7 @@ export function resolveComposerKeyIntent(input: { key: string; shiftKey: boolean
 
 /** 判断当前轮次是否仍可接纳引导，实时订阅状态不改变轮次的可操作性。 */
 export function canSteerActiveTurn(state: NativeSessionState): boolean {
+  if (state.snapshot?.agent?.kind === 'antigravity') return false;
   const active = state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer';
   if (!active || !state.activeTurnId || state.startedTurnId !== state.activeTurnId) return false;
   // 正式正文或正式计划完成后，用户看到的这一轮已经交付；Provider 的后台收尾不能继续开放“引导”。

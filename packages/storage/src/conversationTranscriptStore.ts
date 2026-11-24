@@ -1288,7 +1288,7 @@ export class ConversationTranscriptRepository {
       const providerItemId =
         stringValue(content.providerItemId) ??
         stringValue(row.tool_pair_id) ??
-        (content.agentKind === 'pi' || content.agentKind === 'copilot' ? stringValue(content.stageId) : null) ??
+        (content.agentKind === 'pi' || content.agentKind === 'copilot' || content.agentKind === 'antigravity' ? stringValue(content.stageId) : null) ??
         stringValue(reasoning.itemId) ??
         stringValue(reasoning.providerItemId) ??
         row.expert_execution_id;

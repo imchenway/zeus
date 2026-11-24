@@ -1384,3 +1384,5 @@ function requireRuntimeSession(sessions: Map<string, AiRuntimeSession>, sessionI
   if (!session) throw new Error(`AI Runtime session not found: ${sessionId}`);
   return session;
 }
+
+export * from './antigravityRuntimeDriver.js';

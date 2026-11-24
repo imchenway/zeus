@@ -290,7 +290,7 @@ export interface BindPiConversationProviderInput extends BindConversationProvide
 
 /** SDK 会话绑定必须记录真实 Provider 身份和传输类型。 */
 export interface BindManagedConversationProviderInput extends BindPiConversationProviderInput {
-  agentKind: 'pi' | 'copilot';
+  agentKind: 'pi' | 'copilot' | 'antigravity';
 }
 
 export interface ProviderSequenceSnapshot {
@@ -759,7 +759,7 @@ export class AgentCapabilitySnapshotRepository {
   create(input: CreateAgentCapabilitySnapshotInput): ZeusAgentCapabilitySnapshotRecord {
     const record: ZeusAgentCapabilitySnapshotRecord = {
       id: input.id ?? `agent_capability_${randomId(12)}`,
-      agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'agent capability kind'),
+      agentKind: assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'antigravity', 'claude'] as const, 'agent capability kind'),
       transportKind: assertEnum(input.transportKind, ['app_server', 'rpc', 'sdk'] as const, 'agent capability transport'),
       supportStatus: assertEnum(input.supportStatus, ['unavailable', 'framework_only', 'experimental', 'verified'] as const, 'agent capability support status'),
       adapterVersion: input.adapterVersion ?? null,
@@ -784,7 +784,7 @@ export class AgentCapabilitySnapshotRepository {
   }
 
   listByAgent(agentKind: ConversationAgentKind, limit = 20): ZeusAgentCapabilitySnapshotRecord[] {
-    const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'agent capability kind');
+    const normalizedAgentKind = assertEnum(agentKind, ['codex', 'pi', 'copilot', 'antigravity', 'claude'] as const, 'agent capability kind');
     const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
     return this.db.select<DbAgentCapabilitySnapshotRow>(`SELECT * FROM agent_capability_snapshots WHERE agent_kind = ? ORDER BY checked_at DESC, id DESC LIMIT ?`, [normalizedAgentKind, safeLimit]).map(mapAgentCapabilitySnapshotRow);
   }
@@ -835,7 +835,7 @@ export class ConversationRepository {
     const providerState = assertEnum(input.providerState ?? 'unbound', ['unbound', 'binding', 'ready', 'active', 'waiting', 'paused', 'archived', 'closed', 'failed'] as const, 'conversation provider state');
     const permissionMode = assertEnum(input.permissionMode ?? 'read-only', ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'conversation permission mode');
     const collaborationMode = assertEnum(input.collaborationMode ?? 'default', ['default', 'plan'] as const, 'conversation collaboration mode');
-    const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
+    const agentKind = input.agentKind ? assertEnum(input.agentKind, ['codex', 'pi', 'copilot', 'antigravity', 'claude'] as const, 'conversation agent kind') : transportKind === 'codex_native' ? 'codex' : null;
     const agentTransport = input.agentTransport ? assertEnum(input.agentTransport, ['app_server', 'rpc', 'sdk'] as const, 'conversation agent transport') : transportKind === 'codex_native' ? 'app_server' : null;
     const timestamp = nowIso();
     const record: ZeusConversationRecord = {

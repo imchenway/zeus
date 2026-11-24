@@ -567,9 +567,11 @@ export function ModelConnectionsSettingsPane(props: {
   return (
     <section className="settings-product-pane model-connections-settings" aria-label={zh ? '模型供应商' : 'Model providers'}>
       <header className="settings-section-heading model-connections-heading">
-        <span>
-          <strong>{zh ? '自定义供应商' : 'Custom providers'}</strong>
-        </span>
+        {!props.onComplete ? (
+          <span>
+            <strong>{zh ? '自定义供应商' : 'Custom providers'}</strong>
+          </span>
+        ) : null}
         <span className="settings-heading-actions">
           {!props.onSaveStateChange ? <SettingsSaveStatus status={saveState} language={props.language} /> : null}
           <Button

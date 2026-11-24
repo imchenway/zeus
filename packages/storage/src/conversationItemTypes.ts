@@ -1,6 +1,6 @@
 /** Provider 适配与旧投影切换共用的最小会话 item 契约。 */
 /** 当前会话的真实 Agent 运行时，持久化后不随展示名称改变。 */
-export type ConversationAgentKind = 'codex' | 'pi' | 'copilot' | 'claude';
+export type ConversationAgentKind = 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
 
 /** 会话条目保留输入、模型输出、规则更新与执行活动的实际语义。 */
 export type ConversationItemType =

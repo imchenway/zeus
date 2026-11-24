@@ -276,7 +276,7 @@ export class ConversationExecutionCoordinator {
         await this.options.db.save();
       },
       completeContextCompaction: async (completed) => {
-        if (!contextCompactionPlan || !portableContext || !portableContextId || !submissionId || !segmentId || compactionCompleted) return;
+        if (!contextCompactionPlan || !portableContext || !portableContextId || !submissionId || !segmentId || compactionCompleted || input.route.runtimeKind === 'antigravity') return;
         applyPortableContextCompaction(portableContext, contextCompactionPlan, completed.summary, input.route.runtimeKind);
         const turnId = stableCompactionTurnId(input.conversationId, segmentId, submissionId);
         const request = this.options.execution.observeModelRequest({

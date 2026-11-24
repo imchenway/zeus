@@ -22,6 +22,8 @@ import {
   createAiRuntimeSessionManager,
   createCodexRuntimeGenerationManager,
   createOptionalNodePtyRuntimeSpawn,
+  isManagedAgentKind,
+  type ManagedAgentKind,
   listAiCliAdapters,
   modelConnectionCredentialSlotId,
   modelRef,
@@ -537,7 +539,7 @@ export interface CreateConversationMessageBody {
   serviceTier?: string | null;
   permissionMode?: ConversationPermissionMode;
   collaborationMode?: ConversationCollaborationMode;
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   pluginReferences?: unknown;
   expertMentions?: Array<{ employeeId: string }>;
   skillReferences?: Array<{ id: string }>;
@@ -623,7 +625,7 @@ export type StartTaskConversationBody = (
   clientUserMessageId?: string;
   displayText?: string;
   collaborationMode?: ConversationCollaborationMode;
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   expertMentions?: Array<{ employeeId: string }>;
   skillReferences?: Array<{ id: string }>;
   computerUseRequested?: boolean;
@@ -655,7 +657,7 @@ export interface StartProjectConversationBody {
   model?: string;
   effort?: string;
   clientUserMessageId?: string;
-  agentKind?: 'codex' | 'pi' | 'copilot' | 'claude';
+  agentKind?: 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
   goalObjective?: string;
   pluginReferences?: unknown;
   displayText?: string;
@@ -1526,7 +1528,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   /** 原生协调器先建立端口，平台恢复前绑定唯一工作服务。 */
   /** 接纳与恢复使用真实目标身份，能力失效时不静默降档。 */
-  function validateNativeContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi' | 'copilot'): void {
+  function validateNativeContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | ManagedAgentKind): void {
     if (budget === null) return;
     const state = codexAppServerManager.getState();
     const connection = modelConnections.listMetadata().find((entry) => entry.id === sourceId);
@@ -1549,7 +1551,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     },
   };
   /** Pi 与 Copilot 共用持久会话编排，运行时、账户和目标控制按真实身份创建。 */
-  const createSdkCoordinator = (runtimeKind: 'pi' | 'copilot') =>
+  const createSdkCoordinator = (runtimeKind: ManagedAgentKind) =>
     createPiNativeConversationCoordinator({
       runtimeKind,
       copilotRuntimeManager,
@@ -1612,7 +1614,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       }),
       modelConnections,
       usageLedger: codexUsageLedger,
-      agentDirectory: runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
+      agentDirectory: runtimeKind === 'antigravity' ? dataLayout.root : runtimeKind === 'copilot' ? join(dataLayout.root, 'copilot') : piAgentDirectory,
       loadSkills: loadConversationSkills,
       processes: createConversationToolProcesses({
         runtime: () => aiRuntimeManager,
@@ -1677,10 +1679,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
         await db.save();
       },
-      compileDispatchContext: compileProviderDispatchContext,
+      /** agy 管理项目上下文，ACP 目录没有可核验的模型窗口用于额外资料注入。 */
+      compileDispatchContext: runtimeKind === 'antigravity' ? undefined : compileProviderDispatchContext,
     });
   const piNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('pi');
   const copilotNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('copilot');
+  /** Antigravity 使用自己的 ACP 进程和独立的消息派发身份。 */
+  const antigravityNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('antigravity');
+  /** 托管会话的派发和停止均使用原始运行类型。 */
+  const managedCoordinatorFor = (kind: ManagedAgentKind) => kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
   if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
@@ -1880,7 +1887,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         conversation.contextCapacityTokens,
         conversation.modelSourceId,
         conversation.modelId ?? conversation.providerModel ?? '',
-        conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex',
+        isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex',
       ),
     conversationExperts,
     conversationSubmissions,
@@ -2296,7 +2303,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     if (!head.executionSnapshotId) {
       // Pi 内部问题答复与计划输入仍沿用原队列身份，由原执行入口恢复。
-      if (conversation.agentKind === 'pi' || conversation.agentKind === 'copilot') await (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).dispatchNextQueued(conversationId);
+      if (isManagedAgentKind(conversation.agentKind)) await managedCoordinatorFor(conversation.agentKind).dispatchNextQueued(conversationId);
       return;
     }
     const frozen = conversationExecution.getExecutionSnapshot(head.executionSnapshotId);
@@ -2378,6 +2385,23 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           return;
         }
       }
+      if (frozen.runtimeKind === 'antigravity') {
+        const driver = antigravityNativeCoordinator.antigravityDriver;
+        const cached = driver?.readAccount();
+        const account = cached?.status === 'ready' ? cached : driver ? await driver.refreshAccount() : null;
+        if (frozen.connectionId || frozen.credentialSlotId !== 'antigravity-managed-account' || frozen.endpointIdentity !== 'antigravity://managed-account' || frozen.protocolFamily !== 'antigravity_acp' || !account?.models.some((model) => model.id === frozen.modelId)) {
+          const pausedAt = now().toISOString();
+          conversationSubmissions.updateStatus(head.id, 'paused', {
+            pausedReason: 'semantic_route_changed',
+            error: { code: 'ZEUS_CONVERSATION_ROUTE_CHANGED', message: account?.message ?? '请检查 Google 登录和 Antigravity 模型目录。' },
+            updatedAt: pausedAt,
+          });
+          conversationExecution.pauseQueueBehindHead(conversationId, head.id, pausedAt);
+          await db.save();
+          publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
+          return;
+        }
+      }
       const connection = frozen.connectionId ? await modelConnections.get(frozen.connectionId) : undefined;
       const configuredModel = connection?.models.find((model) => model.id === frozen.modelId);
       if (frozen.connectionId) {
@@ -2420,7 +2444,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         workspaceIdentity,
         providerId: frozen.runtimeKind === 'pi' ? `pi:${frozen.connectionId ?? 'custom'}` : frozen.runtimeKind,
         providerModel: frozen.connectionId ? modelRef(frozen.connectionId, frozen.modelId) : frozen.modelId,
-        providerProtocolVersion: frozen.runtimeKind === 'copilot' ? 'copilot-sdk' : frozen.runtimeKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
+        providerProtocolVersion: frozen.runtimeKind === 'antigravity' ? 'acp' : frozen.runtimeKind === 'copilot' ? 'copilot-sdk' : frozen.runtimeKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
         providerBinaryVersion: frozen.runtimeKind === 'pi' ? piSdkBinaryVersion : null,
       };
       const lifecycle = conversationExecutionCoordinator.createLifecycle({
@@ -2441,8 +2465,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ...(conversationContext ? { conversationContext } : {}),
         },
       });
-      if (frozen.runtimeKind === 'pi' || frozen.runtimeKind === 'copilot') {
-        const managedCoordinator = frozen.runtimeKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
+      if (isManagedAgentKind(frozen.runtimeKind)) {
+        const managedCoordinator = managedCoordinatorFor(frozen.runtimeKind);
         if (lifecycle.requiresNewSegment) {
           await managedCoordinator.startConversation({
             conversationId,
@@ -2455,7 +2479,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             cwd: executionRoot,
             prompt: content,
             ...(typeof persisted.goalObjective === 'string' ? { goalObjective: persisted.goalObjective } : {}),
-            model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
+            model: { sourceId: frozen.runtimeKind === 'antigravity' ? 'antigravity' : frozen.connectionId, modelId: frozen.modelId, displayName: null },
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
             permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',
             workMode: frozen.collaborationMode as 'default' | 'plan',
@@ -2474,7 +2498,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             conversation,
             submissionId: head.id,
             content,
-            model: { sourceId: frozen.connectionId, modelId: frozen.modelId, displayName: null },
+            model: { sourceId: frozen.runtimeKind === 'antigravity' ? 'antigravity' : frozen.connectionId, modelId: frozen.modelId, displayName: null },
             ...(frozen.effort ? { thinkingLevel: frozen.effort } : {}),
             permissionMode: frozen.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',
             workMode: frozen.collaborationMode as 'default' | 'plan',
@@ -2658,7 +2682,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** SDK 轮次在宿主重启后无活动事件订阅；Copilot 的结果保持待核对，避免误报已完成。 */
   const recoverAcceptedSdkTurnsAfterRestart = async () => {
     const interruptedAt = now().toISOString();
-    const candidates = conversationTurns.listInProgress().filter((turn) => (turn.agentKind === 'pi' || turn.agentKind === 'copilot') && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
+    const candidates = conversationTurns.listInProgress().filter((turn) => (isManagedAgentKind(turn.agentKind)) && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
     let recovered = false;
     for (const turn of candidates) {
       const segment = conversationExecution.currentSegment(turn.conversationId);
@@ -3174,10 +3198,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
       if (mappedType === 'plugin.mcp.tool_completed') {
         agentCapabilitySnapshots.create({
-          agentKind: conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? conversation.agentKind : 'codex',
-          transportKind: conversation.agentKind === 'pi' || conversation.agentKind === 'copilot' ? 'sdk' : 'app_server',
+          agentKind: isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex',
+          transportKind: conversation.agentKind === 'antigravity' ? 'rpc' : isManagedAgentKind(conversation.agentKind) ? 'sdk' : 'app_server',
           supportStatus: 'verified',
-          protocolVersion: conversation.agentKind === 'copilot' ? 'copilot-sdk' : conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
+          protocolVersion: conversation.agentKind === 'antigravity' ? 'acp' : conversation.agentKind === 'copilot' ? 'copilot-sdk' : conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
           capabilities: { tools: { state: 'supported', reason: 'Plugin MCP 工具完成了真实调用。' } },
           evidence: { source: 'plugin_mcp_tool_completed', conversationId, model: conversation.modelId ?? conversation.providerModel ?? null, eventType: mappedType },
           checkedAt: now().toISOString(),
@@ -3529,6 +3553,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     aiRuntimeManager,
     copilotRuntimeManager,
     copilotNativeCoordinator,
+    antigravityNativeCoordinator,
     artifactStore,
     appendAuditLog,
     assertCodexAccountReady,
@@ -3645,8 +3670,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     interruptConversationTurn: (conversation, providerTurnId) =>
-      conversation.agentKind === 'pi' || conversation.agentKind === 'copilot'
-        ? (conversation.agentKind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator).interruptTurn({ conversation, providerTurnId })
+      isManagedAgentKind(conversation.agentKind)
+        ? managedCoordinatorFor(conversation.agentKind).interruptTurn({ conversation, providerTurnId })
         : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
     settings,
     aiRuntimeManager,
@@ -4103,6 +4128,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseTelegramSecuritySettingsInput,
     piNativeCoordinator,
     copilotNativeCoordinator,
+    antigravityNativeCoordinator,
     prepareConversationQueueReroute,
     prepareWorkManagementRuntimeStart,
     prepareWorkspaceGitCommand,

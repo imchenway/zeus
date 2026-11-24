@@ -1,4 +1,12 @@
-export type AgentKind = 'codex' | 'pi' | 'copilot' | 'claude';
+export type AgentKind = 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
+
+/** 会话由 Zeus 的托管运行时编排持久派发。 */
+export type ManagedAgentKind = Extract<AgentKind, 'pi' | 'copilot' | 'antigravity'>;
+
+/** 将托管 Provider 和 app-server/legacy Provider 的路由分开。 */
+export function isManagedAgentKind(kind: unknown): kind is ManagedAgentKind {
+  return kind === 'pi' || kind === 'copilot' || kind === 'antigravity';
+}
 
 export type AgentTransportKind = 'app_server' | 'rpc' | 'sdk';
 
@@ -153,6 +161,8 @@ export interface StartAgentRunInput {
   skillCatalog?: AgentRunSkillActivation[];
   /** 产品工作模式，计划模式同时约束宿主工具。 */
   workMode?: 'default' | 'plan';
+  /** 本轮采用的用户权限，ACP 以此选择自己的只读模式。 */
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 仅用于 Zeus 内部 Command/Worker/RPC/回执性能关联，不进入 Provider 正文。 */
   traceIdentity?: string | null;
   /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */

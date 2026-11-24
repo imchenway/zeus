@@ -10,6 +10,10 @@ export function CodexInstallationGuide(props: {
   status: AiRuntimeAdapterStatus;
   /** 检测或认证期间暂停重复操作。 */
   busy: boolean;
+  /** 会话接入优先展示自动安装，程序异常时仍提供修复命令。 */
+  compact?: boolean;
+  /** 由 Zeus 托管首次安装。 */
+  onInstall: () => Promise<void>;
   /** 首次安装或修复后重新检测同一受管程序。 */
   onCheck: () => Promise<void>;
   /** 打开官方安装说明。 */
@@ -65,7 +69,7 @@ export function CodexInstallationGuide(props: {
         <strong>{title}</strong>
         {props.status.version ? <span>{props.status.version}</span> : null}
       </div>
-      {props.status.resolvedCommandPath ? <code className="model-setup-installation-path">{props.status.resolvedCommandPath}</code> : null}
+      {props.status.resolvedCommandPath && !props.compact ? <code className="model-setup-installation-path">{props.status.resolvedCommandPath}</code> : null}
       {!props.status.available ? (
         <>
           <p>
@@ -86,18 +90,23 @@ export function CodexInstallationGuide(props: {
                       ? '当前程序未通过 app-server 能力检查，请更新或修复 Codex 后重新检测。'
                       : 'The app-server capability check failed. Update or repair Codex, then detect again.'
                     : props.zh
-                      ? '请使用下方命令在 Zeus 专属目录准备程序，然后回到这里登录。'
-                      : 'Prepare Codex in the Zeus directory with the command below, then return here to sign in.'}
+                      ? '安装完成后即可登录。'
+                      : 'Sign in after Codex is installed.'}
           </p>
           <div className="model-setup-actions">
-            <Button variant="primary" disabled={props.busy} onClick={() => props.onCheck()}>
+            {issue === 'not_found' ? (
+              <Button variant="primary" disabled={props.busy} onClick={() => props.onInstall()}>
+                {props.zh ? '安装 Codex' : 'Install Codex'}
+              </Button>
+            ) : null}
+            <Button variant={issue === 'not_found' ? 'secondary' : 'primary'} disabled={props.busy} onClick={() => props.onCheck()}>
               {props.zh ? '我已装好，重新检测' : 'Installed — check again'}
             </Button>
             <Button variant="secondary" disabled={props.busy} onClick={() => props.onOpenGuide()}>
               {props.zh ? '查看官方安装指南' : 'Official installation guide'}
             </Button>
           </div>
-          {command ? (
+          {command && !(props.compact && issue === 'not_found') ? (
             <div className="model-setup-installation-command">
               <div className="model-setup-actions">
                 <strong>{props.zh ? '在终端运行安装命令' : 'Run this command in your terminal'}</strong>

@@ -6,6 +6,7 @@ import {
   buildAiRuntimePrompt,
   modelRef,
   parseModelRef,
+  type AntigravityModel,
   type CodexAccountSnapshot,
   type CodexCapabilitiesSnapshot,
   type CodexTransportState,
@@ -79,6 +80,8 @@ interface ConversationCapabilityQueryPorts {
     readAccount(): { authenticated: boolean } | null;
     readModels(): CopilotModelInfo[];
   };
+  /** 项目会话只展示当前 Google 账号实际返回的模型。 */
+  readAntigravityModels?: () => AntigravityModel[];
   git: TaskPushGitReadPort;
   taskContext: {
     read(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushContextProjection;
@@ -98,7 +101,7 @@ export interface ConversationCapabilityModel {
   id: string;
   model: string;
   displayName?: string;
-  agentKind: 'codex' | 'pi' | 'copilot';
+  agentKind: 'codex' | 'pi' | 'copilot' | 'antigravity';
   sourceId: string;
   sourceName: string;
   available: boolean;
@@ -207,7 +210,7 @@ export class ConversationCapabilityQueryApplication {
     const repositoryDiscovery = readProjectRepositoryDiscovery(this.ports.settings, project);
     // GUI 查询把账号与 Git 并行读取；服务端内部调用继续跳过账号通道，避免增加命令路径延迟。
     const [capabilities, repositoryCapabilities] = await Promise.all([
-      this.readExisting(project, { readProviderAccount: options.readProviderAccount === true }),
+      this.readExisting(project, { readProviderAccount: options.readProviderAccount === true, includeAntigravity: false }),
       mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository, taskBranchPrefix)),
     ]);
     const primaryRepository = repositoryCapabilities[0];
@@ -281,14 +284,15 @@ export class ConversationCapabilityQueryApplication {
     codexCapabilities: CodexCapabilitiesSnapshot | null,
     codexAccount: CodexAccountSnapshot | UnavailableCodexAccount,
     preloadedConnectionCatalog?: SelectableConnectionModel[],
+    antigravityModels: AntigravityModel[] = [],
   ): Promise<ConversationCapabilitiesSnapshot> {
     const connectionCatalog = preloadedConnectionCatalog ?? (await this.ports.modelCatalog.listSelectableModels());
     // 项目不再维护模型白名单；供应商中启用的模型全局可用，真实能力以运行探针结果为准。
-    const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog, this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map((model) => ({
+    const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog, this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : [], antigravityModels).map((model) => ({
       ...model,
       contextCapacity: this.ports.readContextCapacitySupport?.(model),
     }));
-    if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
+    if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用模型。');
     const defaultModel = this.ports.readDefaultModel();
     // 新项目沿用 Zeus 全局默认模型；会话/推送模型由各入口的“记住上次选择”覆盖。
     const preferredModel = defaultModel ? (resolveModelCapability(models, defaultModel)?.id ?? defaultModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
@@ -304,7 +308,7 @@ export class ConversationCapabilityQueryApplication {
   }
 
   /** 目录查询只读本地账户缓存，单一供应商账号故障不能阻断其他来源。 */
-  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean; selectedModelRef?: string } = {}): Promise<ConversationCapabilitiesSnapshot> {
+  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean; selectedModelRef?: string; includeAntigravity?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     /** 缓存缺失属于未知状态，只有其他读取异常才将 Codex 标记为不可用。 */
@@ -321,7 +325,7 @@ export class ConversationCapabilityQueryApplication {
     ]);
     try {
       /** 账号故障只影响 Codex，独立供应商仍使用自己的目录与可用性证据。 */
-      const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog);
+      const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog, options.includeAntigravity === false ? [] : this.ports.readAntigravityModels?.());
       if (codexAccountReadFailed) {
         return {
           ...snapshot,
@@ -468,7 +472,7 @@ export class ConversationCapabilityQueryApplication {
   }
 }
 
-function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSnapshot | null, connectionCatalog: SelectableConnectionModel[], copilotCatalog: CopilotModelInfo[]): ConversationCapabilityModel[] {
+function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSnapshot | null, connectionCatalog: SelectableConnectionModel[], copilotCatalog: CopilotModelInfo[], antigravityCatalog: AntigravityModel[] = []): ConversationCapabilityModel[] {
   const codexModels: ConversationCapabilityModel[] = (codexCapabilities?.models ?? []).map((model) => ({
     id: model.id,
     model: model.model,
@@ -529,8 +533,26 @@ function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSna
     protocolFamily: 'copilot_sdk',
     authenticationScheme: 'github_oauth',
   }));
+  /** ACP 目录保留 Google 分配的模型 ID 和名称。 */
+  const antigravityModels: ConversationCapabilityModel[] = antigravityCatalog.map((model) => ({
+    id: modelRef('antigravity', model.id),
+    model: model.id,
+    displayName: model.name,
+    agentKind: 'antigravity',
+    sourceId: 'antigravity',
+    sourceName: 'Google Antigravity',
+    available: true,
+    availabilityReason: 'Antigravity CLI 已返回该模型。',
+    supportedReasoningEfforts: [],
+    serviceTiers: [],
+    supports1MContext: false,
+    contextWindow: null,
+    runtimeAdapter: 'antigravity_acp',
+    protocolFamily: 'antigravity_acp',
+    authenticationScheme: 'google_oauth',
+  }));
   const piTools = new Set(readPiBuiltinToolCatalog().map((tool) => tool.name));
-  return [...codexModels, ...connectionModels, ...copilotModels].map((model) => ({ ...model, features: conversationFeatureCatalog(model, piTools, codexCapabilities) }));
+  return [...codexModels, ...connectionModels, ...copilotModels, ...antigravityModels].map((model) => ({ ...model, features: conversationFeatureCatalog(model, piTools, codexCapabilities) }));
 }
 
 /** 执行内核、模型接口和会话工具分别提供事实，不能把看图能力当成生图能力。 */
@@ -538,6 +560,15 @@ function conversationFeatureCatalog(model: ConversationCapabilityModel, piTools:
   const available = (reason: string): ConversationFeatureAvailability => ({ state: 'available', reason });
   const unknown = (reason: string): ConversationFeatureAvailability => ({ state: 'unknown', reason });
   const unavailable = (reason: string): ConversationFeatureAvailability => ({ state: 'unsupported', reason });
+  if (model.agentKind === 'antigravity') {
+    /** agy 自己提供工具和上下文，Zeus 展示 ACP 实际请求的权限。 */
+    const localOnly = unavailable('此功能在 Antigravity 会话中不可用。');
+    return {
+      skills: localOnly, imageInput: unknown('是否支持图片以 Antigravity 会话为准。'), imageGeneration: localOnly,
+      questions: localOnly, plan: localOnly, processes: localOnly, steering: localOnly, goals: localOnly,
+      subagents: localOnly, autoReview: localOnly, mcp: localOnly, search: localOnly, browser: localOnly,
+    };
+  }
   const nativeKernel = model.runtimeAdapter !== 'pi_sdk' && model.agentKind === 'codex';
   const tools = (name: string): ConversationFeatureAvailability =>
     model.tools === 'unsupported'

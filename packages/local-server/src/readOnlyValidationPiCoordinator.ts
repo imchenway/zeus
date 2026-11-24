@@ -25,6 +25,7 @@ export function createReadOnlyValidationPiCoordinator(now: () => string): PiCoor
     lastFailure: null,
   });
   const passive = {
+    antigravityDriver: null,
     repairPersistedConversationIdentities: () => 0,
     repairPersistedAgentMessageProjections: () => 0,
     runtimeHealth: health,
