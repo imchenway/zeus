@@ -38,7 +38,7 @@ import {
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
 import { MenuSurface } from './ui/MenuSurface.js';
-import { VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
+import { type ApplicationErrorLanguage, VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
 import { Form } from './ui/Form.js';
 
@@ -452,6 +452,8 @@ async function writeCommandRunClipboard(content: string): Promise<boolean> {
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const zh = props.language === 'zh-CN';
+  /** 共用错误组件使用 en 读取英文文案。 */
+  const errorLanguage: ApplicationErrorLanguage = zh ? 'zh-CN' : 'en';
   /** 已读目录立即展示；不同项目和客户端的在途结果互不回填。 */
   const definitionsQuery = useMemo(() => commandDefinitionsQuery(props.client, props.mode, props.project?.id), [props.client, props.mode, props.project?.id]);
   const definitionsSnapshot = useSyncExternalStore(definitionsQuery.subscribe, definitionsQuery.getSnapshot);
@@ -907,7 +909,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         </div>
         {panelError ? (
           <p className="command-center-empty" role="alert">
-            <VisibleApplicationError error={panelError} language={props.language} />
+            <VisibleApplicationError error={panelError} language={errorLanguage} />
           </p>
         ) : null}
 
@@ -997,7 +999,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               draft={draft}
               busy={busy}
               error={error}
-              language={props.language}
+              language={errorLanguage}
               title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
               onChange={setDraft}
               onClose={() => setEditing(null)}
@@ -1020,7 +1022,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               values={runParameters}
               busy={busy}
               error={error}
-              language={props.language}
+              language={errorLanguage}
               onValuesChange={setRunParameters}
               onClose={() => setRunningCommand(null)}
               onSubmit={(event) => submitRun(event)}
@@ -1042,7 +1044,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               client={props.client}
               busy={busy}
               error={editing || runningCommand ? null : error}
-              language={props.language}
+              language={errorLanguage}
               onClose={closeRunHistory}
               onSelectRun={selectHistoryRun}
               onStopRun={(run) => stopRun(run)}
@@ -1102,7 +1104,7 @@ function CommandRunHistoryModal(props: {
   busy: boolean;
   /** 读取执行详情或请求停止失败时在执行窗口内展示原错误。 */
   error: unknown;
-  language: 'zh-CN' | 'en-US';
+  language: ApplicationErrorLanguage;
   onClose: () => void;
   onSelectRun: (runId: string) => void;
   onStopRun: (run: CommandRun) => void;
@@ -1254,7 +1256,7 @@ function CommandDefinitionModal(props: {
   busy: boolean;
   /** 保存失败时在编辑内容旁显示错误。 */
   error: unknown;
-  language: 'zh-CN' | 'en-US';
+  language: ApplicationErrorLanguage;
   onChange: (draft: CommandDraft) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -1485,7 +1487,7 @@ function CommandRunModal(props: {
   busy: boolean;
   /** 启动失败时在确认参数的同一界面显示错误。 */
   error: unknown;
-  language: 'zh-CN' | 'en-US';
+  language: ApplicationErrorLanguage;
   onValuesChange: (values: Record<string, string | number | boolean>) => void;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
