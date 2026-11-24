@@ -3787,7 +3787,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     conversationSubmissions,
     commands: workspaceGitCommands,
     conversationTurns,
-    publish: publishRealtimeEvent,
+    resolveConflictExecutionRoot: resolveNativeConversationExecutionRoot,
+    /** 冲突停止产生的队列变化也需要原会话的耐久快照。 */
+    publish: (type, payload) => {
+      if (type === 'conversation.queue.changed') publishNativeConversationEvent(type, payload);
+      else publishRealtimeEvent(type, payload);
+    },
     waitForCommandExit: (id) => aiRuntimeManager.waitForSessionCompletion(id, 10_000),
     statusOptions: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).statuses,
     commandSecurity: (projectId) => readProjectConfig(projectId).security,
