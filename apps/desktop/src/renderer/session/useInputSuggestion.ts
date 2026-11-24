@@ -56,6 +56,8 @@ export function useInputSuggestion(options: {
   const [failedAdoption, setFailedAdoption] = useState<{ result: typeof result; draft: string } | null>(null);
   /** Escape 后的下一次 Tab 保留焦点导航，避免快捷键困住键盘用户。 */
   const allowTabNavigation = useRef(false);
+  /** 按住已被建议接管的 Tab 时，后续按键仍属于同一次操作。 */
+  const suggestionHandledTab = useRef(false);
   /** 采用时直接核对原生预览是否展开，隐藏候选不能由 Tab 采用。 */
   const previewRef = useRef<HTMLDivElement>(null);
   /** 外部恢复草稿同样使旧润色失效，空输入建议继续由原文匹配控制显示。 */
@@ -156,14 +158,14 @@ export function useInputSuggestion(options: {
   /** 主动操作仅使用已配置的模型与当前可编辑状态。 */
   const available = Boolean(hasModel && options.eligible && generate.current);
 
-  /** 灰字直接可见，预览必须实际展开；请求身份和草稿必须仍与生成时一致。 */
-  function canAccept(): boolean {
-    return Boolean(usable && result?.text && (result.trigger === 'automatic' ? automaticSession : session).getSnapshot() === result && result.sourceDraft === options.draft && (!preview || previewRef.current?.matches(':popover-open')));
+  /** 润色以实际打开的预览为准，空输入的建议以灰字为准。 */
+  function isSuggestionShown(): boolean {
+    return preview ? previewRef.current?.matches(':popover-open') === true : Boolean(usable && result?.text);
   }
 
   /** 鼠标和 Tab 共用可撤销的替换事务，实际原文或引用不匹配时保留输入。 */
   function accept(input: ComposerInputHandle | null): boolean {
-    if (!canAccept() || !result?.text) return false;
+    if (!usable || !result?.text || !isSuggestionShown() || (result.trigger === 'automatic' ? automaticSession : session).getSnapshot() !== result) return false;
     if (input?.replaceDraft?.(options.draft, result.text) !== true) {
       setFailedAdoption({ result, draft: options.draft });
       return false;
@@ -186,20 +188,19 @@ export function useInputSuggestion(options: {
       else completion.dismiss();
       return true;
     }
-    if (event.key !== 'Tab' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || navigate || !available) return false;
-    // 已有草稿的 Tab 优先采用可见后缀；没有后缀时保留原生焦点导航。
-    if (options.draft.length > 0 && !canAccept()) {
-      if (event.repeat || !completion.accept(input)) return false;
-      event.preventDefault();
-      event.stopPropagation();
-      return true;
-    }
+    if (event.key !== 'Tab' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false;
+    /** 浮层或空输入灰字一旦可见，先接管按键再核对当前候选。 */
+    const suggestionShown = isSuggestionShown();
+    /** 空输入可用 Tab 起草，Escape 后的一次 Tab 用于焦点导航。 */
+    const canStartSuggestion = options.draft.length === 0 && !navigate && available;
+    suggestionHandledTab.current = (event.repeat && suggestionHandledTab.current) || suggestionShown || Boolean(completion.text) || canStartSuggestion;
+    if (!suggestionHandledTab.current) return false;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat && !(visible && result?.pending)) {
-      if (canAccept()) accept(input);
-      else requestManual();
-    }
+    if (event.repeat) return true;
+    if (suggestionShown) accept(input);
+    else if (completion.text) completion.accept(input);
+    else if (!(visible && result?.pending)) requestManual();
     return true;
   }
 

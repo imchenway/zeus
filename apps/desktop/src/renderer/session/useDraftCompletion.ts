@@ -78,11 +78,11 @@ export function useDraftCompletion(options: {
   const visible = active && options.enabled && result?.sourceDraft === options.draft && result.modelKey === options.modelKey && (!options.modelRef || result.modelRef === options.modelRef);
   /** 只有当前候选参与 Tab 和 Escape，隐藏的旧请求不占用工作区快捷键。 */
   const text = visible ? result.text : null;
-  /** 编辑器再次核对真实正文及光标，用独立撤销事务追加后缀。 */
-  function accept(input: ComposerInputHandle | null): boolean {
-    if (!text || session.getSnapshot() !== result || !input?.appendCompletion?.(options.draft, text)) return false;
-    dismiss();
-    return true;
+  /** 编辑器核对真实正文及光标，尝试后关闭本次候选，保留之后生成的结果。 */
+  function accept(input: ComposerInputHandle | null): void {
+    if (!result || !text || session.getSnapshot() !== result) return;
+    input?.appendCompletion?.(options.draft, text);
+    session.dismiss(result.requestId);
   }
   return { text, pending: Boolean(visible && result.pending), setActive, accept, dismiss };
 }
