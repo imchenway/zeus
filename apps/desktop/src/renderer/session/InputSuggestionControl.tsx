@@ -37,6 +37,32 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
   cancelled: { 'zh-CN': '', 'en-US': '' },
 };
 
+/** 补全中，主星转动舒展，两颗小星依次向外点亮。 */
+function CompletionSparkle() {
+  /** 主星上侧使用亮紫，底部回到当前主题的品牌强调色。 */
+  const gradientId = useId();
+
+  return (
+    <svg className="session-suggestion-completion-sparkle" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+      <defs>
+        <linearGradient id={gradientId} x1="158" y1="39" x2="64" y2="205" gradientUnits="userSpaceOnUse">
+          <stop stopColor="var(--zeus-brand-highlight)" />
+          <stop offset="0.88" stopColor="currentColor" />
+        </linearGradient>
+      </defs>
+      <path
+        className="session-suggestion-sparkle-body"
+        fill={`url(#${gradientId})`}
+        d="M105 39C107 39 108 41 109 44C118 89 138 111 179 122C183 123 185 125 185 128C185 131 183 133 179 134
+           C138 145 118 169 109 217C108 220 107 222 105 222C103 222 102 220 101 217C92 169 72 145 31 134
+           C27 133 25 131 25 128C25 125 27 123 31 122C72 111 92 89 101 44C102 41 103 39 105 39Z"
+      />
+      <path className="session-suggestion-sparkle-accent" d="M186 16C191 34 199 41 215 46C199 51 191 59 186 76C181 59 173 51 157 46C173 41 181 34 186 16Z" />
+      <path className="session-suggestion-sparkle-accent session-suggestion-sparkle-right" d="M227 74C230 85 235 90 246 93C235 96 230 101 227 112C224 101 219 96 208 93C219 90 224 85 227 74Z" />
+    </svg>
+  );
+}
+
 /** 星光按钮固定在输入区右上角，忙碌时同一个入口取消生成。 */
 export function InputSuggestionButton(props: { suggestion: SuggestionState; draft: string; inputRef: RefObject<ComposerInputHandle | null>; language: SessionUiLanguage; configured: boolean }) {
   /** 每个输入框独立关联图标和浮层，不与其他会话共用 DOM 身份。 */
@@ -57,6 +83,8 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable', 'service_tier_unavailable'].includes(props.suggestion.reason ?? '');
   /** 失败不锁定入口；允许输入时，同一按钮直接重试生成。 */
   const canRetry = failed && props.suggestion.available;
+  /** 自动补全复用星光状态，等待中的输入建议与失败操作优先。 */
+  const completing = props.suggestion.completionPending && !props.suggestion.pending && !failed;
   /** 加载、无需改写和错误只进入提示及读屏说明，不进入用户草稿。 */
   const outcomeMessage = props.suggestion.pending
     ? props.language === 'zh-CN'
@@ -66,11 +94,15 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
       : props.suggestion.mode === 'polish'
         ? 'Polishing your draft; editing cancels generation…'
         : 'Generating an input suggestion…'
-    : props.suggestion.reason === 'failed' && props.suggestion.cause
-      ? formatVisibleApplicationError(props.suggestion.cause, props.language === 'zh-CN' ? 'zh-CN' : 'en')
-      : props.suggestion.reason
-        ? feedback[props.suggestion.reason][props.language]
-        : '';
+    : completing
+      ? props.language === 'zh-CN'
+        ? '正在补全…'
+        : 'Completing your draft…'
+      : props.suggestion.reason === 'failed' && props.suggestion.cause
+        ? formatVisibleApplicationError(props.suggestion.cause, props.language === 'zh-CN' ? 'zh-CN' : 'en')
+        : props.suggestion.reason
+          ? feedback[props.suggestion.reason][props.language]
+          : '';
   /** 自动建议持续重试；手动操作显示原有两次重试上限。 */
   const retryProgress = `${props.suggestion.retryAttempt}${props.suggestion.trigger === 'automatic' ? '' : '/2'}`;
   /** 重试进度仍使用同一个图标和提示，等待期间允许取消且不闪现错误。 */
@@ -118,9 +150,11 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
       : props.language === 'zh-CN'
         ? '生成中...'
         : 'Generating...'
-    : failed || !props.configured || props.suggestion.reason === 'no_change'
-      ? label
-      : [props.language === 'zh-CN' ? '输入建议' : 'Input suggestions', props.suggestion.available && (!props.draft || props.suggestion.completion || hasPreview) ? 'Tab' : ''].filter(Boolean).join(' · ');
+    : completing
+      ? message
+      : failed || !props.configured || props.suggestion.reason === 'no_change'
+        ? label
+        : [props.language === 'zh-CN' ? '输入建议' : 'Input suggestions', props.suggestion.available && (!props.draft || props.suggestion.completion || hasPreview) ? 'Tab' : ''].filter(Boolean).join(' · ');
   // 容器标记忙碌，按钮保留取消操作，避免全局忙碌按钮样式追加圆点并屏蔽点击。
   return (
     <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>
@@ -169,13 +203,15 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
             <ArrowClockwiseIcon aria-hidden="true" />
           ) : failed ? (
             <WarningCircleIcon aria-hidden="true" />
+          ) : completing ? (
+            <CompletionSparkle />
           ) : (
             <SparkleIcon aria-hidden="true" />
           )}
         </Button>
       </IconTooltip>
       <span className="visually-hidden" role="status">
-        {message || (props.suggestion.text || (hasPreview && previewOpen) ? (props.language === 'zh-CN' ? '输入建议已生成，按 Tab 采用。' : 'Suggestion ready. Press Tab to use it.') : '')}
+        {message || (props.suggestion.text || props.suggestion.completion || (hasPreview && previewOpen) ? (props.language === 'zh-CN' ? '输入建议已生成，按 Tab 采用。' : 'Suggestion ready. Press Tab to use it.') : '')}
       </span>
       {hasPreview ? <InputSuggestionPreview {...props} key={props.suggestion.requestId} requestId={props.suggestion.requestId!} id={previewId} previewRef={previewRef} triggerRef={triggerRef} onOpenChange={setPreviewOpen} /> : null}
     </span>

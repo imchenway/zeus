@@ -6636,11 +6636,90 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   animation: session-suggestion-spin 900ms linear infinite;
 }
 
-/* 减少动态效果的系统偏好同样适用于手动生成。 */
+/* 等待状态沿用浅色与深色主题各自的品牌强调色。 */
+.session-codex-parity-v1 .session-suggestion-completion-sparkle {
+  /* 三颗星共用一个周期，连续补全时保持相同的先后顺序。 */
+  --session-suggestion-sparkle-cycle: 1600ms;
+  /* 前半段快速展开，让短请求也有清楚的反馈。 */
+  --session-suggestion-sparkle-rise: cubic-bezier(0.23, 0.64, 0.33, 1);
+  color: var(--session-focus-outline);
+}
+
+/* 每颗星以自身中心转动，位移沿 SVG 坐标轴计算。 */
+.session-codex-parity-v1 .session-suggestion-sparkle-body,
+.session-codex-parity-v1 .session-suggestion-sparkle-accent {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* 主星先舒展并转正，小星随后向外点亮。 */
+.session-codex-parity-v1 .session-suggestion-sparkle-body {
+  animation: session-suggestion-sparkle-expand var(--session-suggestion-sparkle-cycle) ease-in-out infinite;
+}
+
+/* 两颗小星以亮紫从靠近主星的位置向外展开。 */
+.session-codex-parity-v1 .session-suggestion-sparkle-accent {
+  /* 上方小星收拢时向左下移动，长度单位为 SVG 用户单位。 */
+  --session-suggestion-sparkle-gather-x: -22px;
+  --session-suggestion-sparkle-gather-y: 24px;
+  fill: var(--zeus-brand-highlight);
+  animation: session-suggestion-sparkle-shine var(--session-suggestion-sparkle-cycle) ease-in-out infinite both;
+}
+
+/* 右侧小星沿横向舒展，点亮比上方小星晚一拍。 */
+.session-codex-parity-v1 .session-suggestion-sparkle-right {
+  --session-suggestion-sparkle-gather-x: -32px;
+  --session-suggestion-sparkle-gather-y: 7px;
+  animation-delay: 115ms;
+}
+
+/* 减少动态效果时用完整的紫色星光提示正在补全。 */
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-suggestion-spinner,
+  .session-codex-parity-v1 .session-suggestion-sparkle-body,
+  .session-codex-parity-v1 .session-suggestion-sparkle-accent,
   .session-codex-parity-v1 .session-suggestion-preview:popover-open {
     animation: none;
+  }
+}
+
+/* 主星从微倾的姿态展开，落回自然尺寸后缓慢收拢。 */
+@keyframes session-suggestion-sparkle-expand {
+  0%,
+  100% {
+    opacity: 0.56;
+    transform: translate(5px, 8px) rotate(-24deg) scale(0.62);
+    animation-timing-function: var(--session-suggestion-sparkle-rise);
+  }
+  30% {
+    opacity: 1;
+    transform: translate(0, -5px) rotate(8deg) scale(1.13);
+  }
+  48%,
+  59% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+}
+
+/* 小星在移向外侧时变亮，到达自然位置后随主星收拢。 */
+@keyframes session-suggestion-sparkle-shine {
+  0%,
+  10%,
+  92%,
+  100% {
+    opacity: 0.12;
+    transform: translate(var(--session-suggestion-sparkle-gather-x), var(--session-suggestion-sparkle-gather-y)) rotate(-20deg) scale(0.42);
+    animation-timing-function: var(--session-suggestion-sparkle-rise);
+  }
+  35% {
+    opacity: 1;
+    transform: translate(2px, -4px) rotate(11deg) scale(1.14);
+  }
+  53%,
+  62% {
+    opacity: 0.94;
+    transform: translate(0, 0) rotate(0deg) scale(1);
   }
 }
 
