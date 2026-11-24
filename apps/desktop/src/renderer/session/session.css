@@ -12582,6 +12582,66 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   min-inline-size: 0;
 }
 
+/* 状态和视图入口共用一行，窄栏允许操作自然换行。 */
+.session-workspace-root .session-subagent-result-bar {
+  align-items: center;
+  border-block-end: 1px solid var(--session-line-soft);
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  justify-content: space-between;
+  margin-inline: clamp(12px, 3vw, 28px);
+  padding-block: 12px;
+}
+
+.session-workspace-root .session-subagent-result-bar .session-subagent-status {
+  padding: 0;
+}
+
+.session-workspace-root .session-subagent-result-bar .session-subagent-status strong {
+  color: var(--session-text);
+}
+
+.session-workspace-root .session-subagent-view-action {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--session-focus-outline);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  max-inline-size: 100%;
+  min-block-size: 30px;
+  padding: 4px 8px;
+}
+
+.session-workspace-root .session-subagent-view-action:hover {
+  background: var(--session-control-hover);
+}
+
+/* 长回复在正文区滚动，切换入口留在上方。 */
+.session-workspace-root .session-subagent-result {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: auto;
+  padding: 20px clamp(12px, 3vw, 28px);
+}
+
+.session-workspace-root .session-subagent-result:focus-visible {
+  outline: 1px solid var(--session-focus-outline);
+  outline-offset: -2px;
+}
+
+.session-workspace-root .session-subagent-result > h2 {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  font-weight: 560;
+  margin: 0 0 12px;
+}
+
 /* 尚未生成轮次的任务仍可滚动阅读，错误行保留在可见区域。 */
 .session-workspace-root .session-subagent-task {
   min-block-size: 0;

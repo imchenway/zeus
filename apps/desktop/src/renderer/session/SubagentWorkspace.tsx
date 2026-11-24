@@ -10,9 +10,9 @@ import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/Use
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeSessionItemBuffer, NativeSessionState, NativeSubagentListSnapshot, NativeSubagentStatus, NativeSubagentSummary, NativeSubagentThreadSnapshot, NativeTurnSnapshot } from './sessionTypes.js';
 import { activeNativeSubagentStatuses as activeStatuses } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import { ThreadItemView, transcriptItemText, type SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
-import { ConversationTranscript, isSubagentCoordinationItem, isVisibleTranscriptItem } from './ConversationTranscript.js';
+import { ConversationTranscript, isFinalAnswerItem, isSubagentCoordinationItem, isVisibleTranscriptItem } from './ConversationTranscript.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createInitialSessionState } from './sessionReducer.js';
@@ -54,6 +54,8 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   /** 只在重新挂载时补读已选择线程，点击入口仍负责自己的读取。 */
   const initialThreadId = useRef(selectedThreadId).current;
   const [thread, setThread] = useState<NativeSubagentThreadSnapshot | null>(null);
+  /** 手动选择完整会话只作用于当前回复，新一轮完成后优先展示新回复。 */
+  const [fullConversationReplyKey, setFullConversationReplyKey] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(!props.initialSnapshot);
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -95,6 +97,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
     if (foreground) {
       setThread(null);
       setLoadingThread(true);
+      setFullConversationReplyKey(null);
     }
     try {
       const next = await loadThreadRef.current(threadId);
@@ -198,6 +201,25 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
   const hasVisibleItems = threadItems.some(isVisibleTranscriptItem);
   const task = hasVisibleItems ? null : thread?.taskInstruction;
   const startupBlock = thread?.agent.startupBlock;
+  /** 任务已完成且历史归属可确认时，才展示结果。 */
+  const finalReply = useMemo(() => {
+    if (thread?.agent.status !== 'completed' || (selectedStatus ?? thread.agent.status) !== 'completed' || thread.historyBoundary.state !== 'confirmed') return undefined;
+    /** 接口按轮次顺序返回，旧轮次的回复不代表本次执行结果。 */
+    const latestTurn = thread.turns.at(-1);
+    if (!latestTurn || normalizeSubagentTurnStatus(latestTurn.status) !== 'completed') return undefined;
+    return threadItems.findLast(
+      (item) =>
+        item.turnId === latestTurn.id &&
+        item.status === 'completed' &&
+        isFinalAnswerItem(item) &&
+        isVisibleTranscriptItem(item) &&
+        (item.resources.length > 0 || transcriptItemText(item).trim().length > 0),
+    );
+  }, [selectedStatus, thread, threadItems]);
+  /** 同一条回复刷新后保留用户的视图选择。 */
+  const showingFullConversation = finalReply?.key === fullConversationReplyKey;
+  /** 用回复标题标识可滚动的阅读区域。 */
+  const finalReplyTitle = zh ? '最终回复' : 'Final reply';
 
   /** 用户选择列表行后，把键盘导航交给详情工具栏。 */
   function selectAgent(agent: NativeSubagentSummary) {
@@ -301,7 +323,24 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
               {startupBlock.error ? <VisibleApplicationError error={startupBlock.error} language={zh ? 'zh-CN' : 'en'} /> : null}
             </section>
           ) : null}
-          {thread && transcriptState && hasVisibleItems ? (
+          {finalReply && thread ? (
+            <div className="session-subagent-result-bar">
+              <p className="session-subagent-status" role="status">
+                {zh ? '状态' : 'Status'}
+                <span className="session-subagent-status-dot" data-status={thread.agent.status} aria-hidden="true" />
+                <strong>{statusLabel(thread.agent, props.language)}</strong>
+              </p>
+              <Button unstyled type="button" className="session-subagent-view-action" onClick={() => setFullConversationReplyKey(showingFullConversation ? null : finalReply.key)}>
+                {showingFullConversation ? (zh ? '查看最终回复' : 'View final reply') : zh ? '查看完整会话' : 'View full conversation'}
+              </Button>
+            </div>
+          ) : null}
+          {finalReply && !showingFullConversation ? (
+            <section className="session-subagent-result" key={finalReply.key} aria-label={finalReplyTitle} tabIndex={0}>
+              <h2>{finalReplyTitle}</h2>
+              <ThreadItemView item={finalReply} language={props.language} />
+            </section>
+          ) : thread && transcriptState && hasVisibleItems ? (
             <section className="session-subagent-thread" aria-label={zh ? '智能体会话' : 'Agent conversation'}>
               <ConversationTranscript state={transcriptState} language={props.language} historyOnly={Boolean(startupBlock) || !activeStatuses.has(thread.agent.status)} transcriptHydrated />
             </section>
