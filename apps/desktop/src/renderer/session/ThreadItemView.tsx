@@ -4,7 +4,7 @@ import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import type { ConversationTurnUsage, ZeusBrowserComment } from '@zeus/shared';
 import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useContext, useEffect, useRef, useState } from 'react';
 import { useReadingState } from '../ui/readingState.js';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
@@ -468,6 +468,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const [queuedActionError, setQueuedActionError] = useState<unknown>(null);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [retryingExpert, setRetryingExpert] = useState(false);
+  /** 当前 Markdown 渲染组件报告的正文就绪状态。 */
   const [markdownSettled, setMarkdownSettled] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
@@ -584,11 +585,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     if (!needsAuthoritativeAttachmentResources || !props.onLoadResources) return;
     void Promise.resolve(props.onLoadResources(props.item.turnId)).catch(() => undefined);
   }, [needsAuthoritativeAttachmentResources, props.item.turnId, props.onLoadResources]);
-
-  // 本地消息交给 Provider 后沿用显示身份，不能只因原生条目编号变化就重置正文。
-  useEffect(() => setMarkdownSettled(false), [itemText, props.item.key, props.item.status]);
-
-  const handleMarkdownSettled = useCallback(() => setMarkdownSettled(true), []);
 
   async function submitEditedMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -720,7 +716,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             onOpenResource={props.onOpenResource}
             onLoadResourcePreview={props.onLoadResourcePreview}
             onVisibleContentChange={props.onVisibleContentChange}
-            onRenderSettled={handleMarkdownSettled}
+            onRenderSettledChange={setMarkdownSettled}
           />
         </div>
       ) : role === 'user' && taskPushLayout ? (
@@ -780,7 +776,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onOpenResource={props.onOpenResource}
           onLoadResourcePreview={props.onLoadResourcePreview}
           onVisibleContentChange={props.onVisibleContentChange}
-          onRenderSettled={handleMarkdownSettled}
+          onRenderSettledChange={setMarkdownSettled}
         />
       ) : null}
       {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
