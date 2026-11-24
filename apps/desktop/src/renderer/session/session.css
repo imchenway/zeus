@@ -8557,7 +8557,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border-radius: 12px;
   box-sizing: border-box;
   display: grid;
-  block-size: calc(min(56.25cqi, 56vh) + 41px);
+  block-size: min(56.25cqi, 56vh);
   place-items: center;
 }
 
