@@ -12,7 +12,6 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-root {
-  --usage-bg: rgb(251 251 252 / 97%);
   --usage-panel: rgb(255 255 255 / 76%);
   --usage-panel-strong: rgb(255 255 255 / 94%);
   --usage-text: #202126;
@@ -712,12 +711,17 @@ body:has(.menu-bar-usage-root),
   min-inline-size: 0;
   max-block-size: calc(100vh - 16px);
   margin: 0;
-  padding: 10px;
+  /* 描边占用原有内边距，保持表格可用宽高。 */
+  padding: 9px;
   overflow: hidden;
-  border: 0;
-  border-radius: var(--usage-radius-control, 8px);
+  /* 明细和图表提示气泡共用面板底色与浅边线。 */
+  border: 1px solid var(--usage-line);
+  border-radius: var(--usage-radius-card);
   background: var(--usage-panel-strong);
-  box-shadow: var(--usage-shadow-soft);
+  /* 近处的浅影勾勒轮廓，向下扩散的柔影在透明留白内渐隐。 */
+  box-shadow:
+    0 0 3px rgb(0 0 0 / 9%),
+    0 4px 9px -4px rgb(0 0 0 / 28%);
   color: var(--usage-text);
   font-size: 11px;
 }
@@ -1109,7 +1113,6 @@ body:has(.menu-bar-usage-root),
  * 菜单栏浮窗的颜色、材质、边界与账户摘要卡片参考 AgentDesk。
  */
 .menu-bar-usage-root {
-  --usage-bg: #f4f6ff;
   --usage-panel: rgb(255 255 255 / 74%);
   --usage-panel-strong: rgb(255 255 255 / 92%);
   --usage-panel-inset: rgb(238 243 255 / 74%);
@@ -1138,9 +1141,6 @@ body:has(.menu-bar-usage-root),
   --usage-ok: var(--zeus-brand-text);
   --usage-shadow: 0 20px 48px -28px rgb(31 41 55 / 38%);
   --usage-shadow-soft: 0 12px 30px -24px rgb(31 41 55 / 30%);
-  background:
-    radial-gradient(circle at 88% -20%, color-mix(in srgb, var(--usage-accent-secondary) 16%, transparent), transparent 36%), radial-gradient(circle at 10% 110%, color-mix(in srgb, var(--usage-accent) 10%, transparent), transparent 40%),
-    var(--usage-bg);
 }
 
 .menu-bar-usage-surface {
@@ -1397,12 +1397,15 @@ body:has(.menu-bar-usage-root),
   color: var(--usage-text);
 }
 
-/* 独立用量窗口共用面板底色，避免大面积灰底及系统模糊材质透入。 */
+/* 只有菜单栏主体铺满窗口底色，明细窗口留白由系统透明合成。 */
+.menu-bar-usage-root:not(.menu-bar-usage-cost-detail-window-root) {
+  background: var(--usage-panel);
+}
+
+/* 用量窗口使用实色面板，避免系统模糊材质透入。 */
 .menu-bar-usage-root,
 .menu-bar-usage-root[data-appearance='dark'],
 .menu-bar-usage-root[data-appearance='system'] {
-  background: var(--usage-bg);
-  --usage-bg: var(--usage-panel);
   --usage-panel: #fff;
   --usage-panel-strong: #fff;
   --usage-panel-inset: rgb(120 128 140 / 8%);
@@ -1411,7 +1414,6 @@ body:has(.menu-bar-usage-root),
 }
 .menu-bar-usage-root[data-appearance='dark'] {
   /* 深色主题统一消费两层中性表面，禁止恢复旧的蓝色或透明玻璃底。 */
-  --usage-bg: var(--zeus-dark-surface);
   --usage-panel: var(--zeus-dark-surface);
   --usage-panel-strong: var(--zeus-dark-surface);
   --usage-text: var(--zeus-dark-text);
@@ -1432,12 +1434,10 @@ body:has(.menu-bar-usage-root),
   --usage-danger-soft: rgb(255 69 58 / 15%);
   --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
   --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
-  background: var(--zeus-dark-surface);
 }
 @media (prefers-color-scheme: dark) {
   .menu-bar-usage-root[data-appearance='system'] {
     /* 深色主题统一消费两层中性表面，禁止恢复旧的蓝色或透明玻璃底。 */
-    --usage-bg: var(--zeus-dark-surface);
     --usage-panel: var(--zeus-dark-surface);
     --usage-panel-strong: var(--zeus-dark-surface);
     --usage-text: var(--zeus-dark-text);
@@ -1458,7 +1458,6 @@ body:has(.menu-bar-usage-root),
     --usage-danger-soft: rgb(255 69 58 / 15%);
     --usage-shadow: 0 22px 52px -26px rgb(0 0 0 / 70%);
     --usage-shadow-soft: 0 14px 34px -24px rgb(0 0 0 / 58%);
-    background: var(--zeus-dark-surface);
   }
 }
 
