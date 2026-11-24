@@ -7,6 +7,8 @@ body:is([data-surface='system-window'], [data-surface='task-git-delivery'], [dat
 .zeus-system-window-titlebar {
   -webkit-app-region: drag;
   align-items: center;
+  /* 居中布局下仍横跨窗口，标题两侧也能拖动。 */
+  align-self: stretch;
   background: var(--zeus-solid-surface-bg);
   box-sizing: border-box;
   color: var(--zeus-product-text);
