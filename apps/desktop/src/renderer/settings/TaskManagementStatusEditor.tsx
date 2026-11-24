@@ -1,5 +1,5 @@
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TaskManagementStatusConfig, TaskManagementStatusDefinition } from '@zeus/shared';
 import { newTaskManagementStatusLabels, normalizeTaskManagementStatusConfig } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
@@ -53,10 +53,15 @@ function removeStatus(config: TaskManagementStatusConfig, statusId: string, repl
   return normalizeTaskManagementStatusConfig({ statuses, roles }, config);
 }
 
+/** 改名草稿在确认或失焦时保存，Esc 只撤销编辑。 */
 function StatusNameInput(props: { language: 'zh-CN' | 'en-US'; index: number; displayName: string; onCommit: (label: string) => void }) {
   const [value, setValue] = useState(props.displayName);
+  /** blur 同步触发，取消标记必须先于草稿的下一次渲染生效。 */
+  const canceling = useRef(false);
   useEffect(() => setValue(props.displayName), [props.displayName]);
+  /** 提交非空且有变化的名称。 */
   const commit = (): void => {
+    if (canceling.current) return;
     const label = value.trim();
     // 只保存实际改名，语言切换后的默认显示名无需写入配置。
     if (!label || label === props.displayName) {
@@ -76,14 +81,44 @@ function StatusNameInput(props: { language: 'zh-CN' | 'en-US'; index: number; di
         onChange={(event) => setValue(event.currentTarget.value)}
         onBlur={commit}
         onKeyDown={(event) => {
+          // 输入法选字时先由输入法处理键盘操作。
+          if (event.nativeEvent.isComposing) return;
           if (event.key === 'Enter') event.currentTarget.blur();
           if (event.key === 'Escape') {
+            event.preventDefault();
+            canceling.current = true;
             setValue(props.displayName);
             event.currentTarget.blur();
+            canceling.current = false;
           }
         }}
       />
     </label>
+  );
+}
+
+/** 颜色选择器实时预览，原生 change 到达后才保存。 */
+function StatusColorInput(props: { color: string; ariaLabel: string; onCommit: (color: string) => void }) {
+  /** 拖动时只更新色块和旁边的色值。 */
+  const [preview, setPreview] = useState(props.color);
+  /** 原生 change 与 React 在预览时触发的 onChange 分开监听。 */
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => setPreview(props.color), [props.color]);
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    /** 读选色器最终值，避免使用尚未渲染的预览状态。 */
+    const commit = (): void => {
+      if (input.value !== props.color) props.onCommit(input.value);
+    };
+    input.addEventListener('change', commit);
+    return () => input.removeEventListener('change', commit);
+  }, [props.color, props.onCommit]);
+  return (
+    <>
+      <input ref={inputRef} type="color" value={preview} aria-label={props.ariaLabel} onChange={(event) => setPreview(event.currentTarget.value)} />
+      <span aria-hidden="true">{preview.toUpperCase()}</span>
+    </>
   );
 }
 
@@ -166,19 +201,16 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
             />
             <label className="task-status-config-color" data-icon-tooltip={zh ? `修改状态颜色：${props.labelForStatus(status)}` : `Change status color: ${props.labelForStatus(status)}`}>
               <span className="sr-only">{zh ? `${props.labelForStatus(status)} 的颜色` : `Color for ${props.labelForStatus(status)}`}</span>
-              <input
-                type="color"
-                value={status.color}
-                aria-label={zh ? `修改状态 ${props.labelForStatus(status)} 的颜色` : `Change color for ${props.labelForStatus(status)}`}
-                onChange={(event) => {
-                  const color = event.currentTarget.value;
-                  return props.onChange({
+              <StatusColorInput
+                color={status.color}
+                ariaLabel={zh ? `修改状态 ${props.labelForStatus(status)} 的颜色` : `Change color for ${props.labelForStatus(status)}`}
+                onCommit={(color) =>
+                  props.onChange({
                     statuses: props.config.statuses.map((candidate) => (candidate.id === status.id ? { ...candidate, color } : { ...candidate })),
                     roles: { ...props.config.roles },
-                  });
-                }}
+                  })
+                }
               />
-              <span aria-hidden="true">{status.color.toUpperCase()}</span>
             </label>
             <span className="task-status-config-actions">
               <Button
