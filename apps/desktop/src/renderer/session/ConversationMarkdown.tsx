@@ -505,17 +505,22 @@ export async function preloadConversationDiagram(text: string): Promise<void> {
   if (source) await (await ensureMermaidRuntime())?.parse(source, { suppressErrors: true });
 }
 
+/** 用单像素画布把 CSS 实色转换为 sRGB，无法解析的颜色保留为透明像素。 */
+function readMermaidColor(context: CanvasRenderingContext2D, color: string): Uint8ClampedArray | null {
+  if (!CSS.supports('color', color)) return null;
+  context.clearRect(0, 0, 1, 1);
+  context.fillStyle = 'transparent';
+  context.fillStyle = color;
+  context.fillRect(0, 0, 1, 1);
+  return context.getImageData(0, 0, 1, 1).data;
+}
+
 /** 将 SVG 的实色填充读取为 sRGB 像素，渐变和图案没有单一对比度。 */
 function readMermaidFill(context: CanvasRenderingContext2D, element: SVGElement): Uint8ClampedArray | null {
   /** 使用浏览器实际计算的填充，包含主题、style 和 classDef 的结果。 */
   const style = getComputedStyle(element);
-  /** currentColor 取 SVG 元素自己的文字色，而非画布的默认色。 */
-  const fill = style.fill === 'currentcolor' ? style.color : style.fill;
-  if (style.opacity !== '1' || style.fillOpacity !== '1' || !CSS.supports('color', fill)) return null;
-  context.clearRect(0, 0, 1, 1);
-  context.fillStyle = fill;
-  context.fillRect(0, 0, 1, 1);
-  return context.getImageData(0, 0, 1, 1).data;
+  if (style.opacity !== '1' || style.fillOpacity !== '1') return null;
+  return readMermaidColor(context, style.fill === 'currentcolor' ? style.color : style.fill);
 }
 
 /** WCAG 相对亮度使用线性 sRGB，半透明文字先与节点底色混合。 */
@@ -531,8 +536,56 @@ function mermaidFillLuminance(fill: Uint8ClampedArray, background = fill): numbe
   return 0.2126 * linear(0) + 0.7152 * linear(1) + 0.0722 * linear(2);
 }
 
-/** 只调整深色流程图的节点文字，并返回原有填充的恢复操作。 */
-function improveMermaidLabelContrast(diagram: SVGSVGElement): (() => void) | undefined {
+/** 默认手绘色板同时用于绘制流程图和识别作者着色的节点。 */
+const handDrawnFlowchartColors = {
+  light: { canvas: '#ffffff', node: '#e7f0fa', group: '#f3f6fa', border: '#6382a0', groupBorder: '#7898b8', line: '#65798e', text: '#233e5a' },
+  dark: { canvas: '#181818', node: '#23354a', group: '#202b38', border: '#6f8da8', groupBorder: '#6f8da8', line: '#8b9cb1', text: '#e1eeff' },
+};
+
+/** SVG 预览中可独立修正的轮廓、纹理或文字颜色。 */
+type MermaidPaintCorrection = { element: SVGElement; property: 'fill' | 'stroke'; replacement: string };
+
+/** 将作者强调色用于手绘轮廓、低反差斜纹和高对比文字。 */
+function handDrawnHighlightCorrections(diagram: SVGSVGElement, context: CanvasRenderingContext2D, isDark: boolean): MermaidPaintCorrection[] {
+  /** 原始路径若使用默认色板，该节点没有自定义强调色。 */
+  const defaults = handDrawnFlowchartColors[isDark ? 'dark' : 'light'];
+  /** 批量收集改色项，避免读取文字颜色时触发重复样式计算。 */
+  const corrections: MermaidPaintCorrection[] = [];
+  for (const node of diagram.querySelectorAll('g.rough-node')) {
+    /** ponytail: 简单手绘形状按顺序输出斜纹和轮廓。复合形状需要分别识别装饰路径。 */
+    const paths = node.querySelectorAll<SVGPathElement>(':scope > g:first-child > path[fill="none"][stroke]');
+    if (paths.length !== 2) continue;
+    /** 直接读取路径属性，避免 classDef 让斜纹继承外轮廓色。 */
+    const [hatch, outline] = paths;
+    /** 外轮廓的原始描边色。 */
+    const outlineStroke = outline.getAttribute('stroke');
+    /** Mermaid 用斜纹的描边记录原节点填充色。 */
+    const hatchStroke = hatch.getAttribute('stroke');
+    /** 作者设置的描边优先，只有自定义填充时从斜纹取强调色。 */
+    const accent = (outlineStroke?.toLowerCase() !== defaults.border && outlineStroke) || (hatchStroke?.toLowerCase() !== defaults.node && hatchStroke);
+    if (!accent) continue;
+    /** 透明色不作为节点的强调色。 */
+    const color = readMermaidColor(context, accent);
+    if (!color?.[3]) continue;
+    /** OKLCH 保留色相，独立控制亮度和色度上限以保证阅读对比度。 */
+    const tone = (lightness: number, chroma: number) => `oklch(from rgb(${color[0]} ${color[1]} ${color[2]}) ${lightness} min(c, ${chroma}) h)`;
+    corrections.push(
+      { element: hatch, property: 'fill', replacement: 'none' },
+      { element: outline, property: 'fill', replacement: 'none' },
+      { element: hatch, property: 'stroke', replacement: tone(isDark ? 0.29 : 0.96, 0.04) },
+      { element: outline, property: 'stroke', replacement: tone(isDark ? 0.78 : 0.49, 0.14) },
+    );
+    /** 文字与斜纹、纹理间隙都保留明暗差。 */
+    const textColor = isDark ? tone(0.94, 0.055) : tone(0.3, 0.07);
+    for (const label of node.querySelectorAll<SVGTextContentElement>('text, tspan')) {
+      if (readMermaidFill(context, label)?.[3]) corrections.push({ element: label, property: 'fill', replacement: textColor });
+    }
+  }
+  return corrections;
+}
+
+/** 应用流程图预览的对比度修正，并返回原色恢复操作。 */
+function improveMermaidPreviewContrast(diagram: SVGSVGElement, isDark: boolean, handDrawn: boolean): (() => void) | undefined {
   /** 单像素画布复用浏览器的 CSS 颜色解析，不读取图表内容。 */
   const canvas = diagram.ownerDocument.createElement('canvas');
   canvas.width = canvas.height = 1;
@@ -540,8 +593,8 @@ function improveMermaidLabelContrast(diagram: SVGSVGElement): (() => void) | und
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return undefined;
   /** 先读取所有颜色，再应用修正，避免写样式后重复计算。 */
-  const corrections: { label: SVGTextContentElement; fill: string; priority: string; replacement: string }[] = [];
-  for (const node of diagram.querySelectorAll('g.node')) {
+  const corrections = handDrawn ? handDrawnHighlightCorrections(diagram, context, isDark) : [];
+  for (const node of isDark ? diagram.querySelectorAll('g.node') : []) {
     /** 与会话主题使用相同的 Mermaid 节点填充形状。 */
     const shape = node.querySelector<SVGElement>(':is(rect, path, polygon, circle, ellipse).label-container, .label-container path');
     if (!shape) continue;
@@ -558,31 +611,55 @@ function improveMermaidLabelContrast(diagram: SVGSVGElement): (() => void) | und
       const foregroundLevel = mermaidFillLuminance(foreground, background) + 0.05;
       if (Math.max(backgroundLevel, foregroundLevel) / Math.min(backgroundLevel, foregroundLevel) >= 4.5) continue;
       corrections.push({
-        label,
-        fill: label.style.getPropertyValue('fill'),
-        priority: label.style.getPropertyPriority('fill'),
+        element: label,
+        property: 'fill',
         replacement: backgroundLevel / 0.05 >= 1.05 / backgroundLevel ? '#000' : '#fff',
       });
     }
   }
-  for (const { label, replacement } of corrections) label.style.setProperty('fill', replacement, 'important');
+  /** 保存改色前的内联属性，供图表替换或主题切换时恢复。 */
+  const originals = corrections.map(({ element, property, replacement }) => {
+    /** 原有的颜色和优先级分别属于 SVG 的一个绘制属性。 */
+    const value = element.style.getPropertyValue(property);
+    /** 内联样式的原始优先级可能为 important。 */
+    const priority = element.style.getPropertyPriority(property);
+    element.style.setProperty(property, replacement, 'important');
+    return { element, property, value, priority };
+  });
   return () => {
-    for (const { label, fill, priority } of corrections) label.style.setProperty('fill', fill, priority);
+    for (const { element, property, value, priority } of originals) element.style.setProperty(property, value, priority);
   };
 }
 
-/** 为流程图预览选择蓝灰手绘配色，使用固定笔触种子保持主题切换前后的轮廓一致。 */
-function handDrawnFlowchartSource(source: string, isDark: boolean): string {
+/** 横排布局的最小显示字号，单位为 CSS 像素。 */
+const MIN_HORIZONTAL_FLOWCHART_FONT_SIZE = 14;
+
+/** 横排缩短节点间距并提早换行，纵排为长标签留出更多宽度，单位均为 CSS 像素。 */
+const handDrawnFlowchartLayouts = {
+  horizontal: { rankSpacing: 22, wrappingWidth: 150 },
+  vertical: { rankSpacing: 24, wrappingWidth: 248 },
+};
+
+/** 返回横图声明中方向字样的位置，供预览切换方向时保留其余源码。 */
+function horizontalFlowchartDirectionOffset(source: string): number | undefined {
+  /** 只取第一条图声明，兼容前置注释和同一行结束的初始化指令。 */
+  const header = /(?:^|\}%%)[ \t]*(?:flowchart|graph)(?:\s+(LR|RL|TB|BT|TD))?(?=[\s;]|$)/mu.exec(source);
+  return header?.[1] === 'LR' || header?.[1] === 'RL' ? header.index + header[0].length - 2 : undefined;
+}
+
+/** 为流程图预览选择手绘色板和布局，固定笔触种子保持切换主题前后的轮廓一致。 */
+function handDrawnFlowchartSource(source: string, isDark: boolean, layout?: keyof typeof handDrawnFlowchartLayouts): string {
   /** 背景、节点、分组和标签均使用与当前会话深浅色匹配的色组。 */
-  const colors = isDark
-    ? { canvas: '#181818', node: '#23354a', group: '#202b38', border: '#6f8da8', line: '#8b9cb1', text: '#e1eeff' }
-    : { canvas: '#ffffff', node: '#e7f0fa', group: '#f3f6fa', border: '#7898b8', line: '#65798e', text: '#233e5a' };
+  const colors = handDrawnFlowchartColors[isDark ? 'dark' : 'light'];
   /** Markstream 使用开头的 init 指令作为本图配置，并在渲染前交给 Mermaid。 */
   const config = {
     look: 'handDrawn',
     handDrawnSeed: 1,
     theme: 'base',
-    fontFamily: 'system-ui, sans-serif',
+    /** 西文优先用系统手写字体，中文优先用楷体，缺字时回退到系统界面字体。 */
+    fontFamily: '"Chalkboard SE", "Segoe Print", "Kaiti SC", KaiTi, STKaiti, system-ui, sans-serif',
+    /** 原生纵图沿用 Mermaid 的默认布局参数。 */
+    flowchart: layout ? handDrawnFlowchartLayouts[layout] : undefined,
     themeVariables: {
       darkMode: isDark,
       radius: 12,
@@ -593,7 +670,7 @@ function handDrawnFlowchartSource(source: string, isDark: boolean): string {
       secondaryColor: colors.group,
       secondaryTextColor: colors.text,
       tertiaryColor: colors.group,
-      tertiaryBorderColor: colors.border,
+      tertiaryBorderColor: colors.groupBorder,
       tertiaryTextColor: colors.text,
       lineColor: colors.line,
       arrowheadColor: colors.line,
@@ -611,33 +688,48 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
   const languageLabels = labels[runtime?.language ?? 'en-US'];
   /** 图表外壳用于读取当前应用主题。 */
   const containerRef = useRef<HTMLDivElement | null>(null);
-  /** 对比度修正仅接触本图的预览，不读取源码视图。 */
+  /** 预览元素承载 SVG 的配色修正和视口宽度。 */
   const previewRef = useRef<HTMLDivElement | null>(null);
   /** 上游把"画不出来"处理成源码视图且不报错，这里补上用户能看懂的原因。 */
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   /** 源码视图保留原文，预览继续挂载以保留已有缩放状态。 */
   const [showSource, setShowSource] = useState(false);
   /** 已解析源码的样式选择。流式更新后按原文匹配，避免沿用上一段源码的判定。 */
-  const [parsedStyle, setParsedStyle] = useState<{ source: string; useDefaultTheme: boolean; handDrawn: boolean } | null>(null);
+  const [parsedStyle, setParsedStyle] = useState<{ source: string; useDefaultTheme: boolean; handDrawn: boolean; horizontalDirectionOffset?: number } | null>(null);
+  /** 纵排时记住同一张图的横排宽度阈值，拉宽窗口后据此恢复横排。 */
+  const [narrowLayout, setNarrowLayout] = useState<{ source: string; minimumWidth: number } | null>(null);
   /** 只有当前源码的解析结果能控制预览。 */
   const diagramStyle = parsedStyle?.source === props.node.code ? parsedStyle : null;
-  /** Mermaid 手绘路径直接使用生成时的配色，常规图表继续使用会话配色。 */
-  const useDefaultTheme = (diagramStyle?.useDefaultTheme ?? true) && !diagramStyle?.handDrawn;
+  /** 同一个手绘判定控制预览源码配色和绘制后的颜色修正。 */
+  const handDrawn = diagramStyle?.handDrawn ?? false;
+  /** 默认手绘横图才需要对视口宽度切换方向。 */
+  const directionOffset = diagramStyle?.horizontalDirectionOffset;
+  /** 宽度阈值以原图源码为身份，避免沿用其他图的测量结果。 */
+  const responsiveSource = directionOffset === undefined ? undefined : props.node.code;
+  /** 原图命中纵排记录时，保留从横排 SVG 测出的宽度。 */
+  const verticalWidth = responsiveSource === narrowLayout?.source ? narrowLayout?.minimumWidth : undefined;
+  /** 横图先尝试紧凑横排，达到宽度阈值后再恢复该布局。 */
+  const flowchartLayout = responsiveSource === undefined ? undefined : verticalWidth === undefined ? 'horizontal' : 'vertical';
+  /** Zeus 手绘预览使用 Mermaid 色板，常规图表继续使用会话 CSS 配色。 */
+  const useDefaultTheme = (diagramStyle?.useDefaultTheme ?? true) && !handDrawn;
   /** 正文已经结束时图表代码块不会再增长，必须结束生成态，否则上游会一直只显示源码。 */
   const phase = runtime?.phase ?? 'streaming';
   /** 未闭合代码块继续生成；正文完成后覆盖解析节点残留的生成状态。 */
   const streaming = phase === 'streaming' && Boolean(props.node.loading);
   /** Mermaid 的图形颜色跟随应用主题，而非固定使用浅色。 */
   const [isDark, setIsDark] = useState(false);
+  /** 换图、切换方向或主题时重建横图视图，使测量针对当前的 SVG。 */
+  const previewKey = flowchartLayout ? `${isDark}:${flowchartLayout}:${responsiveSource}` : String(isDark);
   /** 只替换绘制用的代码，源码查看与复制继续读取助手原文。 */
-  const node = useMemo(
-    () => ({
+  const node = useMemo(() => {
+    /** 纵排只改预览用的方向，节点、连线和标签使用原图内容。 */
+    const source = flowchartLayout === 'vertical' && directionOffset !== undefined ? `${props.node.code.slice(0, directionOffset)}TB${props.node.code.slice(directionOffset + 2)}` : props.node.code;
+    return {
       ...props.node,
-      code: diagramStyle?.handDrawn ? handDrawnFlowchartSource(props.node.code, isDark) : props.node.code,
+      code: handDrawn ? handDrawnFlowchartSource(source, isDark, flowchartLayout) : source,
       loading: streaming,
-    }),
-    [props.node, diagramStyle?.handDrawn, isDark, streaming],
-  );
+    };
+  }, [props.node, directionOffset, flowchartLayout, handDrawn, isDark, streaming]);
   useLayoutEffect(() => {
     /** 应用主题由已有容器类和系统主题共同决定。 */
     const container = containerRef.current;
@@ -657,31 +749,56 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     };
   }, []);
   useLayoutEffect(() => {
-    /** 浅色主题不调整图表文字。 */
+    /** 手绘强调色使用深浅两套规则，常规流程图在深色主题下修正文字。 */
     const preview = previewRef.current;
-    if (!preview || !isDark) return;
+    if (!preview || (!isDark && !handDrawn)) return;
     /** 上游异步替换 SVG，已有图形在主题规则变更时重新评估。 */
     let diagram: SVGSVGElement | null = null;
     /** 重新评估前恢复作者和主题的原始填充。 */
     let restore: (() => void) | undefined;
-    /** 只处理新增的流程图 SVG，缩放和工具栏事件无需重算。 */
-    const applyContrast = () => {
+    /** 当前源码保持横排字号所需的最小可用宽度。 */
+    let minimumWidth = verticalWidth;
+    /** 跟随预览列宽度跨过字号阈值，源码视图隐藏图表时保留布局。 */
+    const updateLayout = () => {
+      if (responsiveSource === undefined || minimumWidth === undefined) return;
+      /** 预览横向内边距为零，列宽即 SVG 的适配宽度。 */
+      const availableWidth = preview.clientWidth;
+      if (availableWidth === 0) return;
+      /** 预计显示字号低于阈值时使用纵排。 */
+      const needsVertical = availableWidth < minimumWidth;
+      if (needsVertical === (verticalWidth !== undefined)) return;
+      setNarrowLayout(needsVertical ? { source: responsiveSource, minimumWidth } : null);
+    };
+    /** 只处理新增的流程图 SVG，手动缩放不改变其布局阈值。 */
+    const applyDiagram = () => {
       /** Mermaid 用无障碍描述标识图表类型。 */
       const next = preview.querySelector<SVGSVGElement>('svg[aria-roledescription^="flowchart"]');
       if (next === diagram) return;
       restore?.();
       diagram = next;
-      restore = diagram ? improveMermaidLabelContrast(diagram) : undefined;
+      restore = diagram ? improveMermaidPreviewContrast(diagram, isDark, handDrawn) : undefined;
+      if (diagram && responsiveSource !== undefined && verticalWidth === undefined) {
+        /** Mermaid 的基础字号在根 SVG 上，viewBox 宽度不受预览缩放影响。 */
+        const naturalFontSize = Number.parseFloat(getComputedStyle(diagram).fontSize);
+        /** 显示字号按可用宽度等比缩放，反推达到保底字号所需的宽度。 */
+        const threshold = (diagram.viewBox.baseVal.width * MIN_HORIZONTAL_FLOWCHART_FONT_SIZE) / naturalFontSize;
+        minimumWidth = Number.isFinite(threshold) && threshold > 0 ? threshold : undefined;
+        updateLayout();
+      }
     };
     /** 只监听 SVG 插入和替换，不监听修正自身的样式变更。 */
-    const observer = new MutationObserver(applyContrast);
+    const observer = new MutationObserver(applyDiagram);
     observer.observe(preview, { childList: true, subtree: true });
-    applyContrast();
+    /** 横图随会话列和侧栏宽度变化自动选择布局。 */
+    const viewportObserver = responsiveSource === undefined ? undefined : new ResizeObserver(updateLayout);
+    viewportObserver?.observe(preview);
+    applyDiagram();
     return () => {
       observer.disconnect();
+      viewportObserver?.disconnect();
       restore?.();
     };
-  }, [isDark, useDefaultTheme]);
+  }, [handDrawn, isDark, responsiveSource, useDefaultTheme, verticalWidth]);
   /** 返回 true 表示异常已由本组件说明，避免与上游错误界面重复提示。 */
   const onRenderError = useCallback(
     (error: unknown) => {
@@ -714,10 +831,13 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
         }
         /** 显式主题由作者决定。带 YAML 头的图保留其元数据位置和原有渲染入口。 */
         const authoredTheme = Boolean(parsed.config.theme) || Object.keys(parsed.config.themeVariables ?? {}).length > 0;
+        /** 只有使用 Zeus 默认手绘主题的流程图参与自适应布局。 */
+        const useHandDrawn = !authoredTheme && !parsed.config.themeCSS && /^flowchart(?:-|$)/.test(parsed.diagramType) && (!parsed.config.look || parsed.config.look === 'handDrawn') && !props.node.code.trimStart().startsWith('---');
         setParsedStyle({
           source: props.node.code,
           useDefaultTheme: !authoredTheme,
-          handDrawn: !authoredTheme && !parsed.config.themeCSS && /^flowchart(?:-|$)/.test(parsed.diagramType) && (!parsed.config.look || parsed.config.look === 'handDrawn') && !props.node.code.trimStart().startsWith('---'),
+          handDrawn: useHandDrawn,
+          horizontalDirectionOffset: useHandDrawn ? horizontalFlowchartDirectionOffset(props.node.code) : undefined,
         });
       } catch (error) {
         if (active) onRenderError(error);
@@ -749,8 +869,8 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
         <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
       </div>
       <div ref={previewRef} className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={showSource || Boolean(diagnostic)}>
-        {/* 主题变化时重建图形状态，避免上游复用仅按源码缓存的旧 SVG。 */}
-        <MermaidBlockNode key={isDark ? 'dark' : 'light'} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
+        {/* 重建后的图从整体视图开始，宽度测量读取当前布局的 SVG。 */}
+        <MermaidBlockNode key={previewKey} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
       </div>
       {showSource || diagnostic ? (
         <pre>
