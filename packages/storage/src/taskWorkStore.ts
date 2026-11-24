@@ -561,6 +561,8 @@ export class TaskWorkRunRepository {
     input: {
       expectedRevision?: number;
       status?: TaskWorkRunStatus;
+      /** 首次派发时持久冻结已解析的入口信息，后续派发回执复用该快照。 */
+      entrypointSnapshot?: Record<string, unknown>;
       enabledSkillIds?: string[];
       skillSnapshot?: Record<string, unknown>;
       conversationId?: string | null;
@@ -578,14 +580,16 @@ export class TaskWorkRunRepository {
     if (input.expectedRevision !== undefined && current.revision !== input.expectedRevision) conflict('工作运行已更新，请刷新后重试。');
     const status = input.status ?? current.status;
     assertRunTransition(current.status, status);
+    if (input.entrypointSnapshot && (current.status !== 'prepared' || status !== 'dispatching')) conflict('只有首次派发可以保存入口快照。');
     const conversationId = input.conversationId === undefined ? current.conversationId : input.conversationId;
     const commandRunId = input.commandRunId === undefined ? current.commandRunId : input.commandRunId;
     if (conversationId && commandRunId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_RUN_REFERENCE_CONFLICT', 'Agent 会话与 Command 运行不能同时绑定。', 400);
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.execute(
-      `UPDATE task_work_runs SET status = ?, enabled_skill_ids_json = ?, skill_snapshot_json = ?, conversation_id = ?, command_run_id = ?, workspace_snapshot_json = ?, environment_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
+      `UPDATE task_work_runs SET status = ?, entrypoint_snapshot_json = COALESCE(?, entrypoint_snapshot_json), enabled_skill_ids_json = ?, skill_snapshot_json = ?, conversation_id = ?, command_run_id = ?, workspace_snapshot_json = ?, environment_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
       [
         status,
+        input.entrypointSnapshot ? json(input.entrypointSnapshot) : null,
         JSON.stringify(input.enabledSkillIds ?? current.enabledSkillIds),
         json(input.skillSnapshot ?? current.skillSnapshot),
         conversationId,

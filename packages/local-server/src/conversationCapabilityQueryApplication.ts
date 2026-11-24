@@ -28,6 +28,7 @@ import type {
   ZeusConversationWithMessagesRecord,
   ZeusProjectRecord,
   ZeusProjectRepositoryRecord,
+  ZeusTaskEnvironmentRecord,
   ZeusTaskRecord,
 } from '@zeus/storage';
 
@@ -177,6 +178,18 @@ export class ConversationCapabilityQueryApplication {
     return models.length > 0 ? snapshot : { ...snapshot, available: false, availabilityReason: '当前没有已就绪的 Provider 模型；GET 不会为了读取能力而启动 Provider。' };
   }
 
+  /** 返工和重试只读取原环境及其仓库与会话状态，不重新查询模型或 Git 引用。 */
+  readTaskEnvironmentAvailability(projectId: string, taskId: string, environmentId: string): 'available' | 'busy' | 'closed' | 'invalid' {
+    /** 原运行只能继续使用同项目、同任务的环境。 */
+    const environment = this.ports.environments.listByTask(taskId).find((candidate) => candidate.id === environmentId && candidate.projectId === projectId);
+    if (!environment) return 'invalid';
+    /** 合入或放弃任一仓库，会使原环境不能整体继续使用。 */
+    const { workspaces, activeConversationIds, closed } = this.readEnvironmentMembers(environment);
+    if (closed) return 'closed';
+    if (!workspaces.length) return 'invalid';
+    return activeConversationIds.length ? 'busy' : 'available';
+  }
+
   /** 读取一次推送确认所需的模型、上下文和工作区快照；是否附带账号由调用入口决定。 */
   async readTaskPush(projectId: string, rawTaskId: string | undefined, options: { readProviderAccount?: boolean } = {}): Promise<Record<string, unknown>> {
     const project = this.requireProject(projectId);
@@ -200,10 +213,9 @@ export class ConversationCapabilityQueryApplication {
     const primaryRepository = repositoryCapabilities[0];
     const existingEnvironments = this.ports.environments.listByTask(task.id).flatMap((environment) => {
       if (environment.state === 'reclaimed') return [];
-      const members = this.ports.workspaces.listByEnvironment(environment.id).filter((workspace) => workspace.kind === 'task');
+      const { workspaces, activeConversationIds, closed: hasClosedWorkspace } = this.readEnvironmentMembers(environment);
+      const members = workspaces.filter((workspace) => workspace.kind === 'task');
       if (members.length === 0) return [];
-      const hasClosedWorkspace = members.some((workspace) => workspace.state === 'merged' || workspace.state === 'discarded');
-      const activeConversationIds = this.activeWritableEnvironmentConversationIds(environment.id);
       const hasActiveConversation = activeConversationIds.length > 0;
       return [
         {
@@ -410,6 +422,17 @@ export class ConversationCapabilityQueryApplication {
       .filter((entry) => isPathInsideRoot(entry.localPath, repositoryPath))
       .map((entry) => entry.localPath);
     return [...new Set([...nestedRepositories, ...sharedPaths].map((localPath) => relative(repositoryPath, localPath).split(sep).join('/')).filter((path) => Boolean(path) && path !== '.'))];
+  }
+
+  /** 与实际继续环境的校验一致，关闭状态检查所有仓库成员。 */
+  private readEnvironmentMembers(environment: ZeusTaskEnvironmentRecord) {
+    /** 仓库状态与会话占用分别决定关闭和暂时占用。 */
+    const workspaces = this.ports.workspaces.listByEnvironment(environment.id);
+    return {
+      workspaces,
+      closed: environment.state === 'reclaimed' || workspaces.some((workspace) => workspace.state === 'merged' || workspace.state === 'discarded'),
+      activeConversationIds: this.activeWritableEnvironmentConversationIds(environment.id),
+    };
   }
 
   private activeWritableEnvironmentConversationIds(environmentId: string): string[] {

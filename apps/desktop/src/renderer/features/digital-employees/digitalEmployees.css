@@ -1687,6 +1687,11 @@
   border-block: 1px solid var(--zeus-control-border) 0;
 }
 
+/* 返工按钮需说明会新建分支，窄窗口允许审查操作换行。 */
+.macos-ai-app .task-work-deliverable-review > footer {
+  flex-wrap: wrap;
+}
+
 .macos-ai-app :where(.task-work-assignment-drawer, .task-work-decision-dialog) > header > span {
   display: grid;
   gap: 4px;

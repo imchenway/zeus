@@ -198,7 +198,7 @@ export function useTaskDigitalEmployeeManagement(
   useEffect(() => {
     const dispose = props.subscribe?.(
       (event) => {
-        if ((event.type.startsWith('digital_team.') || event.type === 'task.work_management.changed') && event.payload.taskId === props.taskId) void load();
+        if ((event.type.startsWith('digital_team.') || event.type === 'task.work_management.changed' || event.type === 'task.git_delivery.changed') && event.payload.taskId === props.taskId) void load();
       },
       (state) => {
         if (state === 'connected') void load();
@@ -299,6 +299,8 @@ export function useTaskDigitalEmployeeManagement(
         await load();
         return true;
       } catch (cause) {
+        /** 原环境可能刚被交付关闭，刷新动作文案并保留失败提示与审批草稿。 */
+        if (isRecord(cause) && (cause.error === 'ZEUS_TASK_WORK_ENVIRONMENT_CLOSED' || cause.error === 'ZEUS_TASK_WORK_WORKSPACE_INVALID')) await load();
         errorOperation.current = identity;
         setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
         return false;
@@ -416,7 +418,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
               readOnly={props.terminalReadOnly}
               language={props.language}
               onOpenConversation={openConversation}
-              onRetry={(item) => act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item))}
+              onRetry={(item, createWorkspace) => act(`retry:${item.id}`, () => props.client!.retryTaskWorkItem(props.taskId, item, createWorkspace))}
               onCancel={(item) => act(`cancel:${item.id}`, () => props.client!.cancelTaskWorkItem(props.taskId, item))}
             />
           ) : null}
@@ -478,8 +480,8 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
               const success = await act(`decision:${decisionOpen.id}`, () => props.client!.acceptTaskWorkDeliverable(props.taskId, deliverable));
               if (success) setDecisionOpen(null);
             }}
-            onRequestChanges={async (deliverable, reason) => {
-              const success = await act(`decision:${decisionOpen.id}`, () => props.client!.requestTaskWorkDeliverableChanges(props.taskId, deliverable, reason));
+            onRequestChanges={async (deliverable, reason, createWorkspace) => {
+              const success = await act(`decision:${decisionOpen.id}`, () => props.client!.requestTaskWorkDeliverableChanges(props.taskId, deliverable, reason, createWorkspace));
               if (success) setDecisionOpen(null);
             }}
             onRespond={async (response) => {
@@ -494,6 +496,9 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   );
 }
 
+/** 说明换分支的实际来源，正常复用环境的按钮无需提示。 */
+const newTaskBranchTitle = { zh: '按项目默认来源创建任务分支', en: 'Create task branches from the project’s default sources' };
+
 /** 连续列表先展示工作目标，再展示执行者、状态与原有操作。 */
 export function WorkItemBoard(props: {
   items: TaskWorkItemRecord[];
@@ -503,7 +508,7 @@ export function WorkItemBoard(props: {
   readOnly: boolean;
   language: DigitalEmployeeLanguage;
   onOpenConversation?: (conversationId: string) => void;
-  onRetry(item: TaskWorkItemRecord): void;
+  onRetry(item: TaskWorkItemRecord, createWorkspace?: boolean): void;
   onCancel?(item: TaskWorkItemRecord): void;
   /** 结果核对和命令恢复必须针对当前运行的待办。 */
   recoveryDecisions?: readonly TaskWorkDecisionRecord[];
@@ -574,9 +579,10 @@ export function WorkItemBoard(props: {
                     size="compact"
                     busy={props.busy === `retry:${item.id}`}
                     disabled={props.readOnly || !current || current.id !== item.currentRunId || current.status === 'outcome_unknown'}
-                    onClick={() => props.onRetry(item)}
+                    title={current?.workspaceClosed ? newTaskBranchTitle[zh ? 'zh' : 'en'] : undefined}
+                    onClick={() => props.onRetry(item, current?.workspaceClosed)}
                   >
-                    {zh ? '重试' : 'Retry'}
+                    {current?.workspaceClosed ? (zh ? '新建分支并重试' : 'Retry on new branches') : zh ? '重试' : 'Retry'}
                   </Button>
                 ) : null}
                 {props.onCancel && ['queued', 'active', 'waiting_manager', 'blocked'].includes(item.status) ? (
@@ -1432,7 +1438,7 @@ export function DecisionDialog(props: {
   /** 核对 Agent 结果时可进入待办绑定的原会话。 */
   onOpenConversation?(conversationId: string): void | Promise<void>;
   onAccept(deliverable: TaskWorkDeliverableRecord): Promise<void>;
-  onRequestChanges(deliverable: TaskWorkDeliverableRecord, reason: string): Promise<void>;
+  onRequestChanges(deliverable: TaskWorkDeliverableRecord, reason: string, createWorkspace?: boolean): Promise<void>;
   onRespond(response: Record<string, unknown>): Promise<void>;
 }) {
   /** 审查意见读取完成且无阻塞后允许验收。 */
@@ -1451,6 +1457,8 @@ export function DecisionDialog(props: {
   /** 读取失败可在原审查空间重试，不丢失修改意见。 */
   const [contentRetry, setContentRetry] = useState(0);
   const deliverable = props.decision.deliverableId ? (props.projection?.deliverables.find((candidate) => candidate.id === props.decision.deliverableId) ?? null) : null;
+  /** 只根据当前待审成果所对应的运行选择返工动作。 */
+  const workspaceClosed = props.projection?.workItems.find((item) => item.id === props.decision.workItemId)?.runs.find((run) => run.id === props.decision.runId)?.workspaceClosed;
   /** 核对待办绑定运行身份，工作项的新运行不能替代原会话。 */
   const outcomeRun = props.decision.kind === 'outcome_unknown' ? props.projection?.workItems.find((item) => item.id === props.decision.workItemId)?.runs.find((run) => run.id === props.decision.runId) : undefined;
   /** Agent 确认完成后恢复成果收集，命令按核对结论收口。 */
@@ -1611,6 +1619,7 @@ export function DecisionDialog(props: {
                   size="compact"
                   busy={props.busy && Boolean(reason)}
                   disabled={props.busy}
+                  title={workspaceClosed ? newTaskBranchTitle[zh ? 'zh' : 'en'] : undefined}
                   onClick={() => {
                     if (!reason.trim()) {
                       setReasonRequired(true);
@@ -1618,10 +1627,10 @@ export function DecisionDialog(props: {
                       reasonRef.current?.scrollIntoView({ block: 'center' });
                       return;
                     }
-                    return props.onRequestChanges(deliverable, reason.trim());
+                    return props.onRequestChanges(deliverable, reason.trim(), workspaceClosed);
                   }}
                 >
-                  {zh ? '要求修改' : 'Request changes'}
+                  {workspaceClosed ? (zh ? '新建分支并返工' : 'Request changes on new branches') : zh ? '要求修改' : 'Request changes'}
                 </Button>
                 <Button variant="primary" size="compact" busy={props.busy && !reason} disabled={deliverableContent === null || !reviewReady} onClick={() => props.onAccept(deliverable)}>
                   {zh ? '接受交付物' : 'Accept deliverable'}

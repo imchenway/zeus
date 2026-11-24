@@ -230,6 +230,8 @@ export type TaskWorkWorkspaceSnapshot =
   | { mode: 'create'; repositoryRevision: string; repositories: Array<{ repositoryId: string; sourceRef: string; branchName: string }> };
 
 export interface TaskWorkRunRecord {
+  /** 当前轮次的原环境关闭，返工或重试须明确新建分支。 */
+  workspaceClosed?: boolean;
   /** 原会话权威目标状态，工作页只展示，控制复用原会话。 */
   goal?: { objective: string; status: string } | null;
   id: string;

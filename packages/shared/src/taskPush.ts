@@ -1,5 +1,8 @@
 import type { TaskAttachmentField, TaskType } from './index.js';
 
+/** 任务首发补充信息去除首尾空白后的最大字符数。 */
+export const taskPushSupplementalInfoMaxCharacters = 20_000;
+
 export interface TaskPushPromptAttachment {
   key: string;
   field: TaskAttachmentField;
