@@ -106,6 +106,8 @@ export const languageCopy = {
       search: '搜索',
       skills: '扩展管理',
       projects: '项目',
+      /** 侧栏中未归入用户项目的会话分组。 */
+      withoutProject: '无项目',
       projectListLabel: '项目列表',
       selectRepository: '选择本地项目文件夹',
       selectedRepositoryDescription: '已选择的本地项目',
@@ -1332,6 +1334,8 @@ export const languageCopy = {
       search: 'Search',
       skills: 'Extension management',
       projects: 'Projects',
+      /** 英文沿用项目选择器中的无项目分组名称。 */
+      withoutProject: 'Without a project',
       projectListLabel: 'Project list',
       selectRepository: 'Choose a local project folder',
       selectedRepositoryDescription: 'Selected local project',

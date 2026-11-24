@@ -1071,6 +1071,10 @@ export function SidebarNav(props: {
             </p>
           ) : (
             visibleProjects.map((project) => {
+              /** 固定工作区身份用于识别未归入用户项目的会话。 */
+              const isTemporaryWorkspace = project.id === temporaryWorkspaceId;
+              /** 侧栏标题和读屏名称共用当前语言的分组名称。 */
+              const projectLabel = isTemporaryWorkspace ? copy.withoutProject : project.name;
               const isActiveProject =
                 project.id === props.activeProjectId &&
                 props.activeNavTarget !== 'settings' &&
@@ -1175,7 +1179,7 @@ export function SidebarNav(props: {
                 <section
                   className="project-sidebar-item"
                   key={project.id}
-                  aria-label={`${copy.projects}${copy.labelSeparator}${project.name}`}
+                  aria-label={isTemporaryWorkspace ? projectLabel : `${copy.projects}${copy.labelSeparator}${projectLabel}`}
                   data-motion-surface="list-item"
                   data-motion-state={enteringProjectIds.has(project.id) ? 'entering' : undefined}
                 >
@@ -1188,7 +1192,7 @@ export function SidebarNav(props: {
                         else projectMenuAnchorRefs.current.delete(project.id);
                       },
                       onContextMenu: (event) => {
-                        if (project.id === temporaryWorkspaceId) return;
+                        if (isTemporaryWorkspace) return;
                         event.preventDefault();
                         event.stopPropagation();
                         /** 整行的右边缘作为锚点，不遮挡项目名称。 */
@@ -1197,7 +1201,7 @@ export function SidebarNav(props: {
                       },
                       onKeyDown: (event) => {
                         // 标准菜单键可替代右键；普通方向键仍由项目列表处理。
-                        if (project.id === temporaryWorkspaceId || (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))) return;
+                        if (isTemporaryWorkspace || (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10'))) return;
                         event.preventDefault();
                         event.stopPropagation();
                         /** 键盘与右键在整行右侧的同一位置打开。 */
@@ -1209,24 +1213,23 @@ export function SidebarNav(props: {
                     surface="fill"
                     expanded={showConversationNavigation ? expanded : undefined}
                     icon={<FolderIcon className="native-folder-icon zeus-avatar-token" weight="regular" aria-hidden="true" />}
-                    label={<strong>{project.name}</strong>}
+                    label={<strong>{projectLabel}</strong>}
                     buttonProps={{
                       type: 'button',
                       tabIndex: isActiveProject ? 0 : -1,
                       'data-source-list-item': 'true',
-                      'aria-label':
-                        project.id === temporaryWorkspaceId ? (props.appLanguage === 'zh-CN' ? '临时会话' : 'Temporary conversations') : `${props.appLanguage === 'zh-CN' ? '项目' : 'Project'}${copy.labelSeparator}${project.name}`,
+                      'aria-label': isTemporaryWorkspace ? projectLabel : `${zh ? '项目' : 'Project'}${copy.labelSeparator}${projectLabel}`,
                       'aria-current': isActiveProject ? 'true' : undefined,
-                      'aria-haspopup': project.id === temporaryWorkspaceId ? undefined : 'menu',
+                      'aria-haspopup': isTemporaryWorkspace ? undefined : 'menu',
                       'aria-controls': showConversationNavigation ? projectConversationsId : menuOpen ? `project-more-menu-${project.id}` : undefined,
                       // 有会话子级的布局整行切换展开；纯项目导航布局继续进入项目。
                       onClick: () => {
                         if (showConversationNavigation) toggleProjectCollapsed(project.id, expanded);
-                        else props.onOpenProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks');
+                        else props.onOpenProjectSection(project, isTemporaryWorkspace ? 'sessions' : 'tasks');
                       },
                     }}
                     actions={
-                      project.id === temporaryWorkspaceId ? undefined : projectMenuPortalHost ? (
+                      isTemporaryWorkspace ? undefined : projectMenuPortalHost ? (
                         createPortal(<MotionPresence>{projectMorePopover}</MotionPresence>, projectMenuPortalHost)
                       ) : (
                         <MotionPresence>{projectMorePopover}</MotionPresence>
@@ -1238,7 +1241,7 @@ export function SidebarNav(props: {
                       <div className="project-sidebar-conversations">
                         {showConversationNavigation && conversationGroup ? (
                           <ProjectConversationTree
-                            groups={[conversationGroup]}
+                            groups={[isTemporaryWorkspace ? { ...conversationGroup, projectName: projectLabel } : conversationGroup]}
                             selectedConversationId={props.selectedConversationId}
                             conversationStates={props.conversationStates}
                             onSelectConversation={props.onSelectConversation}
