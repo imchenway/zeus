@@ -22,6 +22,7 @@ import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
 import { createAutomationNotificationService } from './automationNotificationService.js';
 import { probeCodexConversation } from './codexConnectionDiagnostic.js';
+import { modelConnectionWebsiteIconOrigin, readModelConnectionWebsiteIcon } from './modelConnectionWebsiteIcon.js';
 import {
   checkAiCliAdapter,
   powerShellCommandArguments,
@@ -4631,8 +4632,37 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get<{ Querystring: { view?: string } }>('/api/model-connections', async (request) => {
     // 行内图标只需供应商外观，避开密钥状态、价目和完整模型目录。
-    if (request.query.view === 'appearance') return { items: modelConnections.listMetadata().map(({ id, name, templateId, iconDataUrl }: ModelConnectionRecord) => ({ id, name, templateId, iconDataUrl })) };
+    if (request.query.view === 'appearance') {
+      return {
+        items: modelConnections.listMetadata().map((connection: ModelConnectionRecord) => ({
+          id: connection.id,
+          name: connection.name,
+          templateId: connection.templateId,
+          iconDataUrl: connection.iconDataUrl,
+          websiteIconOrigin: modelConnectionWebsiteIconOrigin(connection),
+        })),
+      };
+    }
     return { items: await modelConnections.list() };
+  });
+
+  /** 同源请求共用一次在途下载，持久缓存只保存客户端解码后的 PNG。 */
+  const websiteIconRequests = new Map<string, Promise<string | null>>();
+  server.get<{ Params: { connectionId: string }; Querystring: { faviconOnly?: string } }>('/api/model-connections/:connectionId/website-icon', async (request, reply) => {
+    // 下载地址由已保存的连接派生，不接受客户端提交的外部 URL。
+    reply.header('Cache-Control', 'no-store');
+    const connection = modelConnections.listMetadata().find((item: ModelConnectionRecord) => item.id === request.params.connectionId);
+    const origin = connection && modelConnectionWebsiteIconOrigin(connection);
+    if (!origin) return null;
+    /** 原始图片解码失败时，客户端可仅重试网站的常规图标路径。 */
+    const faviconOnly = request.query.faviconOnly === 'true';
+    const requestKey = origin + (faviconOnly ? '/favicon.ico' : '/');
+    let pending = websiteIconRequests.get(requestKey);
+    if (!pending) {
+      pending = readModelConnectionWebsiteIcon(origin, faviconOnly).finally(() => websiteIconRequests.delete(requestKey));
+      websiteIconRequests.set(requestKey, pending);
+    }
+    return { origin, dataUrl: await pending };
   });
 
   server.get('/api/zentao-instances', async () => ({ items: await zentaoCredentials.list() }));

@@ -104,7 +104,16 @@ export interface ModelConnectionRecord {
 }
 
 /** 各窗口按连接身份读取图标，无需加载完整模型配置。 */
-export type ModelConnectionAppearance = Pick<ModelConnectionRecord, 'id' | 'name' | 'templateId' | 'iconDataUrl'>;
+export type ModelConnectionAppearance = Pick<ModelConnectionRecord, 'id' | 'name' | 'templateId' | 'iconDataUrl'> & {
+  /** 需要自动取图时提供站点来源，供同源连接共用缓存。 */
+  websiteIconOrigin?: string;
+};
+
+/** 待解码的站点图标，来源用于校验期间是否编辑了连接地址。 */
+export interface ModelConnectionWebsiteIcon {
+  origin: string;
+  dataUrl: string | null;
+}
 
 export interface SaveModelConnectionRequest {
   name: string;

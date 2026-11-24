@@ -3,6 +3,7 @@ import type { IntegrationApiClient } from './features/integrations/integrationAp
 import type { ModelConnectionAppearance } from './features/integrations/integrationContracts.js';
 import { modelProviderAppearanceChangedEvent } from './features/integrations/modelCatalogEvents.js';
 import { CachedQuery } from './cachedQuery.js';
+import { loadWebsiteModelConnectionIcon, readCachedWebsiteModelConnectionIcon } from './settings/modelConnectionIcon.js';
 
 /** 内置品牌图案已去除外围留白，彩色品牌保留素材原色。 */
 const brands = new Map<string, { name: string; url: string; monochrome?: boolean }>([
@@ -16,19 +17,44 @@ const brands = new Map<string, { name: string; url: string; monochrome?: boolean
   ['zai', { name: 'Z.ai', url: new URL('./assets/model-providers/zai.svg', import.meta.url).href, monochrome: true }],
 ]);
 
+/** 将就绪的网站图标并入外观，手动上传字段仍只代表用户的选择。 */
+type ModelProviderAppearance = ModelConnectionAppearance & { websiteIconDataUrl?: string };
 /** 连接外观按持久身份索引，供 HTML 和原生菜单共用。 */
-type ModelProviderAppearances = ReadonlyMap<string, ModelConnectionAppearance>;
+type ModelProviderAppearances = ReadonlyMap<string, ModelProviderAppearance>;
 /** 冷加载或独立窗口缺少目录时使用同一空视图。 */
 const emptyAppearances: ModelProviderAppearances = new Map();
 /** 原生菜单可等待同一在途读取，行内图标只消费已完成的值。 */
 const appearances = createContext<{ items: ModelProviderAppearances; query: CachedQuery<ModelProviderAppearances> | null }>({ items: emptyAppearances, query: null });
 
 /** 后台读取外观，配置保存或其他窗口修改后刷新；旧请求不能覆盖新配置。 */
-export function ModelProviderAppearanceScope({ client, children }: { client: Pick<IntegrationApiClient, 'loadModelConnectionAppearances'>; children: ReactNode }) {
+export function ModelProviderAppearanceScope({ client, children }: { client: Pick<IntegrationApiClient, 'loadModelConnectionAppearances' | 'loadModelConnectionWebsiteIcon'>; children: ReactNode }) {
   /** 半分钟缓存合并首屏读取与原生菜单首次打开。 */
   const query = useMemo(() => new CachedQuery<ModelProviderAppearances>(async () => new Map((await client.loadModelConnectionAppearances()).map((item) => [item.id, item])), 30_000), [client]);
   const { value } = useSyncExternalStore(query.subscribe, query.getSnapshot, query.getSnapshot);
-  const context = useMemo(() => ({ items: value ?? emptyAppearances, query }), [value, query]);
+  /** 站点结果独立更新，获取网站图标时列表、选择器和原生菜单可以先显示。 */
+  const [websiteIcons, setWebsiteIcons] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const items = useMemo(() => {
+    if (!value || !websiteIcons.size) return value ?? emptyAppearances;
+    return new Map(Array.from(value, ([id, item]) => {
+      const websiteIconDataUrl = item.websiteIconOrigin && websiteIcons.get(item.websiteIconOrigin);
+      return [id, websiteIconDataUrl ? { ...item, websiteIconDataUrl } : item] as const;
+    }));
+  }, [value, websiteIcons]);
+  const context = useMemo(() => ({ items, query }), [items, query]);
+  useEffect(() => {
+    if (!value) return;
+    let active = true;
+    for (const item of value.values()) {
+      const origin = item.websiteIconOrigin;
+      if (!origin) continue;
+      void loadWebsiteModelConnectionIcon(origin, (faviconOnly) => client.loadModelConnectionWebsiteIcon(item.id, faviconOnly)).then((png) => {
+        if (active && png) setWebsiteIcons((current) => (current.get(origin) === png ? current : new Map(current).set(origin, png)));
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [client, value]);
   useEffect(() => {
     /** 外观只影响展示，读取失败时沿用上次成功状态。 */
     const refresh = () => {
@@ -57,7 +83,7 @@ export function ModelProviderAppearanceScope({ client, children }: { client: Pic
 }
 
 /** 图标旁的提示和独立用量窗口可复用当前供应商名称与本地图片。 */
-export function useModelProviderAppearances(): ReadonlyMap<string, ModelConnectionAppearance> {
+export function useModelProviderAppearances(): ModelProviderAppearances {
   return useContext(appearances).items;
 }
 
@@ -74,23 +100,24 @@ export function builtinModelProviderName(sourceId: string | null | undefined): s
 /** 同一外观也可以直接来自设置草稿或原生用量载荷。 */
 type ModelProviderBadgeProps = { sourceId?: string | null; sourceName?: string | null; templateId?: string; iconDataUrl?: string | null };
 
-/** 上传、模板和字母的优先级在原生菜单与行内组件中一致。 */
-function modelProviderVisual(props: ModelProviderBadgeProps, appearance?: ModelConnectionAppearance) {
+/** 上传、内置品牌、站点及字母回退的顺序由原生菜单和行内组件共用。 */
+function modelProviderVisual(props: ModelProviderBadgeProps, appearance?: ModelProviderAppearance) {
   const template = props.templateId ?? appearance?.templateId;
   const brandId = template ?? props.sourceId ?? '';
   const brand = brands.get(brandId);
   const custom = props.iconDataUrl === undefined ? appearance?.iconDataUrl : props.iconDataUrl;
+  const images = [custom, brand?.url, template === 'custom' ? appearance?.websiteIconDataUrl : undefined];
   const name = props.sourceName?.trim() || appearance?.name || brand?.name || '';
   const initial = name.match(/[\p{L}\p{N}]/u)?.[0]?.toLocaleUpperCase() ?? '·';
-  return { brandId, brand, custom, initial };
+  return { brandId, brand, images, initial };
 }
 
 /** 安装源与自定义连接以 sourceId 识别，模板只决定它的默认品牌图标。 */
 export function ModelProviderBadge(props: ModelProviderBadgeProps) {
   const appearance = useModelProviderAppearances().get(props.sourceId ?? '');
-  const [failedImage, setFailedImage] = useState<string>();
-  const { brandId, brand, custom, initial } = modelProviderVisual(props, appearance);
-  const image = custom && custom !== failedImage ? custom : brand?.url !== failedImage ? brand?.url : undefined;
+  const [failedImages, setFailedImages] = useState<ReadonlySet<string>>(() => new Set());
+  const { brandId, brand, images, initial } = modelProviderVisual(props, appearance);
+  const image = images.find((candidate) => candidate && !failedImages.has(candidate));
   return (
     <span
       className="model-provider-badge"
@@ -99,7 +126,7 @@ export function ModelProviderBadge(props: ModelProviderBadgeProps) {
       data-monochrome={image && image === brand?.url && brand?.monochrome ? true : undefined}
       aria-hidden="true"
     >
-      {image ? <img src={image} alt="" draggable={false} onError={() => setFailedImage(image)} /> : initial}
+      {image ? <img src={image} alt="" draggable={false} onError={() => setFailedImages((failed) => new Set(failed).add(image))} /> : initial}
     </span>
   );
 }
@@ -113,15 +140,15 @@ export async function modelProviderMenuIcons(items: ModelProviderAppearances): P
   const style = getComputedStyle(document.querySelector('.macos-ai-app') ?? document.documentElement);
   const primary = style.getPropertyValue('--zeus-brand-primary').trim() || '#6155d8';
   const text = style.getPropertyValue('--zeus-brand-text').trim() || primary;
-  const sources = new Map<string, ModelConnectionAppearance | undefined>([['codex', undefined], ...items]);
+  const sources = new Map<string, ModelProviderAppearance | undefined>([['codex', undefined], ...items]);
   const icons = await Promise.all(
     [...sources].map(async ([sourceId, appearance]) => {
-      const visual = modelProviderVisual({ sourceId }, appearance);
+      const visual = modelProviderVisual({ sourceId }, appearance && { ...appearance, websiteIconDataUrl: readCachedWebsiteModelConnectionIcon(appearance.websiteIconOrigin) });
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = menuIconPixels;
       const context = canvas.getContext('2d');
       if (!context) return null;
-      for (const url of [visual.custom, visual.brand?.url]) {
+      for (const url of visual.images) {
         if (!url) continue;
         try {
           const image = new Image();
@@ -134,7 +161,7 @@ export async function modelProviderMenuIcons(items: ModelProviderAppearances): P
           context.drawImage(image, (menuIconPixels - width) / 2, (menuIconPixels - height) / 2, width, height);
           return [sourceId, canvas.toDataURL('image/png')] as const;
         } catch {
-          // 清除无效内容和颜色滤镜，继续尝试模板或绘制字母。
+          // 清除无效内容和颜色滤镜，继续尝试下一个图标。
           canvas.width = menuIconPixels;
         }
       }

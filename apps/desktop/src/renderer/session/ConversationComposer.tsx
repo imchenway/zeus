@@ -635,7 +635,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 label={copy.model}
                 triggerLabel={`${copy.model}：${selectedModelLabel}`}
                 displayLabel={selectedModelLabel}
-                // 窄输入框通过容器查询只显示图标，模型名称继续用于提示和无障碍名称。
+                // 当前选择暂时没有目录选项时，用通用图标保留模型入口。
                 triggerIcon={<ModelBrainIcon />}
                 className="session-composer-model-dropdown"
                 value={effectiveModel}
