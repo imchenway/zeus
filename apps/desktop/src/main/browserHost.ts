@@ -12,6 +12,7 @@ import {
   type DownloadItem,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type NativeImage,
   type Rectangle,
   session,
   shell,
@@ -25,7 +26,8 @@ import { publishFile } from '@zeus/storage/platform-security';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
-import { defaultBrowserTranslationService, isFreeBrowserTranslationService, serializeBrowserComments, validBrowserTranslationSegments } from '@zeus/shared';
+import { defaultBrowserTranslationService, isFreeBrowserTranslationService, parseModelRef, serializeBrowserComments, validBrowserTranslationSegments } from '@zeus/shared';
+import { normalizeModelConnectionIcon } from '@zeus/ai-runtime';
 import type { createBrowserTranslationClient } from './browserTranslationClient.js';
 import type {
   ZeusBrowserApprovalDecision,
@@ -355,6 +357,9 @@ export class BrowserHost implements BrowserAutomationPort {
       const window = this.requireRendererWindow(event);
       const value = asRecord(input);
       const english = value.language === 'en-US';
+      /** 只解码实际出现在模型目录中的图标，一家供应商的菜单项复用同一个 NativeImage。 */
+      const providerIconData = value.providerIcons && typeof value.providerIcons === 'object' && !Array.isArray(value.providerIcons) ? asRecord(value.providerIcons) : {};
+      const providerIcons = new Map<string, NativeImage | undefined>();
       /** 菜单状态来自当前标签，不能由渲染器伪造网址或导航能力。 */
       const tab = this.requireConversationTab(requireNonEmptyString(value.conversationId, 'conversationId'), requireNonEmptyString(value.tabId, 'tabId'));
       /** 等待目录期间页面可能关闭或导航，菜单只能用于原来的页面。 */
@@ -388,7 +393,24 @@ export class BrowserHost implements BrowserAutomationPort {
           }
           /** 目录身份与翻译命令共用完整 modelRef。 */
           const catalog = result.value;
-          for (const model of catalog.items) services.append(new MenuItem({ label: model.label, type: 'checkbox', checked: selectedId === model.id, click: () => resolveSelection({ action: 'translation_service', serviceId: model.id }) }));
+          for (const model of catalog.items) {
+            const sourceId = parseModelRef(model.id)?.sourceId;
+            if (sourceId && !providerIcons.has(sourceId)) {
+              const dataURL = normalizeModelConnectionIcon(providerIconData[sourceId]);
+              const icon = nativeImage.createEmpty();
+              if (dataURL) icon.addRepresentation({ scaleFactor: 2, dataURL });
+              providerIcons.set(sourceId, icon.isEmpty() ? undefined : icon);
+            }
+            services.append(
+              new MenuItem({
+                label: model.label,
+                icon: sourceId ? providerIcons.get(sourceId) : undefined,
+                type: 'checkbox',
+                checked: selectedId === model.id,
+                click: () => resolveSelection({ action: 'translation_service', serviceId: model.id }),
+              }),
+            );
+          }
           if (catalog.codexLoginRequired) services.append(new MenuItem({ label: english ? 'Sign in to Codex' : '登录 Codex', click: () => resolveSelection('translation_login') }));
           if (!catalog.items.length && !catalog.codexLoginRequired) services.append(new MenuItem({ label: catalog.warning || (english ? 'No available models' : '暂无可用模型'), enabled: false }));
         }
@@ -710,7 +732,12 @@ export class BrowserHost implements BrowserAutomationPort {
       if (!tab?.translation || event.senderFrame !== event.sender.mainFrame || value.runId !== tab.translation.id || !['working', 'ready', 'error'].includes(String(value.state)) || !tab.snapshot.translation) return;
       tab.snapshot = {
         ...tab.snapshot,
-        translation: { state: value.state as 'working' | 'ready' | 'error', serviceLabel: tab.snapshot.translation.serviceLabel, ...(typeof value.message === 'string' ? { message: value.message.slice(0, 500) } : {}) },
+        translation: {
+          state: value.state as 'working' | 'ready' | 'error',
+          serviceLabel: tab.snapshot.translation.serviceLabel,
+          modelSourceId: tab.snapshot.translation.modelSourceId,
+          ...(typeof value.message === 'string' ? { message: value.message.slice(0, 500) } : {}),
+        },
       };
       this.emitSnapshot(tab.snapshot.conversationId);
     });
@@ -1669,7 +1696,7 @@ export class BrowserHost implements BrowserAutomationPort {
         label = selected.label;
       }
       if (run.controller.signal.aborted || tab.translation !== run) return;
-      tab.snapshot = { ...tab.snapshot, translation: { state: 'working', serviceLabel: label } };
+      tab.snapshot = { ...tab.snapshot, translation: { state: 'working', serviceLabel: label, modelSourceId: isFreeBrowserTranslationService(serviceId) ? undefined : parseModelRef(serviceId)?.sourceId } };
       tab.view!.webContents.send('zeus-browser-page:command', { type: 'start_translation', runId: run.id, serviceId });
       this.emitSnapshot(tab.snapshot.conversationId);
     } catch (error) {

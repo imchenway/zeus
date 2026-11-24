@@ -1,0 +1,61 @@
+/* 每个入口只定义占位尺寸，同一区域的品牌和自定义图标使用相同宽高。 */
+.model-provider-badge {
+  --model-provider-size: 20px;
+  inline-size: var(--model-provider-size);
+  block-size: var(--model-provider-size);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+}
+
+.model-provider-badge img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+/* 用量表和只读目录中的文字沿用行内布局。 */
+.model-provider-labelled {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+  vertical-align: middle;
+}
+
+.zeus-icon-tooltip[data-model-provider] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zeus-icon-tooltip .model-provider-badge {
+  --model-provider-size: 16px;
+}
+
+/* 原 Google Antigravity 图案在大品牌图标中带留白，行内显示按可见轮廓对齐。 */
+.model-provider-badge[data-brand='antigravity'] img {
+  transform: scale(1.33);
+}
+
+.model-provider-badge[data-initial] {
+  --model-provider-fill: color-mix(in srgb, var(--zeus-brand-primary) 14%, var(--usage-panel, var(--zeus-product-panel, white)));
+  border-radius: 50%;
+  color: var(--zeus-brand-text);
+  background-color: var(--model-provider-fill);
+  box-shadow: 0 0 0 1px var(--model-provider-fill);
+  font-size: calc(var(--model-provider-size) * 0.67);
+  font-weight: 620;
+  line-height: 1;
+}
+
+:is(.theme-dark, [data-zeus-theme='dark'], [data-appearance='dark']) .model-provider-badge[data-monochrome] img {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :is(.theme-system, [data-zeus-theme='system'], [data-appearance='system']) .model-provider-badge[data-monochrome] img {
+    filter: invert(1);
+  }
+}

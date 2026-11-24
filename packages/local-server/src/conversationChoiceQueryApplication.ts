@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { compareConversationWorkStartedDesc } from '@zeus/shared';
+import { parseModelRef } from '@zeus/ai-runtime';
 import {
   isInFlightSubmission,
   type ConversationAttentionKind,
@@ -166,8 +167,20 @@ export class ConversationChoiceQueryApplication {
 
   toChoice(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {
     const state = this.projectState(conversation, context);
+    const summary = this.toSummary(conversation, context);
+    // 运行轮次使用已下发的模型。下轮选择只影响后续执行，不覆盖当前轮次。
+    const active =
+      context.inProgressTurnsByConversationId.get(conversation.id)?.some((turn) => turn.providerTurnId || turn.nativeRunId) ||
+      context.recoverableSubmissionsByConversationId.get(conversation.id)?.some((submission) => submission.status === 'active');
+    const nextModel = !active && !conversation.archived && conversation.transportKind === 'codex_native' ? parseJsonObject(conversation.nextTurnSettingsJson).model : undefined;
+    const selected = typeof nextModel === 'string' && nextModel.trim() ? nextModel.trim() : null;
+    const reference = parseModelRef(selected ?? (!summary.model.sourceId ? (summary.model.id ?? '') : ''));
+    const agent = conversation.agentKind ?? conversation.providerId;
+    const sourceId = summary.model.sourceId ?? (agent === 'codex' || agent === 'copilot' || agent === 'antigravity' ? agent : null);
     return {
-      ...this.toSummary(conversation, context),
+      ...summary,
+      /** 当前列表展示身份独立于可供恢复使用的历史模型。 */
+      displayModel: { sourceId: reference?.sourceId ?? sourceId, id: reference?.modelId ?? selected ?? summary.model.id },
       /** 单条会话刷新与完整目录共用持久化的列表范围。 */
       listingScope: conversation.listingScope,
       listRuntimeState: state.runtimeState,

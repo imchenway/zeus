@@ -432,6 +432,11 @@
   overflow-wrap: anywhere;
 }
 
+/* 阶段摘要的图标与紧凑标签的行高对齐。 */
+.task-workflow-stage-meta .model-provider-badge {
+  --model-provider-size: 16px;
+}
+
 .task-workflow-stage-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10362,15 +10367,33 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
-  display: grid;
-  /* 状态退出网格后，标题使用类型图标之外的全部可用宽度。 */
+  display: flex;
+  /* 状态图标浮在末尾，剩余空间由型号与标题使用。 */
   gap: var(--zeus-sidebar-label-gap, 6px);
-  grid-template-columns: var(--zeus-sidebar-icon-column, 18px) minmax(0, 1fr);
   inline-size: 100%;
   min-block-size: 38px;
   padding: 6px 0 6px 32px;
   position: relative;
   text-align: left;
+}
+
+.macos-ai-app .session-conversation-tree-row .model-provider-badge {
+  --model-provider-size: 18px;
+}
+
+.macos-ai-app .session-conversation-tree-row .session-conversation-workspace-icon {
+  inline-size: var(--zeus-sidebar-icon-column, 18px);
+}
+
+.macos-ai-app .session-conversation-model {
+  max-inline-size: 38%;
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 580;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .macos-ai-app .session-conversation-tree-item {
@@ -10435,6 +10458,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .session-conversation-tree-row > .session-conversation-title {
+  flex: 1;
   font-size: 13px;
   font-weight: 400;
   min-inline-size: 0;
@@ -11042,6 +11066,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .zeus-select-trigger:has(.zeus-select-trigger-icon) {
   grid-template-columns: 18px minmax(0, 1fr) 14px;
+}
+
+.macos-ai-app .zeus-select-trigger:has(.model-provider-badge) {
+  grid-template-columns: max-content minmax(0, 1fr) 14px;
 }
 
 .macos-ai-app .zeus-select-trigger:has(.zeus-select-trigger-icon):has(.zeus-select-value-color) {

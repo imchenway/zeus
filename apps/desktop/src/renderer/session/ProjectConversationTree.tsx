@@ -12,7 +12,7 @@ import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/S
 import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { NativeConversationChoice, NativeSessionState } from './sessionTypes.js';
-import { compareConversationWorkStartedDesc } from '@zeus/shared';
+import { compareConversationWorkStartedDesc, parseModelRef } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { hasPendingAsyncQuestion } from './AsyncQuestionMessage.js';
@@ -24,6 +24,7 @@ import { beginConversationNavigationTrace } from '../performanceTraceContext.js'
 import { ConversationContextMenu, type ConversationContextMenuLanguage } from './ConversationContextMenu.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
+import { builtinModelProviderName, ModelProviderBadge, useModelProviderAppearances } from '../modelProviderAppearance.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -123,6 +124,7 @@ interface FlattenedConversation {
 /** 按会话更新时间平铺项目内容，键盘导航只包含当前可见项。 */
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
+  const providerAppearances = useModelProviderAppearances();
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
   /** 归档失败只归属触发操作的会话行，不打断其他工作面。 */
   const [archiveError, setArchiveError] = useState<{ conversationId: string; error: unknown } | null>(null);
@@ -202,6 +204,13 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     return conversations.map(({ conversation, displayTitle }) => {
       const navigationId = conversationNavigationId(conversation);
       const current = navigationId === props.selectedConversationId;
+      /** 历史缓存缺少展示身份时，仍可使用已有的持久型号。 */
+      const model = conversation.displayModel ?? conversation.model;
+      const legacyRef = !conversation.displayModel && !model?.sourceId ? parseModelRef(model?.id ?? conversation.providerModel ?? '') : null;
+      const sourceId = model?.sourceId ?? legacyRef?.sourceId ?? (builtinModelProviderName(conversation.agent?.kind ?? conversation.providerId) ? (conversation.agent?.kind ?? conversation.providerId) : null);
+      const modelId = legacyRef?.modelId ?? model?.id ?? conversation.providerModel;
+      const sourceName = providerAppearances.get(sourceId ?? '')?.name ?? builtinModelProviderName(sourceId);
+      const modelTooltip = [sourceName, modelId].filter(Boolean).join(' / ');
       /** 工作区类型未取得时先保留图标位置，避免把工作树暂时显示为目录。 */
       const workspaceMode = conversation.workspaceId || conversation.environmentId ? 'worktree' : conversation.workspaceMode;
       const workspaceLabel = workspaceMode ? copy.workspaceMode[workspaceMode] : undefined;
@@ -226,6 +235,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
+            data-icon-tooltip={modelTooltip ? `${displayTitle} · ${modelTooltip}` : displayTitle}
+            data-icon-tooltip-provider={Boolean(modelTooltip) || undefined}
             onPointerEnter={prepareConversation}
             onFocus={prepareConversation}
             onClick={() => {
@@ -246,6 +257,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               setContextMenuState({ conversation, position: { x: rect.right + 6, y: rect.top } });
             }}
           >
+            <ModelProviderBadge sourceId={sourceId} sourceName={sourceName} />
             <span
               className="session-conversation-workspace-icon"
               data-workspace-mode={workspaceMode ?? undefined}
@@ -255,6 +267,12 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             >
               {workspaceMode === 'worktree' ? <GitBranch aria-hidden="true" /> : workspaceMode === 'direct' ? <Folder aria-hidden="true" /> : null}
             </span>
+            {modelId ? (
+              <span className="session-conversation-model" data-icon-tooltip={modelTooltip} data-icon-tooltip-provider="parent">
+                {sourceName ? <span className="visually-hidden">{sourceName} / </span> : null}
+                {modelId.split('/').at(-1)}
+              </span>
+            ) : null}
             <span className="session-conversation-title" data-icon-tooltip={displayTitle}>
               {displayTitle}
             </span>

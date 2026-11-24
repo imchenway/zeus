@@ -30,7 +30,9 @@ import type {
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { compareModelNames, presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
+import { compareModelNames, modelProviderOption, presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
+import { readModelConnectionIcon } from './modelConnectionIcon.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { useHoverIntent } from '../ui/useHoverIntent.js';
@@ -115,8 +117,14 @@ export function ModelConnectionsSettingsPane(props: {
     const selected = !props.onComplete ? (cached?.find((connection) => connection.id === query.selectedConnectionId) ?? cached?.[0]) : undefined;
     return selected ? connectionDraft(selected) : emptyDraft();
   });
+  /** 图片解码期间草稿仍可输入，合并到同一连接的最新表单。 */
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
   /** 子编辑器保存期间允许切换供应商，迟到回执只更新原连接。 */
   const selectedConnectionId = useRef(draft.id);
+  /** 文件选择仅由按钮触发，错误显示在字段旁。 */
+  const iconInput = useRef<HTMLInputElement>(null);
+  const [iconError, setIconError] = useState<string | null>(null);
   selectedConnectionId.current = draft.id;
   const [newModelId, setNewModelId] = useState('');
   /** 搜索和分页只改变展示，不影响供应商保存的模型集合。 */
@@ -213,6 +221,8 @@ export function ModelConnectionsSettingsPane(props: {
     setPendingInsecureHttpSave(null);
   }, [props.active]);
   const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
+  /** null 表示本次恢复默认，undefined 时显示已保存图标。 */
+  const draftAppearance = { sourceId: draft.id ?? undefined, sourceName: draft.name, templateId: draft.templateId, iconDataUrl: draft.iconDataUrl === undefined ? (current?.iconDataUrl ?? null) : draft.iconDataUrl };
   /** 已保存的地址为空时，显示目录使用的默认来源。 */
   const savedPricingUrl = current?.pricingUrl || current?.pricingCatalog?.url || '';
   /** 只展示当前供应商的草稿，包括有意清空的地址。 */
@@ -264,7 +274,7 @@ export function ModelConnectionsSettingsPane(props: {
     id: model.id,
     model: model.id,
     displayName: model.displayName,
-    sourceName: current?.name || draft.name,
+    ...draftAppearance,
     available: true,
     supports1MContext: model.supports1MContext,
     speedLabel: model.speedLabel,
@@ -303,6 +313,7 @@ export function ModelConnectionsSettingsPane(props: {
     query.selectedConnectionId = connection.id;
     selectionRevision.current += 1;
     setSaveState('idle');
+    setIconError(null);
     setModelQuery('');
     setRequestedModelPage(1);
     if (connection.id !== draft.id) setExpandedModelIds(new Set());
@@ -321,6 +332,19 @@ export function ModelConnectionsSettingsPane(props: {
     setDraft(next);
     setSaveState('idle');
     if (next.id && !props.onComplete) void save(next);
+  }
+
+  /** 文件解码结束时仍须属于同一份未变更的草稿。 */
+  async function replaceIcon(file: File): Promise<void> {
+    const revision = ++draftRevision.current;
+    const selection = selectionRevision.current;
+    setIconError(null);
+    try {
+      const iconDataUrl = await readModelConnectionIcon(file);
+      if (draftRevision.current === revision && selectionRevision.current === selection) changeDraft({ ...latestDraft.current, iconDataUrl });
+    } catch {
+      if (draftRevision.current === revision && selectionRevision.current === selection) setIconError(zh ? '请选择不超过 1 MB 的有效 PNG、JPEG 或 WebP 图片。' : 'Choose a valid PNG, JPEG, or WebP image up to 1 MB.');
+    }
   }
 
   function applyTemplate(templateId: ModelConnectionTemplateId): void {
@@ -372,6 +396,7 @@ export function ModelConnectionsSettingsPane(props: {
       ...(value.id === null ? { pricingUrl: pricingUrl.trim() } : {}),
       enabled: value.enabled,
       models: value.models,
+      ...(value.iconDataUrl !== undefined && value.iconDataUrl !== (current?.iconDataUrl ?? null) ? { iconDataUrl: value.iconDataUrl } : {}),
       ...(value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}),
     };
   }
@@ -412,6 +437,7 @@ export function ModelConnectionsSettingsPane(props: {
       if (props.onComplete) await refreshDefaultModels(saved.id);
     } catch (error) {
       setSaveState('failed');
+      if (input.iconDataUrl !== undefined) setDraft((value) => ({ ...value, iconDataUrl: undefined }));
       setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       savingRef.current = false;
@@ -597,6 +623,7 @@ export function ModelConnectionsSettingsPane(props: {
               selectedConnectionId.current = null;
               query.selectedConnectionId = null;
               setDraft(emptyDraft());
+              setIconError(null);
               setPricingUrlDraft(null);
               setModelQuery('');
               setRequestedModelPage(1);
@@ -616,7 +643,14 @@ export function ModelConnectionsSettingsPane(props: {
           size="regular"
           ariaLabel={zh ? '选择已保存供应商' : 'Choose a saved provider'}
           value={draft.id ?? ''}
-          options={[{ value: '', label: zh ? '新建供应商' : 'New provider' }, ...connections.map((connection) => ({ value: connection.id, label: connection.name }))]}
+          options={[
+            { value: '', label: zh ? '新建供应商' : 'New provider' },
+            ...connections.map((connection) => ({
+              value: connection.id,
+              label: connection.name,
+              ...modelProviderOption({ sourceId: connection.id, sourceName: connection.name, templateId: connection.templateId, iconDataUrl: connection.iconDataUrl }),
+            })),
+          ]}
           disabled={navigationBusy}
           onChange={(id) => {
             const connection = connections.find((item) => item.id === id);
@@ -656,7 +690,10 @@ export function ModelConnectionsSettingsPane(props: {
               onClick={() => selectConnection(connection)}
             >
               <span>
-                <strong>{connection.name}</strong>
+                <strong className="model-connection-name">
+                  <ModelProviderBadge sourceId={connection.id} sourceName={connection.name} templateId={connection.templateId} iconDataUrl={connection.iconDataUrl} />
+                  <span>{connection.name}</span>
+                </strong>
                 <small>
                   {connection.models.length} {zh ? '个模型' : 'models'}
                 </small>
@@ -669,6 +706,37 @@ export function ModelConnectionsSettingsPane(props: {
         </nav>
 
         <fieldset disabled={busy} className="model-connection-editor" key={draft.id ?? 'new'} aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}>
+          <div className="model-connection-icon-editor">
+            <span>{zh ? '供应商图标' : 'Provider icon'}</span>
+            <ModelProviderBadge {...draftAppearance} />
+            <Button variant="secondary" size="compact" type="button" onClick={() => iconInput.current?.click()}>
+              {zh ? '更换图标' : 'Change icon'}
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
+              type="button"
+              disabled={!draftAppearance.iconDataUrl}
+              onClick={() => {
+                setIconError(null);
+                changeDraft({ ...draft, iconDataUrl: null });
+              }}
+            >
+              {zh ? '恢复默认' : 'Reset icon'}
+            </Button>
+            <input
+              ref={iconInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file) void replaceIcon(file);
+              }}
+            />
+            {iconError ? <p role="alert">{iconError}</p> : null}
+          </div>
           <div
             className="model-connection-field-grid"
             onInput={() => setSaveState('idle')}
@@ -683,14 +751,16 @@ export function ModelConnectionsSettingsPane(props: {
                 size="regular"
                 value={draft.templateId}
                 onChange={applyTemplate}
-                options={[
-                  { value: 'custom', label: zh ? '自定义兼容供应商' : 'Custom compatible provider' },
-                  { value: 'kilo', label: 'Kilo' },
-                  { value: 'deepseek', label: 'DeepSeek' },
-                  { value: 'bailian', label: zh ? '阿里云百炼' : 'Alibaba Bailian' },
-                  { value: 'kimi', label: 'Kimi' },
-                  { value: 'zai', label: 'Z.AI / GLM' },
-                ]}
+                options={(
+                  [
+                    { value: 'custom', label: zh ? '自定义兼容供应商' : 'Custom compatible provider' },
+                    { value: 'kilo', label: 'Kilo' },
+                    { value: 'deepseek', label: 'DeepSeek' },
+                    { value: 'bailian', label: zh ? '阿里云百炼' : 'Alibaba Bailian' },
+                    { value: 'kimi', label: 'Kimi' },
+                    { value: 'zai', label: 'Z.AI / GLM' },
+                  ] as const
+                ).map((option) => ({ ...option, ...modelProviderOption({ templateId: option.value, sourceName: option.label }) }))}
               />
             </label>
             {draft.templateId === 'custom' ? (
@@ -798,7 +868,7 @@ export function ModelConnectionsSettingsPane(props: {
                   {formatZeusDateTime(pricingCatalog.retrievedAt, props.language)}
                 </small>
               ) : null}
-              {pricingCatalog && enabledModelCount > 0 ? <ProviderRatePopover key={current?.id} modelIds={enabledModelIds} prices={pricingCatalog.prices} language={props.language} /> : null}
+              {pricingCatalog && enabledModelCount > 0 ? <ProviderRatePopover key={current?.id} modelIds={enabledModelIds} prices={pricingCatalog.prices} language={props.language} provider={draftAppearance} /> : null}
               {missingPriceCount > 0 ? <small>{zh ? `${missingPriceCount}/${enabledModelCount} 缺价` : `${missingPriceCount}/${enabledModelCount} missing`}</small> : null}
             </div>
             {pricingCatalog?.error ? (
@@ -909,6 +979,7 @@ export function ModelConnectionsSettingsPane(props: {
               ) : null}
               {draft.templateId === 'custom' || props.onComplete ? (
                 <span className="model-add-row">
+                  <ModelProviderBadge {...draftAppearance} />
                   <input aria-label={zh ? '手工模型 ID' : 'Manual model ID'} placeholder={zh ? '手工模型 ID' : 'Manual model ID'} value={newModelId} onChange={(event) => setNewModelId(event.currentTarget.value)} />
                   <Button variant="secondary" size="compact" onClick={addManualModel} disabled={!newModelId.trim()}>
                     {zh ? '添加' : 'Add'}
@@ -936,6 +1007,7 @@ export function ModelConnectionsSettingsPane(props: {
                   key={`${draft.id ?? 'new'}:${model.id}`}
                   language={props.language}
                   model={model}
+                  provider={draftAppearance}
                   expanded={expandedModelIds.has(model.id)}
                   onToggle={() => setModelsExpanded([model.id], !expandedModelIds.has(model.id))}
                   readOnly={draft.templateId !== 'custom' && draft.templateId !== 'kilo'}
@@ -950,15 +1022,20 @@ export function ModelConnectionsSettingsPane(props: {
 
           {diagnostic ? (
             <p className={`model-connection-diagnostic ${diagnostic.ok ? 'success' : 'warning'}`}>
-              {diagnostic.ok ? (
-                zh ? (
-                  diagnostic.message
-                ) : (
-                  `Model ${diagnostic.testedModelId ?? ''} completed a real request. Image and tool capabilities still require separate probes.`
-                )
-              ) : (
-                <VisibleApplicationError error={diagnostic} language={zh ? 'zh-CN' : 'en'} />
-              )}
+              <span className="model-provider-labelled">
+                {diagnostic.testedModelId ? <ModelProviderBadge {...draftAppearance} /> : null}
+                <span>
+                  {diagnostic.ok ? (
+                    zh ? (
+                      diagnostic.message
+                    ) : (
+                      `Model ${diagnostic.testedModelId ?? ''} completed a real request. Image and tool capabilities still require separate probes.`
+                    )
+                  ) : (
+                    <VisibleApplicationError error={diagnostic} language={zh ? 'zh-CN' : 'en'} />
+                  )}
+                </span>
+              </span>
             </p>
           ) : null}
           {message ? (
@@ -969,7 +1046,13 @@ export function ModelConnectionsSettingsPane(props: {
           {props.onComplete ? (
             <label className="model-setup-default-model">
               <span>{completionModelLabel}</span>
-              <ZeusSelect size="regular" ariaLabel={completionModelLabel} value={defaultModelRef} onChange={setDefaultModelRef} options={selectableModels.map((model) => ({ value: model.id, label: model.displayName }))} />
+              <ZeusSelect
+                size="regular"
+                ariaLabel={completionModelLabel}
+                value={defaultModelRef}
+                onChange={setDefaultModelRef}
+                options={selectableModels.map((model) => ({ value: model.id, label: model.displayName, ...modelProviderOption(model.sourceId === draft.id ? draftAppearance : model) }))}
+              />
               <small>
                 {props.completionScope === 'conversation'
                   ? zh
@@ -1263,14 +1346,17 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
 }
 
 /** 自定义档位弹窗：只有用户点开才会出现，关闭即回到 Zeus 的默认判定。 */
-function ModelReasoningDialog(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; context: ModelReasoningContext; onClose: () => void }) {
+function ModelReasoningDialog(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; provider: Parameters<typeof ModelProviderBadge>[0]; context: ModelReasoningContext; onClose: () => void }) {
   const zh = props.language === 'zh-CN';
   const titleId = `model-reasoning-dialog-title-${props.model.id}`;
   return (
     <ModalPortal rootClassName="model-reasoning-portal" role="dialog" aria-labelledby={titleId} onDismiss={props.onClose}>
       <section className="model-reasoning-dialog zeus-solid-form-surface">
         <header>
-          <strong id={titleId}>{zh ? `自定义推理档位：${props.model.id}` : `Customize reasoning levels: ${props.model.id}`}</strong>
+          <strong id={titleId} className="model-provider-labelled">
+            <ModelProviderBadge {...props.provider} />
+            <span>{zh ? `自定义推理档位：${props.model.id}` : `Customize reasoning levels: ${props.model.id}`}</span>
+          </strong>
         </header>
         <ModelReasoningSection language={props.language} model={props.model} context={props.context} />
         <footer>
@@ -1291,7 +1377,7 @@ interface ModelReasoningOverrideRow {
 }
 
 /** 能力证据只展示真实观测过的内容；没探测过的模型不显示空话。 */
-function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; reasoning?: ModelReasoningContext }) {
+function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: ModelConnectionModel; provider: Parameters<typeof ModelProviderBadge>[0]; reasoning?: ModelReasoningContext }) {
   const zh = props.language === 'zh-CN';
   const capability = props.model.capability;
   /** 四项独立探测结论，供合并展示与逐项展示共用。 */
@@ -1328,7 +1414,10 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
       <div>
         <dt>{zh ? '模型版本' : 'Model version'}</dt>
         <dd>
-          {versionValue}
+          <span className="model-provider-labelled">
+            <ModelProviderBadge {...props.provider} />
+            {versionValue}
+          </span>
           <small>{zh ? `（${versionSource}）` : ` (${versionSource})`}</small>
         </dd>
       </div>
@@ -1370,7 +1459,7 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
           ) : null}
         </dd>
       </div>
-      {reasoningDialogOpen && props.reasoning ? <ModelReasoningDialog language={props.language} model={props.model} context={props.reasoning} onClose={() => setReasoningDialogOpen(false)} /> : null}
+      {reasoningDialogOpen && props.reasoning ? <ModelReasoningDialog language={props.language} model={props.model} provider={props.provider} context={props.reasoning} onClose={() => setReasoningDialogOpen(false)} /> : null}
     </dl>
   );
 }
@@ -1408,7 +1497,7 @@ function requiresInsecureHttpConfirmation(baseUrl: string, existingBaseUrl?: str
 }
 
 /** 已启用模型共用一个原生费率浮层，缺价保留空单价。 */
-function ProviderRatePopover(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US' }) {
+function ProviderRatePopover(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US'; provider: Parameters<typeof ModelProviderBadge>[0] }) {
   const id = useId();
   const anchor = `--provider-rates-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const surface = useRef<HTMLDivElement>(null);
@@ -1479,14 +1568,14 @@ function ProviderRatePopover(props: { modelIds: string[]; prices: ModelPrice[]; 
         onFocus={() => clearTimeout(closeTimer.current)}
         onBlur={closeRatesLater}
       >
-        <ProviderRateTable modelIds={props.modelIds} prices={props.prices} language={props.language} />
+        <ProviderRateTable {...props} />
       </div>
     </div>
   );
 }
 
 /** 费率表保留币种、计费单位及适用条件，所有数值为空的列自动省略。 */
-function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US' }) {
+function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; language: 'zh-CN' | 'en-US'; provider: Parameters<typeof ModelProviderBadge>[0] }) {
   const zh = props.language === 'zh-CN';
   const rows = props.modelIds.flatMap<{ model: string; price?: ModelPrice; charge?: MeteredCharge }>((model) => {
     const prices = props.prices.filter((price) => price.model === model);
@@ -1524,7 +1613,12 @@ function ProviderRateTable(props: { modelIds: string[]; prices: ModelPrice[]; la
       <tbody>
         {rows.map(({ model, price, charge }, index) => (
           <tr key={`${model}:${index}`}>
-            <th scope="row">{model}</th>
+            <th scope="row">
+              <span className="model-provider-labelled">
+                <ModelProviderBadge {...props.provider} />
+                {model}
+              </span>
+            </th>
             {visibleColumns.map((column) => (
               <td key={column.label} data-numeric={column.numeric}>
                 {column.value(price, charge) ?? '—'}
@@ -1556,6 +1650,8 @@ function excludedRateHours(windows: NonNullable<ModelPrice['excludedUtcWindows']
 function ModelDefinitionEditor(props: {
   language: 'zh-CN' | 'en-US';
   model: ModelConnectionModel;
+  /** 模型卡片与启用菜单使用同一供应商外观。 */
+  provider: Parameters<typeof ModelProviderBadge>[0];
   readOnly: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -1598,7 +1694,10 @@ function ModelDefinitionEditor(props: {
         </span>
         <Button unstyled type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
           <span>
-            <strong data-icon-tooltip={model.displayName || model.id}>{model.displayName || model.id}</strong>
+            <strong className="model-connection-name" data-icon-tooltip={model.displayName || model.id} data-icon-tooltip-provider>
+              <ModelProviderBadge {...props.provider} />
+              <span>{model.displayName || model.id}</span>
+            </strong>
             <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
@@ -1674,7 +1773,7 @@ function ModelDefinitionEditor(props: {
               </label>
             </div>
           )}
-          <ModelCapabilityFacts language={props.language} model={model} {...(props.reasoning ? { reasoning: props.reasoning } : {})} />
+          <ModelCapabilityFacts language={props.language} model={model} provider={props.provider} {...(props.reasoning ? { reasoning: props.reasoning } : {})} />
         </div>
       </Collapsible>
     </article>

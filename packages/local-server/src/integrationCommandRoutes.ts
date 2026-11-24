@@ -74,8 +74,10 @@ export function registerIntegrationCommandRoutes(options: {
         externalOperationId: externalOperationId(parsed),
         sensitiveValues: sensitiveValues(parsed.input.apiKey, parsed.input.pricingAccessToken),
         invoke: async () => {
+          const previous = parsed.input.iconDataUrl === undefined ? undefined : options.modelConnections.listMetadata().find((item) => item.id === request.params.connectionId);
           const connection = await options.modelConnections.update(request.params.connectionId, parsed.input);
-          await options.refreshModelRuntime();
+          // 只更换外观时不清除正在使用的运行目录或认证状态。
+          if (!previous || parsed.input.apiKey || parsed.input.pricingAccessToken || modelConnectionRuntimeSettings(previous) !== modelConnectionRuntimeSettings(connection)) await options.refreshModelRuntime();
           return connection;
         },
         mutateAcceptedBusinessState: (connection) => appendModelConnectionAudit(options, 'model.connection.updated', connection, parsed.input.allowInsecureHttp === true),
@@ -503,6 +505,11 @@ function modelApiKeyScope(connectionId: string): string {
   return `model_connection:${connectionId}:api_key`;
 }
 
+/** 相同连接的运行与价目配置相等时，图标改动无需重建模型目录。 */
+function modelConnectionRuntimeSettings(connection: ModelConnectionRecord): string {
+  return JSON.stringify([connection.name, connection.templateId, connection.baseUrl, connection.modelsPath, connection.enabled, connection.models, connection.pricingUrl, connection.pricingProfile, connection.pricingCredentialId]);
+}
+
 function appendModelConnectionAudit(
   options: Pick<Parameters<typeof registerIntegrationCommandRoutes>[0], 'appendAuditLog'>,
   action: 'model.connection.created' | 'model.connection.updated',
@@ -537,7 +544,7 @@ function appendZentaoAudit(options: Pick<Parameters<typeof registerIntegrationCo
 }
 
 function assertModelConnectionInput(input: SaveModelConnectionRequest): void {
-  assertAllowedKeys(input, ['name', 'templateId', 'baseUrl', 'modelsPath', 'pricingUrl', 'pricingProfile', 'pricingAccessToken', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
+  assertAllowedKeys(input, ['name', 'templateId', 'iconDataUrl', 'baseUrl', 'modelsPath', 'pricingUrl', 'pricingProfile', 'pricingAccessToken', 'enabled', 'models', 'apiKey', 'allowInsecureHttp'], 'model connection input');
 }
 
 function assertZentaoInput(input: SaveZentaoInstanceRequest): void {

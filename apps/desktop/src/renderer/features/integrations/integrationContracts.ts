@@ -84,6 +84,8 @@ export interface ModelConnectionRecord {
   id: string;
   name: string;
   templateId: ModelConnectionTemplateId;
+  /** 已保存的本地 PNG 图标。 */
+  iconDataUrl?: string;
   baseUrl: string;
   modelsPath: string;
   /** 一个价格清单页面覆盖全部模型。 */
@@ -101,9 +103,14 @@ export interface ModelConnectionRecord {
   updatedAt: string;
 }
 
+/** 各窗口按连接身份读取图标，无需加载完整模型配置。 */
+export type ModelConnectionAppearance = Pick<ModelConnectionRecord, 'id' | 'name' | 'templateId' | 'iconDataUrl'>;
+
 export interface SaveModelConnectionRequest {
   name: string;
   templateId: ModelConnectionTemplateId;
+  /** 省略保留原样，null 清除。 */
+  iconDataUrl?: string | null;
   baseUrl: string;
   modelsPath: string;
   /** 可选的供应商价格页面。 */

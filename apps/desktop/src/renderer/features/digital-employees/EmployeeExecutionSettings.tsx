@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { EmployeeWorkSettings } from '@zeus/shared';
 import { codexServiceTierLabel } from '../../session/serviceTierSelection.js';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
-import { presentModelOptions } from '../../modelOptionPresentation.js';
+import { modelProviderOption, modelProviderOptionForRef, presentModelOptions } from '../../modelOptionPresentation.js';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { PermissionModeControl } from '../../session/PermissionModeControl.js';
+import { resolveModelCapability } from '../../session/modelSelection.js';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
 import { SkillSelector } from '../skills/SkillSelector.js';
@@ -69,9 +70,11 @@ export function EmployeeExecutionSettings(props: {
   /** 缺省字段继承，显式 null 保留模型默认语义。 */
   const effective = { ...props.inherited, ...props.value };
   /** 空选项代表项目默认，表单值由当前层及继承配置决定。 */
-  const modelValue = effective.modelOverride ?? '';
+  const savedModelRef = effective.modelOverride ?? '';
   /** 未指定模型时，其他执行字段读取首选模型的能力。 */
-  const model = models.find((item) => item.id === (modelValue || preferredModel));
+  const model = resolveModelCapability(models, savedModelRef || preferredModel);
+  /** 已解析的历史型号使用目录中的稳定引用展示选中项。 */
+  const modelValue = savedModelRef ? (model?.id ?? savedModelRef) : '';
   /** 模型分组、排序、搜索与置顶跟随任务推送。 */
   const modelPresentation = useMemo(() => presentModelOptions(models, modelValue, props.language, { preserveMissingSelection: true }), [models, modelValue, props.language]);
   /** 已停用或移除的当前模型仍可识别。 */
@@ -81,6 +84,7 @@ export function EmployeeExecutionSettings(props: {
   if (unavailableModel) {
     modelFallbackOptions.push({
       value: modelValue,
+      ...(model ? modelProviderOption(model) : modelProviderOptionForRef(modelValue)),
       label: [model?.displayName?.trim() || model?.model || modelValue, model?.sourceName, zh ? '不可用' : 'Unavailable'].filter(Boolean).join(' · '),
       disabled: true,
     });

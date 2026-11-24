@@ -3,6 +3,7 @@ import { isCodexServiceTierId } from '@zeus/shared';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
 import type { GitCommitModelOption } from '../features/git/gitApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { modelProviderOption } from '../modelOptionPresentation.js';
 import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
 import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -116,7 +117,7 @@ export function GitCommitGenerationSettingsButton(props: { client: GitCommitMode
               size="compact"
               ariaLabel={props.zh ? '提交说明模型' : 'Commit message model'}
               value={settings?.modelRef ?? ''}
-              options={models.map((model) => ({ value: model.id, label: model.label }))}
+              options={models.map((model) => ({ value: model.id, label: model.label, ...modelProviderOption(model) }))}
               disabled={loading || !models.length}
               onChange={(id) => {
                 /** 切换模型时恢复该模型自己的推理与速率档位。 */

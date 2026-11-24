@@ -13,6 +13,7 @@ import { CodexInstallationGuide } from './CodexInstallationGuide.js';
 import { AntigravityAccountSettings } from './AntigravityAccountSettings.js';
 import { CopilotAccountSettings } from './CopilotAccountSettings.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
 
 /** 模型供应商设置顶部的常驻订阅入口，状态来自实际账号查询。 */
 export function CodexAccountSettings({ controller }: { controller: ModelSetupController }) {
@@ -148,7 +149,10 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           <ul>
             {presentedModels.map((model) => (
               <li key={model.id}>
-                <span>{model.displayName?.trim() || model.model}</span>
+                <span className="model-provider-labelled">
+                  <ModelProviderBadge sourceId="codex" />
+                  {model.displayName?.trim() || model.model}
+                </span>
               </li>
             ))}
           </ul>

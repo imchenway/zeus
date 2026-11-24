@@ -134,6 +134,10 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
   min-block-size: 28px;
   flex: 0 0 auto;
   padding: 4px 10px;
@@ -144,6 +148,16 @@ body:has(.menu-bar-usage-root),
   font: inherit;
   font-size: 12px;
   font-weight: 550;
+}
+
+.menu-bar-usage-root .model-provider-badge {
+  --model-provider-size: 18px;
+}
+
+.menu-bar-usage-provider-copy .model-provider-labelled > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .menu-bar-usage-tabs button[aria-selected='true'] {

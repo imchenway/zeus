@@ -152,6 +152,8 @@ export interface ModelConnectionRecord {
   id: string;
   name: string;
   templateId: ModelConnectionTemplateId;
+  /** 供应商本地图标，使用规范化的 PNG 数据地址。 */
+  iconDataUrl?: string;
   baseUrl: string;
   modelsPath: string;
   /** 可选价格清单页面；空值使用内置来源。 */
@@ -173,6 +175,8 @@ export interface SaveModelConnectionInput {
   id?: string;
   name: string;
   templateId?: ModelConnectionTemplateId;
+  /** 省略时保留，传 null 恢复默认图标。 */
+  iconDataUrl?: string | null;
   baseUrl: string;
   modelsPath?: string;
   /** 自定义供应商只需提供一个价格清单页面。 */
@@ -272,16 +276,19 @@ export function modelRef(sourceId: string, modelId: string): string {
   return `${encodeURIComponent(sourceId)}:${encodeURIComponent(modelId)}`;
 }
 
-export function parseModelRef(value: string): { sourceId: string; modelId: string } | null {
-  const boundary = value.indexOf(':');
-  if (boundary <= 0 || boundary >= value.length - 1) return null;
-  try {
-    const sourceId = decodeURIComponent(value.slice(0, boundary));
-    const modelId = decodeURIComponent(value.slice(boundary + 1));
-    return sourceId && modelId ? { sourceId, modelId } : null;
-  } catch {
-    return null;
-  }
+export { parseModelRef } from '@zeus/shared';
+
+/** 仅接受有尺寸和体积上限的内嵌 PNG，旧配置中的无效图标回退到默认。 */
+export function normalizeModelConnectionIcon(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 33_000) return undefined;
+  const encoded = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/u.exec(value)?.[1];
+  if (!encoded) return undefined;
+  const png = Buffer.from(encoded, 'base64');
+  if (png.length < 45 || png.toString('base64') !== encoded || png.subarray(0, 16).toString('hex') !== '89504e470d0a1a0a0000000d49484452') return undefined;
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  if (width < 1 || width > 64 || height < 1 || height > 64 || png.subarray(-12).toString('hex') !== '0000000049454e44ae426082') return undefined;
+  return value;
 }
 
 export function normalizeModelConnection(
@@ -295,12 +302,14 @@ export function normalizeModelConnection(
   const baseUrl = normalizeModelBaseUrl(input.baseUrl || template?.baseUrl || '');
   const modelsPath = normalizeModelsPath(input.modelsPath ?? template?.modelsPath ?? '/models');
   const pricingProfile = input.pricingProfile?.trim();
+  const iconDataUrl = normalizeModelConnectionIcon(input.iconDataUrl);
   if (pricingProfile) parseModelPricingProfile(pricingProfile);
   const models = normalizeConfiguredModels(input.models ?? [], template?.thinkingFormat ?? 'openai').map((model) => applyAutomaticCapabilityProfile(model, { templateId, baseUrl, protocolFamily: model.protocolFamily }, codexCatalog));
   return {
     id: normalizeIdentifier(options.id, '连接 ID'),
     name,
     templateId,
+    ...(iconDataUrl ? { iconDataUrl } : {}),
     baseUrl,
     modelsPath,
     ...(input.pricingUrl?.trim() ? { pricingUrl: normalizePricingPageUrl(input.pricingUrl) } : {}),

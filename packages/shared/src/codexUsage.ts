@@ -208,6 +208,14 @@ export interface KiloAccountUsage {
   error: string | null;
 }
 
+/** 独立用量表格所需的供应商外观，按实际用量来源传递。 */
+export interface UsageModelProviderAppearance {
+  sourceId: string;
+  sourceName: string;
+  templateId?: string;
+  iconDataUrl?: string;
+}
+
 export interface UsageProviderSummary {
   providerId: string;
   sourceId: string;

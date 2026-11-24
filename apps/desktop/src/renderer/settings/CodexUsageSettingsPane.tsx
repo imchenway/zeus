@@ -7,7 +7,8 @@ import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { compareModelNames } from '../modelOptionPresentation.js';
+import { compareModelNames, modelProviderOption } from '../modelOptionPresentation.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 用量详情只依赖统一分析接口。 */
@@ -105,6 +106,11 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
   const projects = usageFilterOptions(filterProviders, 'projects');
   /** 模型目录独立于已选项目，允许用户退出组合筛选。 */
   const models = usageFilterOptions(filterProviders, 'models');
+  /** 全部供应商视图中的同名模型仍是一个筛选项，图标展示实际贡献的来源。 */
+  const modelSources = Map.groupBy(
+    filterProviders.flatMap((entry) => entry.filters.models.map((group) => ({ modelId: group.id, provider: entry.provider }))),
+    (entry) => entry.modelId,
+  );
 
   /** 下钻沿用可用筛选，不让同一行进入详情后改变统计范围。 */
   const selectProvider = (providerId: string) => {
@@ -198,7 +204,10 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
                 value={selectedProvider?.provider.providerId ?? 'all'}
                 onChange={selectProvider}
                 searchable
-                options={[{ value: 'all', label: copy.allProviders }, ...providers.map((entry) => ({ value: entry.provider.providerId, label: entry.provider.name }))]}
+                options={[
+                  { value: 'all', label: copy.allProviders },
+                  ...providers.map(({ provider }) => ({ value: provider.providerId, label: provider.name, ...modelProviderOption({ sourceId: provider.sourceId, sourceName: provider.name }) })),
+                ]}
               />
             </div>
             <div>
@@ -222,7 +231,28 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
             </div>
             <div>
               <span>{copy.model}</span>
-              <ZeusSelect size="regular" ariaLabel={copy.model} value={model} onChange={setModel} searchable options={[{ value: '', label: copy.all }, ...models.map((group) => ({ value: group.id, label: group.label }))]} />
+              <ZeusSelect
+                size="regular"
+                ariaLabel={copy.model}
+                value={model}
+                onChange={setModel}
+                searchable
+                options={[
+                  { value: '', label: copy.all },
+                  ...models.map((group) => ({
+                    value: group.id,
+                    label: group.label,
+                    icon: (
+                      <span className="model-provider-labelled">
+                        {modelSources.get(group.id)?.map(({ provider }) => (
+                          <ModelProviderBadge key={provider.providerId} sourceId={provider.sourceId} sourceName={provider.name} />
+                        ))}
+                      </span>
+                    ),
+                    showIconInTrigger: true,
+                  })),
+                ]}
+              />
             </div>
           </div>
           <div className="codex-usage-content" aria-busy={loading}>
@@ -274,7 +304,10 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
               <tr key={analytics.provider.providerId}>
                 <th scope="row">
                   <Button data-busy-behavior="background" unstyled type="button" className="codex-usage-provider-open" onClick={() => props.onSelect(analytics.provider.providerId)}>
-                    <strong>{analytics.provider.name}</strong>
+                    <strong className="model-provider-labelled">
+                      <ModelProviderBadge sourceId={analytics.provider.sourceId} sourceName={analytics.provider.name} />
+                      {analytics.provider.name}
+                    </strong>
                     <small>
                       {isCodexSubscriptionUsage(analytics.provider) ? (analytics.provider.planType ?? copy.subscription) : 'API'}
                       <span aria-hidden="true"> →</span>
@@ -396,7 +429,10 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
   return (
     <section className="codex-usage-section codex-usage-local-tabs">
       <header className="codex-usage-local-tabs-header">
-        <strong>{props.analytics.provider.name}</strong>
+        <strong className="model-provider-labelled">
+          <ModelProviderBadge sourceId={props.analytics.provider.sourceId} sourceName={props.analytics.provider.name} />
+          {props.analytics.provider.name}
+        </strong>
         <nav className="codex-usage-local-tab-list" role="tablist" aria-label={copy.local} onKeyDown={handleLocalUsageTabKeyDown}>
           {tabs.map((tab) => (
             <Button unstyled id={tabId(tab.id)} key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={panelId(tab.id)} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)}>
@@ -416,6 +452,7 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
             key={`${props.dataKey}:models`}
             title={props.language === 'zh-CN' ? '模型明细' : 'Models'}
             rows={props.analytics.local.byModel}
+            showModelProvider
             language={props.language}
             showTitle={false}
             provider={props.analytics.provider}
@@ -809,7 +846,7 @@ function formatCalendarDate(value: Date, language: Language): string {
 }
 
 /** 各明细独立分页，过滤条件变更时由父级重新挂载并回到第一页。 */
-function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[]; language: Language; showTitle?: boolean; provider: UsageProviderAnalytics['provider'] }) {
+function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[]; language: Language; showTitle?: boolean; showModelProvider?: boolean; provider: UsageProviderAnalytics['provider'] }) {
   /** 用户请求页；最新数据缩短时立即夹紧显示范围。 */
   const [requestedPage, setRequestedPage] = useState(1);
   /** 当前可展示页。 */
@@ -835,8 +872,15 @@ function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[
           <tbody>
             {rows.slice((page - 1) * settingsPageSize, page * settingsPageSize).map((row) => (
               <tr key={row.id}>
-                <th scope="row" data-icon-tooltip={row.label}>
-                  {row.label}
+                <th scope="row" data-icon-tooltip={row.label} data-icon-tooltip-provider={props.showModelProvider || undefined}>
+                  {props.showModelProvider ? (
+                    <span className="model-provider-labelled">
+                      <ModelProviderBadge sourceId={props.provider.sourceId} sourceName={props.provider.name} />
+                      {row.label}
+                    </span>
+                  ) : (
+                    row.label
+                  )}
                 </th>
                 <td>{formatTokens(row.totalTokens, props.language)}</td>
                 <td>{formatPercent(row.cacheHitRate, props.language)}</td>
