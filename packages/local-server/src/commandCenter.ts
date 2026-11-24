@@ -162,6 +162,19 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
     runCommandRoute(reply, () => startRun(request.params.projectId, request.params.commandId, request.body, reply)),
   );
 
+  /** 执行历史按原命令 ID 读取，已删除的命令仍能从执行详情打开。 */
+  options.server.get('/api/projects/:projectId/commands/:commandId/runs', async (request: FastifyRequest<{ Params: { projectId: string; commandId: string }; Querystring: { cursor?: string } }>, reply) => {
+    /** 读取前确认执行所属项目仍可用。 */
+    const { projectId, commandId } = request.params;
+    if (!requireProject(projectId, reply)) return;
+    /** 首次请求省略游标；后续请求必须提供上页末尾的执行 ID。 */
+    const { cursor } = request.query;
+    /** 空游标、重复参数和其他命令的游标均视为读取失败。 */
+    const page = cursor === undefined || (typeof cursor === 'string' && cursor.length > 0) ? runs.listByCommand(projectId, commandId, cursor) : null;
+    if (!page) return reply.code(400).send({ error: 'ZEUS_INVALID_COMMAND_RUN_CURSOR', message: 'Command run history cursor is invalid' });
+    return page;
+  });
+
   options.server.get('/api/projects/:projectId/command-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { limit?: string } }>, reply) => {
     if (!requireProject(request.params.projectId, reply)) return;
     const requestedLimit = Number(request.query.limit ?? 100);

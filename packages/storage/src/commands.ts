@@ -5,6 +5,7 @@ import {
   type CommandDefinition,
   type CommandDefinitionInput,
   type CommandRun,
+  type CommandRunHistoryPage,
   type CommandRunNotification,
   type CommandRunStatus,
   type CommandRunTrigger,
@@ -496,6 +497,21 @@ export class CommandRunRepository {
 
   listByProject(projectId: string, limit = 100): CommandRun[] {
     return this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, [projectId, Math.max(1, Math.min(500, Math.trunc(limit)))]).map(mapCommandRunRow);
+  }
+
+  /** 先按项目和命令筛选，再以创建时间和执行 ID 为边界读取较早的记录。 */
+  listByCommand(projectId: string, commandId: string, cursor?: string): CommandRunHistoryPage | null {
+    /** 每页返回的执行记录数，额外一条只用于判断是否还有下一页。 */
+    const pageSize = 50;
+    /** 游标必须是当前项目内这条命令的一次执行。 */
+    const before = cursor === undefined ? undefined : this.db.get<{ created_at: string; id: string }>('SELECT created_at, id FROM command_runs WHERE project_id = ? AND command_id = ? AND id = ?', [projectId, commandId, cursor]);
+    if (cursor !== undefined && !before) return null;
+    /** 使用与排序相同的两个字段，允许同一毫秒内出现多条执行。 */
+    const rows = this.db.select<DbCommandRunRow>(
+      `${commandRunSelectSql()} WHERE project_id = ? AND command_id = ?${before ? ' AND (created_at, id) < (?, ?)' : ''} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      [projectId, commandId, ...(before ? [before.created_at, before.id] : []), pageSize + 1],
+    );
+    return { items: rows.slice(0, pageSize).map(mapCommandRunRow), nextCursor: rows.length > pageSize ? rows[pageSize - 1]!.id : null };
   }
 
   listActive(): CommandRun[] {

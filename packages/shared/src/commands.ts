@@ -88,6 +88,14 @@ export interface CommandRun {
   updatedAt: string;
 }
 
+/** 同一项目、同一命令的执行记录，按创建时间及执行 ID 从新到旧分页。 */
+export interface CommandRunHistoryPage {
+  /** 当前页包含的执行记录。 */
+  items: CommandRun[];
+  /** 下一页之前的最后一条记录 ID，null 表示已读到底。 */
+  nextCursor: string | null;
+}
+
 export interface CommandArtifact {
   id: string;
   runId: string;
