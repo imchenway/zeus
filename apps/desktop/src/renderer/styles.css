@@ -4899,6 +4899,8 @@ a {
   width: 14px;
 }
 .project-git-diff-side-by-side {
+  /* 绝对定位的加载占位以差异正文区为边界。 */
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
