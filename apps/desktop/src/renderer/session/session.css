@@ -219,7 +219,7 @@
 .session-codex-parity-v1 .session-quick-actions-surface[data-presentation='persistent'] {
   inline-size: 300px;
   inset-block-start: 16px;
-  inset-inline-end: 16px;
+  inset-inline: 16px auto;
   max-block-size: var(--session-quick-actions-available-height, calc(100vh - 90px));
   pointer-events: auto;
   position: absolute;
@@ -230,12 +230,14 @@
   inline-size: 0;
 }
 
-/* 常驻卡片独立占用右侧空间；收起后归还会话宽度。 */
+/* 常驻卡片的占位与分栏同步调整，卡片从左边缘进入并裁切多出的部分。 */
 .session-codex-parity-v1 .session-quick-actions-persistent-host {
   flex: 0 0 0;
   min-inline-size: 0;
+  overflow: clip;
   pointer-events: none;
   position: relative;
+  transition: flex-basis 180ms var(--zeus-motion-ease-out);
   z-index: 30;
 }
 
@@ -2507,6 +2509,11 @@
 .session-codex-parity-v1 .session-terminal-panel[data-position='right'][data-open='true'] {
   border-inline-start-width: 1px;
   inline-size: var(--session-terminal-width, 480px);
+}
+
+/* 右侧终端退场时裁切标签、搜索和正文，保留扣除分隔线后的内容宽度。 */
+.session-codex-parity-v1 .session-terminal-panel[data-position='right'][inert] > :not(.session-terminal-resizer) {
+  min-inline-size: max(0px, calc(var(--session-terminal-width, 480px) - 1px));
 }
 
 /* 首次挂载沿当前方向展开；后续重开直接接续当前过渡。 */
@@ -8336,7 +8343,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   transition: --session-context-width 180ms var(--zeus-motion-ease-out);
 }
 
-.session-codex-parity-v1 .session-sidecar-layout[data-context-resizing='true'] {
+.session-codex-parity-v1 .session-sidecar-layout[data-context-resizing='true'],
+.session-codex-parity-v1 .session-sidecar-layout[data-context-resizing='true'] .session-quick-actions-persistent-host {
   transition: none;
 }
 
@@ -8350,7 +8358,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   flex: 1 1 auto;
   min-block-size: 0;
   min-inline-size: 0;
-  overflow: hidden;
+  /* 固定排版的右栏沿窗口边缘裁切，聚焦时也不能滚动整个分栏。 */
+  overflow: clip;
   position: relative;
 }
 
@@ -8391,7 +8400,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: var(--session-canvas);
   display: flex;
   flex-direction: column;
-  inset: 0;
+  /* 内容从分隔线开始绘制，退场时多出的部分由外层裁切。 */
+  inline-size: 100%;
+  inset-block: 0;
+  inset-inline-start: 0;
   min-block-size: 0;
   min-inline-size: 0;
   overflow: hidden;
@@ -10718,6 +10730,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-sidecar-layout,
+  .session-codex-parity-v1 .session-quick-actions-persistent-host,
   .session-codex-parity-v1 .session-terminal-panel {
     transition: none;
   }
@@ -13341,6 +13354,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   border: 0;
   flex: 1 1 0;
   min-block-size: 32px;
+  min-inline-size: var(--session-context-toolbar-content-width, 0px);
   padding: 0;
 }
 

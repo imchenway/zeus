@@ -2217,10 +2217,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const projectTools = useContext(ProjectToolContext);
   /** 仅当前可见的会话工作面可以占用全宽。 */
   const contextFullWidth = requestedContextFullWidth;
-  /** 关闭期间保留原工作面的资源，重开或切换入口会中断退出。 */
-  const [closingContext, setClosingContext] = useState<SessionContextWorkspace | null>(null);
-  /** 工作面身份变化后，旧关闭请求不再影响当前面板。 */
-  const contextClosing = closingContext !== null && closingContext === contextWorkspace;
+  /** 退出期间保留工作面身份和退场前的排版宽度，单位为 CSS 像素。 */
+  const [closingContext, setClosingContext] = useState<{ workspace: SessionContextWorkspace; paneWidth?: number; toolbarWidth?: number } | null>(null);
+  /** 工作面身份变化后，旧关闭请求的宽度不再影响当前面板。 */
+  const contextExit = closingContext?.workspace === contextWorkspace ? closingContext : null;
+  const contextClosing = contextExit !== null;
   /** 交互在收拢开始时关闭，画面在收拢结束时移除。 */
   const contextOpen = contextWorkspace.kind !== 'none' && !contextClosing;
   /** 顶栏和正文由同一个元素上的宽度过渡驱动。 */
@@ -2250,8 +2251,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const planWorkspaceItem = contextWorkspace.kind === 'plan' ? contextWorkspace.item : null;
   const sessionReady = props.state != null;
   const resolvedBrowserTargetWidth = resolveBrowserTargetWidth(browserLayoutWidth, browserPaneShare, contextFullWidth);
-  /** 环境卡常驻判定只用正文列真实可用宽度：右侧浏览器工作面、停靠终端和全宽工作面占用的空间都不算正文空间。 */
-  const conversationColumnWidth = contextFullWidth && contextPresent ? 0 : Math.max(0, browserLayoutWidth - (contextPresent ? resolvedBrowserTargetWidth : 0));
+  /** 环境卡随会话分栏归还空间。原生网页退出后才切换环境卡的位置，避免中途挤压网页。 */
+  const conversationColumnWidth = Math.max(0, browserLayoutWidth - (contextOpen || browserPresent ? resolvedBrowserTargetWidth : 0));
   const currentHeader = useMemo(() => createSessionHeaderSnapshot(props.conversation, props.task, owner, props.language), [owner, props.conversation, props.task, props.language]);
   const displayedHeader = currentHeader;
   // 本地缓存只支撑会话重挂载的首帧；没有待确认用户修改时，后续以服务端快照为权威。
@@ -2964,8 +2965,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   /** 开始收拢时交还焦点，原生标签在视区缩到零后释放。 */
   function closeContextWorkspace(options: { focusComposer?: boolean } = {}): void {
-    if (contextClosing || contextWorkspaceRef.current.kind === 'none') return;
-    setClosingContext(contextWorkspaceRef.current);
+    const workspace = contextWorkspaceRef.current;
+    if (contextClosing || workspace.kind === 'none') return;
+    /** 动画开始前量取实际宽度，包含尚在进行的全宽或分栏过渡。 */
+    const pane = browserSplitRef.current?.querySelector(':scope > .session-context-sidecar > .session-browser-pane');
+    const paneWidth = pane?.getBoundingClientRect().width;
+    const toolbarWidth = sessionContextToolbarWidth(contextMotionRef.current);
+    setClosingContext((current) => (current?.workspace === workspace ? current : { workspace, paneWidth, toolbarWidth }));
     setContextWorkspaceError(null);
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     /** 显式返回输入框时不再恢复工具入口。 */
@@ -2975,13 +2981,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   useEffect(() => {
-    if (!contextClosing || contextPresent) return;
+    if (!contextExit || contextPresent) return;
     /** 异步宿主回执只更新发起关闭的工作面。 */
+    const { workspace } = contextExit;
     const conversationId = workspaceIdentityRef.current;
-    const isCurrent = (): boolean => workspaceIdentityRef.current === conversationId && contextWorkspaceRef.current === closingContext;
+    const isCurrent = (): boolean => workspaceIdentityRef.current === conversationId && contextWorkspaceRef.current === workspace;
     /** 先让原生视区走完分栏过渡，再执行原有标签清理。 */
     async function finishClose(): Promise<void> {
-      if (closingContext?.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
+      if (workspace.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
         if (closingBrowserConversationsRef.current.has(conversationId)) return;
         closingBrowserConversationsRef.current.add(conversationId);
         try {
@@ -3003,7 +3010,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       setClosingContext(null);
     }
     void finishClose();
-  }, [closingContext, contextClosing, contextPresent, setContextWorkspace, setContextFullWidth]);
+  }, [contextExit, contextPresent, setContextWorkspace, setContextFullWidth]);
 
   async function runGoalAction(action: (() => void | Promise<void>) | undefined, closeAfter = false): Promise<boolean> {
     if (!action || goalBusy) return false;
@@ -3334,7 +3341,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </div>
           ) : null}
           <div className="session-context-header-tools">
-            <div ref={setContextToolbarHost} className="session-context-toolbar-host" inert={!contextOpen} />
+            <div ref={setContextToolbarHost} className="session-context-toolbar-host" inert={!contextOpen} style={sessionContextToolbarExitStyle(contextExit?.toolbarWidth)} />
             <div className="session-thread-header-actions">
               {props.embeddedInTask ? conversationInformation : null}
               {!legacy && props.conversation && props.state ? (
@@ -3639,7 +3646,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     aria-label={contextWorkspaceLabel(contextWorkspace, props.language)}
                     aria-hidden={!contextOpen}
                     inert={!contextOpen}
-                    data-native-viewport-transition={contextClosing || undefined}
+                    // 只有内置网页的占位区按动画收拢，PDF 等原生内容在退出交互时隐藏。
+                    data-native-viewport-transition={(browserPresent && contextClosing) || undefined}
                   >
                     <div
                       className="session-browser-resizer"
@@ -3660,7 +3668,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       }}
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
-                    <div className="session-browser-pane" data-environment-open={(browserPresent && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
+                    <div
+                      className="session-browser-pane"
+                      style={browserPresent || !contextExit ? undefined : { minInlineSize: contextExit.paneWidth }}
+                      data-environment-open={(browserPresent && quickActionsPopoverOpen) || undefined}
+                      data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}
+                    >
                       <ReadingStateScope id={JSON.stringify([props.conversation.projectId, navigationId])}>
                         {sideQuestionState && props.renderSideQuestion
                           ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace, contextToolbarHost)
@@ -4043,8 +4056,8 @@ export function NewConversationComposer(props: {
   const projectTools = useContext(ProjectToolContext);
   /** 浏览器工作面随当前输入草稿恢复。 */
   const [browserOpen, setBrowserOpen] = useState(() => restoredDraft?.browserOpen ?? false);
-  /** 关闭释放标签，批注暂存只收拢网页以供首发迁移。 */
-  const [browserClosing, setBrowserClosing] = useState<'close' | 'hide' | null>(null);
+  /** 关闭释放标签，暂存只收拢网页，两者都保留退场前的标签栏宽度。 */
+  const [browserClosing, setBrowserClosing] = useState<{ action: 'close' | 'hide'; toolbarWidth?: number } | null>(null);
   /** 退出时立即关闭交互，重新打开时从当前宽度反向过渡。 */
   const browserVisible = browserOpen && !browserClosing;
   /** 新会话和已有会话共用同一分栏过渡。 */
@@ -4229,20 +4242,25 @@ export function NewConversationComposer(props: {
   }, [browserDraft.conversationId]);
 
   /** 开始收拢时恢复输入框焦点，保持原生视图随尺寸同步。 */
-  const closeBrowser = useCallback((action: 'close' | 'hide' = 'close'): void => {
-    setBrowserClosing((current) => current ?? action);
-    window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  const closeBrowser = useCallback(
+    (action: 'close' | 'hide' = 'close'): void => {
+      const toolbarWidth = sessionContextToolbarWidth(browserMotionRef.current);
+      setBrowserClosing((current) => current ?? { action, toolbarWidth });
+      window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [browserMotionRef],
+  );
 
   useEffect(() => {
     if (!browserClosing || browserPresent) return;
+    const { action } = browserClosing;
     /** 重开浏览器后忽略已过期的关闭回执。 */
     let cancelled = false;
     /** 动画结束后按关闭来源释放或保留原生标签。 */
     async function finishClose(): Promise<void> {
       try {
-        if (browserClosing === 'close') {
+        if (action === 'close') {
           await window.zeus?.closeBrowserConversation?.(browserDraft.conversationId);
           if (cancelled) return;
           recoverDraftOperation('browser_close');
@@ -4979,7 +4997,7 @@ export function NewConversationComposer(props: {
           <strong>{props.language === 'zh-CN' ? '新对话' : 'New conversation'}</strong>
         </div>
         <div className="session-context-header-tools">
-          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" inert={!browserVisible} />
+          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" inert={!browserVisible} style={sessionContextToolbarExitStyle(browserClosing?.toolbarWidth)} />
           <div className="session-thread-header-actions">
             <Button
               unstyled
@@ -5283,6 +5301,16 @@ function historySessionHasActiveWork(state: NativeSessionState | null | undefine
     // 完成事件登记两种轮次身份，旧快照不能因使用内部 ID 而绕过终态。
     (turn) => !state.terminalTurnIds[turn.id] && !(turn.providerTurnId && state.terminalTurnIds[turn.providerTurnId]) && (turn.status === 'running' || turn.status === 'dispatching' || turn.status === 'waiting'),
   );
+}
+
+/** 量取当前分栏的门户宽度，避免退场时标题和标签在裁切区内重新排版。 */
+function sessionContextToolbarWidth(layout: HTMLElement | null): number | undefined {
+  return layout?.querySelector(':scope > .session-thread-header > .session-context-header-tools > .session-context-toolbar-host')?.getBoundingClientRect().width;
+}
+
+/** 向标签栏提供退场前的 CSS 像素宽度，裁切宽度仍由门户外层决定。 */
+function sessionContextToolbarExitStyle(width: number | undefined): CSSProperties | undefined {
+  return width === undefined ? undefined : ({ '--session-context-toolbar-content-width': `${width}px` } as CSSProperties);
 }
 
 function resolveBrowserTargetWidth(layoutWidth: number, paneShare: number, expanded: boolean): number {
