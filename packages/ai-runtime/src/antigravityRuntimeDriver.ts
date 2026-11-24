@@ -575,12 +575,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   }
 
   /** 在账号探测会话里逐型号读取档位，正式会话和模型目录均沿用 agy 的值。 */
-  private async readModelReasoningEfforts(
-    connection: AcpConnection,
-    sessionId: string,
-    probe: Record<string, unknown>,
-    modelConfig: NonNullable<ReturnType<typeof selectConfig>>,
-  ): Promise<AntigravityModel[]> {
+  private async readModelReasoningEfforts(connection: AcpConnection, sessionId: string, probe: Record<string, unknown>, modelConfig: NonNullable<ReturnType<typeof selectConfig>>): Promise<AntigravityModel[]> {
     let config = probe;
     const models: AntigravityModel[] = [];
     for (const model of modelConfig.options) {

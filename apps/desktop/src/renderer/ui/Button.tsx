@@ -20,7 +20,10 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 /** 按钮共享异步互斥，原地等待的操作可以切换文案。 */
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ busy = false, busyLabel, children, className, disabled, onClick, onDoubleClick, size = 'regular', title, type, unstyled = false, variant = 'secondary', ...buttonProps }, ref) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { busy = false, busyLabel, children, className, disabled, onClick, onDoubleClick, size = 'regular', title, type, unstyled = false, variant = 'secondary', ...buttonProps },
+  ref,
+) {
   /** 已经打开工作面的读取不占用来源按钮，关闭后仍可重新进入。 */
   const background = buttonProps['data-busy-behavior'] === 'background';
   /** 单击选择与双击命令共用互斥状态；文件导航通过 background 保留原生双击序列。 */
@@ -53,7 +56,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           <span aria-hidden={showBusyLabel || undefined}>{children}</span>
           <span aria-hidden={!showBusyLabel || undefined}>{busyLabel}</span>
         </span>
-      ) : children}
+      ) : (
+        children
+      )}
     </button>
   );
 });

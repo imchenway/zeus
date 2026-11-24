@@ -719,11 +719,7 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
         setParsedStyle({
           source: props.node.code,
           useDefaultTheme: !authoredTheme,
-          handDrawn: !authoredTheme
-            && !parsed.config.themeCSS
-            && /^flowchart(?:-|$)/.test(parsed.diagramType)
-            && (!parsed.config.look || parsed.config.look === 'handDrawn')
-            && !props.node.code.trimStart().startsWith('---'),
+          handDrawn: !authoredTheme && !parsed.config.themeCSS && /^flowchart(?:-|$)/.test(parsed.diagramType) && (!parsed.config.look || parsed.config.look === 'handDrawn') && !props.node.code.trimStart().startsWith('---'),
         });
       } catch (error) {
         if (active) onRenderError(error);

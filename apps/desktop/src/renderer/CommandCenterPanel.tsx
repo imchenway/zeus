@@ -1138,7 +1138,7 @@ function CommandRunHistoryModal(props: {
         </header>
         <div className="command-history-modal-body">
           {props.runs.length === 0 ? (
-            visibleError ?? <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
+            (visibleError ?? <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>)
           ) : (
             <div className="command-run-layout">
               <aside className="command-run-sidebar">
@@ -1223,14 +1223,22 @@ function CommandRunHistoryModal(props: {
                     zh={zh}
                   />
                 </section>
-              ) : visibleError ?? (
-                <p className="command-center-empty" role="status">
-                  {props.syncState === 'stale'
-                    ? (zh ? '连接中断，执行状态待确认。' : 'Connection lost. Run status is unconfirmed.')
-                    : props.selectedRunId
-                      ? (zh ? '正在读取执行详情…' : 'Loading run details…')
-                      : (zh ? '选择一条记录查看执行详情。' : 'Select a run to view its details.')}
-                </p>
+              ) : (
+                (visibleError ?? (
+                  <p className="command-center-empty" role="status">
+                    {props.syncState === 'stale'
+                      ? zh
+                        ? '连接中断，执行状态待确认。'
+                        : 'Connection lost. Run status is unconfirmed.'
+                      : props.selectedRunId
+                        ? zh
+                          ? '正在读取执行详情…'
+                          : 'Loading run details…'
+                        : zh
+                          ? '选择一条记录查看执行详情。'
+                          : 'Select a run to view its details.'}
+                  </p>
+                ))
               )}
             </div>
           )}

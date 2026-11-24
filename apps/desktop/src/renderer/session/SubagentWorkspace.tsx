@@ -208,12 +208,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
     const latestTurn = thread.turns.at(-1);
     if (!latestTurn || normalizeSubagentTurnStatus(latestTurn.status) !== 'completed') return undefined;
     return threadItems.findLast(
-      (item) =>
-        item.turnId === latestTurn.id &&
-        item.status === 'completed' &&
-        isFinalAnswerItem(item) &&
-        isVisibleTranscriptItem(item) &&
-        (item.resources.length > 0 || transcriptItemText(item).trim().length > 0),
+      (item) => item.turnId === latestTurn.id && item.status === 'completed' && isFinalAnswerItem(item) && isVisibleTranscriptItem(item) && (item.resources.length > 0 || transcriptItemText(item).trim().length > 0),
     );
   }, [selectedStatus, thread, threadItems]);
   /** 同一条回复刷新后保留用户的视图选择。 */
