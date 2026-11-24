@@ -573,6 +573,38 @@ function improveMermaidLabelContrast(diagram: SVGSVGElement): (() => void) | und
   };
 }
 
+/** 为流程图预览选择蓝灰手绘配色，使用固定笔触种子保持主题切换前后的轮廓一致。 */
+function handDrawnFlowchartSource(source: string, isDark: boolean): string {
+  /** 背景、节点、分组和标签均使用与当前会话深浅色匹配的色组。 */
+  const colors = isDark
+    ? { canvas: '#181818', node: '#23354a', group: '#202b38', border: '#6f8da8', line: '#8b9cb1', text: '#e1eeff' }
+    : { canvas: '#ffffff', node: '#e7f0fa', group: '#f3f6fa', border: '#7898b8', line: '#65798e', text: '#233e5a' };
+  /** Markstream 使用开头的 init 指令作为本图配置，并在渲染前交给 Mermaid。 */
+  const config = {
+    look: 'handDrawn',
+    handDrawnSeed: 1,
+    theme: 'base',
+    fontFamily: 'system-ui, sans-serif',
+    themeVariables: {
+      darkMode: isDark,
+      radius: 12,
+      background: colors.canvas,
+      primaryColor: colors.node,
+      primaryBorderColor: colors.border,
+      primaryTextColor: colors.text,
+      secondaryColor: colors.group,
+      secondaryTextColor: colors.text,
+      tertiaryColor: colors.group,
+      tertiaryBorderColor: colors.border,
+      tertiaryTextColor: colors.text,
+      lineColor: colors.line,
+      arrowheadColor: colors.line,
+      edgeLabelBackground: colors.canvas,
+    },
+  };
+  return `%%{init: ${JSON.stringify(config)}}%%\n${source}`;
+}
+
 /** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
   /** 语言和正文阶段来自所有 Markdown 展示入口共用的上下文。 */
@@ -587,16 +619,27 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   /** 源码视图保留原文，预览继续挂载以保留已有缩放状态。 */
   const [showSource, setShowSource] = useState(false);
-  /** 未指定图表主题时才使用会话默认配色，作者的整图主题继续生效。 */
-  const [useDefaultTheme, setUseDefaultTheme] = useState(true);
+  /** 已解析源码的样式选择。流式更新后按原文匹配，避免沿用上一段源码的判定。 */
+  const [parsedStyle, setParsedStyle] = useState<{ source: string; useDefaultTheme: boolean; handDrawn: boolean } | null>(null);
+  /** 只有当前源码的解析结果能控制预览。 */
+  const diagramStyle = parsedStyle?.source === props.node.code ? parsedStyle : null;
+  /** Mermaid 手绘路径直接使用生成时的配色，常规图表继续使用会话配色。 */
+  const useDefaultTheme = (diagramStyle?.useDefaultTheme ?? true) && !diagramStyle?.handDrawn;
   /** 正文已经结束时图表代码块不会再增长，必须结束生成态，否则上游会一直只显示源码。 */
   const phase = runtime?.phase ?? 'streaming';
   /** 未闭合代码块继续生成；正文完成后覆盖解析节点残留的生成状态。 */
   const streaming = phase === 'streaming' && Boolean(props.node.loading);
-  /** 上游优先读取 node.loading，必须与组件 loading 同步。 */
-  const node = useMemo(() => ({ ...props.node, loading: streaming }), [props.node, streaming]);
   /** Mermaid 的图形颜色跟随应用主题，而非固定使用浅色。 */
   const [isDark, setIsDark] = useState(false);
+  /** 只替换绘制用的代码，源码查看与复制继续读取助手原文。 */
+  const node = useMemo(
+    () => ({
+      ...props.node,
+      code: diagramStyle?.handDrawn ? handDrawnFlowchartSource(props.node.code, isDark) : props.node.code,
+      loading: streaming,
+    }),
+    [props.node, diagramStyle?.handDrawn, isDark, streaming],
+  );
   useLayoutEffect(() => {
     /** 应用主题由已有容器类和系统主题共同决定。 */
     const container = containerRef.current;
@@ -656,7 +699,6 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     /** 取消旧正文的异步结果，防止其错误覆盖新图表。 */
     let active = true;
     setDiagnostic(null);
-    setUseDefaultTheme(true);
     void ensureMermaidRuntime().then(async (mermaid) => {
       if (!active) return;
       if (!mermaid) {
@@ -667,8 +709,22 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
       try {
         /** 未闭合语法返回 false，不让 Mermaid 额外插入错误图形。 */
         const parsed = await mermaid.parse(props.node.code, { suppressErrors: true });
-        if (active && parsed !== false) setUseDefaultTheme(!parsed.config.theme && Object.keys(parsed.config.themeVariables ?? {}).length === 0);
-        if (active && parsed === false) setDiagnostic(`${languageLabels.diagramRenderFailed}${languageLabels.diagramSyntaxInvalid}`);
+        if (!active) return;
+        if (parsed === false) {
+          setDiagnostic(`${languageLabels.diagramRenderFailed}${languageLabels.diagramSyntaxInvalid}`);
+          return;
+        }
+        /** 显式主题由作者决定。带 YAML 头的图保留其元数据位置和原有渲染入口。 */
+        const authoredTheme = Boolean(parsed.config.theme) || Object.keys(parsed.config.themeVariables ?? {}).length > 0;
+        setParsedStyle({
+          source: props.node.code,
+          useDefaultTheme: !authoredTheme,
+          handDrawn: !authoredTheme
+            && !parsed.config.themeCSS
+            && /^flowchart(?:-|$)/.test(parsed.diagramType)
+            && (!parsed.config.look || parsed.config.look === 'handDrawn')
+            && !props.node.code.trimStart().startsWith('---'),
+        });
       } catch (error) {
         if (active) onRenderError(error);
       }
