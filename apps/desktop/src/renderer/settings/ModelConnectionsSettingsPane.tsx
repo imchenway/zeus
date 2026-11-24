@@ -1,7 +1,7 @@
 import { formatZeusDateTime, type MeteredCharge, type ModelPrice } from '@zeus/shared';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { SettingsSaveStatus, type SettingsSaveState } from './useSettingsAutosave.js';
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ModelConnectionQueryStore, modelConnectionQueryStore, type ModelConnectionJob } from '../features/integrations/modelConnectionQueryStore.js';
 import { codexCapabilitiesChangedEvent } from '../features/integrations/modelCatalogEvents.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
@@ -38,7 +38,7 @@ import { FormDialog } from '../ui/FormDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 编辑中的供应商；密钥只在当前编辑器内存中短暂保留。 */
-interface ModelConnectionDraft extends SaveModelConnectionRequest {
+interface ModelConnectionDraft extends Omit<SaveModelConnectionRequest, 'pricingUrl'> {
   id: string | null;
   apiKey: string;
 }
@@ -110,11 +110,6 @@ export function ModelConnectionsSettingsPane(props: {
   const connectionSnapshot = useSyncExternalStore(query.connections.subscribe, query.connections.getSnapshot, query.connections.getSnapshot);
   const jobs = useSyncExternalStore(query.subscribe, query.getSnapshot, query.getSnapshot);
   const connections = connectionSnapshot.value ?? [];
-  /** 写入回执与现有列表共用一份可订阅快照。 */
-  function setConnections(update: SetStateAction<ModelConnectionRecord[]>): void {
-    const current = query.connections.getSnapshot().value ?? [];
-    query.connections.set(typeof update === 'function' ? update(current) : update);
-  }
   const [draft, setDraft] = useState<ModelConnectionDraft>(() => {
     const cached = query.connections.getSnapshot().value;
     const selected = !props.onComplete ? (cached?.find((connection) => connection.id === query.selectedConnectionId) ?? cached?.[0]) : undefined;
@@ -157,6 +152,8 @@ export function ModelConnectionsSettingsPane(props: {
   /** 引导为后续新项目选定的完整模型引用。 */
   const [defaultModelRef, setDefaultModelRef] = useState('');
   const [pendingInsecureHttpSave, setPendingInsecureHttpSave] = useState<SaveModelConnectionRequest | null>(null);
+  /** 价格地址单独编辑，普通供应商保存不会提交此草稿。 */
+  const [pricingUrlDraft, setPricingUrlDraft] = useState<{ connectionId: string | null; value: string } | null>(null);
   /** 价目令牌只在价格源弹窗的临时状态中存在。 */
   const [pricingSourceDraft, setPricingSourceDraft] = useState<{ profile: string; token: string } | null>(null);
 
@@ -216,8 +213,17 @@ export function ModelConnectionsSettingsPane(props: {
     setPendingInsecureHttpSave(null);
   }, [props.active]);
   const current = draft.id ? (connections.find((connection) => connection.id === draft.id) ?? null) : null;
-  /** 换到别的连接（或清空草稿）时立刻丢掉上一条连接读出来的密钥，避免串台。 */
+  /** 已保存的地址为空时，显示目录使用的默认来源。 */
+  const savedPricingUrl = current?.pricingUrl || current?.pricingCatalog?.url || '';
+  /** 只展示当前供应商的草稿，包括有意清空的地址。 */
+  const currentPricingUrlDraft = pricingUrlDraft?.connectionId === draft.id ? pricingUrlDraft : null;
+  /** 编辑时展示草稿，未编辑时展示已生效的来源。 */
+  const pricingUrl = currentPricingUrlDraft?.value ?? savedPricingUrl;
+  /** 地址提交前不能给草稿配置令牌，令牌只会绑定已生效的来源。 */
+  const pricingUrlChanged = pricingUrl.trim() !== savedPricingUrl;
+  /** 更换连接时清除上一条连接的价格草稿和密钥。 */
   useEffect(() => {
+    setPricingUrlDraft(null);
     setPricingSourceDraft(null);
     setRevealedApiKey(null);
     setApiKeyVisible(false);
@@ -351,36 +357,44 @@ export function ModelConnectionsSettingsPane(props: {
   async function reloadConnections(preferredId?: string): Promise<void> {
     if (!props.client) return;
     const items = await props.client.loadModelConnections();
-    setConnections(items);
+    query.connections.set(items);
     const selected = items.find((connection) => connection.id === preferredId);
     if (selected && selectedConnectionId.current === preferredId) selectConnection(selected);
   }
 
+  /** 创建供应商时允许初始化价格地址，已有供应商的地址由价格操作单独提交。 */
   function createSaveInput(value = draft): SaveModelConnectionRequest {
     return {
       name: value.name,
       templateId: value.templateId,
       baseUrl: value.baseUrl,
       modelsPath: value.modelsPath,
-      pricingUrl: value.pricingUrl?.trim() ?? '',
+      ...(value.id === null ? { pricingUrl: pricingUrl.trim() } : {}),
       enabled: value.enabled,
       models: value.models,
       ...(value.apiKey.trim() ? { apiKey: value.apiKey.trim() } : {}),
     };
   }
 
-  /** 先保存单一页面地址，再读取清单；无需逐模型填价。 */
+  /** 用户点击更新时才应用价格地址；地址未变时直接读取清单。 */
   async function refreshPricing(): Promise<void> {
     if (!props.client || busy || !current) return;
     setMessage(null);
     const client = props.client;
-    const input = { ...createSaveInput({ ...current, id: current.id, apiKey: '' }), pricingUrl: draft.pricingUrl?.trim() ?? '' };
+    /** 本次提交使用点击时的地址，不包含其他字段的草稿。 */
+    const nextPricingUrl = pricingUrl.trim();
     await query.run(current.id, 'refreshing', async () => {
-      await client.updateModelConnection(current.id, input);
+      if (pricingUrlChanged) {
+        /** 地址已经生效时立即同步回执，即使接下来的价格读取失败。 */
+        const saved = await client.updateModelConnection(current.id, { ...createSaveInput({ ...current, apiKey: '' }), pricingUrl: nextPricingUrl });
+        query.upsert(saved);
+      }
+      setPricingUrlDraft((pending) => (pending === currentPricingUrlDraft ? null : pending));
       return client.refreshModelConnectionPricing(current.id);
     });
   }
 
+  /** 保存供应商配置并按连接 ID 更新列表和编辑器。 */
   async function persistConnection(input: SaveModelConnectionRequest): Promise<void> {
     if (!props.client || busy || savingRef.current) return;
     savingRef.current = true;
@@ -389,10 +403,10 @@ export function ModelConnectionsSettingsPane(props: {
     setMessage(null);
     try {
       const saved = draft.id ? await props.client.updateModelConnection(draft.id, input) : await props.client.createModelConnection(input);
-      setConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
+      query.upsert(saved);
       setRevealedApiKey(null);
       setApiKeyVisible(false);
-      setDraft({ ...saved, id: saved.id, apiKey: '', pricingUrl: saved.pricingUrl || saved.pricingCatalog?.url || '', models: saved.models.map(cloneModel) });
+      setDraft(connectionDraft(saved));
       setSaveState('saved');
       setPricingSourceDraft(null);
       if (props.onComplete) await refreshDefaultModels(saved.id);
@@ -583,6 +597,7 @@ export function ModelConnectionsSettingsPane(props: {
               selectedConnectionId.current = null;
               query.selectedConnectionId = null;
               setDraft(emptyDraft());
+              setPricingUrlDraft(null);
               setModelQuery('');
               setRequestedModelPage(1);
               setExpandedModelIds(new Set());
@@ -653,17 +668,14 @@ export function ModelConnectionsSettingsPane(props: {
           ))}
         </nav>
 
-        <fieldset
-          disabled={busy}
-          onInput={() => setSaveState('idle')}
-          onBlurCapture={(event) => {
-            if (draft.id && !props.onComplete && event.target instanceof HTMLInputElement && event.target.type !== 'checkbox' && event.target.type !== 'search') return save();
-          }}
-          className="model-connection-editor"
-          key={draft.id ?? 'new'}
-          aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}
-        >
-          <div className="model-connection-field-grid">
+        <fieldset disabled={busy} className="model-connection-editor" key={draft.id ?? 'new'} aria-label={zh ? '模型供应商编辑器' : 'Model provider editor'}>
+          <div
+            className="model-connection-field-grid"
+            onInput={() => setSaveState('idle')}
+            onBlurCapture={(event) => {
+              if (draft.id && !props.onComplete && event.target instanceof HTMLInputElement && event.target.type !== 'search') return save();
+            }}
+          >
             <label>
               <span>{zh ? '快捷模板' : 'Template'}</span>
               <ZeusSelect
@@ -755,9 +767,12 @@ export function ModelConnectionsSettingsPane(props: {
                 <input
                   id={pricingInputId}
                   type="url"
-                  value={draft.pricingUrl ?? ''}
+                  value={pricingUrl}
                   placeholder={draft.templateId === 'custom' ? 'https://example.com/pricing' : zh ? '供应商默认价格页面' : 'Provider pricing page'}
-                  onChange={(event) => changeDraft({ ...draft, pricingUrl: event.currentTarget.value })}
+                  onChange={(event) => {
+                    draftRevision.current += 1;
+                    setPricingUrlDraft({ connectionId: draft.id, value: event.currentTarget.value });
+                  }}
                   disabled={busy}
                 />
                 <Button variant="secondary" size="compact" disabled={busy || !current} onClick={() => refreshPricing()}>
@@ -768,8 +783,8 @@ export function ModelConnectionsSettingsPane(props: {
                   type="button"
                   className="model-connection-pricing-source-button"
                   aria-label={zh ? '价格源配置' : 'Price source settings'}
-                  data-icon-tooltip={zh ? '价格源配置' : 'Price source settings'}
-                  disabled={busy || !current}
+                  data-icon-tooltip={pricingUrlChanged ? (zh ? '先更新价格源地址' : 'Update the pricing source URL first') : zh ? '价格源配置' : 'Price source settings'}
+                  disabled={busy || !current || pricingUrlChanged}
                   onClick={() => setPricingSourceDraft({ profile: current?.pricingProfile ?? '', token: '' })}
                 >
                   <GearIcon size={16} aria-hidden="true" />
@@ -804,6 +819,7 @@ export function ModelConnectionsSettingsPane(props: {
                 event.stopPropagation();
                 return persistConnection({
                   ...createSaveInput(),
+                  pricingUrl: savedPricingUrl,
                   pricingProfile: pricingSourceDraft.profile.trim(),
                   ...(pricingSourceDraft.token.trim() ? { pricingAccessToken: pricingSourceDraft.token.trim() } : {}),
                 });
@@ -1010,8 +1026,8 @@ export function ModelConnectionsSettingsPane(props: {
                   !current.enabled ||
                   !defaultModelRef ||
                   Boolean(draft.apiKey) ||
-                  JSON.stringify(createSaveInput()) !==
-                    JSON.stringify({ name: current.name, templateId: current.templateId, baseUrl: current.baseUrl, modelsPath: current.modelsPath, pricingUrl: current.pricingUrl ?? '', enabled: current.enabled, models: current.models })
+                  pricingUrlChanged ||
+                  JSON.stringify(createSaveInput()) !== JSON.stringify(createSaveInput({ ...current, apiKey: '' }))
                 }
               >
                 {zh ? '完成接入' : 'Finish setup'}
@@ -1679,7 +1695,6 @@ function connectionDraft(connection: ModelConnectionRecord): ModelConnectionDraf
     templateId: connection.templateId,
     baseUrl: connection.baseUrl,
     modelsPath: connection.modelsPath,
-    pricingUrl: connection.pricingUrl || connection.pricingCatalog?.url || '',
     enabled: connection.enabled,
     models: connection.models.map(cloneModel),
     apiKey: '',
