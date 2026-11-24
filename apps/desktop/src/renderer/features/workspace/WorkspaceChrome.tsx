@@ -1228,13 +1228,7 @@ export function SidebarNav(props: {
                         else props.onOpenProjectSection(project, isTemporaryWorkspace ? 'sessions' : 'tasks');
                       },
                     }}
-                    actions={
-                      isTemporaryWorkspace ? undefined : projectMenuPortalHost ? (
-                        createPortal(<MotionPresence>{projectMorePopover}</MotionPresence>, projectMenuPortalHost)
-                      ) : (
-                        <MotionPresence>{projectMorePopover}</MotionPresence>
-                      )
-                    }
+                    actions={isTemporaryWorkspace ? undefined : projectMenuPortalHost ? createPortal(<MotionPresence>{projectMorePopover}</MotionPresence>, projectMenuPortalHost) : <MotionPresence>{projectMorePopover}</MotionPresence>}
                   />
                   {showConversationNavigation ? (
                     <Collapsible open={expanded} id={projectConversationsId} animateHeight heightMotionTiming={projectConversationHeightMotion}>

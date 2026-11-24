@@ -19,7 +19,13 @@ export function readContextCapacitySupport(identity: {
 }
 
 /** 新建、恢复、下一轮及界面共用同一容量来源。 */
-export function resolveContextCapacityPolicy(native: CodexCapabilitiesSnapshot | null, connection: ModelConnectionRecord | undefined, modelId: string, runtime: 'codex' | 'pi' | 'copilot' | 'antigravity', managedContextWindow: number | null = null) {
+export function resolveContextCapacityPolicy(
+  native: CodexCapabilitiesSnapshot | null,
+  connection: ModelConnectionRecord | undefined,
+  modelId: string,
+  runtime: 'codex' | 'pi' | 'copilot' | 'antigravity',
+  managedContextWindow: number | null = null,
+) {
   const model = connection?.models.find((candidate) => candidate.id === modelId);
   const budget = native?.modelBudgets[modelId];
   const contextWindow = model?.contextWindow ?? (runtime === 'codex' ? (budget?.maximumContextWindowTokens ?? budget?.contextWindowTokens) : runtime === 'copilot' ? managedContextWindow : null) ?? null;

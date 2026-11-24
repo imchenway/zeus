@@ -391,22 +391,31 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     },
   };
   /** ACP 权限请求进入与其他运行时相同的持久交互，保留单次人工决定。 */
-  const antigravityDriver = runtimeKind === 'antigravity'
-    ? new AntigravityRuntimeDriver(options.agentDirectory, async (request, tool) => {
-        const context = contexts.get(request.session.nativeSessionId);
-        if (!context || context.permissionMode === 'read-only' || context.workMode === 'plan') return false;
-        const kind = tool.kind === 'edit' || tool.kind === 'delete' || tool.kind === 'move' ? 'file' : 'command';
-        const label = typeof tool.title === 'string' ? tool.title : request.toolName;
-        return readApprovalDecision(await requestInteraction(context, request, kind, {
-          toolName: request.toolName,
-          ...(kind === 'file' ? { path: stringArg(request.args.path, label) } : { command: stringArg(request.args.command, label) }),
-          args: redactArgs(request.args),
-          availableDecisions: ['accept', 'decline', 'cancel'],
-        }));
-      }, (input) => broker.respond!(input), options.now)
-    : null;
-  const driver = antigravityDriver ?? (
-    runtimeKind === 'copilot'
+  const antigravityDriver =
+    runtimeKind === 'antigravity'
+      ? new AntigravityRuntimeDriver(
+          options.agentDirectory,
+          async (request, tool) => {
+            const context = contexts.get(request.session.nativeSessionId);
+            if (!context || context.permissionMode === 'read-only' || context.workMode === 'plan') return false;
+            const kind = tool.kind === 'edit' || tool.kind === 'delete' || tool.kind === 'move' ? 'file' : 'command';
+            const label = typeof tool.title === 'string' ? tool.title : request.toolName;
+            return readApprovalDecision(
+              await requestInteraction(context, request, kind, {
+                toolName: request.toolName,
+                ...(kind === 'file' ? { path: stringArg(request.args.path, label) } : { command: stringArg(request.args.command, label) }),
+                args: redactArgs(request.args),
+                availableDecisions: ['accept', 'decline', 'cancel'],
+              }),
+            );
+          },
+          (input) => broker.respond!(input),
+          options.now,
+        )
+      : null;
+  const driver =
+    antigravityDriver ??
+    (runtimeKind === 'copilot'
       ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
       : createPiRuntimeWorkerDriver({
           adapterVersion: 'zeus-pi-worker',
@@ -416,8 +425,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           toolBroker: broker,
           ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}),
           now: options.now,
-        })
-  );
+        }));
   /** 同轮图片落盘、消息投影和终态按原事件顺序完成，不阻塞其他会话。 */
   const eventTails = new Map<string, Promise<void>>();
   const unsubscribe = driver.subscribe((event) => {
@@ -756,23 +764,24 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerPrompt = pluginResult.prompt;
       }
       providerMetadata = { ...piPluginMetadata(pluginPreparation, historyCompaction ? null : input.segmentLifecycle?.portableContext), zeusSkills: skillCatalog };
-      compiledDispatchContext = runtimeKind !== 'antigravity' && options.compileDispatchContext
-        ? await options.compileDispatchContext({
-            provider: runtimeKind,
-            conversationId: input.conversationId,
-            submissionId: input.submissionId,
-            projectId: input.projectId,
-            projectLocalPath: input.cwd,
-            taskId: input.taskId ?? null,
-            modelId: input.model.modelId,
-            modelSourceId: input.model.sourceId,
-            operationRisk: input.permissionMode === 'read-only' ? 'read_only' : 'local_write',
-            fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerPrompt, images: attachmentInput.images }), 'utf8'),
-            providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
-            providerHistoryMode: 'bootstrap',
-            providerGenerationId: driver.getRuntimeHealth().generationId,
-          })
-        : null;
+      compiledDispatchContext =
+        runtimeKind !== 'antigravity' && options.compileDispatchContext
+          ? await options.compileDispatchContext({
+              provider: runtimeKind,
+              conversationId: input.conversationId,
+              submissionId: input.submissionId,
+              projectId: input.projectId,
+              projectLocalPath: input.cwd,
+              taskId: input.taskId ?? null,
+              modelId: input.model.modelId,
+              modelSourceId: input.model.sourceId,
+              operationRisk: input.permissionMode === 'read-only' ? 'read_only' : 'local_write',
+              fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerPrompt, images: attachmentInput.images }), 'utf8'),
+              providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
+              providerHistoryMode: 'bootstrap',
+              providerGenerationId: driver.getRuntimeHealth().generationId,
+            })
+          : null;
     } catch (error) {
       const failure = asRecord(error);
       options.submissions.updateStatus(submission.id, 'paused', {
@@ -1271,23 +1280,24 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           }),
         );
       }
-      compiledDispatchContext = runtimeKind !== 'antigravity' && options.compileDispatchContext
-        ? await options.compileDispatchContext({
-            provider: runtimeKind,
-            conversationId: input.conversation.id,
-            submissionId: submission.id,
-            projectId: context.projectId,
-            projectLocalPath: context.cwd,
-            taskId: context.taskId,
-            modelId: input.model.modelId,
-            modelSourceId: input.model.sourceId,
-            operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
-            fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerContent, images: attachmentInput.images }), 'utf8'),
-            providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
-            providerHistoryMode: 'latest',
-            providerGenerationId: driver.getRuntimeHealth().generationId,
-          })
-        : null;
+      compiledDispatchContext =
+        runtimeKind !== 'antigravity' && options.compileDispatchContext
+          ? await options.compileDispatchContext({
+              provider: runtimeKind,
+              conversationId: input.conversation.id,
+              submissionId: submission.id,
+              projectId: context.projectId,
+              projectLocalPath: context.cwd,
+              taskId: context.taskId,
+              modelId: input.model.modelId,
+              modelSourceId: input.model.sourceId,
+              operationRisk: context.permissionMode === 'read-only' ? 'read_only' : 'local_write',
+              fixedRequestUtf8Bytes: Buffer.byteLength(JSON.stringify({ content: providerContent, images: attachmentInput.images }), 'utf8'),
+              providerBootstrapUtf8Bytes: Buffer.byteLength(JSON.stringify(providerMetadata), 'utf8'),
+              providerHistoryMode: 'latest',
+              providerGenerationId: driver.getRuntimeHealth().generationId,
+            })
+          : null;
       // 同一 session 的压缩时机与恢复由 Pi SDK 自己负责；Zeus 的估算只约束可选应用上下文，不阻断核心消息。
       runCommand = providerCommands.prepare({
         operation: 'run_start',

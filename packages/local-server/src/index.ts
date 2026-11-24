@@ -1687,7 +1687,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** Antigravity 使用自己的 ACP 进程和独立的消息派发身份。 */
   const antigravityNativeCoordinator = readOnlyValidation ? createReadOnlyValidationPiCoordinator(() => now().toISOString()) : createSdkCoordinator('antigravity');
   /** 托管会话的派发和停止均使用原始运行类型。 */
-  const managedCoordinatorFor = (kind: ManagedAgentKind) => kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
+  const managedCoordinatorFor = (kind: ManagedAgentKind) => (kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator);
   const repairedPiConversationIdentityCount = piNativeCoordinator.repairPersistedConversationIdentities();
   const repairedPiAgentMessageProjectionCount = piNativeCoordinator.repairPersistedAgentMessageProjections();
   if (repairedPiConversationIdentityCount > 0 || repairedPiAgentMessageProjectionCount > 0) await db.save();
@@ -1883,12 +1883,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const conversationExecutionContextOperations = createConversationExecutionContextOperations({
     /** 所有恢复入口共用预算门禁，禁止先恢复 Provider 再发现能力已失效。 */
     validateContextCapacity: (conversation: import('@zeus/storage').ZeusConversationRecord) =>
-      validateNativeContextCapacity(
-        conversation.contextCapacityTokens,
-        conversation.modelSourceId,
-        conversation.modelId ?? conversation.providerModel ?? '',
-        isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex',
-      ),
+      validateNativeContextCapacity(conversation.contextCapacityTokens, conversation.modelSourceId, conversation.modelId ?? conversation.providerModel ?? '', isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex'),
     conversationExperts,
     conversationSubmissions,
     conversations,
@@ -2389,7 +2384,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const driver = antigravityNativeCoordinator.antigravityDriver;
         const cached = driver?.readAccount();
         const account = cached?.status === 'ready' ? cached : driver ? await driver.refreshAccount() : null;
-        if (frozen.connectionId || frozen.credentialSlotId !== 'antigravity-managed-account' || frozen.endpointIdentity !== 'antigravity://managed-account' || frozen.protocolFamily !== 'antigravity_acp' || !account?.models.some((model) => model.id === frozen.modelId)) {
+        if (
+          frozen.connectionId ||
+          frozen.credentialSlotId !== 'antigravity-managed-account' ||
+          frozen.endpointIdentity !== 'antigravity://managed-account' ||
+          frozen.protocolFamily !== 'antigravity_acp' ||
+          !account?.models.some((model) => model.id === frozen.modelId)
+        ) {
           const pausedAt = now().toISOString();
           conversationSubmissions.updateStatus(head.id, 'paused', {
             pausedReason: 'semantic_route_changed',
@@ -2682,7 +2683,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** SDK 轮次在宿主重启后无活动事件订阅；Copilot 的结果保持待核对，避免误报已完成。 */
   const recoverAcceptedSdkTurnsAfterRestart = async () => {
     const interruptedAt = now().toISOString();
-    const candidates = conversationTurns.listInProgress().filter((turn) => (isManagedAgentKind(turn.agentKind)) && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
+    const candidates = conversationTurns.listInProgress().filter((turn) => isManagedAgentKind(turn.agentKind) && (turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting'));
     let recovered = false;
     for (const turn of candidates) {
       const segment = conversationExecution.currentSegment(turn.conversationId);
@@ -3670,9 +3671,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     interruptConversationTurn: (conversation, providerTurnId) =>
-      isManagedAgentKind(conversation.agentKind)
-        ? managedCoordinatorFor(conversation.agentKind).interruptTurn({ conversation, providerTurnId })
-        : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
+      isManagedAgentKind(conversation.agentKind) ? managedCoordinatorFor(conversation.agentKind).interruptTurn({ conversation, providerTurnId }) : codexNativeCoordinator.interruptTurn({ conversationId: conversation.id, providerTurnId }),
     settings,
     aiRuntimeManager,
     stopPersistedOrphanRuntimeSession,

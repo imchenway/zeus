@@ -472,7 +472,12 @@ export class ConversationCapabilityQueryApplication {
   }
 }
 
-function mapConversationCapabilityModels(codexCapabilities: CodexCapabilitiesSnapshot | null, connectionCatalog: SelectableConnectionModel[], copilotCatalog: CopilotModelInfo[], antigravityCatalog: AntigravityModel[] = []): ConversationCapabilityModel[] {
+function mapConversationCapabilityModels(
+  codexCapabilities: CodexCapabilitiesSnapshot | null,
+  connectionCatalog: SelectableConnectionModel[],
+  copilotCatalog: CopilotModelInfo[],
+  antigravityCatalog: AntigravityModel[] = [],
+): ConversationCapabilityModel[] {
   const codexModels: ConversationCapabilityModel[] = (codexCapabilities?.models ?? []).map((model) => ({
     id: model.id,
     model: model.model,
@@ -564,9 +569,19 @@ function conversationFeatureCatalog(model: ConversationCapabilityModel, piTools:
     /** agy 自己提供工具和上下文，Zeus 展示 ACP 实际请求的权限。 */
     const localOnly = unavailable('此功能在 Antigravity 会话中不可用。');
     return {
-      skills: localOnly, imageInput: unknown('是否支持图片以 Antigravity 会话为准。'), imageGeneration: localOnly,
-      questions: localOnly, plan: localOnly, processes: localOnly, steering: localOnly, goals: localOnly,
-      subagents: localOnly, autoReview: localOnly, mcp: localOnly, search: localOnly, browser: localOnly,
+      skills: localOnly,
+      imageInput: unknown('是否支持图片以 Antigravity 会话为准。'),
+      imageGeneration: localOnly,
+      questions: localOnly,
+      plan: localOnly,
+      processes: localOnly,
+      steering: localOnly,
+      goals: localOnly,
+      subagents: localOnly,
+      autoReview: localOnly,
+      mcp: localOnly,
+      search: localOnly,
+      browser: localOnly,
     };
   }
   const nativeKernel = model.runtimeAdapter !== 'pi_sdk' && model.agentKind === 'codex';

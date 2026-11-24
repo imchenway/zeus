@@ -344,7 +344,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     trustedConversationAttachmentRoots,
   } = dependencies;
   /** SDK 会话按持久 Agent 身份选择原生协调器，其他运行时仍由 Codex 路径处理。 */
-  const sdkCoordinator = (kind: ManagedAgentKind) => kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator;
+  const sdkCoordinator = (kind: ManagedAgentKind) => (kind === 'antigravity' ? antigravityNativeCoordinator : kind === 'copilot' ? copilotNativeCoordinator : piNativeCoordinator);
   /** 目录投影不改变真实 Provider 身份。 */
   const providerIdForModel = (model: { agentKind: 'codex' | ManagedAgentKind; sourceId?: string | null }) => (model.agentKind === 'pi' ? `pi:${model.sourceId ?? 'custom'}` : model.agentKind);
 
@@ -910,8 +910,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       await cancelQueuedSubagentSubmissions(child.id);
       const conversation = conversations.getById(child.id)!;
       // 子回合结束后仍可能留下后台命令或目标续跑，显式停止须清理其自身归属。
-      if (conversationGoals.get(child.id)?.status === 'active')
-        await (isManagedAgentKind(conversation.agentKind) ? sdkCoordinator(conversation.agentKind) : codexNativeCoordinator).pauseGoal({ conversationId: child.id });
+      if (conversationGoals.get(child.id)?.status === 'active') await (isManagedAgentKind(conversation.agentKind) ? sdkCoordinator(conversation.agentKind) : codexNativeCoordinator).pauseGoal({ conversationId: child.id });
       if (isManagedAgentKind(conversation.agentKind)) {
         sdkCoordinator(conversation.agentKind).stopOwnedProcesses(child.id);
       }
@@ -1843,7 +1842,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
         connectionId: connection?.id ?? null,
         credentialSlotId: connection && configuredModel ? modelConnectionCredentialSlotId(connection.id, configuredModel.authenticationScheme) : `${selectedModel.agentKind}-managed-account`,
         endpointIdentity: connection?.baseUrl ?? `${selectedModel.agentKind}://managed-account`,
-        protocolFamily: configuredModel?.protocolFamily ?? (selectedModel.agentKind === 'antigravity' ? 'antigravity_acp' : selectedModel.agentKind === 'copilot' ? 'copilot_sdk' : selectedModel.agentKind === 'pi' ? 'openai_completions' : 'openai_responses'),
+        protocolFamily:
+          configuredModel?.protocolFamily ??
+          (selectedModel.agentKind === 'antigravity' ? 'antigravity_acp' : selectedModel.agentKind === 'copilot' ? 'copilot_sdk' : selectedModel.agentKind === 'pi' ? 'openai_completions' : 'openai_responses'),
         modelId: selectedModel.model,
         effort,
         serviceTier,
@@ -3047,77 +3048,76 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const titledRecord = temporaryTitle === undefined ? record : { ...record, title: temporaryTitle, automaticTitle: true };
       return reservation.taskId && !deliveryWorkspace ? createProjectConversationRecord(titledRecord, displayText || content, attachments) : conversations.create(titledRecord);
     };
-    const nativeOperation =
-      isManagedAgentKind(selectedAgentKind)
-        ? await sdkCoordinator(selectedAgentKind).startConversation({
-            conversationId: reservation.conversationId,
-            // 首发先持久接纳，沿用队列入口在回执之后准备运行时。
-            deferInitialDispatch: true,
-            contextCapacityTokens: reservation.contextCapacityTokens,
-            submissionId: reservation.submissionId,
-            projectId: project.id,
-            conversationTitle: initialTitle,
-            ...(reservation.taskId ? { taskId: reservation.taskId } : {}),
-            createRecord,
-            cwd: executionRoot,
-            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
-            ...(goalObjective ? { goalObjective } : {}),
-            prompt: providerContent,
-            browserComments,
-            browserCommentContent,
-            conversationContext,
-            ...(displayText !== providerContent ? { displayText } : {}),
-            model: {
-              sourceId: selectedModel.sourceId ?? null,
-              modelId: selectedModel.model,
-              displayName: selectedModel.displayName ?? null,
-            },
-            ...(effectiveEffort ? { thinkingLevel: effectiveEffort } : {}),
-            attachments,
-            allowedAttachmentRoots: executionRoots,
-            writableRoots,
-            permissionMode,
-            workMode: collaborationMode,
-            idempotencyKey,
-            clientUserMessageId,
-            ...(skills.length ? { skills } : {}),
-            ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
-            providerWriteLifecycle: reservedLifecycle,
-            segmentLifecycle,
-          })
-        : await codexNativeCoordinator.startProjectConversation({
-            conversationId: reservation.conversationId,
-            deferInitialDispatch: true,
-            contextCapacityTokens: reservation.contextCapacityTokens,
-            submissionId: reservation.submissionId,
-            projectId: project.id,
-            projectLocalPath: executionRoot,
-            ...(reservation.taskId ? { taskId: reservation.taskId } : {}),
-            createRecord,
-            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
-            prompt: providerContent,
-            browserComments,
-            browserCommentContent,
-            conversationContext,
-            ...(displayText !== providerContent ? { displayText } : {}),
-            attachments,
-            allowedAttachmentRoots: executionRoots,
-            writableRoots,
-            model: selectedModel.model,
-            modelSourceId: selectedModel.sourceId ?? null,
-            ...(effectiveEffort ? { effort: effectiveEffort } : {}),
-            ...(requestedServiceTier.present ? { serviceTier } : {}),
-            ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
-            permissionMode,
-            collaborationMode,
-            ...(skills.length ? { skills } : {}),
-            ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
-            idempotencyKey,
-            clientUserMessageId,
-            providerWriteLifecycle: reservedLifecycle,
-            segmentLifecycle,
-            ...(goalObjective ? { goalObjective } : {}),
-          });
+    const nativeOperation = isManagedAgentKind(selectedAgentKind)
+      ? await sdkCoordinator(selectedAgentKind).startConversation({
+          conversationId: reservation.conversationId,
+          // 首发先持久接纳，沿用队列入口在回执之后准备运行时。
+          deferInitialDispatch: true,
+          contextCapacityTokens: reservation.contextCapacityTokens,
+          submissionId: reservation.submissionId,
+          projectId: project.id,
+          conversationTitle: initialTitle,
+          ...(reservation.taskId ? { taskId: reservation.taskId } : {}),
+          createRecord,
+          cwd: executionRoot,
+          executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+          ...(goalObjective ? { goalObjective } : {}),
+          prompt: providerContent,
+          browserComments,
+          browserCommentContent,
+          conversationContext,
+          ...(displayText !== providerContent ? { displayText } : {}),
+          model: {
+            sourceId: selectedModel.sourceId ?? null,
+            modelId: selectedModel.model,
+            displayName: selectedModel.displayName ?? null,
+          },
+          ...(effectiveEffort ? { thinkingLevel: effectiveEffort } : {}),
+          attachments,
+          allowedAttachmentRoots: executionRoots,
+          writableRoots,
+          permissionMode,
+          workMode: collaborationMode,
+          idempotencyKey,
+          clientUserMessageId,
+          ...(skills.length ? { skills } : {}),
+          ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
+          providerWriteLifecycle: reservedLifecycle,
+          segmentLifecycle,
+        })
+      : await codexNativeCoordinator.startProjectConversation({
+          conversationId: reservation.conversationId,
+          deferInitialDispatch: true,
+          contextCapacityTokens: reservation.contextCapacityTokens,
+          submissionId: reservation.submissionId,
+          projectId: project.id,
+          projectLocalPath: executionRoot,
+          ...(reservation.taskId ? { taskId: reservation.taskId } : {}),
+          createRecord,
+          executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+          prompt: providerContent,
+          browserComments,
+          browserCommentContent,
+          conversationContext,
+          ...(displayText !== providerContent ? { displayText } : {}),
+          attachments,
+          allowedAttachmentRoots: executionRoots,
+          writableRoots,
+          model: selectedModel.model,
+          modelSourceId: selectedModel.sourceId ?? null,
+          ...(effectiveEffort ? { effort: effectiveEffort } : {}),
+          ...(requestedServiceTier.present ? { serviceTier } : {}),
+          ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
+          permissionMode,
+          collaborationMode,
+          ...(skills.length ? { skills } : {}),
+          ...(body.computerUseRequested ? { computerUseRequested: true } : {}),
+          idempotencyKey,
+          clientUserMessageId,
+          providerWriteLifecycle: reservedLifecycle,
+          segmentLifecycle,
+          ...(goalObjective ? { goalObjective } : {}),
+        });
     const conversation = conversations.getById(nativeOperation.conversationId);
     const submission = conversationSubmissions.getById(nativeOperation.submissionId);
     if (
