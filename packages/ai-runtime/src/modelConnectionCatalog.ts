@@ -860,7 +860,8 @@ function normalizeModelCatalog(catalog: object): Readonly<Record<string, Model<A
 }
 
 function catalogThinkingFormat(model: Model<Api>, fallback: OpenAiThinkingFormat): OpenAiThinkingFormat {
-  const compat = isRecord(model.compat) ? model.compat : {};
+  /** Pi 按协议定义兼容参数，目录只采用 Zeus 能转换的推理格式。 */
+  const compat: Record<string, unknown> = isRecord(model.compat) ? model.compat : {};
   return thinkingFormats.has(compat.thinkingFormat as OpenAiThinkingFormat) ? (compat.thinkingFormat as OpenAiThinkingFormat) : fallback;
 }
 

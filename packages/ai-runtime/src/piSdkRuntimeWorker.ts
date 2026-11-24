@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AcceptedAgentRun, AgentProviderPayloadDiagnostic, AgentRuntimeEvent, FollowUpAgentRunInput, StartAgentRunInput, SteerAgentRunInput } from './agentRuntimeContracts.js';
+import type { AgentProviderPayloadDiagnostic, AgentRuntimeEvent, FollowUpAgentRunInput, StartAgentRunInput, SteerAgentRunInput } from './agentRuntimeContracts.js';
 import { createPiSdkRuntimeDriver, type PiRuntimeConnection, type PiSdkRuntimeDriver, type PiZeusToolDefinitionSpec, type PiZeusToolRequest, type PiZeusToolResult } from './piSdkRuntimeDriver.js';
 import {
   isPiRuntimeCoreToWorkerMessage,
@@ -25,12 +25,11 @@ interface SerializedStartInput extends Omit<StartAgentRunInput, 'preflightResult
   callbackToken: string;
 }
 
-interface RunBoundary {
+/** 把模型请求诊断路由到当前原生轮次对应的 Core 回调。 */
+interface RunCallbackBinding {
+  nativeRunId: string;
   callbackToken: string;
   traceIdentity: string | null;
-  providerWriteAllowed: Promise<void>;
-  allowProviderWrite(): void;
-  rejectProviderWrite(error: unknown): void;
 }
 
 interface PendingReverseRequest {
@@ -45,7 +44,8 @@ interface PendingReverseRequest {
 const noCommandResponse = Symbol('no-command-response');
 const generationId = process.env.ZEUS_PI_WORKER_GENERATION_ID?.trim() || `invalid_generation_${randomUUID()}`;
 const pendingReverseRequests = new Map<string, PendingReverseRequest>();
-const runBoundaries = new Map<string, RunBoundary>();
+/** 每个 Pi 会话仅保留当前轮次的诊断回调身份。 */
+const runCallbacks = new Map<string, RunCallbackBinding>();
 const knownCredentialValues = new Set<string>();
 let driver: PiSdkRuntimeDriver | null = null;
 let closing = false;
@@ -157,46 +157,39 @@ async function handleRequest(request: PiRuntimeWorkerRequest): Promise<unknown |
   }
 }
 
+/** Core 持久接纳通过反向 RPC 完成，由 SDK 驱动统一控制写前放行。 */
 async function startRun(runtime: PiSdkRuntimeDriver, request: PiRuntimeWorkerRequest, input: SerializedStartInput): Promise<typeof noCommandResponse> {
-  const boundary = createRunBoundary(input.callbackToken, request.traceIdentity ?? null);
-  runBoundaries.set(input.session.nativeSessionId, boundary);
+  /** 接纳、拒绝和诊断都需要保留同一条派发链路标识。 */
+  const traceIdentity = request.traceIdentity ?? null;
   let preflightAccepted = false;
-  let acceptance: AcceptedAgentRun | null = null;
   try {
-    acceptance = await runtime.startRun({
-      ...input,
-      preflightResult: (accepted) => {
-        preflightAccepted = accepted;
-      },
-    });
-    await reverseRequest(
-      'run_acceptance',
+    await runtime.startRun(
       {
-        commandRequestId: request.id,
-        callbackToken: input.callbackToken,
-        session: input.session,
-        acceptance,
+        ...input,
+        preflightResult: (accepted) => {
+          preflightAccepted = accepted;
+        },
       },
-      undefined,
-      boundary.traceIdentity,
+      async (acceptance) => {
+        runCallbacks.set(input.session.nativeSessionId, { nativeRunId: acceptance.nativeRunId, callbackToken: input.callbackToken, traceIdentity });
+        await reverseRequest('run_acceptance', { commandRequestId: request.id, callbackToken: input.callbackToken, session: input.session, acceptance }, undefined, traceIdentity);
+      },
     );
-    boundary.allowProviderWrite();
     return noCommandResponse;
   } catch (error) {
-    boundary.rejectProviderWrite(error);
     if (!preflightAccepted) {
-      await reverseRequest('run_rejected', { commandRequestId: request.id, callbackToken: input.callbackToken, session: input.session }, undefined, boundary.traceIdentity).catch(() => undefined);
-    } else if (acceptance) await runtime.interruptRun({ session: input.session, nativeRunId: acceptance.nativeRunId }).catch(() => undefined);
-    runBoundaries.delete(input.session.nativeSessionId);
+      await reverseRequest('run_rejected', { commandRequestId: request.id, callbackToken: input.callbackToken, session: input.session }, undefined, traceIdentity).catch(() => undefined);
+    }
+    if (runCallbacks.get(input.session.nativeSessionId)?.callbackToken === input.callbackToken) runCallbacks.delete(input.session.nativeSessionId);
     throw error;
   }
 }
 
+/** 发出模型请求前将脱敏诊断交给已接纳该轮的 Core。 */
 async function beforeProviderWrite(sessionId: string, model: { sourceId: string | null; modelId: string; displayName: string | null }, diagnostic: AgentProviderPayloadDiagnostic): Promise<void> {
-  const boundary = runBoundaries.get(sessionId);
-  if (!boundary) return;
-  await boundary.providerWriteAllowed;
-  await reverseRequest('provider_payload_observed', { callbackToken: boundary.callbackToken, model, diagnostic }, undefined, boundary.traceIdentity);
+  /** 归属按会话查找，接纳回执绑定到具体轮次。 */
+  const binding = runCallbacks.get(sessionId);
+  if (binding) await reverseRequest('provider_payload_observed', { callbackToken: binding.callbackToken, model, diagnostic }, undefined, binding.traceIdentity);
 }
 
 async function reverseToolRequest(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
@@ -207,7 +200,9 @@ async function reverseToolRequest(request: PiZeusToolRequest): Promise<PiZeusToo
 function forwardRuntimeEvent(event: AgentRuntimeEvent): void {
   const forwardedEvent = event.type === 'runtime_error' ? { ...event, payload: sanitizeRuntimeErrorPayload(event.payload) } : event;
   send({ kind: 'event', protocolVersion: piRuntimeWorkerProtocolVersion, generationId, event: forwardedEvent });
-  if (event.nativeSessionId && (event.type === 'agent_settled' || event.type === 'runtime_error')) runBoundaries.delete(event.nativeSessionId);
+  if (event.nativeSessionId && (event.type === 'agent_settled' || event.type === 'runtime_error') && runCallbacks.get(event.nativeSessionId)?.nativeRunId === event.nativeRunId) {
+    runCallbacks.delete(event.nativeSessionId);
+  }
 }
 
 function reverseRequest(method: Parameters<typeof sendReverseRequest>[0], payload: unknown, signal?: AbortSignal, traceIdentity: string | null = null): Promise<unknown> {
@@ -261,17 +256,6 @@ function settleReverseRequest(response: PiRuntimeWorkerReverseResponse): void {
   else pending.reject(piRuntimeWorkerError(response.error!));
 }
 
-function createRunBoundary(callbackToken: string, traceIdentity: string | null): RunBoundary {
-  let resolve!: () => void;
-  let reject!: (error: unknown) => void;
-  const providerWriteAllowed = new Promise<void>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  void providerWriteAllowed.catch(() => undefined);
-  return { callbackToken, traceIdentity, providerWriteAllowed, allowProviderWrite: resolve, rejectProviderWrite: reject };
-}
-
 function readInitialization(value: unknown): WorkerInitialization {
   const record = asRecord(value);
   const adapterVersion = requiredString(record.adapterVersion, 'adapterVersion');
@@ -310,8 +294,7 @@ async function closeDriver(): Promise<void> {
     pending.reject(workerError('ZEUS_PI_WORKER_CLOSING', 'Pi Worker 正在关闭。'));
   }
   pendingReverseRequests.clear();
-  for (const boundary of runBoundaries.values()) boundary.rejectProviderWrite(workerError('ZEUS_PI_WORKER_CLOSING', 'Pi Worker 正在关闭。'));
-  runBoundaries.clear();
+  runCallbacks.clear();
   knownCredentialValues.clear();
 }
 
