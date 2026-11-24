@@ -129,7 +129,8 @@ export interface ConversationMarkdownProps {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
-  onRenderSettled?: () => void;
+  /** 报告最终正文是否已渲染完成，可用于启用依赖正文位置的操作。 */
+  onRenderSettledChange?: (ready: boolean) => void;
   /** 助手正文的独立媒体链接可在原段落位置展开。 */
   showMedia?: boolean;
   /** 用户消息中的结构化引用标签，按原标签文本渲染为胶囊而不是普通 Markdown 文本。 */
@@ -218,12 +219,12 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   motion.current.enabled ||= props.phase === 'streaming' || Boolean(props.animateArrival);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onVisibleContentChangeRef = useRef(props.onVisibleContentChange);
-  const onRenderSettledRef = useRef(props.onRenderSettled);
-  const settledNotificationRef = useRef<string | null>(null);
+  /** 回调更新不影响当前正文的渲染状态。 */
+  const onRenderSettledChangeRef = useRef(props.onRenderSettledChange);
   const [settled, setSettled] = useState(false);
   const languageLabels = labels[props.language];
   onVisibleContentChangeRef.current = props.onVisibleContentChange;
-  onRenderSettledRef.current = props.onRenderSettled;
+  onRenderSettledChangeRef.current = props.onRenderSettledChange;
 
   const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language, props.documentMode), [props.documentMode, props.language, props.text]);
   const customId = props.customComponentsId ?? (props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : props.showMedia ? MEDIA_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID);
@@ -266,21 +267,17 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    const notificationKey = `${props.streamId}:${bounded.text}`;
-    setSettled(false);
-    if (props.phase !== 'final') {
-      settledNotificationRef.current = null;
-      return;
-    }
+    /** 正文标记和依赖选区的操作使用同一次渲染检查。 */
+    const reportSettled = (ready: boolean) => {
+      setSettled(ready);
+      onRenderSettledChangeRef.current?.(ready);
+    };
+    reportSettled(false);
+    if (props.phase !== 'final') return;
     let frame = 0;
     const inspect = () => {
       frame = 0;
-      const renderSettled = !root.querySelector('.node-placeholder');
-      setSettled(renderSettled);
-      if (renderSettled && settledNotificationRef.current !== notificationKey) {
-        settledNotificationRef.current = notificationKey;
-        onRenderSettledRef.current?.();
-      }
+      reportSettled(!root.querySelector('.node-placeholder'));
     };
     const scheduleInspect = () => {
       if (!frame) frame = requestAnimationFrame(inspect);
@@ -291,6 +288,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
     return () => {
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
+      onRenderSettledChangeRef.current?.(false);
     };
   }, [bounded.text, props.phase, props.streamId]);
 
