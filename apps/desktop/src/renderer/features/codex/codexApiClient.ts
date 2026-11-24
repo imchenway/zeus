@@ -97,12 +97,16 @@ export interface CodexRuntimeUpdateProgress {
 export interface CodexApiClient {
   /** 读取 agy 已观察到的 Google 账号状态。 */
   loadAntigravityAccount: () => Promise<AntigravityAccountCatalog>;
+  /** 用户主动验证时读取一次 Google 的验证链接。 */
+  loadAntigravityVerification: () => Promise<{ url: string | null }>;
   /** 从 agy 刷新登录和可选模型。 */
   refreshAntigravityAccount: () => Promise<AntigravityAccountCatalog>;
   /** 发起官方个人 Google 账号授权。 */
   startAntigravityLogin: () => Promise<AntigravityAccountCatalog>;
   /** 停止当前尚未完成的授权。 */
   cancelAntigravityLogin: () => Promise<AntigravityAccountCatalog>;
+  /** 退出当前 Zeus 的 Antigravity 账号接入。 */
+  logoutAntigravityAccount: () => Promise<AntigravityAccountCatalog>;
   /** 只读已缓存的 Copilot 登录和模型状态。 */
   loadCopilotAccount: () => Promise<CopilotAccountCatalog>;
   /** 主动从 Copilot SDK 刷新账号和模型目录。 */
@@ -239,9 +243,11 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
 
   return {
     loadAntigravityAccount: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account'),
+    loadAntigravityVerification: () => transport.request<{ url: string | null }>('/api/antigravity/account/verification'),
     refreshAntigravityAccount: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/refresh', { method: 'POST', body: '{}' }),
     startAntigravityLogin: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/login', { method: 'POST', body: '{}' }),
     cancelAntigravityLogin: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/cancel', { method: 'POST', body: '{}' }),
+    logoutAntigravityAccount: () => transport.request<AntigravityAccountCatalog>('/api/antigravity/account/logout', { method: 'POST', body: '{}' }),
     loadCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account'),
     refreshCopilotAccount: () => transport.request<CopilotAccountCatalog>('/api/copilot/account/refresh', { method: 'POST', body: '{}' }),
     startCopilotLogin: () => transport.request<{ loginId: string; step: CopilotLoginStep }>('/api/copilot/account/login', { method: 'POST', body: '{}' }),

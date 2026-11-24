@@ -1287,12 +1287,6 @@
     align-items: center;
     padding-inline-end: calc(var(--settings-card-padding) + 1px);
   }
-  :is(.model-provider-accounts .model-setup-actions, .model-connections-heading > .settings-heading-actions) > .zeus-button {
-    flex: none;
-    inline-size: 108px;
-    min-block-size: var(--zeus-control-height, 34px);
-    padding-inline: 8px;
-  }
   .model-provider-accounts .codex-update-row {
     flex-wrap: wrap;
     padding-inline-start: 55px;
@@ -2446,6 +2440,18 @@
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+}
+/* 已接入账号的操作在接入弹窗和供应商设置共用按钮规格。 */
+.macos-ai-app
+  :is(
+    .settings-reference-shell .model-provider-accounts .model-setup-actions,
+    .settings-reference-shell .model-connections-heading > .settings-heading-actions,
+    .model-setup-subscription .model-setup-actions:is([data-account-status='ready'], [data-account-status='verification_required'])
+  ) > .zeus-button {
+  flex: none;
+  inline-size: 108px;
+  min-block-size: var(--zeus-control-height, 34px);
+  padding-inline: 8px;
 }
 @container model-provider-accounts (max-width: 490px) {
   .macos-ai-app :is(.model-provider-accounts, .model-setup-subscription) > .model-setup-account {

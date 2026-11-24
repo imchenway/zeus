@@ -1,5 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   AcceptedAgentRun,
   AgentDescriptor,
@@ -30,8 +33,10 @@ export interface AntigravityModel {
 
 /** 浏览器授权和模型目录的公开状态，凭据始终留在 agy。 */
 export interface AntigravityAccountCatalog {
-  status: 'idle' | 'checking' | 'missing_cli' | 'installing' | 'sign_in_required' | 'signing_in' | 'ready' | 'unavailable';
+  status: 'idle' | 'checking' | 'missing_cli' | 'installing' | 'sign_in_required' | 'signing_in' | 'verification_required' | 'ready' | 'unavailable';
   models: AntigravityModel[];
+  /** 验证地址仅在用户点击验证时单独读取。 */
+  verificationAvailable?: boolean;
   /** 仅在准备受管 CLI 时公开具体阶段。 */
   installation?: AntigravityInstallProgress;
   message?: string;
@@ -60,6 +65,7 @@ class AcpConnection {
   /** 建立子进程读写边界，stderr 可能包含 OAuth 信息，直接消费且不保存。 */
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
+    private readonly diagnosticPath: string,
     onMessage: (connection: AcpConnection, message: RpcMessage) => void,
     private readonly onClose: (connection: AcpConnection, error: Error) => void,
   ) {
@@ -91,6 +97,11 @@ class AcpConnection {
   /** 活跃的本地 CLI 进程。 */
   get pid(): number | null {
     return this.child.pid ?? null;
+  }
+
+  /** 从当前 CLI 进程的私有诊断读取 Google 账号挑战。 */
+  readVerification(): Promise<{ url: string | null } | null> {
+    return readAntigravityVerification(this.diagnosticPath);
   }
 
   /** 登录有独立的等待区间。轮次由用户停止，不对正常长轮次设置硬超时。 */
@@ -137,6 +148,8 @@ interface SessionBinding {
   run?: {
     id: string;
     text: string;
+    /** CLI 用普通消息发送验证提示，等供应商诊断确认后再判定用途。 */
+    verificationNotice: string | null;
     messageId: string;
     abort: AbortController;
     tools: Set<string>;
@@ -145,6 +158,9 @@ interface SessionBinding {
 
 /** Zeus 接受的 Google 账号授权方式。 */
 const googleLoginMethod = 'oauth-personal';
+
+/** agy 在 ACP 正文中返回的账号验证提示。 */
+const verificationNotice = '⚠ Verification Required';
 
 /** 将官方 ACP 会话接入 Zeus 已有的持久派发和审批。 */
 export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedAgentRuntimeDriver {
@@ -156,6 +172,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private readonly listeners = new Set<(event: AgentRuntimeEvent) => void>();
   /** 未授权时模型目录为空。 */
   private catalog: AntigravityAccountCatalog = { status: 'idle', models: [] };
+  /** Google 生成的验证链接，仅保存在当前 Core 内存。 */
+  private verificationUrl: string | null = null;
   /** 当前 ACP 子进程，关闭后生成新代次。 */
   private connection: AcpConnection | null = null;
   /** 同时刷新只启动一个子进程。 */
@@ -188,6 +206,11 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return this.catalog;
   }
 
+  /** 仅在账号仍待验证时向显式的验证操作提供官方链接。 */
+  readVerificationUrl(): string | null {
+    return this.catalog.status === 'verification_required' ? this.verificationUrl : null;
+  }
+
   /** 冷启动复用本机此前通过 Zeus 接入的官方个人 Google 账号。 */
   restoreGoogleAccount(): Promise<AntigravityAccountCatalog> {
     this.googleAccountSelected = true;
@@ -196,7 +219,17 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
 
   /** 使用 agy 已保存的 Google 账号检查模型目录。 */
   refreshAccount(): Promise<AntigravityAccountCatalog> {
-    return this.accountOperation ?? this.checkAccount(false);
+    if (this.accountOperation) return this.accountOperation;
+    if (!this.googleAccountSelected) {
+      this.catalog = { status: readManagedAntigravity(this.probeDirectory) ? 'sign_in_required' : 'missing_cli', models: [] };
+      return Promise.resolve(this.catalog);
+    }
+    if (this.catalog.status === 'verification_required') {
+      if ([...this.sessions.values()].some((session) => session.run)) return Promise.resolve(this.catalog);
+      // 新进程会重新检查 Google 账号，当前进程的诊断仍保留上一次拒绝。
+      this.connection?.close();
+    }
+    return this.checkAccount(false);
   }
 
   /** 在后台推进官方浏览器授权，界面可以取消。 */
@@ -217,6 +250,32 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       this.connection?.close();
     }
     return this.catalog;
+  }
+
+  /** 提交 Zeus 的接入退出后，释放当前连接、模型目录和验证链接。 */
+  async logoutAccount(disableRestore: () => Promise<void>): Promise<AntigravityAccountCatalog> {
+    if (this.accountOperation || [...this.sessions.values()].some((session) => session.run)) {
+      throw agyError('ZEUS_AGY_BUSY', '请等 Antigravity 当前操作或会话结束后再退出登录。');
+    }
+    const previous = this.catalog;
+    this.catalog = { status: 'checking', models: [] };
+    const operation = (async () => {
+      await disableRestore();
+      this.googleAccountSelected = false;
+      this.verificationUrl = null;
+      this.catalog = { status: 'sign_in_required', models: [] };
+      this.connection?.close();
+      return this.catalog;
+    })();
+    this.accountOperation = operation;
+    try {
+      return await operation;
+    } catch (error) {
+      this.catalog = previous;
+      throw error;
+    } finally {
+      this.accountOperation = null;
+    }
   }
 
   /** 能力探测仅陈述已经观察到的 CLI 和账号状态。 */
@@ -257,8 +316,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
 
   /** 先冻结模型和操作模式，持久接纳成功后才发送提示词。 */
   async startRun(input: StartAgentRunInput): Promise<AcceptedAgentRun> {
+    const connection = await this.requireAccount();
     const session = this.requireSession(input.session);
-    const connection = this.connection!;
     if (session.run) throw agyError('ZEUS_AGY_BUSY', 'Antigravity 会话已有运行中的轮次。');
     const sessionId = session.identity.nativeSessionId;
     const config = selectConfig(session.config, 'model');
@@ -287,7 +346,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       record(session.config.modes).currentModeId = modeId;
     }
     const acceptance = { nativeRunId: randomUUID(), acceptedAt: this.now() };
-    const run = { id: acceptance.nativeRunId, messageId: randomUUID(), text: '', abort: new AbortController(), tools: new Set<string>() };
+    /** 该轮持有 ACP 原生会话内的正文和工具状态。 */
+    const run: NonNullable<SessionBinding['run']> = { id: acceptance.nativeRunId, messageId: randomUUID(), text: '', verificationNotice: null, abort: new AbortController(), tools: new Set<string>() };
     const prompt = [{ type: 'text', text: [input.content, input.untrustedContext?.content].filter(Boolean).join('\n\n') }, ...(input.images ?? []).map((image) => ({ type: 'image', data: image.data, mimeType: image.mimeType }))];
     input.preflightResult?.(true);
     input.durableTransactionSync?.(acceptance);
@@ -298,11 +358,23 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
         this.finish(session, true, null);
         return;
       }
+      if (this.catalog.status === 'verification_required') {
+        this.finish(session, false, antigravityVerificationError());
+        return;
+      }
       void (async () => {
         try {
           input.providerWriteMayStart?.();
           const result = record(await connection.request('session/prompt', { sessionId, prompt }, null));
-          this.finish(session, result.stopReason === 'cancelled', null);
+          const cancelled = result.stopReason === 'cancelled';
+          const verification = !cancelled && (run.verificationNotice || run.text.trim() === verificationNotice) ? await connection.readVerification() : null;
+          if (session.run !== run) return;
+          if (verification && !run.abort.signal.aborted) {
+            this.requireVerification(this.catalog.models, verification.url);
+            this.finish(session, false, antigravityVerificationError());
+            return;
+          }
+          this.finish(session, cancelled, null);
         } catch (error) {
           this.finish(session, false, error instanceof Error ? error : agyError('ZEUS_AGY_RUN_FAILED', 'Antigravity 请求失败。'));
         }
@@ -406,6 +478,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     const needsInstallation = login && !readManagedAntigravity(this.probeDirectory);
     this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
     const operation = (async () => {
+      /** 同一连接的诊断也用于识别授权或建探测会话时的验证要求。 */
+      let connection: AcpConnection | undefined;
       try {
         if (needsInstallation) {
           const abort = new AbortController();
@@ -420,7 +494,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           if (revision !== this.accountRevision) return this.catalog;
           this.catalog = { status: 'signing_in', models: [] };
         }
-        const connection = await this.connect();
+        connection = await this.connect();
         if (revision !== this.accountRevision) return this.catalog;
         if (login) {
           if (!this.authMethods.some((item) => record(item).id === googleLoginMethod)) throw agyError('ZEUS_AGY_PROTOCOL', '请更新 Antigravity CLI 以使用个人 Google 账号登录。');
@@ -428,16 +502,27 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           if (revision !== this.accountRevision) return this.catalog;
           this.googleAccountSelected = true;
         }
-        if (!this.googleAccountSelected) {
-          this.catalog = { status: 'sign_in_required', models: [] };
-          return this.catalog;
-        }
         const probe = record(await connection.request('session/new', { cwd: this.probeDirectory, mcpServers: [] }));
         if (typeof probe.sessionId === 'string') await connection.request('session/close', { sessionId: probe.sessionId }).catch(() => undefined);
         const models = selectConfig(probe, 'model')?.models ?? legacyModels(record(probe.models));
-        if (revision === this.accountRevision) this.catalog = { status: 'ready', models };
-      } catch (error) {
+        const verification = await connection.readVerification();
         if (revision === this.accountRevision) {
+          if (connection !== this.connection) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已断开。');
+          if (verification) this.requireVerification(models, verification.url);
+          else {
+            this.verificationUrl = null;
+            this.catalog = { status: 'ready', models };
+          }
+        }
+      } catch (error) {
+        const verification = login || this.googleAccountSelected ? await connection?.readVerification() : null;
+        if (revision === this.accountRevision) {
+          if (verification) {
+            this.googleAccountSelected = true;
+            this.requireVerification([], verification.url);
+            return this.catalog;
+          }
+          this.verificationUrl = null;
           const code = record(error).code;
           this.catalog = {
             status: code === 'ZEUS_AGY_MISSING' ? 'missing_cli' : code === 'ZEUS_AGY_AUTH_REQUIRED' ? 'sign_in_required' : 'unavailable',
@@ -455,6 +540,12 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return operation;
   }
 
+  /** 账号已授权，Google 需要验证后才接受模型请求。 */
+  private requireVerification(models: AntigravityModel[], url: string | null): void {
+    this.verificationUrl = url;
+    this.catalog = { status: 'verification_required', models, verificationAvailable: Boolean(url), message: antigravityVerificationError().message };
+  }
+
   /** 过滤替代认证环境，使用 Zeus 持有的官方 CLI 启动 ACP。 */
   private connect(): Promise<AcpConnection> {
     if (this.connecting) return this.connecting;
@@ -467,10 +558,19 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       }
       const executable = readManagedAntigravity(this.probeDirectory);
       if (!executable) throw agyError('ZEUS_AGY_MISSING', '点击登录 Google，Zeus 会准备 Antigravity CLI。');
-      const invocation = resolveExecutableInvocation(executable, ['acp', '--sandbox'], { env, cwd: this.probeDirectory });
+      /** 独占诊断目录只在子进程存活期间保留，避免读取其他 agy 实例的账号挑战。 */
+      const diagnosticDirectory = await mkdtemp(join(tmpdir(), 'zeus-antigravity-'));
+      const diagnosticPath = join(diagnosticDirectory, 'acp.log');
+      if (this.disposed) {
+        await rm(diagnosticDirectory, { recursive: true, force: true });
+        throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已关闭。');
+      }
+      const invocation = resolveExecutableInvocation(executable, ['acp', '--sandbox', '--log-file', diagnosticPath], { env, cwd: this.probeDirectory });
       const child = spawn(invocation.command, invocation.args, { cwd: this.probeDirectory, env: invocation.env, windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments, stdio: 'pipe' });
+      child.once('close', () => void rm(diagnosticDirectory, { recursive: true, force: true }).catch(() => undefined));
       const connection = new AcpConnection(
         child,
+        diagnosticPath,
         (source, message) => this.onMessage(source, message),
         (source, error) => this.onClose(source, error),
       );
@@ -499,7 +599,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
 
   /** 只有已连通的官方 Google 账号才能创建会话。 */
   private async requireAccount(): Promise<AcpConnection> {
-    const account = this.catalog.status === 'ready' ? this.catalog : await this.refreshAccount();
+    const account = this.catalog.status === 'ready' || this.catalog.status === 'verification_required' ? this.catalog : await this.refreshAccount();
+    if (account.status === 'verification_required') throw antigravityVerificationError();
     if (account.status !== 'ready' || !this.connection) throw agyError('ZEUS_AGY_AUTH_REQUIRED', account.message ?? '请在模型供应商中登录 Google 账号。');
     return this.connection;
   }
@@ -548,9 +649,10 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     if (update.sessionUpdate === 'agent_message_chunk') {
       const { text } = record(update.content);
       if (typeof text !== 'string' || !text) return;
-      if (!run.text) this.emit(session, 'message_start', { message: { id: run.messageId, role: 'assistant' } });
-      run.text += text;
-      this.emit(session, 'message_update', { message: { id: run.messageId, role: 'assistant' }, assistantMessageEvent: { type: 'text_delta', delta: text } });
+      if (text.trim() === verificationNotice) {
+        this.appendMessage(session, run, '');
+        run.verificationNotice = text;
+      } else this.appendMessage(session, run, text);
     }
     if (typeof update.toolCallId === 'string') {
       if (update.sessionUpdate === 'tool_call' && !run.tools.has(update.toolCallId)) {
@@ -563,6 +665,16 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
         this.emit(session, 'tool_execution_end', { toolCallId: update.toolCallId, result: update.content ?? update.rawOutput, isError: update.status === 'failed' });
       }
     }
+  }
+
+  /** 保留原生回复文本及首次输出事件。 */
+  private appendMessage(session: SessionBinding, run: NonNullable<SessionBinding['run']>, text: string): void {
+    const delta = (run.verificationNotice ?? '') + text;
+    run.verificationNotice = null;
+    if (!delta) return;
+    if (!run.text) this.emit(session, 'message_start', { message: { id: run.messageId, role: 'assistant' } });
+    run.text += delta;
+    this.emit(session, 'message_update', { message: { id: run.messageId, role: 'assistant' }, assistantMessageEvent: { type: 'text_delta', delta } });
   }
 
   /** 只向 ACP 回送单次批准、拒绝或取消。 */
@@ -595,7 +707,9 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 将工具调用前的正文与之后的回复存为独立原生条目。 */
   private endMessage(session: SessionBinding): void {
     const run = session.run;
-    if (!run?.text) return;
+    if (!run) return;
+    if (run.verificationNotice) this.appendMessage(session, run, '');
+    if (!run.text) return;
     this.emit(session, 'message_end', { message: { id: run.messageId, role: 'assistant', content: [{ type: 'text', text: run.text }] } });
     run.text = '';
     run.messageId = randomUUID();
@@ -605,6 +719,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private finish(session: SessionBinding, cancelled: boolean, error: Error | null): void {
     if (!session.run) return;
     session.run.abort.abort();
+    if (record(error).code === 'ZEUS_AGY_VERIFICATION_REQUIRED') session.run.verificationNotice = null;
     this.endMessage(session);
     if (record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') this.catalog = { status: 'sign_in_required', models: [], message: error!.message };
     if (error) this.emit(session, 'runtime_error', { code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message });
@@ -637,6 +752,44 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
         createdAt: this.now(),
       });
   }
+}
+
+/** 只在匹配 Google 结构化 403 时接收验证链接，链接必须指向 Google 账号站点。 */
+async function readAntigravityVerification(path: string): Promise<{ url: string | null } | null> {
+  const file = await open(path, 'r').catch(() => null);
+  if (!file) return null;
+  try {
+    const { size } = await file.stat();
+    /** 登录和本轮错误扫描最多读取最近 128 KiB。 */
+    const tail = Buffer.alloc(Math.min(size, 128 * 1024));
+    const { bytesRead } = await file.read(tail, 0, tail.length, size - tail.length);
+    const diagnostics = tail.toString('utf8', 0, bytesRead);
+    for (const match of [...diagnostics.matchAll(/Failed to make code assist backend request \([^\r\n]+\): (\{\r?\n[\s\S]*?^\})/gm)].reverse()) {
+      const body = match[1];
+      if (!body) continue;
+      try {
+        const error = record(record(JSON.parse(body)).error);
+        if (error.code !== 403 || !Array.isArray(error.details)) continue;
+        const validation = error.details.map(record).find((item) => item['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && item.reason === 'VALIDATION_REQUIRED' && item.domain === 'cloudcode-pa.googleapis.com');
+        if (!validation) continue;
+        const value = record(validation.metadata).validation_url;
+        const url = typeof value === 'string' ? URL.parse(value) : null;
+        return { url: url?.origin === 'https://accounts.google.com' && !url.username && !url.password ? url.href : null };
+      } catch {
+        // 单条截断的诊断不影响其他记录。
+      }
+    }
+    return /^E\d{4} [^\r\n]* errorreport\.go:\d+\] PERMISSION_DENIED \(code 403\): Verify your account to continue\.\r?$/m.test(diagnostics) ? { url: null } : null;
+  } catch {
+    return null;
+  } finally {
+    await file.close().catch(() => undefined);
+  }
+}
+
+/** 服务端提交和失败轮次共用明确的验证提示。 */
+function antigravityVerificationError(): Error & { code: string } {
+  return agyError('ZEUS_AGY_VERIFICATION_REQUIRED', '请在设置的 Google Antigravity 账号卡片中完成验证后重试。');
 }
 
 /** 读取 ACP 的对象字段时拒绝数组和非对象值。 */

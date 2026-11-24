@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
+import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent, type AntigravityAccountCatalog } from '../features/codex/codexApiClient.js';
 import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ManagedCliProgress } from './ManagedCliProgress.js';
 import { ModelProviderIdentity } from './ModelProviderIdentity.js';
+
+/** 修改当前 Antigravity 接入状态的账号操作。 */
+type AccountAction = 'login' | 'refresh' | 'cancel' | 'logout';
 
 /** Antigravity 的官方 Google 登录和当前可用模型状态。 */
 export function AntigravityAccountSettings({
@@ -21,8 +25,9 @@ export function AntigravityAccountSettings({
   const zh = language === 'zh-CN';
   /** 账号状态仅从 Core 读取，凭据不进入设置页。 */
   const [catalog, setCatalog] = useState<AntigravityAccountCatalog | null>(null);
-  /** 操作期间避免再次发起登录或刷新。 */
-  const [busy, setBusy] = useState(false);
+  /** 当前操作决定哪个按钮显示进度，其他按钮在此期间停用。 */
+  const [busyAction, setBusyAction] = useState<AccountAction | 'verify' | null>(null);
+  const busy = busyAction !== null;
   /** 保留当前操作的可读错误。 */
   const [error, setError] = useState<string | null>(null);
   /** 程序准备和浏览器授权共用同一可取消流程。 */
@@ -56,7 +61,7 @@ export function AntigravityAccountSettings({
         const value = await client.loadAntigravityAccount();
         if (!active) return;
         setCatalog(value);
-        if (value.status === 'ready') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+        if (value.status === 'ready' || value.status === 'verification_required') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
         if (value.status !== 'installing' && value.status !== 'signing_in' && value.status !== 'checking') return;
       } catch (cause) {
         if (!active) return;
@@ -71,19 +76,36 @@ export function AntigravityAccountSettings({
     };
   }, [busy, checking, client, connecting]);
 
-  /** 用户明确操作才刷新 CLI 或发起、取消浏览器登录。 */
-  async function changeAccount(action: 'login' | 'refresh' | 'cancel'): Promise<void> {
+  /** 账号操作完成后更新卡片状态及模型目录。 */
+  async function changeAccount(action: AccountAction): Promise<void> {
     if (!client || busy) return;
-    setBusy(true);
+    setBusyAction(action);
     setError(null);
     try {
-      const value = await (action === 'login' ? client.startAntigravityLogin() : action === 'cancel' ? client.cancelAntigravityLogin() : client.refreshAntigravityAccount());
-      setCatalog(value);
-      if (action === 'refresh') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+      const update = { login: client.startAntigravityLogin, refresh: client.refreshAntigravityAccount, cancel: client.cancelAntigravityLogin, logout: client.logoutAntigravityAccount };
+      setCatalog(await update[action]());
+      if (action === 'refresh' || action === 'logout') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(false);
+      setBusyAction(null);
+    }
+  }
+
+  /** 通过系统浏览器打开 Google 的账号验证页面。 */
+  async function openVerification(): Promise<void> {
+    if (!client || busy) return;
+    setBusyAction('verify');
+    setError(null);
+    try {
+      const { url } = await client.loadAntigravityVerification();
+      if (!url) throw new Error(zh ? '验证链接已失效，请刷新状态。' : 'The verification link is unavailable. Refresh status.');
+      const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url });
+      if (!result.opened) throw new Error(zh ? '无法打开 Google 验证页面。' : 'Could not open the Google verification page.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -95,6 +117,7 @@ export function AntigravityAccountSettings({
     installing: zh ? '安装中' : 'Installing',
     sign_in_required: zh ? '需要登录' : 'Sign-in required',
     signing_in: zh ? '等待浏览器授权' : 'Waiting for browser sign-in',
+    verification_required: zh ? 'Google 账号待验证' : 'Google account verification required',
     ready: zh ? '已连接 Google 账号' : 'Google account connected',
     unavailable: zh ? '暂不可用' : 'Unavailable',
   };
@@ -107,13 +130,23 @@ export function AntigravityAccountSettings({
       <ModelProviderIdentity provider="antigravity" name="Google Antigravity" connected={catalog?.status === 'ready'} busy={connecting || checking || busy}>
         {catalog ? statusLabels[catalog.status] : zh ? '正在读取状态' : 'Checking status'}
       </ModelProviderIdentity>
-      <div className="model-setup-actions">
+      <div className="model-setup-actions" data-account-status={catalog?.status}>
         {!connecting ? (
-          <Button variant="secondary" busy={busy} disabled={!client || busy || checking} onClick={() => void changeAccount('refresh')}>
+          <Button variant="secondary" busy={busyAction === 'refresh'} disabled={!client || busy || checking} onClick={() => void changeAccount('refresh')}>
             {zh ? '刷新状态' : onChooseModel ? 'Refresh status' : 'Refresh'}
           </Button>
         ) : null}
-        {catalog?.status !== 'ready' ? (
+        {catalog?.status === 'ready' || catalog?.status === 'verification_required' ? (
+          <Button variant="secondary" busy={busyAction === 'logout'} disabled={!client || busy} onClick={() => void changeAccount('logout')}>
+            {zh ? '退出登录' : 'Sign out'}
+          </Button>
+        ) : null}
+        {catalog?.status === 'verification_required' && catalog.verificationAvailable ? (
+          <Button variant="primary" busy={busyAction === 'verify'} disabled={!client || busy} onClick={() => void openVerification()}>
+            {zh ? '验证账号' : 'Verify account'}
+          </Button>
+        ) : null}
+        {catalog?.status !== 'ready' && catalog?.status !== 'verification_required' ? (
           <Button
             variant={connecting ? 'secondary' : 'primary'}
             aria-label={connecting ? undefined : zh ? '登录 Google' : 'Sign in with Google'}
@@ -125,11 +158,12 @@ export function AntigravityAccountSettings({
         ) : null}
         {catalog?.status === 'ready' && onChooseModel && catalog.models.length > 0 ? (
           <Button variant="primary" disabled={busy} busy={choosingModel} onClick={onChooseModel}>
-            {zh ? '选择模型' : 'Choose a model'}
+            {zh ? '选择模型' : 'Choose model'}
           </Button>
         ) : null}
       </div>
       {catalog?.status === 'installing' && installation ? <ManagedCliProgress program="Antigravity CLI" zh={zh} stage={installation.stage} progress={bytes?.total ? bytes.received / bytes.total : null} bytes={bytes} /> : null}
+      {catalog?.status === 'verification_required' && !catalog.verificationAvailable ? <p role="status">{zh ? 'Google 暂未提供验证链接，请刷新状态。' : 'Google has not provided a verification link. Refresh status.'}</p> : null}
       {catalog?.status === 'ready' && catalog.models.length === 0 ? <p role="status">{zh ? '此账号暂无可用模型。' : 'No models are available for this account.'}</p> : null}
       {error || (catalog?.status === 'unavailable' && catalog.message) ? (
         <p className="model-connection-message" role="alert">
