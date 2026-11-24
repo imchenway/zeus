@@ -265,7 +265,9 @@ export function providerTurnFailure(params: Record<string, unknown>, providerTur
   const providerStatus = providerTurnStatus(params);
   const message =
     typeof providerError?.message === 'string' && providerError.message.trim() ? providerError.message : providerStatus === 'failed' ? 'Codex provider turn failed.' : `Codex provider emitted unsupported terminal status: ${providerStatus}.`;
-  return Object.assign(coordinatorError('ZEUS_CODEX_TURN_FAILED', message), { providerTurnId, providerStatus });
+  /** 使用 Codex 结构化安全拒绝原因，原始消息仍用于诊断。 */
+  const code = providerError?.codexErrorInfo === 'cyberPolicy' ? 'ZEUS_CODEX_CYBER_POLICY' : 'ZEUS_CODEX_TURN_FAILED';
+  return Object.assign(coordinatorError(code, message), { providerTurnId, providerStatus });
 }
 
 /** 仅识别 Provider 明确报告的回复流提前断开，其他失败不得进入连接恢复重试。 */
@@ -302,7 +304,9 @@ export function failedTurnErrorFromRecord(turn: ZeusConversationTurnRecord): Err
     // Corrupt historical error details must not upgrade a failed turn to success.
   }
   const message = typeof persisted.message === 'string' && persisted.message ? persisted.message : 'Codex provider turn failed.';
-  return Object.assign(coordinatorError('ZEUS_CODEX_TURN_FAILED', message), { providerTurnId: turn.providerTurnId });
+  /** 历史回合也可从已保存的 Codex 原因识别安全拒绝。 */
+  const code = isRecord(persisted.providerError) && persisted.providerError.codexErrorInfo === 'cyberPolicy' ? 'ZEUS_CODEX_CYBER_POLICY' : 'ZEUS_CODEX_TURN_FAILED';
+  return Object.assign(coordinatorError(code, message), { providerTurnId: turn.providerTurnId });
 }
 
 export function findSnapshotTurn(snapshot: CodexThreadSnapshot, submission: ZeusConversationSubmissionRecord): Record<string, unknown> | null {

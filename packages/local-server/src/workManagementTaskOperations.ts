@@ -46,11 +46,15 @@ export interface TaskManagementStatusPlan<TCleanup, TConversation extends Reopen
   cleanup: TCleanup | null;
   /** 此次恢复的会话；显式选择优先，否则取任务自动归档且版本未变的会话。 */
   reopenTargets: TConversation[];
+  /** 用户选择指定会话时，只有该会话成功恢复才变更任务状态。 */
+  requireConversationRestore: boolean;
 }
 
 export interface TaskManagementStatusEffect<TConversation extends ReopenableTaskConversation> {
   /** 已完成恢复的会话，用于逐条记录审计。 */
   restoredConversations: TConversation[];
+  /** 工作目录在写入前不能确认的自动恢复目标，继续保留归档。 */
+  skippedConversationIds: string[];
 }
 
 interface TaskBoardPropertyMutation {
@@ -99,7 +103,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       listTaskConversationHistory(taskId: string, projectId: string): TConversation[];
       /** 只返回有任务自动归档来源、且此后未被改动的会话身份。 */
       listAutoArchivedConversationIds(taskId: string): string[];
-      restoreTaskConversation(conversation: TConversation): Promise<TConversation | null>;
+      restoreTaskConversation(conversation: TConversation, beforeRestoreWrite: () => void): Promise<TConversation | null>;
       validateRuntimeAction(action: TaskRuntimeCommandAction, task: ZeusTaskRecord, project: ZeusProjectRecord): void;
       invokeRuntimeAction(action: Extract<TaskRuntimeCommandAction, 'run' | 'continue'>, task: ZeusTaskRecord, project: ZeusProjectRecord, operationIdentity: string): Promise<TRuntimeEffect>;
       stopRuntimeSessions(taskId: string): Promise<TRuntimeEffect>;
@@ -167,6 +171,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
           targetStatus,
           cleanup: null,
           reopenTargets: [],
+          requireConversationRestore: false,
         },
       };
     }
@@ -207,22 +212,36 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       targetStatus,
       cleanup,
       reopenTargets,
+      requireConversationRestore: Boolean(input.reopenConversationId),
     };
     return { resourceId: existing.id, requiresExternal: cleanup !== null || reopenTargets.length > 0, state };
   }
 
-  /** 完成资源操作后才允许提交任务状态；任一恢复失败都会保留错误。 */
-  async invokeManagementStatus(plan: TaskManagementStatusPlan<TCleanup, TConversation>): Promise<TaskManagementStatusEffect<TConversation>> {
-    if (plan.cleanup !== null) await this.options.closeTerminalResources(plan.taskId, plan.cleanup);
+  /** 自动重开可跳过尚未写出且目录不可用的会话，已写出的恢复继续按原结果收口。 */
+  async invokeManagementStatus(plan: TaskManagementStatusPlan<TCleanup, TConversation>, beforeExternalWrite: () => void): Promise<TaskManagementStatusEffect<TConversation>> {
+    if (plan.cleanup !== null) {
+      beforeExternalWrite();
+      await this.options.closeTerminalResources(plan.taskId, plan.cleanup);
+    }
     /** 顺序恢复，沿用每个 Provider 的工作区准备及失败处理。 */
     const restoredConversations: TConversation[] = [];
+    const skippedConversationIds: string[] = [];
     for (const conversation of plan.reopenTargets) {
-      /** Provider 返回的恢复记录是审计依据。 */
-      const restored = await this.options.restoreTaskConversation(conversation);
-      if (!restored) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The conversation could not be restored.');
-      restoredConversations.push(restored);
+      /** 每条会话单独确认有无写入，前一条的成功不会使下一条的目录失败变为未知。 */
+      let restoreWriteStarted = false;
+      try {
+        const restored = await this.options.restoreTaskConversation(conversation, () => {
+          beforeExternalWrite();
+          restoreWriteStarted = true;
+        });
+        if (!restored) throw routeError(409, 'ZEUS_TASK_REOPEN_CONVERSATION_NOT_FOUND', 'The conversation could not be restored.');
+        restoredConversations.push(restored);
+      } catch (error) {
+        if (plan.requireConversationRestore || restoreWriteStarted || (error as { code?: string } | null)?.code !== 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE') throw error;
+        skippedConversationIds.push(conversation.id);
+      }
     }
-    return { restoredConversations };
+    return { restoredConversations, skippedConversationIds };
   }
 
   mutateManagementStatus(plan: TaskManagementStatusPlan<TCleanup, TConversation>, effect: TaskManagementStatusEffect<TConversation> | null, context: WorkManagementTaskCommandContext): ZeusTaskRecord {
@@ -253,6 +272,14 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
         resourceType: 'conversation',
         resourceId: restoredConversation.id,
         payload: { projectId: restoredConversation.projectId, taskId: updated.id, conversationId: restoredConversation.id, reason: 'task_reopened', commandId: context.commandId },
+      });
+    }
+    if (effect?.skippedConversationIds.length) {
+      this.options.recordTaskEvent({
+        taskId: updated.id,
+        eventType: 'task.conversation.restore.skipped',
+        title: '工作目录不可用，相关会话保持归档',
+        payload: { conversationIds: effect.skippedConversationIds, commandId: context.commandId },
       });
     }
     if (updated.managementStatus !== existing.managementStatus) {
@@ -338,8 +365,8 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     };
   }
 
-  invokeTaskBoardMove(plan: TaskBoardMovePlan<TCleanup, TConversation>): Promise<TaskManagementStatusEffect<TConversation>> {
-    return plan.managementStatusPlan ? this.invokeManagementStatus(plan.managementStatusPlan) : Promise.resolve({ restoredConversations: [] });
+  invokeTaskBoardMove(plan: TaskBoardMovePlan<TCleanup, TConversation>, beforeExternalWrite: () => void): Promise<TaskManagementStatusEffect<TConversation>> {
+    return plan.managementStatusPlan ? this.invokeManagementStatus(plan.managementStatusPlan, beforeExternalWrite) : Promise.resolve({ restoredConversations: [], skippedConversationIds: [] });
   }
 
   mutateTaskBoardMove(plan: TaskBoardMovePlan<TCleanup, TConversation>, effect: TaskManagementStatusEffect<TConversation> | null, context: WorkManagementTaskCommandContext): { task: ZeusTaskRecord; board: TaskBoardViewSnapshot } {

@@ -712,9 +712,14 @@ export async function getGitCommonDirectory(cwd: string): Promise<string> {
 /**
  * 在项目容器内发现独立 Git 仓库目录；同仓库优先保留较浅路径，只返回候选，不替用户登记仓库。
  * 扫描跳过依赖、构建产物和 Zeus 自己的 worktree 根，避免把缓存仓库误纳入项目。
- * 目录或仓库不可读时抛出错误，禁止把不完整扫描伪装成空清单；退出可中止遍历。
+ * 目录或仓库不可读时抛出错误；只读调用方可收集 Git 路径已不存在的工作树。
  */
-export async function discoverGitRepositoryRoots(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<Array<Pick<DiscoveredGitRepository, 'name' | 'relativePath' | 'localPath'>>> {
+export async function discoverGitRepositoryRoots(
+  containerPath: string,
+  maxDepth = 6,
+  signal?: AbortSignal,
+  onDanglingWorktree?: (relativePath: string) => void,
+): Promise<Array<Pick<DiscoveredGitRepository, 'name' | 'relativePath' | 'localPath'>>> {
   /** 拒绝把文件系统根目录作为项目递归发现范围。 */
   const containerRoot = canonicalFilesystemPath(containerPath);
   if (dirname(containerRoot) === containerRoot) throw new Error('请选择实际项目目录，不能在文件系统根目录发现仓库。');
@@ -752,21 +757,27 @@ export async function discoverGitRepositoryRoots(containerPath: string, maxDepth
     currentLevel = nested.flat();
   }
   /** 先按深度和路径固定顺序，使主目录优先于嵌套工作树，结果不受并发读取顺序影响。 */
-  const identities = await mapWithConcurrency(
-    candidates.sort((left, right) => left.split(sep).length - right.split(sep).length || left.localeCompare(right)),
-    4,
-    async (localPath) => {
-      signal?.throwIfAborted();
-      try {
-        return { localPath, commonDirectory: await getGitCommonDirectory(localPath) };
-      } catch (cause) {
-        /** 相对路径在诊断脱敏后仍能标识失败的仓库。 */
-        const repository = relative(containerRoot, localPath).split(sep).join('/') || '.';
-        const reason = cause instanceof Error ? cause.message.trim() : String(cause);
-        throw Object.assign(new Error(`无法读取仓库 ${repository} 的 Git 公共目录：${reason}`, { cause }), { code: (cause as NodeJS.ErrnoException | null)?.code });
-      }
-    },
-  );
+  const identities = (
+    await mapWithConcurrency(
+      candidates.sort((left, right) => left.split(sep).length - right.split(sep).length || left.localeCompare(right)),
+      4,
+      async (localPath) => {
+        signal?.throwIfAborted();
+        try {
+          return { localPath, commonDirectory: await getGitCommonDirectory(localPath) };
+        } catch (cause) {
+          /** 相对路径在诊断脱敏后仍能标识失败的仓库。 */
+          const repository = relative(containerRoot, localPath).split(sep).join('/') || '.';
+          if (onDanglingWorktree && (await hasMissingGitFileTarget(localPath))) {
+            onDanglingWorktree(repository);
+            return null;
+          }
+          const reason = cause instanceof Error ? cause.message.trim() : String(cause);
+          throw Object.assign(new Error(`无法读取仓库 ${repository} 的 Git 公共目录：${reason}`, { cause }), { code: (cause as NodeJS.ErrnoException | null)?.code });
+        }
+      },
+    )
+  ).filter((identity) => identity !== null);
   /** 同一公共 Git 目录只占一个项目仓库身份。 */
   const commonDirectories = new Set<string>();
   /** 重复工作树内的子仓库属于那份副本，不扩展当前项目的仓库范围。 */
@@ -796,9 +807,26 @@ export async function discoverGitRepositoryRoots(containerPath: string, maxDepth
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
+/** 只识别普通 Git 指针文件明确指向不存在的目录；权限或 I/O 错误沿用原失败。 */
+async function hasMissingGitFileTarget(localPath: string): Promise<boolean> {
+  try {
+    const marker = join(localPath, '.git');
+    const stat = await lstat(marker);
+    if (!stat.isFile() || stat.size > 32_768) return false;
+    const gitDir = /^gitdir: ([^\r\n]+)(?:\r?\n)?$/u.exec(await readFile(marker, 'utf8'))?.[1];
+    if (!gitDir) return false;
+    return realpath(resolve(localPath, gitDir)).then(
+      () => false,
+      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** 完整仓库发现为需要工作区状态的调用者补齐分支和未提交更改。 */
-export async function discoverGitRepositories(containerPath: string, maxDepth = 6, signal?: AbortSignal): Promise<DiscoveredGitRepository[]> {
-  return mapWithConcurrency(await discoverGitRepositoryRoots(containerPath, maxDepth, signal), 4, async (repository) => {
+export async function discoverGitRepositories(containerPath: string, maxDepth = 6, signal?: AbortSignal, onDanglingWorktree?: (relativePath: string) => void): Promise<DiscoveredGitRepository[]> {
+  return mapWithConcurrency(await discoverGitRepositoryRoots(containerPath, maxDepth, signal, onDanglingWorktree), 4, async (repository) => {
     signal?.throwIfAborted();
     const { localPath } = repository;
     const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);

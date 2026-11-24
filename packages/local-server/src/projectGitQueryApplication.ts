@@ -28,7 +28,7 @@ interface ProjectGitQueryPorts {
   resolveConversationWorkspace(
     project: ZeusProjectRecord,
     conversationId: string,
-  ): Promise<{ repositories: Array<{ id: string; name: string; relativePath: string; localPath: string }>; sourceBranches?: GitEnvironmentSummary['sourceBranches'] }>;
+  ): Promise<{ repositories: Array<{ id: string; name: string; relativePath: string; localPath: string }>; sourceBranches?: GitEnvironmentSummary['sourceBranches']; unavailableRepositories?: string[] }>;
   resolveConversationRepository(project: ZeusProjectRecord, conversationId: string): Promise<{ id: string; name: string; relativePath: string; localPath: string }>;
   /** 回收历史仅供交付读视图使用，来源路径不作为会话执行位置。 */
   resolveRecoveredConversationRepositories(
@@ -54,7 +54,11 @@ export class ProjectGitQueryApplication {
     return this.ports.effects.readDiff(scope.path);
   }
 
-  async readWorkbench(projectId: string, conversationId?: string, includePatches = true): Promise<{ projectId: string; projectName: string; refreshedAt: string; committedOnly?: true; repositories: Array<Record<string, unknown>> }> {
+  async readWorkbench(
+    projectId: string,
+    conversationId?: string,
+    includePatches = true,
+  ): Promise<{ projectId: string; projectName: string; refreshedAt: string; committedOnly?: true; unavailableRepositories?: string[]; repositories: Array<Record<string, unknown>> }> {
     const project = this.requireProject(projectId);
     const header = { projectId: project.id, projectName: project.name };
     /** 会话来源与环境卡片复用同一份已核验记录。 */
@@ -84,7 +88,7 @@ export class ProjectGitQueryApplication {
       sourceBranch: workspace?.sourceBranches?.find((source) => source.repositoryRelativePath === repository.relativePath)?.branch ?? null,
       snapshot: await this.ports.effects.readRepositorySnapshot(repository.localPath, includePatches),
     }));
-    return { ...header, refreshedAt: this.ports.now().toISOString(), repositories: items };
+    return { ...header, refreshedAt: this.ports.now().toISOString(), repositories: items, ...(workspace?.unavailableRepositories?.length ? { unavailableRepositories: workspace.unavailableRepositories } : {}) };
   }
 
   async readCommit(projectId: string, repositoryId: string, commitHash: string): Promise<unknown> {

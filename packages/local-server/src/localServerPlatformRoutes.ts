@@ -931,8 +931,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 回收记录为工作台提供已移除工作树的 Git 提交身份。 */
   const conversationWorktreeRecovery = new ConversationWorktreeRecoveryRepository(db);
   const projectGitQueries = new ProjectGitQueryApplication({
-    resolveConversationWorkspace: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions),
-    resolveConversationRepository: (project, repositoryKey) => resolveConversationGitRepository(project, repositoryKey, conversations, conversationSubmissions),
+    resolveConversationWorkspace: (project, conversationId) => resolveConversationGitWorkspace(project, conversationId, conversations, conversationSubmissions, true),
+    resolveConversationRepository: (project, repositoryKey) => resolveConversationGitRepository(project, repositoryKey, conversations, conversationSubmissions, true),
     resolveRecoveredConversationRepositories: (project, key) => resolveRecoveredConversationGitRepositories(project, key, conversations, conversationSubmissions, conversationWorktreeRecovery),
     projects,
     repositories: projectRepositories,
@@ -3132,16 +3132,17 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         .filter((conversation) => archivedVersions.get(conversation.id) === conversation.updatedAt)
         .map((conversation) => conversation.id);
     },
-    restoreTaskConversation: async (conversation) => {
+    restoreTaskConversation: async (conversation, beforeRestoreWrite) => {
       if (!conversation.archived) return conversation;
       if (conversation.transportKind === 'codex_native') {
         taskConversationReopenInProgressIds.add(conversation.id);
         try {
-          await restoreNativeConversation(conversation);
+          await restoreNativeConversation(conversation, beforeRestoreWrite, beforeRestoreWrite);
         } finally {
           taskConversationReopenInProgressIds.delete(conversation.id);
         }
       } else {
+        beforeRestoreWrite();
         conversations.restore(conversation.id);
       }
       return conversations.getRecordById(conversation.id) ?? null;
@@ -3194,10 +3195,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (effect) db.afterCommit(() => workManagementTaskEffects.schedule(effect));
     },
     prepareManagementStatus: (taskId, input) => workManagementTaskOperations.prepareManagementStatus(taskId, input),
-    invokeManagementStatus: (plan) => workManagementTaskOperations.invokeManagementStatus(plan),
+    invokeManagementStatus: (plan, beforeExternalWrite) => workManagementTaskOperations.invokeManagementStatus(plan, beforeExternalWrite),
     mutateManagementStatus: (plan, effect, context) => workManagementTaskOperations.mutateManagementStatus(plan, effect, context),
     prepareTaskBoardMove: (projectId, input) => workManagementTaskOperations.prepareTaskBoardMove(projectId, input),
-    invokeTaskBoardMove: (plan) => workManagementTaskOperations.invokeTaskBoardMove(plan),
+    invokeTaskBoardMove: (plan, beforeExternalWrite) => workManagementTaskOperations.invokeTaskBoardMove(plan, beforeExternalWrite),
     mutateTaskBoardMove: (plan, effect, context) => workManagementTaskOperations.mutateTaskBoardMove(plan, effect, context),
     prepareRuntimeAction: (action, taskId) => workManagementTaskOperations.prepareRuntimeAction(action, taskId),
     beforeRuntimeActionWrite: async (action, plan, operationIdentity) => {
@@ -3685,7 +3686,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             destinationId: 'work-management-task-management-status-external',
             resourceId: prepared.resourceId,
             externalOperationId: `task-management-status:${parsed.operationIdentity}`,
-            invoke: () => workManagementTaskOperations.invokeManagementStatus(prepared.state),
+            manualExternalWriteStart: true,
+            invoke: (beforeExternalWrite) => workManagementTaskOperations.invokeManagementStatus(prepared.state, beforeExternalWrite),
             mutateAcceptedBusinessState: (effect) => workManagementTaskOperations.mutateManagementStatus(prepared.state, effect, context),
           })
         ).result;

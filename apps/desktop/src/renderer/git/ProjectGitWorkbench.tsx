@@ -6,7 +6,15 @@ import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCo
 import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerge';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
+import {
+  projectGitWorkbenchCacheEntry,
+  readCachedProjectGitWorkbench,
+  requestProjectGitWorkbench,
+  subscribeProjectGitRefresh,
+  notifyProjectGitChanged,
+  unavailableGitRepositoriesNotice,
+  visibleRepositoryFiles,
+} from './projectGitWorkbenchState.js';
 import { createProjectGitMergeAction } from './projectGitMergeAction.js';
 import {
   BranchSwitcher,
@@ -123,6 +131,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => readCachedProjectGitWorkbench(props.client, props.project.id));
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(() => (snapshot ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
+  /** 有可用快照时在原状态区域说明遗漏的仓库。 */
+  const unavailableNotice = unavailableGitRepositoriesNotice(snapshot, zh);
   const [tab, setTab] = useState<GitTab>(() => (props.conversationScope ? 'log' : readRememberedTab(props.project.id)));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
@@ -721,9 +731,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       }}
       aria-label={zh ? '项目 Git 工作台' : 'Project Git workbench'}
     >
-      {error ? (
-        <section className="project-git-workbench-state" role="alert">
-          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+      {error || unavailableNotice ? (
+        <section className={error ? 'project-git-workbench-state' : 'project-git-inline-error'} role={error ? 'alert' : 'status'}>
+          {error ? <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} /> : <span style={{ overflowWrap: 'anywhere' }}>{unavailableNotice}</span>}
         </section>
       ) : null}
       {busy || selectedRepository?.snapshot.integrationState ? (

@@ -444,12 +444,12 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   const contextFromSubmission = (submission: ZeusConversationSubmissionRecord): ConversationDispatchContext => contextFromPersistedSubmission(submission, options.conversations.getById(submission.conversationId));
 
-  async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false): Promise<void> {
+  async function ensureConversationExecutionContext(conversationId: string, mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore', allowProductConversation = false, beforeWorkspaceWrite?: () => void): Promise<void> {
     await transcriptInitialization.waitUntilReady(conversationId);
     const existing = executionContextPromises.get(conversationId);
     if (existing) return existing;
     const promise = (async () => {
-      const resolved = await options.ensureExecutionContext({ conversationId, mode });
+      const resolved = await options.ensureExecutionContext({ conversationId, mode, beforeWorkspaceWrite });
       if (!resolved) return;
       const conversation = allowProductConversation ? requireProductConversation(conversationId) : requireConversation(conversationId);
       const current = contexts.get(conversationId) ?? contextFromConversation(conversation);
@@ -2147,15 +2147,15 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function restoreArchivedConversation(input: RestoreArchivedConversationInput): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(input.conversationId);
-    if (await restoreUnboundConversationLocally(options, conversation, () => (runStates.set(conversation.id, { type: 'idle' }), contexts.delete(conversation.id)))) return toQueueSnapshot(conversation.id);
+    if (await restoreUnboundConversationLocally(options, conversation, () => (runStates.set(conversation.id, { type: 'idle' }), contexts.delete(conversation.id)), input.beforeLocalRestore)) return toQueueSnapshot(conversation.id);
     if (!conversation.providerThreadId) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', '缺少可核对的会话身份，尚未恢复。');
-    input.beforeExternalWrite?.();
     if (conversation.providerState === 'archived') {
       await ensureGenerationReconciled([conversation.id]);
       conversation = requireConversation(input.conversationId);
-      if (conversation.providerState === 'archived') await restoreArchivedProviderThread(conversation.id);
+      if (conversation.providerState === 'archived') await restoreArchivedProviderThread(conversation.id, input.beforeExternalWrite);
     }
-    if (conversation.archived) await ensureConversationExecutionContext(conversation.id, 'restore');
+    if (conversation.archived) await ensureConversationExecutionContext(conversation.id, 'restore', false, input.beforeExternalWrite);
+    input.beforeExternalWrite?.();
     if (conversation.archived) {
       options.conversations.restore(conversation.id);
       await persist();
@@ -2170,12 +2170,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     await drainQueuedSubmissions();
     return toQueueSnapshot(conversation.id);
   }
-  async function restoreArchivedProviderThread(conversationId: string): Promise<NativeQueueSnapshot> {
+  /** 先验证与恢复工作目录，再开始 Provider 解档。 */
+  async function restoreArchivedProviderThread(conversationId: string, beforeExternalWrite?: () => void): Promise<NativeQueueSnapshot> {
     assertOpen();
     let conversation = requireConversation(conversationId);
     if (conversation.providerState !== 'archived') return toQueueSnapshot(conversation.id);
     const providerThreadId = requireString(conversation.providerThreadId, 'provider thread id');
-    await ensureConversationExecutionContext(conversation.id, 'restore');
+    await ensureConversationExecutionContext(conversation.id, 'restore', false, beforeExternalWrite);
     assertOpen();
     conversation = requireConversation(conversation.id);
     const context = contexts.get(conversation.id) ?? contextFromConversation(conversation);
@@ -2183,6 +2184,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     restoringArchivedConversations.add(conversationId);
     options.broadcast('conversation.queue.changed', { conversationId, queueDispatchRequested: false });
     try {
+      beforeExternalWrite?.();
       await options.plugins?.prepare({
         conversationId: conversation.id,
         projectId: context.projectId,

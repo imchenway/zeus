@@ -39,6 +39,7 @@ export async function resolveConversationGitWorkspace(
   conversationId: string,
   conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
+  allowPartialRead = false,
 ) {
   /** 会话目录的业务错误码供交付、归档和恢复识别。 */
   const unavailableCode = 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE';
@@ -49,17 +50,28 @@ export async function resolveConversationGitWorkspace(
   /** 沿用最初持久提交的目录，不从最近命令的 cwd 或客户端路径推断操作范围。 */
   const context = conversationExecutionWorkspace(conversation.id, submissions);
   if (!context || typeof context.projectLocalPath !== 'string') throw unavailable();
+  /** 只读工作台保留可用仓库，并返回发现的失效仓库相对路径。 */
+  const unavailableRepositories = new Set<string>();
+  const discover = (path: string) => discoverGitRepositories(path, undefined, undefined, allowPartialRead ? (relativePath) => unavailableRepositories.add(relativePath) : undefined);
   try {
     const [root, cwd] = await Promise.all([realpath(project.localPath), realpath(context.projectLocalPath)]);
     /** 交付隔离目录按持久步骤校验，不能用项目相对目录布局判定归属。 */
     const conflict = conversations.getDeliveryConflictOrigin(conversation.id);
     if (conflict) {
       if ((await realpath(conflict.integrationPath)) !== cwd) throw unavailable();
-      const original: { repositories: Array<{ id: string; relativePath: string; localPath: string; repositoryPath: string }> } = await resolveConversationGitWorkspace(project, conflict.conversationId, conversations, submissions);
+      const original: { repositories: Array<{ id: string; relativePath: string; localPath: string; repositoryPath: string }> } = await resolveConversationGitWorkspace(
+        project,
+        conflict.conversationId,
+        conversations,
+        submissions,
+        allowPartialRead,
+      );
       /** 普通目录交付还可使用服务端登记身份，路径必须属于原会话的已验证成员。 */
       const registeredPath = conflict.repositoryPath ? await realpath(conflict.repositoryPath) : null;
-      const source = original.repositories.find((member) => member.id === conflict.repositoryId || projectGitRepositoryId(project.id, member.relativePath) === conflict.repositoryId || member.localPath === registeredPath);
-      const member = (await discoverGitRepositories(cwd)).find((entry) => entry.localPath === cwd);
+      const source = original.repositories.find(
+        (member) => matchesConversationRepositoryId(conflict.repositoryId, conflict.conversationId, member) || projectGitRepositoryId(project.id, member.relativePath) === conflict.repositoryId || member.localPath === registeredPath,
+      );
+      const member = (await discover(cwd)).find((entry) => entry.localPath === cwd);
       if (!source || !member || (await commonGitDirectory(source.localPath)) !== (await commonGitDirectory(cwd))) throw unavailable();
       const registered = await Promise.all(member.context.worktrees.filter((entry) => !entry.bare && !entry.prunable).map((entry) => realpath(entry.path).catch(() => null)));
       if (!registered.includes(cwd) || cwd === (await realpath(source.localPath))) throw unavailable();
@@ -70,13 +82,15 @@ export async function resolveConversationGitWorkspace(
         localPath: cwd,
         workspaceMode: 'worktree' as const,
         sourceBranches: [],
+        unavailableRepositories: [...unavailableRepositories].sort(),
         repositories: [{ ...member, id: conversationRepositoryId(conversation.id, '.'), repositoryPath: source.repositoryPath, managedWorktree: false }],
       };
     }
     /** 普通模式只能复用所属项目的真实目录，不能借持久上下文指向其他目录。 */
     if (context.executionWorkspaceMode === 'direct' || (context.executionWorkspaceMode === undefined && cwd === root)) {
       if (cwd !== root) throw unavailable();
-      const repositories = await discoverGitRepositories(cwd);
+      const repositories = await discover(cwd);
+      if (!repositories.length && unavailableRepositories.size) throw unavailable();
       return {
         id: conversationRepositoryId(conversation.id, '.'),
         name: conversation.title || '会话工作目录',
@@ -84,12 +98,13 @@ export async function resolveConversationGitWorkspace(
         localPath: cwd,
         workspaceMode: 'direct' as const,
         sourceBranches: [],
+        unavailableRepositories: [...unavailableRepositories].sort(),
         repositories: repositories.map((repository) => ({ ...repository, repositoryPath: repository.localPath, managedWorktree: false, id: conversationRepositoryId(conversation.id, repository.relativePath) })),
       };
     }
     if (cwd === root) throw unavailable();
     /** 只纳入环境里实际存在的 Git 根，不把容器目录或共享符号链接当仓库。 */
-    const [sources, members] = await Promise.all([discoverGitRepositories(root), discoverGitRepositories(cwd)]);
+    const [sources, members] = await Promise.all([discover(root), discover(cwd)]);
     if (!members.length) throw unavailable();
     /** 来源项目登记的工作树决定环境身份；新增仓库可操作，但不自动获得回收权限。 */
     const managedPaths = new Set<string>();
@@ -125,6 +140,7 @@ export async function resolveConversationGitWorkspace(
       localPath: cwd,
       workspaceMode: 'worktree' as const,
       sourceBranches,
+      unavailableRepositories: [...unavailableRepositories].sort(),
       repositories: members.map((repository) => ({
         ...repository,
         repositoryPath: sources.find((source) => source.relativePath === repository.relativePath)?.localPath ?? repository.localPath,
@@ -138,9 +154,18 @@ export async function resolveConversationGitWorkspace(
   }
 }
 
-/** 根仓沿用原身份；子仓身份同时绑定会话和项目内相对位置。 */
+/** 保留可路由的仓库身份，过长子仓使用定长摘要。 */
 export function conversationRepositoryId(conversationId: string, relativePath: string): string {
-  return `${conversationGitRepositoryPrefix}${conversationId}${relativePath && relativePath !== '.' ? `:${Buffer.from(relativePath).toString('base64url')}` : ''}`;
+  const prefix = `${conversationGitRepositoryPrefix}${conversationId}`;
+  if (!relativePath || relativePath === '.') return prefix;
+  const existingId = `${prefix}:${Buffer.from(relativePath).toString('base64url')}`;
+  /** Fastify 的默认单参数上限为 100，按 URL 编码后的长度保守判断。 */
+  return encodeURIComponent(existingId).length <= 100 ? existingId : `${prefix}:.${createHash('sha256').update(relativePath).digest('hex').slice(0, 24)}`;
+}
+
+/** 已保存的交付和冲突记录仍可匹配原仓库；旧后缀只与已核验路径比较。 */
+export function matchesConversationRepositoryId(repositoryId: string, conversationId: string, repository: { id: string; relativePath: string }): boolean {
+  return repository.id === repositoryId || (repository.relativePath !== '.' && repositoryId === `${conversationGitRepositoryPrefix}${conversationId}:${Buffer.from(repository.relativePath).toString('base64url')}`);
 }
 
 /** 恢复引用按项目与原工作树隔离。 */
@@ -209,7 +234,7 @@ export async function resolveRecoveredConversationGitRepositories(
     const source = sources.find((candidate) => candidate.localPath === plan.repositoryPath && resolve(rootPath, candidate.relativePath) === plan.worktreePath);
     if (!source || !plan.headSha) return [];
     const id = conversationRepositoryId(conversation.id, source.relativePath);
-    if ('repositoryKey' in conversationKey && id !== `${conversationGitRepositoryPrefix}${conversationKey.repositoryKey}`) return [];
+    if ('repositoryKey' in conversationKey && !matchesConversationRepositoryId(`${conversationGitRepositoryPrefix}${conversationKey.repositoryKey}`, conversation.id, { id, relativePath: source.relativePath })) return [];
     return [{ source, id, plan }];
   });
   /** 单个仓库无法核对起点时，交付窗口仍可读取其他仓库。 */
@@ -233,10 +258,11 @@ export async function resolveConversationGitRepository(
   repositoryKey: string,
   conversations: Pick<ConversationRepository, 'getRecordById' | 'getDeliveryConflictOrigin'>,
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>,
+  allowPartialRead = false,
 ) {
   const conversationId = conversationForRepositoryKey(repositoryKey, conversations)?.id ?? repositoryKey;
-  const workspace = await resolveConversationGitWorkspace(project, conversationId, conversations, submissions);
-  const repository = workspace.repositories.find((member) => member.id === `${conversationGitRepositoryPrefix}${repositoryKey}`);
+  const workspace = await resolveConversationGitWorkspace(project, conversationId, conversations, submissions, allowPartialRead);
+  const repository = workspace.repositories.find((member) => matchesConversationRepositoryId(`${conversationGitRepositoryPrefix}${repositoryKey}`, conversationId, member));
   if (!repository) throw Object.assign(new Error('仓库已不存在或不属于当前会话工作目录。'), { code: 'ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE', statusCode: 409 });
   return repository;
 }

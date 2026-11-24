@@ -1176,7 +1176,7 @@ function initialTaskGitDeliveryWindowBounds(parent: BrowserWindow): Electron.Rec
   };
 }
 
-/** 先更新授权范围，再等待交付窗口的最终尺寸和实际内容。 */
+/** 先更新授权范围，再按最终尺寸显示交付窗口的首个可绘制界面。 */
 function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   if (window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isLoadingMainFrame()) return;
   window.webContents.send('zeus:task-git-delivery:current-context', taskGitDeliveryWindowContext(window));
@@ -2060,7 +2060,7 @@ function setupIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || window.isDestroyed() || event.senderFrame !== event.sender.mainFrame || (!windows.has(window) && !taskGitDeliveryTargetByWindowId.has(window.id) && !projectGitDiffWindows.has(window)) || !input) return;
     if (input.kind === 'surface' || input.kind === 'window') {
-      taskGitDeliveryPresentations.get(window)?.frame(input.kind, input.reduceMotion !== false);
+      taskGitDeliveryPresentations.get(window)?.frame(input.reduceMotion !== false);
     }
     if (input.kind === 'window') {
       const pending = taskGitDeliveryFirstFrames.get(window.id);
