@@ -75,6 +75,38 @@ export interface FileApprovalTargetAudit {
   paths: string[];
 }
 
+/** 将持久请求投影为交互卡字段，沿用各入口的 JSON 解析规则。 */
+export function projectPendingRequestFields(
+  request: ZeusConversationServerRequestRecord,
+  parseRecord: (json: string) => Record<string, unknown>,
+  transcripts?: ConversationTranscriptRepository,
+) {
+  return {
+    id: request.id,
+    conversationId: request.conversationId,
+    turnId: request.turnId,
+    itemId: request.itemId,
+    generationId: request.transportGenerationId,
+    type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
+    status: request.status,
+    payload: parseRecord(request.payloadJson),
+    response: request.responseJson ? parseRecord(request.responseJson) : null,
+    containsSecret: request.containsSecret,
+    expiresAt: request.expiresAt,
+    autoResolutionState: request.autoResolutionState,
+    createdAt: request.createdAt,
+    resolvedAt: request.resolvedAt,
+    transcript: transcripts?.envelopeForSource({
+      conversationId: request.conversationId,
+      sourceDomain: 'request',
+      sourceScope: request.turnId ?? request.transportGenerationId,
+      sourceId: request.id,
+      facet: 'request_answer',
+    }),
+  };
+}
+
+/** 在持久请求投影上补充文件审批的目标核查。 */
 export function nativePendingRequestProjection(
   request: ZeusConversationServerRequestRecord,
   authority?: {
@@ -84,35 +116,12 @@ export function nativePendingRequestProjection(
     transcripts: ConversationTranscriptRepository;
   },
 ): Record<string, unknown> {
-  const payload = parseJsonRecord(request.payloadJson);
-  return {
-    id: request.id,
-    conversationId: request.conversationId,
-    turnId: request.turnId,
-    itemId: request.itemId,
-    generationId: request.transportGenerationId,
-    type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
-    status: request.status,
-    payload,
-    response: request.responseJson ? parseJsonRecord(request.responseJson) : null,
-    containsSecret: request.containsSecret,
-    expiresAt: request.expiresAt,
-    autoResolutionState: request.autoResolutionState,
-    createdAt: request.createdAt,
-    resolvedAt: request.resolvedAt,
-    transcript: authority?.transcripts.envelopeForSource({
-      conversationId: request.conversationId,
-      sourceDomain: 'request',
-      sourceScope: request.turnId ?? request.transportGenerationId,
-      sourceId: request.id,
-      facet: 'request_answer',
-    }),
-    ...(request.requestKind === 'file' && authority
-      ? {
-          fileApproval: inspectFileApprovalTargets(payload, authority.conversation, authority.projectRoot, authority.providerItems),
-        }
-      : {}),
-  };
+  const projection = projectPendingRequestFields(request, parseJsonRecord, authority?.transcripts);
+  // ACP 文件请求保存本次操作的实际路径和可用决定，回看与实时卡沿用同一授权依据。
+  if (request.requestKind === 'file' && authority && !(authority.conversation.agentKind === 'antigravity' && projection.payload.agentKind === 'antigravity')) {
+    return { ...projection, fileApproval: inspectFileApprovalTargets(projection.payload, authority.conversation, authority.projectRoot, authority.providerItems) };
+  }
+  return projection;
 }
 
 export function buildInteractionRecoveryContinuation(request: ZeusConversationServerRequestRecord, response: RespondNativeRequestInput['response'], privacyNote?: string): string {

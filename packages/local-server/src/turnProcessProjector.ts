@@ -129,15 +129,21 @@ export class TurnProcessProjector {
     }
     const mapped = piEventKind(event.type);
     if (!mapped) return [];
+    const thoughtId = event.agentKind === 'antigravity' && mapped === 'reasoning' && typeof payload.reasoningId === 'string' ? payload.reasoningId : null;
     const sourceId = typeof payload.toolCallId === 'string' ? payload.toolCallId : typeof payload.attempt === 'number' ? String(payload.attempt) : String(event.sequence);
-    /** 调用、进度和结果共用调用身份；其他状态保留各自事件身份。 */
-    const sourceEventId = mapped === 'tool' ? `${event.agentKind}:tool_execution:${sourceId}` : `${event.agentKind}:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`;
-    /** 完成通知通常不带参数，从同一条持久化调用保留原始参数和阶段。 */
-    const previous = mapped === 'tool' ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
-    /** 终态不被迟到的 started 或 update 回退。 */
-    if (previous && previous.status !== 'in_progress') return [previous];
+    /** ACP 摘要与工具的分段都更新同一条记录。 */
+    const sourceEventId = thoughtId
+      ? `antigravity:reasoning:${thoughtId}`
+      : mapped === 'tool'
+        ? `${event.agentKind}:tool_execution:${sourceId}`
+        : `${event.agentKind}:${event.type.replace(/_(start|end|complete|completed)$/, '')}:${sourceId}`;
+    const previous = mapped === 'tool' || thoughtId ? this.execution.processItemBySourceEventId(identity.segment.id, sourceEventId) : undefined;
+    /** 已确认的终态不回退；同一 ACP 调用的真实结果可补齐原先的未知结果。 */
     /** 只合并同一调用的事件内容，不读取其他轮次。 */
     const previousDetail = previous ? asRecord(JSON.parse(previous.detailJson)) : {};
+    const lateResult = event.agentKind === 'antigravity' && payload.lateResult === true && previous?.turnId === identity.turnId && asRecord(previousDetail.payload).outcome === 'outcome_unknown';
+    if (event.agentKind === 'antigravity' && previous && previous.turnId !== identity.turnId) return [];
+    if (previous && previous.status !== 'in_progress' && !lateResult) return [previous];
     const ending = /(_end|_settled|_complete|_completed)$/.test(event.type);
     const failed = event.type === 'runtime_error' || payload.error !== undefined || payload.isError === true;
     return [
@@ -147,14 +153,15 @@ export class TurnProcessProjector {
         segmentId: identity.segment.id,
         kind: mapped,
         status: failed ? 'failed' : ending ? 'completed' : 'in_progress',
-        title: processTitle(mapped, event.type),
+        title: event.agentKind === 'antigravity' && mapped === 'tool' && typeof payload.toolName === 'string' ? payload.toolName : processTitle(mapped, event.type),
         detail: {
           ...previousDetail,
           provider: event.agentKind,
           protocolFamily: identity.protocolFamily,
           stageId: previousDetail.stageId ?? identity.stageId,
           eventType: event.type,
-          payload: { ...asRecord(previousDetail.payload), ...payload },
+          ...(thoughtId ? { reasoningPresentation: 'process_text', text: Array.isArray(payload.summary) ? payload.summary.join('') : '' } : {}),
+          payload: { ...asRecord(previousDetail.payload), ...(lateResult ? { summary: undefined } : {}), ...payload },
         },
         sourceEventId,
         startedAt: event.createdAt,

@@ -5156,11 +5156,16 @@ function SessionRuntimeDetails(props: {
   const unifiedUsage = metrics?.usage ?? props.state.unifiedUsage;
   const conversationUsage = unifiedUsage?.conversationTotal ?? null;
   const latestRequest = unifiedUsage?.latestModelRequest ?? null;
-  const totalTokens = conversationUsage?.totalTokens ?? usage?.total.totalTokens ?? null;
-  const inputTokens = conversationUsage?.inputTokens ?? usage?.total.inputTokens ?? null;
-  const outputTokens = conversationUsage?.outputTokens ?? usage?.total.outputTokens ?? null;
-  const reasoningTokens = conversationUsage?.reasoningOutputTokens ?? usage?.total.reasoningOutputTokens ?? null;
-  const cacheHitRate = nullableCacheHitRate(conversationUsage?.inputTokens ?? null, conversationUsage?.cachedInputTokens ?? null) ?? usage?.cacheHitRate ?? null;
+  /** ACP 只提供整轮用量，合并账本可覆盖同一会话早先的其他引擎。 */
+  const usageCount = (field: 'totalTokens' | 'inputTokens' | 'outputTokens' | 'reasoningOutputTokens' | 'cachedInputTokens') =>
+    usage?.reportedTokenFields ? (usage.reportedTokenFields.includes(field) ? usage.total[field] : null) : (conversationUsage?.[field] ?? usage?.total[field] ?? null);
+  const totalTokens = usageCount('totalTokens');
+  const inputTokens = usageCount('inputTokens');
+  const outputTokens = usageCount('outputTokens');
+  const reasoningTokens = usageCount('reasoningOutputTokens');
+  const cacheHitRate = usage?.reportedTokenFields
+    ? nullableCacheHitRate(inputTokens, usageCount('cachedInputTokens'))
+    : (nullableCacheHitRate(conversationUsage?.inputTokens ?? null, conversationUsage?.cachedInputTokens ?? null) ?? usage?.cacheHitRate ?? null);
   const cost = metrics?.cost ?? {
     costs: usage?.costs,
     apiEquivalentUsd: usage?.apiEquivalentUsd ?? null,
@@ -5189,8 +5194,14 @@ function SessionRuntimeDetails(props: {
       inputTokens: runtimeFact(inputTokens, props.language === 'zh-CN' ? '暂无累计输入用量。' : 'Total input usage is unavailable.'),
       outputTokens: runtimeFact(outputTokens, props.language === 'zh-CN' ? '暂无累计输出用量。' : 'Total output usage is unavailable.'),
       reasoningOutputTokens: runtimeFact(reasoningTokens, props.language === 'zh-CN' ? '暂无累计推理用量。' : 'Total reasoning usage is unavailable.'),
-      contextTokens: runtimeFact(latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null, props.language === 'zh-CN' ? '暂无最近请求的上下文用量。' : 'Context usage for the latest request is unavailable.'),
-      contextWindow: runtimeFact(latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null, props.language === 'zh-CN' ? '尚未读取到模型可处理的最大长度。' : 'The model’s maximum context length is unavailable.'),
+      contextTokens: runtimeFact(
+        usage?.contextUsedTokens !== undefined ? usage.contextUsedTokens : (latestRequest?.totalTokens ?? usage?.last.totalTokens ?? null),
+        props.language === 'zh-CN' ? '暂无最近请求的上下文用量。' : 'Context usage for the latest request is unavailable.',
+      ),
+      contextWindow: runtimeFact(
+        usage?.contextUsedTokens !== undefined ? usage.modelContextWindow : (latestRequest?.contextWindow ?? usage?.modelContextWindow ?? null),
+        props.language === 'zh-CN' ? '尚未读取到模型可处理的最大长度。' : 'The model’s maximum context length is unavailable.',
+      ),
       cacheHitRate: runtimeFact(cacheHitRate, props.language === 'zh-CN' ? '暂无缓存使用比例。' : 'The cache usage ratio is unavailable.'),
       costs: cost.costs,
       apiEquivalentUsd: runtimeFact(cost.apiEquivalentUsd, props.language === 'zh-CN' ? '当前模型没有可用于计算费用的价格。' : 'No price is available to calculate this model’s cost.'),

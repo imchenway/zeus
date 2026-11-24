@@ -55,6 +55,8 @@ export function activityOutcome(item: ActivityItem): ActivityOutcome {
   const result = native ? activityResult(item.payload) : {};
   /** 明确的取消状态优先于取消时产生的非零退出码。 */
   if (['cancelled', 'canceled', 'interrupted'].includes(item.status) || ['cancelled', 'canceled', 'interrupted'].includes(status)) return 'cancelled';
+  /** ACP 的轮次可能先于工具结果结束，界面继续区分结果未知和命令失败。 */
+  if (item.payload.provider === 'antigravity' && item.payload.outcome === 'outcome_unknown') return 'unknown';
   /** 只解释命令的标准 SIGINT/SIGTERM 退出码，不推断正常清理或运行成功。 */
   const commandType = item.type?.toLowerCase();
   /** 只有命令可以使用进程退出语义，其他工具仍按真实调用结果展示。 */

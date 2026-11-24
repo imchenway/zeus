@@ -15,6 +15,7 @@ import {
   type AgentSessionIdentity,
   AntigravityRuntimeDriver,
   type AntigravityRuntimeOptions,
+  type AntigravityInteraction,
   CopilotRuntimeDriver,
   type ManagedAgentKind,
   type CopilotRuntimeManager,
@@ -39,6 +40,7 @@ import {
   calculateCacheHitRate,
   type CodexUsageEstimate,
   emptyTokenUsageBreakdown,
+  tokenUsageFields,
   estimateModelPrice,
   aggregateRequestPrices,
   sumEstimatedCosts,
@@ -97,7 +99,7 @@ import type { ConversationToolProcesses } from './conversationToolProcesses.js';
 import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput, SendQueuedNowInput } from './codexNativeConversationContracts.js';
 import type { createConversationApplicationOperations } from './conversationApplicationOperations.js';
 import type { createPiGoalApplication } from './piGoalApplication.js';
-import { parseJsonRecord } from './codexNativeConversationPolicy.js';
+import { parseJsonRecord, projectPendingRequestFields } from './codexNativeConversationPolicy.js';
 
 interface PiConversationContext {
   conversationId: string;
@@ -323,7 +325,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const interruptedRuns = new Set<string>();
   const processProjector = new TurnProcessProjector(options.execution);
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText, runtimeKind);
-  const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string }>();
+  const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string; delivered?: Promise<boolean>; responding?: boolean }>();
   let eventSequence = 0;
   const zeusToolBroker =
     options.browserAutomation || options.workTools || options.sourceContexts || options.automationAgents
@@ -389,34 +391,58 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     respond: async (input) => {
       const pending = pendingApprovals.get(input.requestId);
       if (!pending || pending.session.nativeSessionId !== input.session.nativeSessionId) throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', 'Pi 工具审批已不在等待。');
-      pendingApprovals.delete(input.requestId);
+      if (pending.responding) throw piError('ZEUS_AGY_INTERACTION_SENDING', '答复正在送达 Antigravity。');
+      if (pending.delivered) pending.responding = true;
+      else pendingApprovals.delete(input.requestId);
       pending.resolve(input.response);
     },
   };
+  /** 使用本轮冻结的权限和原生选项决定是否需要向用户提问。 */
+  async function handleAntigravityInteraction(request: PiZeusToolRequest, interaction: AntigravityInteraction): Promise<unknown> {
+    const context = contexts.get(request.session.nativeSessionId);
+    if (!context || context.session.runtimeInstanceId !== request.session.runtimeInstanceId) throw piError('ZEUS_AGY_SESSION', '原 Antigravity 会话已断开。');
+    if (interaction.kind === 'question') return requestInteraction(context, request, 'request_user_input', { questions: interaction.questions }, interaction.delivered);
+    const { tool, decisions } = interaction;
+    const read = tool.kind === 'read' || (tool.kind === 'search' && tool.paths.length > 0);
+    const file = !tool.command && (read || ['edit', 'delete', 'move'].includes(tool.kind));
+    const nativeTool = !file && tool.kind !== 'execute' && !tool.command;
+    const args = redactArgs(tool.args);
+    const cwd = resolve(context.cwd, tool.cwd ?? '.');
+    const paths = [...new Set(tool.paths.map((path) => resolve(cwd, path)))];
+    // move 的源和目标都需要可见，未知工具只接受有确切调用身份的参数。
+    const namedOperation = tool.kind === 'fetch' || tool.kind === 'search' || (typeof args.ServerName === 'string' && typeof args.ToolName === 'string');
+    const actionable = file ? paths.length >= (tool.kind === 'move' ? 2 : 1) : nativeTool ? namedOperation && Object.keys(args).length > 0 : Boolean(tool.command);
+
+    if (context.workMode === 'plan' && !(file && read)) return { decision: 'decline' };
+    if (context.workMode !== 'plan' && context.permissionMode === 'full-access') return { decision: decisions.includes('accept') ? 'accept' : 'cancel' };
+    // 原生 Auto 剩余的请求交给用户；普通档按 Zeus 已冻结的文件边界处理。
+    const mayUseWorkspace = file && (read || context.permissionMode === 'auto') && context.permissionMode !== 'auto-review';
+    if (mayUseWorkspace && actionable && decisions.includes('accept')) {
+      const writableRoots = context.writableRoots.length ? context.writableRoots : [context.cwd];
+      try {
+        if (paths.every((path) => !resolveConversationToolPath({ cwd, path, permission: context.permissionMode, write: !read, readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots], writableRoots }).requiresApproval))
+          return { decision: 'accept' };
+      } catch {
+        // 不能核实实际路径时出示原始目标，由用户选择单次处理。
+      }
+    }
+    return requestInteraction(
+      context,
+      request,
+      file ? 'file' : 'command',
+      {
+        toolName: tool.toolName,
+        args,
+        cwd,
+        ...(file ? { path: paths[0], paths, fileAccess: read ? 'read' : 'write' } : nativeTool ? { nativeTool: true } : { command: tool.command }),
+        availableDecisions: actionable ? decisions : decisions.filter((value) => value !== 'accept'),
+      },
+      interaction.delivered,
+    );
+  }
+
   /** ACP 权限请求进入与其他运行时相同的持久交互，保留单次人工决定。 */
-  const antigravityDriver =
-    runtimeKind === 'antigravity'
-      ? new AntigravityRuntimeDriver(
-          options.agentDirectory,
-          async (request, tool) => {
-            const context = contexts.get(request.session.nativeSessionId);
-            if (!context || context.permissionMode === 'read-only' || context.workMode === 'plan') return false;
-            const kind = tool.kind === 'edit' || tool.kind === 'delete' || tool.kind === 'move' ? 'file' : 'command';
-            const label = typeof tool.title === 'string' ? tool.title : request.toolName;
-            return readApprovalDecision(
-              await requestInteraction(context, request, kind, {
-                toolName: request.toolName,
-                ...(kind === 'file' ? { path: stringArg(request.args.path, label) } : { command: stringArg(request.args.command, label) }),
-                args: redactArgs(request.args),
-                availableDecisions: ['accept', 'decline', 'cancel'],
-              }),
-            );
-          },
-          (input) => broker.respond!(input),
-          options.now,
-          options.antigravity!,
-        )
-      : null;
+  const antigravityDriver = runtimeKind === 'antigravity' ? new AntigravityRuntimeDriver(options.agentDirectory, handleAntigravityInteraction, (input) => broker.respond!(input), options.now, options.antigravity!) : null;
   const driver =
     antigravityDriver ??
     (runtimeKind === 'copilot'
@@ -484,7 +510,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** 发布已持久化的 Pi 处理过程，并保持实时事件与 Snapshot 投影字段一致。 */
-  function publishPiProcessItems(run: PiRunContext, processItems: ReturnType<TurnProcessProjector['projectPiEvent']>): void {
+  function publishPiProcessItems(run: Pick<PiRunContext, 'conversationId' | 'providerTurnId'>, processItems: ReturnType<TurnProcessProjector['projectPiEvent']>): void {
     for (const processItem of processItems) {
       const detail = asRecord(JSON.parse(processItem.detailJson));
       // 与历史回看使用同一转换，实时事件不再另造工具字段和类型。
@@ -1860,16 +1886,55 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return { conversationId: submission.conversationId, submissionId: replacement.id, providerThreadId: nativeSessionId, providerTurnId: null, status: 'queued' };
   }
 
+  /** 以会话内递增的序号保存 ACP 上下文读数；重启后承接最后一个持久序号。 */
+  function saveAntigravityUsage(run: PiRunContext, snapshot: NativeTokenUsageSnapshot, contextUsed: unknown): NativeTokenUsageSnapshot | null {
+    const previous = options.conversations.getProviderTokenUsageSnapshot(run.conversationId);
+    snapshot.generationId = run.providerThreadId;
+    eventSequence = Math.max(eventSequence, previous?.generationId === run.providerThreadId ? previous.sequence : 0);
+    snapshot.sequence = ++eventSequence;
+    snapshot.contextUsedTokens = optionalTokenCount(contextUsed);
+    const saved = options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, snapshot, 'native_session');
+    return saved === snapshot ? saved : null;
+  }
+
   async function handleRuntimeEvent(event: AgentRuntimeEvent): Promise<void> {
     if (!event.nativeRunId) return;
     const run = runs.get(event.nativeRunId);
-    if (!run) return;
+    if (!run) {
+      // 后台命令可以在下一轮开始后结束。只更新原轮次已有的工具记录。
+      const payload = asRecord(event.payload);
+      if (event.agentKind === 'antigravity' && event.nativeSessionId && event.type === 'tool_execution_end' && payload.lateResult === true && typeof payload.toolCallId === 'string') {
+        const turn = options.turns.getByProvider(event.nativeSessionId, event.nativeRunId);
+        const segment = turn && options.execution.segmentByNativeSession(event.nativeSessionId, turn.conversationId);
+        const existing = segment && options.execution.processItemBySourceEventId(segment.id, `antigravity:tool_execution:${payload.toolCallId}`);
+        if (turn && segment && existing?.turnId === turn.id) {
+          const items = processProjector.projectPiEvent({ conversationId: turn.conversationId, turnId: turn.id, segment, protocolFamily: 'antigravity_acp', stageId: null }, event);
+          await options.db.save();
+          publishPiProcessItems({ conversationId: turn.conversationId, providerTurnId: event.nativeRunId }, items);
+        }
+      }
+      return;
+    }
     if (event.type === 'pricing_request_started') {
       run.pendingRequestPrice = { ...captureRequestPrice(run), startedAt: event.createdAt };
       return;
     }
     await options.transcripts.waitUntilReady(run.conversationId);
     const payload = asRecord(event.payload);
+    if (runtimeKind === 'antigravity' && event.type === 'acp_context_usage') {
+      run.contextWindow = optionalTokenCount(payload.contextSize) ?? run.contextWindow;
+      const previous = options.conversations.getProviderTokenUsageSnapshot(run.conversationId);
+      const rows = previous ? [] : options.usageLedger.list({ conversationId: run.conversationId });
+      const snapshot =
+        previous ?? buildPiUsageSnapshot({ rows, last: emptyTokenUsageBreakdown(), lastEstimate: unavailablePriceEstimate(run.modelId, 0), modelContextWindow: run.contextWindow, generationId: run.providerThreadId, sequence: 0 });
+      if (!previous && !rows.length) snapshot.reportedTokenFields = [];
+      snapshot.modelContextWindow = run.contextWindow;
+      const saved = saveAntigravityUsage(run, snapshot, payload.contextUsed);
+      if (!saved) return;
+      await options.db.save();
+      publish('conversation.provider.token_usage.updated', run.conversationId, { ...saved });
+      return;
+    }
     if (event.type === 'auto_retry_start' || event.type === 'auto_retry_end') {
       options.publish('conversation.transport.changed', {
         conversationId: run.conversationId,
@@ -2005,92 +2070,95 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
       /** 完成事件可能省略已经流过的文字，保留同一请求的累计正文作为可靠后备。 */
       const pendingModelRequest = run.pendingModelRequest;
-      const requestUsage = readPiUsage(message.usage);
-      /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
-      const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
-      /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
-      const recorded = options.usageLedger.findByProviderTurn(managedProviderId(run.sourceId), run.providerThreadId, run.providerTurnId);
-      if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
-        run.priceRequests = recorded.estimate.requests;
-        run.usage = { ...recorded.usage };
-        run.usageComplete = recorded.usageComplete;
-      }
-      /** 重放只跳过费用累加，仍完成消息与执行状态投影。 */
-      const recordedRequest = run.priceRequests.find((request) => request.id === requestId);
-      if (!recordedRequest) {
-        if (!requestUsage) run.usageComplete = false;
-        addUsage(run.usage, requestUsage);
-      }
-      /** 缺少请求开始事件时不套用结束后才获取的费率。 */
-      const requestPrice = run.pendingRequestPrice;
-      run.pendingRequestPrice = undefined;
-      const captured = requestPrice ? requestPrice.pricingCatalog : pendingModelRequest?.pricingCatalog;
-      const startedAt = requestPrice?.startedAt;
-      const catalog = captured && !startedAt ? { ...captured, prices: captured.prices.filter((price) => !price.metered) } : (captured ?? null);
-      const meteredUsage = readMeteredUsage(failed && !requestUsage ? undefined : message.usage, (requestPrice ?? pendingModelRequest)?.pricingUsageProfile, !failed && Boolean(startedAt), Boolean(requestUsage));
-      const requestEstimate =
-        recordedRequest?.estimate ??
-        (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && (price.perRequest !== null || price.metered))
-          ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, startedAt ?? pendingModelRequest?.startedAt ?? event.createdAt, meteredUsage)
-          : unavailablePriceEstimate(run.modelId, 0));
-      if (!recordedRequest) {
-        const pricingSource = (requestPrice ?? pendingModelRequest)?.pricingSource;
-        if (pricingSource && !requestEstimate.rateSnapshot.sourceUrls.length) requestEstimate.rateSnapshot.sourceUrls = [pricingSource];
-        run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, startedAt, pricingAccountScope: requestPrice?.pricingAccountScope, meteredUsage, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
-      }
-      options.usageLedger.upsert({
-        providerId: managedProviderId(run.sourceId),
-        accountScopeId: run.sourceId,
-        projectId: run.projectId,
-        conversationId: run.conversationId,
-        providerThreadId: run.providerThreadId,
-        providerTurnId: run.providerTurnId,
-        model: run.modelId,
-        usage: run.usage,
-        usageComplete: run.usageComplete,
-        estimate: aggregateRequestPrices(run.priceRequests),
-        occurredAt: event.createdAt,
-      });
-      // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
-      if (requestUsage) run.lastRequestUsage = { ...requestUsage };
-      if (segment) {
-        const contextWindow = run.contextWindow;
-        const rawUsage = readPiUsageObservation(message.usage);
-        const hasReasoningContent = content.some((part) => part.type === 'thinking');
-        // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
-        // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
-        if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
-        const usageComplete = Object.values(rawUsage).every((value) => value !== null);
-        const pending = pendingModelRequest;
-        const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
-        const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
-        const measurementComplete =
-          usageComplete &&
-          pending?.boundaryStarted === true &&
-          pending?.firstTextOutputAt !== null &&
-          pending?.firstTextOutputAt !== undefined &&
-          Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
-          !hasNonTextOutput &&
-          !failed;
-        options.execution.observeModelRequest({
+      // ACP 按轮次提供用量；工具两侧的文字分段只投影到对话。
+      if (runtimeKind !== 'antigravity') {
+        const requestUsage = readPiUsage(message.usage);
+        /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
+        const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
+        /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
+        const recorded = options.usageLedger.findByProviderTurn(managedProviderId(run.sourceId), run.providerThreadId, run.providerTurnId);
+        if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
+          run.priceRequests = recorded.estimate.requests;
+          run.usage = { ...recorded.usage };
+          run.usageComplete = recorded.usageComplete;
+        }
+        /** 重放只跳过费用累加，仍完成消息与执行状态投影。 */
+        const recordedRequest = run.priceRequests.find((request) => request.id === requestId);
+        if (!recordedRequest) {
+          if (!requestUsage) run.usageComplete = false;
+          addUsage(run.usage, requestUsage);
+        }
+        /** 缺少请求开始事件时不套用结束后才获取的费率。 */
+        const requestPrice = run.pendingRequestPrice;
+        run.pendingRequestPrice = undefined;
+        const captured = requestPrice ? requestPrice.pricingCatalog : pendingModelRequest?.pricingCatalog;
+        const startedAt = requestPrice?.startedAt;
+        const catalog = captured && !startedAt ? { ...captured, prices: captured.prices.filter((price) => !price.metered) } : (captured ?? null);
+        const meteredUsage = readMeteredUsage(failed && !requestUsage ? undefined : message.usage, (requestPrice ?? pendingModelRequest)?.pricingUsageProfile, !failed && Boolean(startedAt), Boolean(requestUsage));
+        const requestEstimate =
+          recordedRequest?.estimate ??
+          (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && (price.perRequest !== null || price.metered))
+            ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, startedAt ?? pendingModelRequest?.startedAt ?? event.createdAt, meteredUsage)
+            : unavailablePriceEstimate(run.modelId, 0));
+        if (!recordedRequest) {
+          const pricingSource = (requestPrice ?? pendingModelRequest)?.pricingSource;
+          if (pricingSource && !requestEstimate.rateSnapshot.sourceUrls.length) requestEstimate.rateSnapshot.sourceUrls = [pricingSource];
+          run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, startedAt, pricingAccountScope: requestPrice?.pricingAccountScope, meteredUsage, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
+        }
+        options.usageLedger.upsert({
+          providerId: managedProviderId(run.sourceId),
+          accountScopeId: run.sourceId,
+          projectId: run.projectId,
           conversationId: run.conversationId,
-          turnId: run.turnId,
-          segmentId: segment.id,
-          requestKind: run.modelRequestCount === 0 ? 'inference' : 'tool_continuation',
-          observationIdentity: `${runtimeKind}:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
-          modelId: run.modelId,
-          contextWindow,
-          ...rawUsage,
-          estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
-          usageComplete,
-          providerRequestId,
-          firstVisibleOutputAt: pending?.firstVisibleOutputAt ?? null,
-          firstTextOutputAt: pending?.firstTextOutputAt ?? null,
-          completedAt: event.createdAt,
-          measurementComplete,
+          providerThreadId: run.providerThreadId,
+          providerTurnId: run.providerTurnId,
+          model: run.modelId,
+          usage: run.usage,
+          usageComplete: run.usageComplete,
+          estimate: aggregateRequestPrices(run.priceRequests),
           occurredAt: event.createdAt,
         });
-        run.modelRequestCount += 1;
+        // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
+        if (requestUsage) run.lastRequestUsage = { ...requestUsage };
+        if (segment) {
+          const contextWindow = run.contextWindow;
+          const rawUsage = readPiUsageObservation(message.usage);
+          const hasReasoningContent = content.some((part) => part.type === 'thinking');
+          // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
+          // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
+          if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
+          const usageComplete = Object.values(rawUsage).every((value) => value !== null);
+          const pending = pendingModelRequest;
+          const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
+          const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
+          const measurementComplete =
+            usageComplete &&
+            pending?.boundaryStarted === true &&
+            pending?.firstTextOutputAt !== null &&
+            pending?.firstTextOutputAt !== undefined &&
+            Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
+            !hasNonTextOutput &&
+            !failed;
+          options.execution.observeModelRequest({
+            conversationId: run.conversationId,
+            turnId: run.turnId,
+            segmentId: segment.id,
+            requestKind: run.modelRequestCount === 0 ? 'inference' : 'tool_continuation',
+            observationIdentity: `${runtimeKind}:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
+            modelId: run.modelId,
+            contextWindow,
+            ...rawUsage,
+            estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
+            usageComplete,
+            providerRequestId,
+            firstVisibleOutputAt: pending?.firstVisibleOutputAt ?? null,
+            firstTextOutputAt: pending?.firstTextOutputAt ?? null,
+            completedAt: event.createdAt,
+            measurementComplete,
+            occurredAt: event.createdAt,
+          });
+          run.modelRequestCount += 1;
+        }
       }
       // 接口实际返回的图片沿用工具图片存储；无需按模型名称猜测生图能力。
       const imageProjections: string[] = [];
@@ -2111,7 +2179,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const hasToolCall = content.some((part) => part.type === 'toolCall' || part.type === 'tool_use');
       const isToolUseStage = stopReason === 'toolUse' || stopReason === 'tool_use' || hasToolCall;
       const providerPresentation = piProviderPresentation(run);
-      const phase = isToolUseStage ? ('prework' as const) : ('final_answer' as const);
+      const phase = isToolUseStage || (runtimeKind === 'antigravity' && payload.phase === 'prework') ? ('prework' as const) : ('final_answer' as const);
       /** 交接文本沿实际消息身份保存，实时和历史都归入过程。 */
       const operationHandoff = options.isOperationHandoff?.(run.conversationId, run.turnId) === true;
       const itemPayload = { ...providerPresentation, protocolFamily: messageProtocolFamily, stageId: messageStageId, stopReason, ...(operationHandoff ? { operationHandoff: true } : {}) };
@@ -2258,8 +2326,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
       }
       let usageSnapshot: NativeTokenUsageSnapshot | null = null;
-      if (run.priceRequests.length > 0) {
-        const estimate = aggregateRequestPrices(run.priceRequests);
+      const acp = runtimeKind === 'antigravity';
+      const acpUsage = acp ? readAntigravityUsage(payload.usage) : null;
+      if (acp) {
+        run.usageComplete = acpUsage?.complete ?? false;
+        if (acpUsage) run.usage = acpUsage.usage;
+        run.contextWindow = optionalTokenCount(payload.contextSize) ?? run.contextWindow;
+      }
+      if (acp || run.priceRequests.length > 0) {
+        const estimate = acp ? { ...unavailablePriceEstimate(run.modelId, run.usage.totalTokens), reportedTokenFields: acpUsage?.fields ?? [] } : aggregateRequestPrices(run.priceRequests);
         options.usageLedger.upsert({
           providerId: managedProviderId(run.sourceId),
           accountScopeId: run.sourceId,
@@ -2276,13 +2351,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         usageSnapshot = buildPiUsageSnapshot({
           rows: options.usageLedger.list({ conversationId: run.conversationId }),
           // last 的既定语义是"最后一次真实模型请求"，与 Codex 路径保持一致；缺失时退回整轮累加值。
-          last: run.lastRequestUsage ?? run.usage,
+          last: acp ? emptyTokenUsageBreakdown() : (run.lastRequestUsage ?? run.usage),
           lastEstimate: run.priceRequests.at(-1)?.estimate ?? estimate,
           modelContextWindow: run.contextWindow,
           generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
           sequence: eventSequence + 1,
         });
-        options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, usageSnapshot);
+        if (acp) usageSnapshot = saveAntigravityUsage(run, usageSnapshot, payload.contextUsed);
+        else options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, usageSnapshot);
       }
       runs.delete(event.nativeRunId);
       /** 与原生链一致，在轮次终态前发布确认项，避免前端提前释放实时订阅。 */
@@ -2920,10 +2996,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     );
   }
 
+  /** 持久化请求过期状态，保存后通知对应会话。 */
+  async function expirePendingRequest(request: ZeusConversationServerRequestRecord, response: unknown, conversationId = request.conversationId): Promise<void> {
+    options.requests.expire(request.id, { response, resolvedAt: options.now() });
+    await options.db.save();
+    publish('conversation.request.resolved', conversationId, { requestId: request.id, requestKind: request.requestKind });
+  }
+
   /** 同步问题与审批使用同一持久请求，先注册答复通道再公开问题。 */
-  async function requestInteraction(context: PiConversationContext, request: PiZeusToolRequest, kind: 'command' | 'file' | 'request_user_input', payload: Record<string, unknown>): Promise<unknown> {
+  async function requestInteraction(context: PiConversationContext, request: PiZeusToolRequest, kind: 'command' | 'file' | 'request_user_input', payload: Record<string, unknown>, delivered?: Promise<boolean>): Promise<unknown> {
     const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
-    if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 工具请求没有对应的活动轮次。');
+    if (!activeRun || (runtimeKind === 'antigravity' && (activeRun.providerTurnId !== request.nativeRunId || activeRun.providerThreadId !== request.session.nativeSessionId)))
+      throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '工具请求没有对应的活动轮次。');
     if (request.signal?.aborted) throw piError('ZEUS_PI_TOOL_ABORTED', 'Pi 工具请求已中止。');
     const timestamp = options.now();
     const activeTurn = options.turns.getById(activeRun.turnId);
@@ -2945,13 +3029,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       finish = resolveResponse;
     });
     const abort = () => finish(false);
-    pendingApprovals.set(persisted.id, { resolve: finish, session: context.session, conversationId: context.conversationId });
+    pendingApprovals.set(persisted.id, { resolve: finish, session: context.session, conversationId: context.conversationId, delivered });
     request.signal?.addEventListener('abort', abort, { once: true });
     if (request.signal?.aborted) abort();
     try {
       await options.db.save();
       publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted, options.transcripts) });
-      if (kind !== 'request_user_input' && !payload.taskWorkAssignment && context.permissionMode === 'auto-review') {
+      if (runtimeKind !== 'antigravity' && kind !== 'request_user_input' && !payload.taskWorkAssignment && context.permissionMode === 'auto-review') {
         // 审查与人工回答竞争同一持久请求；先解决者生效，迟到结果不得覆盖。
         void (async () => {
           let review;
@@ -2993,13 +3077,16 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       }
       const answered = await response;
       if (answered === false && options.requests.getById(persisted.id)?.status === 'pending') {
-        options.requests.expire(persisted.id, { response: kind === 'request_user_input' ? { type: 'request_user_input', answers: {} } : { decision: 'cancel' }, resolvedAt: options.now() });
-        await options.db.save();
-        publish('conversation.request.resolved', context.conversationId, { requestId: persisted.id, requestKind: kind });
+        await expirePendingRequest(persisted, delivered ? { reason: 'native_request_closed' } : kind === 'request_user_input' ? { type: 'request_user_input', answers: {} } : { decision: 'cancel' }, context.conversationId);
       }
       return answered;
+    } catch (error) {
+      if (delivered && options.requests.getById(persisted.id)?.status === 'pending') {
+        await expirePendingRequest(persisted, { reason: 'delivery_failed' }, context.conversationId);
+      }
+      throw error;
     } finally {
-      pendingApprovals.delete(persisted.id);
+      if (!pendingApprovals.get(persisted.id)?.responding) pendingApprovals.delete(persisted.id);
       request.signal?.removeEventListener('abort', abort);
     }
   }
@@ -3368,14 +3455,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     },
     async respondToRequest(input: { requestId: string; response: unknown }): Promise<void> {
       const request = options.requests.getById(input.requestId);
-      if (!request || request.status !== 'pending') throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', 'Pi 工具审批已不在等待。');
+      if (!request || request.status !== 'pending') throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', '该请求已不在等待。');
       const pending = pendingApprovals.get(request.id);
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === request.conversationId);
       if (request.requestKind === 'request_user_input') {
         const response = asRecord(input.response);
         const invalid = response.type !== 'request_user_input' ? '回答类型与原问题不匹配。' : validateCanonicalRequestUserInputAnswers(JSON.parse(request.payloadJson), response.answers);
         if (invalid) throw piError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', invalid);
-        if (!pending) {
+        if (!pending && runtimeKind !== 'antigravity') {
           // 恢复后的回答保存原问题身份并排队，不向已经失效的工具调用重放响应。
           const conversation = requirePiConversation(request.conversationId);
           const timestamp = options.now();
@@ -3408,15 +3495,35 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           return;
         }
       }
+      if (!pending && runtimeKind === 'antigravity') {
+        await expirePendingRequest(request, { reason: 'transport_closed' });
+      }
       if (!pending) throw piError('ZEUS_PI_APPROVAL_CHANNEL_UNAVAILABLE', '原工具审批通道已断开；不能自动重放可能已执行的操作。');
       if (!activeRun || activeRun.turnId !== request.turnId) throw piError('ZEUS_PI_QUESTION_TURN_CHANGED', '原问题所属轮次已结束，不能向其他轮次提交回答。');
-      const activeTurn = activeRun ? options.turns.getById(activeRun.turnId) : undefined;
+      const reply = { session: pending.session, requestId: request.id, response: input.response };
+      if (pending.delivered) {
+        const payload = asRecord(JSON.parse(request.payloadJson));
+        if (request.requestKind !== 'request_user_input' && (!Array.isArray(payload.availableDecisions) || !payload.availableDecisions.includes(asRecord(input.response).decision)))
+          throw piError('ZEUS_INVALID_SERVER_REQUEST_RESPONSE', '此操作未提供所选的授权范围。');
+        await driver.respondToInteraction(reply);
+        const written = await pending.delivered;
+        pendingApprovals.delete(request.id);
+        if (!written) {
+          if (options.requests.getById(request.id)?.status === 'pending') {
+            await expirePendingRequest(request, { reason: 'delivery_unconfirmed' });
+          }
+          throw piError('ZEUS_AGY_INTERACTION_UNDELIVERED', '原 Antigravity 轮次未确认收到答复。');
+        }
+      }
       const timestamp = options.now();
-      if (activeTurn) options.turns.upsert({ ...activeTurn, status: 'running', completedAt: null, updatedAt: timestamp, agentKind: runtimeKind, nativeRunId: activeRun?.providerTurnId ?? null });
-      options.conversations.updateAgentRuntime(request.conversationId, { providerState: 'active', status: 'running' });
-      options.requests.resolve(request.id, { response: input.response, resolvedAt: options.now() });
+      options.requests.resolve(request.id, { response: input.response, resolvedAt: timestamp });
+      const activeTurn = options.turns.getLatestActiveByConversation(request.conversationId);
+      if (activeTurn?.id === request.turnId && !options.requests.listPendingByConversation(request.conversationId).some((item) => item.turnId === request.turnId)) {
+        options.turns.upsert({ ...activeTurn, status: 'running', completedAt: null, updatedAt: timestamp, agentKind: runtimeKind, nativeRunId: activeRun.providerTurnId });
+        options.conversations.updateAgentRuntime(request.conversationId, { providerState: 'active', status: 'running' });
+      }
       await options.db.save();
-      await driver.respondToInteraction({ session: pending.session, requestId: request.id, response: input.response });
+      if (!pending.delivered) await driver.respondToInteraction(reply);
       publish('conversation.request.resolved', request.conversationId, { requestId: request.id, requestKind: request.requestKind });
     },
     async close(): Promise<void> {
@@ -3426,6 +3533,41 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       await driver.close({ mode: 'final' });
       await Promise.all(eventTails.values());
     },
+  };
+}
+
+/** ACP 的 input/output 已含缓存和思考子项，计入总量一次即可。 */
+function readAntigravityUsage(value: unknown): { usage: TokenUsageBreakdown; fields: (keyof TokenUsageBreakdown)[]; complete: boolean } | null {
+  const raw = asRecord(value);
+  /** 新旧 ACP 字段均保留显式零。 */
+  const count = (camel: string, snake: string) => optionalTokenCount(raw[camel]) ?? optionalTokenCount(raw[snake]);
+  const total = count('totalTokens', 'total_tokens');
+  const nativeOutput = count('outputTokens', 'output_tokens');
+  const nativeInput = count('inputTokens', 'input_tokens');
+  const input = nativeInput ?? (total !== null && nativeOutput !== null && total >= nativeOutput ? total - nativeOutput : null);
+  const output = nativeOutput ?? (total !== null && nativeInput !== null && total >= nativeInput ? total - nativeInput : null);
+  const cacheRead = count('cachedReadTokens', 'cached_read_tokens');
+  const cacheWrite = count('cachedWriteTokens', 'cached_write_tokens');
+  const thought = count('thoughtTokens', 'thought_tokens');
+  const observed = { totalTokens: total, inputTokens: input, outputTokens: output, cachedInputTokens: cacheRead, cacheWriteInputTokens: cacheWrite, reasoningOutputTokens: thought };
+  const fields = tokenUsageFields.filter((field) => observed[field] !== null);
+  if (!fields.length) return null;
+  const inputTokens = input ?? (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const outputTokens = output ?? thought ?? 0;
+  const cachedInputTokens = Math.min(inputTokens, cacheRead ?? 0);
+  // 账本可累计已知部分；估算记录中的 fields 决定界面可展示哪些分类。
+  if (!fields.includes('totalTokens')) fields.push('totalTokens');
+  return {
+    usage: {
+      totalTokens: total ?? inputTokens + outputTokens,
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      cacheWriteInputTokens: Math.min(inputTokens - cachedInputTokens, cacheWrite ?? 0),
+      reasoningOutputTokens: Math.min(outputTokens, thought ?? 0),
+    },
+    fields,
+    complete: input !== null && output !== null,
   };
 }
 
@@ -3557,6 +3699,7 @@ function buildPiUsageSnapshot(input: {
     generationId: input.generationId,
     sequence: input.sequence,
     total,
+    ...(input.rows.some((row) => row.estimate.reportedTokenFields !== undefined) ? { reportedTokenFields: [...new Set(input.rows.flatMap((row) => row.estimate.reportedTokenFields ?? tokenUsageFields))] } : {}),
     last: input.last,
     modelContextWindow: input.modelContextWindow,
     cacheHitRate: calculateCacheHitRate(total),
@@ -3793,30 +3936,9 @@ function readApprovalDecision(value: unknown): boolean {
   return record.decision === 'accept' || record.decision === 'acceptForSession' || record.action === 'accept';
 }
 
+/** 实时卡片继续将合法的非对象 JSON 投影为空对象。 */
 function nativePendingRequestProjection(request: ZeusConversationServerRequestRecord, transcripts: ConversationTranscriptRepository): Record<string, unknown> {
-  return {
-    id: request.id,
-    conversationId: request.conversationId,
-    turnId: request.turnId,
-    itemId: request.itemId,
-    generationId: request.transportGenerationId,
-    type: request.requestKind === 'request_user_input' ? 'userInput' : request.requestKind === 'mcp' ? 'MCP' : request.requestKind,
-    status: request.status,
-    payload: asRecord(JSON.parse(request.payloadJson) as unknown),
-    response: request.responseJson ? asRecord(JSON.parse(request.responseJson) as unknown) : null,
-    containsSecret: request.containsSecret,
-    expiresAt: request.expiresAt,
-    autoResolutionState: request.autoResolutionState,
-    createdAt: request.createdAt,
-    resolvedAt: request.resolvedAt,
-    transcript: transcripts.envelopeForSource({
-      conversationId: request.conversationId,
-      sourceDomain: 'request',
-      sourceScope: request.turnId ?? request.transportGenerationId,
-      sourceId: request.id,
-      facet: 'request_answer',
-    }),
-  };
+  return projectPendingRequestFields(request, (json) => asRecord(JSON.parse(json) as unknown), transcripts);
 }
 
 function toPiRunDispatchContext(envelope: ContextDispatchEnvelope | null) {

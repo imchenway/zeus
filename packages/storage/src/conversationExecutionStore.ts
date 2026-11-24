@@ -1,3 +1,4 @@
+import { tokenUsageFields } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { randomId } from './randomId.js';
@@ -2815,6 +2816,7 @@ export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, 
   for (const row of rows) {
     /** 金额与费率来自同一条已校验账本，不读取当前模型价格。 */
     const estimate = JSON.parse(row.estimate_json) as CodexUsageEstimate;
+    if (estimate.reportedTokenFields?.length === 0) continue;
     /** 已有美元账本沿用原金额，不从当前价格反推历史费用。 */
     const costs = sumEstimatedCosts([estimate]);
     /** 旧整轮账本拆分时也保留缓存和推理分类，避免重复计费。 */
@@ -2834,6 +2836,9 @@ export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, 
     const previous = usageByTurn[row.turn_id];
     /** 金额为零仍是有效记录；缺价则保留空数组。 */
     const usage: ConversationTurnUsage = {
+      ...(estimate.reportedTokenFields || previous?.reportedTokenFields
+        ? { reportedTokenFields: [...new Set([...(previous ? (previous.reportedTokenFields ?? tokenUsageFields) : []), ...(estimate.reportedTokenFields ?? tokenUsageFields)])] }
+        : {}),
       totalTokens: (previous?.totalTokens ?? 0) + row.total_tokens,
       inputTokens: (previous?.inputTokens ?? 0) + row.input_tokens,
       outputTokens: (previous?.outputTokens ?? 0) + row.output_tokens,

@@ -94,6 +94,9 @@ const labels = {
     fileChange: '文件变更',
     runCommand: '运行命令',
     editFiles: '编辑文件',
+    toolQuestion: '允许调用这个工具吗？',
+    readFiles: '读取文件',
+    readQuestion: '允许读取这些文件吗？',
     commandQuestion: '是否允许 Zeus 运行以下命令？',
     fileQuestion: '是否允许 Zeus 编辑以下文件？',
     moreFiles: (count: number) => `另有 ${count} 个文件`,
@@ -139,6 +142,9 @@ const labels = {
     fileChange: 'File changes',
     runCommand: 'Run command',
     editFiles: 'Edit files',
+    toolQuestion: 'Allow this tool call?',
+    readFiles: 'Read files',
+    readQuestion: 'Allow access to these files?',
     commandQuestion: 'Allow Zeus to run the following command?',
     fileQuestion: 'Allow Zeus to edit the following files?',
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
@@ -360,6 +366,10 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
   }
 
   const preview = requestPreview(props.request, copy.cwd);
+  const nativeOperation = props.request.payload.agentKind === 'antigravity' && props.request.payload.nativeTool === true;
+  const readFiles = props.kind === 'file' && props.request.payload.fileAccess === 'read';
+  const label = nativeOperation ? (stringValue(props.request.payload.toolName) ?? copy.approval) : readFiles ? copy.readFiles : props.kind === 'command' ? copy.runCommand : copy.editFiles;
+  const question = nativeOperation ? copy.toolQuestion : readFiles ? copy.readQuestion : props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion;
   const mode = permissionModeLabel(props.permissionMode, props.language);
   const Icon = props.kind === 'command' ? TerminalWindow : PencilSimple;
   return (
@@ -369,13 +379,13 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
         <header className="session-compact-approval-heading">
           <span className="session-compact-approval-identity">
             <Icon aria-hidden="true" />
-            <span>{props.kind === 'command' ? copy.runCommand : copy.editFiles}</span>
+            <span>{label}</span>
           </span>
           <span className="session-compact-approval-mode" data-icon-tooltip={`${copy.mode}: ${mode}`}>
             {mode}
           </span>
         </header>
-        <h2 className="session-compact-approval-question zeus-fidelity-text">{props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion}</h2>
+        <h2 className="session-compact-approval-question zeus-fidelity-text">{question}</h2>
         {props.error ? (
           <p className="session-request-invalid" role="alert">
             <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -394,7 +404,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                 <FileApprovalTargetList paths={props.filePaths} moreLabel={copy.moreFiles} />
               ) : null
             ) : (
-              <pre className="session-request-preview" role="region" aria-label={copy.runCommand} tabIndex={0}>
+              <pre className="session-request-preview" role="region" aria-label={label} tabIndex={0}>
                 {preview}
               </pre>
             )}
@@ -573,7 +583,8 @@ function FileApprovalTargetList(props: { paths: readonly string[]; moreLabel: (c
 function approvalFilePaths(request: NativePendingRequest, linkedPaths: readonly string[] | undefined): string[] {
   const audit = fileApprovalAudit(request);
   if (audit) return audit.paths;
-  const candidates = [request.payload.path, request.payload.filePath, request.payload.targetPath, ...(linkedPaths ?? [])];
+  const nativePaths = request.payload.agentKind === 'antigravity' && Array.isArray(request.payload.paths) ? request.payload.paths : [];
+  const candidates = [request.payload.path, request.payload.filePath, request.payload.targetPath, ...nativePaths, ...(linkedPaths ?? [])];
   return [...new Set(candidates.flatMap((value) => (typeof value === 'string' && value.trim() ? [value.trim()] : [])))];
 }
 
@@ -1464,6 +1475,7 @@ export function supportedRequestDecisions(request: NativePendingRequest): Suppor
     if (request.payload.grantRoot !== undefined && request.payload.grantRoot !== null) decisions = decisions.filter((decision) => decision !== 'accept' && decision !== 'acceptForSession');
   }
   if (kind === 'file' && decisions.length === 0 && advertised.length === 0 && hasCanonicalLinkedFileApprovalDetails(request)) decisions = ['accept', 'acceptForSession', 'decline', 'cancel'];
+  if (request.payload.agentKind === 'antigravity') return hasCompleteApprovalDetails(request) ? decisions : decisions.filter(isFailClosedDecision);
   if (decisions.length === 0) decisions = ['decline', 'cancel'];
   if (!hasCompleteApprovalDetails(request)) return ensureFailClosedDecisions(decisions.filter(isFailClosedDecision));
   return ensureFailClosedDecisions(decisions);
@@ -1532,6 +1544,7 @@ function ensureFailClosedDecisions(decisions: readonly SupportedRequestDecision[
 function hasCompleteApprovalDetails(request: NativePendingRequest): boolean {
   const kind = requestKind(request);
   if (kind === 'command') {
+    if (request.payload.agentKind === 'antigravity' && request.payload.nativeTool === true) return Boolean(stringValue(request.payload.toolName)) && isRecord(request.payload.args) && Object.keys(request.payload.args).length > 0;
     const command = request.payload.command;
     return typeof command === 'string' ? Boolean(command.trim()) : Array.isArray(command) && command.length > 0 && command.every((part) => typeof part === 'string' && Boolean(part.trim()));
   }
@@ -1577,6 +1590,7 @@ function requestPreview(request: NativePendingRequest, cwdLabel: string): string
   const command = request.payload.command;
   const commandText = Array.isArray(command) ? command.filter((value): value is string => typeof value === 'string').join(' ') : typeof command === 'string' ? command : '';
   const cwd = stringValue(request.payload.cwd) ?? stringValue(request.payload.workingDirectory);
+  if (request.payload.agentKind === 'antigravity' && request.payload.nativeTool === true) return JSON.stringify(request.payload.args, null, 2);
   if (commandText) return cwd ? `${commandText}\n${cwdLabel}: ${cwd}` : commandText;
   const filePath = stringValue(request.payload.path) ?? stringValue(request.payload.filePath);
   if (filePath) return filePath;

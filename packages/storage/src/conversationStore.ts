@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { randomId } from './randomId.js';
-import { type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type TokenUsageBreakdown } from '@zeus/shared';
+import { isReportedTokenFields, type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { captureCompletedInputSuggestion } from './inputSuggestionStore.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
@@ -306,23 +306,8 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
   collaborationMode?: 'plan' | 'default';
 }
 
-export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
-  /** 原币费用汇总，保持美元字段的原有语义。 */
-  costs?: import('@zeus/shared').EstimatedMoney[];
-  serviceTier?: string | null;
-  total: TokenUsageBreakdown;
-  last: TokenUsageBreakdown;
-  modelContextWindow: number | null;
-  cacheHitRate: number | null;
-  estimatedCredits: number | null;
-  apiEquivalentUsd: number | null;
-  lastApiEquivalentUsd: number | null;
-  cacheSavingsUsd: number | null;
-  priceCoverage: number | null;
-  pricingCatalogDate: string | null;
-  pricingSourceUrls: string[];
-  historyComplete: boolean;
-}
+/** 持久化的供应商会话用量与原生会话用量采用同一快照结构。 */
+export type ConversationProviderTokenUsageSnapshot = NativeTokenUsageSnapshot;
 
 export interface CodexUsageLedgerRecord {
   id: string;
@@ -1250,8 +1235,8 @@ export class ConversationRepository {
     return this.getConversationSnapshot<ConversationProviderSettingsSnapshot>(conversationId, 'provider_settings_json');
   }
 
-  upsertProviderTokenUsageSnapshot(conversationId: string, snapshot: ConversationProviderTokenUsageSnapshot): ConversationProviderTokenUsageSnapshot | undefined {
-    return this.upsertConversationSnapshot(conversationId, 'provider_token_usage_json', snapshot);
+  upsertProviderTokenUsageSnapshot(conversationId: string, snapshot: ConversationProviderTokenUsageSnapshot, scope: 'transport' | 'native_session' = 'transport'): ConversationProviderTokenUsageSnapshot | undefined {
+    return this.upsertConversationSnapshot(conversationId, 'provider_token_usage_json', snapshot, scope);
   }
 
   /**
@@ -1301,11 +1286,20 @@ export class ConversationRepository {
     return undefined;
   }
 
-  private upsertConversationSnapshot<T extends ProviderSequenceSnapshot>(conversationId: string, column: 'provider_settings_json' | 'provider_token_usage_json', snapshot: T): T | undefined {
+  private upsertConversationSnapshot<T extends ProviderSequenceSnapshot>(
+    conversationId: string,
+    column: 'provider_settings_json' | 'provider_token_usage_json',
+    snapshot: T,
+    scope: 'transport' | 'native_session' = 'transport',
+  ): T | undefined {
     if (column === 'provider_settings_json') validateProviderSettingsSnapshot(snapshot);
     else validateProviderTokenUsageSnapshot(snapshot);
     const current = this.getConversationSnapshot<T>(conversationId, column);
-    if (!shouldAcceptProviderSnapshot(this.db, snapshot, current)) return current;
+    if (scope === 'native_session') {
+      // ACP 的 generationId 是当前会话身份；同时打开的另一个会话不能把它置为过期。
+      const active = this.db.get<{ id: string }>('SELECT id FROM conversations WHERE id = ? AND native_session_id = ?', [conversationId, snapshot.generationId]);
+      if (!active || (current?.generationId === snapshot.generationId && current.sequence >= snapshot.sequence)) return current;
+    } else if (!shouldAcceptProviderSnapshot(this.db, snapshot, current)) return current;
     this.db.execute(`UPDATE conversations SET ${column} = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(snapshot), nowIso(), conversationId]);
     if (!this.db.get<{ id: string }>(`SELECT id FROM conversations WHERE id = ?`, [conversationId])) throw new Error(`Zeus conversation not found: ${conversationId}`);
     return snapshot;
@@ -3189,7 +3183,7 @@ function validateNextTurnSettings(settings: unknown): asserts settings is Conver
 function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot is ConversationProviderTokenUsageSnapshot {
   assertProviderSequenceSnapshot(snapshot);
   const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
-  assertNoSecretLikeProviderKeys(candidate, new Set(['inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
+  assertNoSecretLikeProviderKeys(candidate, new Set(['reportedtokenfields', 'contextusedtokens', 'inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
   assertOnlyKeys(
     candidate,
     [
@@ -3199,6 +3193,8 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
       'total',
       'last',
       'modelContextWindow',
+      'contextUsedTokens',
+      'reportedTokenFields',
       'cacheHitRate',
       'estimatedCredits',
       'apiEquivalentUsd',
@@ -3216,6 +3212,8 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
   validateTokenUsageBreakdown(candidate.total);
   validateTokenUsageBreakdown(candidate.last);
   if (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string') throw new Error('Invalid provider token usage snapshot');
+  if (candidate.reportedTokenFields !== undefined && !isReportedTokenFields(candidate.reportedTokenFields)) throw new Error('Invalid reported token fields');
+  if (candidate.contextUsedTokens != null && (typeof candidate.contextUsedTokens !== 'number' || !Number.isSafeInteger(candidate.contextUsedTokens) || candidate.contextUsedTokens < 0)) throw new Error('Invalid provider context usage');
   for (const value of [candidate.modelContextWindow, candidate.cacheHitRate, candidate.estimatedCredits, candidate.apiEquivalentUsd, candidate.lastApiEquivalentUsd, candidate.cacheSavingsUsd, candidate.priceCoverage]) {
     if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid provider token usage snapshot');
   }
@@ -3234,6 +3232,7 @@ export function validateTokenUsageBreakdown(value: unknown): asserts value is To
 function validateCodexUsageEstimate(value: unknown): asserts value is CodexUsageEstimate {
   if (!isPlainRecord(value) || !isPlainRecord(value.rateSnapshot)) throw new Error('Invalid Codex usage estimate');
   validateEstimatedMoney(value.costs);
+  if (value.reportedTokenFields !== undefined && !isReportedTokenFields(value.reportedTokenFields)) throw new Error('Invalid reported token fields');
   if (value.requests !== undefined) {
     if (!Array.isArray(value.requests)) throw new Error('Invalid request price snapshots');
     const identities = new Set<string>();
