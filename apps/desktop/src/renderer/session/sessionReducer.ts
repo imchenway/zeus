@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, type AsyncQuestionAnswer, type AsyncQuestionResponse, type TurnChangeSet } from '@zeus/shared';
+import { classifyAssistantMessage, isReportedTokenFields, type AsyncQuestionAnswer, type AsyncQuestionResponse, type TurnChangeSet } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationState,
@@ -2249,6 +2249,8 @@ function tokenUsageFrom(payload: Record<string, unknown>): NativeTokenUsageSnaps
     ...(Object.prototype.hasOwnProperty.call(payload, 'serviceTier') && (payload.serviceTier === null || typeof payload.serviceTier === 'string') ? { serviceTier: payload.serviceTier } : {}),
     total,
     last,
+    ...(isReportedTokenFields(payload.reportedTokenFields) ? { reportedTokenFields: payload.reportedTokenFields } : {}),
+    ...(payload.contextUsedTokens !== undefined ? { contextUsedTokens: numberValue(payload.contextUsedTokens) } : {}),
     modelContextWindow: numberValue(payload.modelContextWindow),
     cacheHitRate: numberValue(payload.cacheHitRate),
     estimatedCredits: numberValue(payload.estimatedCredits),

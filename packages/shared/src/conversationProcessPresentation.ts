@@ -73,6 +73,16 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
                 : kind === 'retry'
                   ? 'commentary'
                   : 'dynamicToolCall';
+  if (record.provider === 'antigravity' && kind === 'tool') {
+    const toolKind = source.toolKind;
+    if (toolKind === 'execute' || source.command) type = 'commandExecution';
+    else if (toolKind === 'edit' || toolKind === 'delete' || toolKind === 'move') type = 'fileChange';
+    else if (toolKind === 'read' || toolKind === 'search') {
+      type = 'commandExecution';
+      payload.commandActions = [{ type: toolKind, ...(source.filePath ? { path: source.filePath } : {}) }];
+    }
+    return { type, payload };
+  }
   if (record.provider !== 'pi' || (kind !== 'tool' && kind !== 'command')) {
     // 原生事件已声明工具语义，历史回看不能将文件修改或搜索降级为通用工具。
     if (kind === 'tool' && ['fileChange', 'webSearch', 'imageView', 'mcpToolCall', 'dynamicToolCall'].includes(String(record.itemType))) type = String(record.itemType);

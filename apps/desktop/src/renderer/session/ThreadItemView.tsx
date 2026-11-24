@@ -1395,7 +1395,9 @@ function MessageTurnUsage(props: { language: SessionUiLanguage; usage: Conversat
   /** 金额复用运行详情的两位小数和原币符号，不引入汇率。 */
   const cost = props.usage.costs.length ? formatRuntimeCosts(props.usage.costs, props.language) : null;
   /** 共享提示支持换行，按账本口径分别列出本轮输入与输出。 */
-  const tokenLabel = `${zh ? '本轮消耗' : 'Turn usage'} ${tokens.exact} Token${props.usage.usageComplete ? '' : partial}\n${zh ? '输入' : 'Input'} ${formatTokenCount(props.usage.inputTokens, props.language).exact} Token\n${zh ? '输出' : 'Output'} ${formatTokenCount(props.usage.outputTokens, props.language).exact} Token`;
+  const reportedCount = (field: 'inputTokens' | 'outputTokens') =>
+    props.usage.reportedTokenFields && !props.usage.reportedTokenFields.includes(field) ? (zh ? '未上报' : 'Not reported') : `${formatTokenCount(props.usage[field], props.language).exact} Token`;
+  const tokenLabel = `${zh ? '本轮消耗' : 'Turn usage'} ${tokens.exact} Token${props.usage.usageComplete ? '' : partial}\n${zh ? '输入' : 'Input'} ${reportedCount('inputTokens')}\n${zh ? '输出' : 'Output'} ${reportedCount('outputTokens')}`;
   /** 缺少拆分依据时明确显示暂无明细，与真实零费用区分。 */
   const unavailableBreakdown = zh ? '暂无明细' : 'Breakdown unavailable';
   /** 输入费用包含缓存读取与写入，沿用账本逐请求价格快照。 */

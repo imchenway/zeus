@@ -20,6 +20,8 @@ import type {
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
 import { installManagedAntigravity, readManagedAntigravity, type AntigravityInstallProgress } from './antigravityInstallation.js';
+import { acpPermissionOptions, acpQuestionContent, acpQuestions, acpRecord as record, acpToolProgress, mergeAcpTool, readAcpTool, type AntigravityInteraction } from './antigravityAcpInteractions.js';
+export type { AntigravityInteraction } from './antigravityAcpInteractions.js';
 import { resolveCliSearchPath } from './cliSearchPath.js';
 import { CodexJsonLineDecoder as JsonLineDecoder, type CodexWireId as RpcId, type CodexWireMessage as RpcMessage } from './codexAppServerProtocol.js';
 import { businessProcessEnvironment, resolveExecutableInvocation } from './commandExecution.js';
@@ -133,10 +135,17 @@ class AcpConnection {
     });
   }
 
-  /** 发送 ACP 取消通知或工具权限答复。 */
-  write(message: object): void {
+  /** 向 CLI 写入一条 ACP 消息，可通过回调确认此帧写入。 */
+  write(message: object, onWritten?: (error?: Error | null) => void): void {
     if (this.closed || !this.child.stdin.writable) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已断开。');
-    this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
+    this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n', onWritten);
+  }
+
+  /** 等待标准输入确认本帧已写入，管道断开不能当作已交付。 */
+  reply(message: object): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.write(message, (error) => (error ? reject(error) : resolve()));
+    });
   }
 
   /** 退出或取消登录时收敛当前连接，避免旧回执污染新进程。 */
@@ -157,6 +166,8 @@ class AcpConnection {
 interface SessionBinding {
   identity: AgentSessionIdentity;
   config: Record<string, unknown>;
+  /** 已收口的轮次仍可能收到后台工具的最终结果。 */
+  unfinished: Map<string, { runId: string; call: Record<string, unknown> }>;
   run?: {
     id: string;
     text: string;
@@ -164,7 +175,17 @@ interface SessionBinding {
     verificationNotice: string | null;
     messageId: string;
     abort: AbortController;
-    tools: Set<string>;
+    /** 包含已完成调用，重复终态和迟到的增量沿用同一身份。 */
+    tools: Map<string, Record<string, unknown>>;
+    /** 当前连续的原生思考摘要与其过程身份。 */
+    thought?: { id: string; text: string };
+    /** 请求处理失败须与用户选择拒绝区分。 */
+    interactionError?: Error;
+    /** prompt 结果才提供整轮 Token，用量更新单独报告上下文占用。 */
+    usage?: unknown;
+    stopReason?: string;
+    contextUsed?: number;
+    contextSize?: number;
   };
 }
 
@@ -211,7 +232,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 使用 Core 自己的工作目录查询账号和模型目录。 */
   constructor(
     private readonly probeDirectory: string,
-    private readonly approve: (request: PiZeusToolRequest, tool: Record<string, unknown>) => Promise<boolean>,
+    private readonly interact: (request: PiZeusToolRequest, interaction: AntigravityInteraction) => Promise<unknown>,
     private readonly respond: (input: RespondAgentInteractionInput) => Promise<void>,
     private readonly now: () => string,
     private readonly options: AntigravityRuntimeOptions,
@@ -349,17 +370,19 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       }
     }
     const mode = selectConfig(session.config, 'mode');
-    const modeId = input.workMode === 'plan' || input.permissionMode === 'read-only' ? 'plan' : 'default';
-    if (mode?.options.some((item) => item.id === modeId)) {
-      if (mode.current !== modeId) await this.setConfig(connection, session, mode.id, modeId);
-    } else if (modeId === 'plan') {
-      const modes = record(session.config.modes);
-      if (!Array.isArray(modes.availableModes) || !modes.availableModes.some((item) => record(item).id === modeId)) throw agyError('ZEUS_AGY_MODE_UNAVAILABLE', '当前 Antigravity CLI 未开放计划模式。');
-      await connection.request('session/set_mode', { sessionId, modeId });
-      modes.currentModeId = modeId;
-    } else if (record(session.config.modes).currentModeId === 'plan') {
-      await connection.request('session/set_mode', { sessionId, modeId });
-      record(session.config.modes).currentModeId = modeId;
+    const legacyModes = record(session.config.modes);
+    const availableModes = mode?.options.map((item) => item.id) ?? (Array.isArray(legacyModes.availableModes) ? legacyModes.availableModes.map((item) => record(item).id) : []);
+    const modeId = input.workMode === 'plan' || input.permissionMode === 'read-only' ? 'plan' : input.permissionMode === 'auto-review' && availableModes.includes('auto') ? 'auto' : 'default';
+    const currentMode = mode?.current ?? legacyModes.currentModeId;
+    if (currentMode !== modeId) {
+      if (mode?.options.some((item) => item.id === modeId)) {
+        await this.setConfig(connection, session, mode.id, modeId);
+        const confirmed = selectConfig(session.config, 'mode')?.current;
+        if (confirmed !== modeId && !(modeId === 'auto' && confirmed === 'default')) throw agyError('ZEUS_AGY_MODE_UNCONFIRMED', 'Antigravity 未确认本轮权限模式，消息尚未发送。');
+      } else if (availableModes.includes(modeId)) {
+        await connection.request('session/set_mode', { sessionId, modeId });
+        legacyModes.currentModeId = modeId;
+      } else if (modeId !== 'default' || currentMode) throw agyError('ZEUS_AGY_MODE_UNAVAILABLE', '当前 Antigravity 会话无法切换到所需的权限模式。');
     }
     if (input.thinkingLevel) {
       /** agy 在模型或模式切换时可能重算档位，使用此时的回执核验。 */
@@ -373,7 +396,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     if (connection !== this.connection) throw agyError('ZEUS_AGY_EXIT', 'Antigravity CLI 已断开，消息尚未发送。');
     const acceptance = { nativeRunId: randomUUID(), acceptedAt: this.now() };
     /** 该轮持有 ACP 原生会话内的正文和工具状态。 */
-    const run: NonNullable<SessionBinding['run']> = { id: acceptance.nativeRunId, messageId: randomUUID(), text: '', verificationNotice: null, abort: new AbortController(), tools: new Set<string>() };
+    const run: NonNullable<SessionBinding['run']> = { id: acceptance.nativeRunId, messageId: randomUUID(), text: '', verificationNotice: null, abort: new AbortController(), tools: new Map() };
     const prompt = [{ type: 'text', text: [input.content, input.untrustedContext?.content].filter(Boolean).join('\n\n') }, ...(input.images ?? []).map((image) => ({ type: 'image', data: image.data, mimeType: image.mimeType }))];
     input.preflightResult?.(true);
     input.durableTransactionSync?.(acceptance);
@@ -392,6 +415,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
         try {
           input.providerWriteMayStart?.();
           const result = record(await connection.request('session/prompt', { sessionId, prompt }, null));
+          run.usage = result.usage;
+          if (typeof result.stopReason === 'string') run.stopReason = result.stopReason;
           const cancelled = result.stopReason === 'cancelled';
           const verification = !cancelled && (run.verificationNotice || run.text.trim() === verificationNotice) ? await connection.readVerification() : null;
           if (session.run !== run) return;
@@ -400,7 +425,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
             this.finish(session, false, antigravityVerificationError());
             return;
           }
-          this.finish(session, cancelled, null);
+          this.finish(session, cancelled, cancelled ? null : (run.interactionError ?? acpStopError(result.stopReason)));
         } catch (error) {
           this.finish(session, false, error instanceof Error ? error : agyError('ZEUS_AGY_RUN_FAILED', 'Antigravity 请求失败。'));
         }
@@ -662,7 +687,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       );
       this.connection = connection;
       try {
-        const result = record(await connection.request('initialize', { protocolVersion: 1, clientInfo: { name: 'zeus', version: '0.1.0' }, clientCapabilities: {} }));
+        const result = record(await connection.request('initialize', { protocolVersion: 1, clientInfo: { name: 'zeus', version: '0.1.0' }, clientCapabilities: { elicitation: { form: {} } } }));
         if (result.protocolVersion !== 1) throw agyError('ZEUS_AGY_PROTOCOL', '当前 Antigravity CLI 的 ACP 协议不可用。');
         this.authMethods = Array.isArray(result.authMethods) ? result.authMethods : [];
         return connection;
@@ -701,7 +726,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 绑定官方会话 ID，ACP 会话不需要本地文件路径。 */
   private bind(connection: AcpConnection, nativeSessionId: string, config: Record<string, unknown>): AgentSessionIdentity {
     const identity = { agentKind: this.kind, runtimeInstanceId: connection.generationId, nativeSessionId, nativeSessionPath: null };
-    this.sessions.set(nativeSessionId, { identity, config });
+    this.sessions.set(nativeSessionId, { identity, config, unfinished: new Map() });
     return identity;
   }
 
@@ -715,42 +740,85 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private onMessage(connection: AcpConnection, message: RpcMessage): void {
     if (connection !== this.connection || !('method' in message)) return;
     const params = record(message.params);
-    const session = typeof params.sessionId === 'string' ? this.sessions.get(params.sessionId) : undefined;
+    let session = typeof params.sessionId === 'string' ? this.sessions.get(params.sessionId) : undefined;
     if ('id' in message) {
-      if (message.method === 'session/request_permission') void this.approveTool(connection, message.id, session, params).catch(() => connection.close());
-      else {
-        try {
-          connection.write({ id: message.id, error: { code: -32601, message: 'Method not supported' } });
-        } catch {
-          connection.close();
-        }
+      const form = message.method === 'elicitation/create';
+      if (form && params.sessionId === undefined) {
+        // 部分 agy 表单省略会话身份，只在同一进程内能唯一归属时交给用户。
+        const active = [...this.sessions.values()].filter((item) => item.run && !item.run.abort.signal.aborted);
+        const owners = typeof params.toolCallId === 'string' ? active.filter((item) => item.run!.tools.has(params.toolCallId as string)) : [];
+        session = owners.length === 1 ? owners[0] : active.length === 1 ? active[0] : undefined;
       }
+      const reply =
+        form || message.method === 'session/request_permission' ? this.handleInteraction(connection, message.id, session, params, form) : connection.reply({ id: message.id, error: { code: -32601, message: 'Method not supported' } });
+      void reply.catch(() => connection.close());
       return;
     }
     if (message.method !== 'session/update' || !session) return;
     const update = record(params.update);
     if (update.sessionUpdate === 'config_option_update') this.updateSessionConfig(session, update.configOptions);
+    if (typeof update.toolCallId === 'string' && update.sessionUpdate === 'tool_call_update') {
+      const unfinished = session.unfinished.get(update.toolCallId);
+      if (unfinished) {
+        unfinished.call = mergeAcpTool(unfinished.call, update);
+        if (update.status === 'completed' || update.status === 'failed') {
+          session.unfinished.delete(update.toolCallId);
+          this.emit(session, 'tool_execution_end', { ...acpToolProgress(unfinished.call), isError: update.status === 'failed', outcome: update.status, lateResult: true }, unfinished.runId);
+        }
+        return;
+      }
+    }
     const run = session.run;
     if (!run) return;
-    if (update.sessionUpdate === 'agent_message_chunk') {
+    if (update.sessionUpdate === 'usage_update') {
+      const used = run.contextUsed;
+      const size = run.contextSize;
+      if (typeof update.used === 'number' && Number.isSafeInteger(update.used) && update.used >= 0) run.contextUsed = update.used;
+      if (typeof update.size === 'number' && Number.isSafeInteger(update.size) && update.size > 0) run.contextSize = update.size;
+      if (run.contextUsed !== used || run.contextSize !== size) this.emit(session, 'acp_context_usage', { contextUsed: run.contextUsed, contextSize: run.contextSize });
+    } else if (update.sessionUpdate === 'agent_thought_chunk') {
+      const part = record(update.content);
+      if (part.type !== 'text' || typeof part.text !== 'string' || !part.text) return;
+      if (!run.thought) {
+        this.endMessage(session, 'prework');
+        run.thought = { id: randomUUID(), text: '' };
+      }
+      run.thought.text += part.text;
+      this.emit(session, 'reasoning_update', { reasoningId: run.thought.id, summary: [run.thought.text] });
+    } else if (update.sessionUpdate === 'agent_message_chunk') {
       const { text } = record(update.content);
       if (typeof text !== 'string' || !text) return;
+      this.endThought(session, run);
       if (text.trim() === verificationNotice) {
         this.appendMessage(session, run, '');
         run.verificationNotice = text;
       } else this.appendMessage(session, run, text);
+    } else if (typeof update.toolCallId === 'string' && (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update')) {
+      this.projectTool(session, run, update.toolCallId, update);
     }
-    if (typeof update.toolCallId === 'string') {
-      if (update.sessionUpdate === 'tool_call' && !run.tools.has(update.toolCallId)) {
-        this.endMessage(session);
-        run.tools.add(update.toolCallId);
-        this.emit(session, 'tool_execution_start', { toolCallId: update.toolCallId, toolName: update.title ?? update.kind ?? 'Antigravity', arguments: update.rawInput });
-      }
-      if (run.tools.has(update.toolCallId) && (update.status === 'completed' || update.status === 'failed')) {
-        run.tools.delete(update.toolCallId);
-        this.emit(session, 'tool_execution_end', { toolCallId: update.toolCallId, result: update.content ?? update.rawOutput, isError: update.status === 'failed' });
-      }
+  }
+
+  /** 同一条工具可从权限、声明或增量开始，按首次出现的位置保存。 */
+  private projectTool(session: SessionBinding, run: NonNullable<SessionBinding['run']>, id: string, update: Record<string, unknown>): Record<string, unknown> {
+    session.unfinished.delete(id);
+    const previous = run.tools.get(id);
+    if (previous?.status === 'completed' || previous?.status === 'failed') return previous;
+    const call = mergeAcpTool(previous, update);
+    if (!previous) {
+      this.endThought(session, run);
+      this.endMessage(session, 'toolUse');
     }
+    run.tools.set(id, call);
+    const terminal = call.status === 'completed' || call.status === 'failed';
+    this.emit(session, terminal ? 'tool_execution_end' : previous ? 'tool_execution_update' : 'tool_execution_start', { ...acpToolProgress(call), ...(terminal ? { isError: call.status === 'failed' } : {}) });
+    return call;
+  }
+
+  /** 思考过程使用同一条目收口，正文继续进入回复区。 */
+  private endThought(session: SessionBinding, run: NonNullable<SessionBinding['run']>): void {
+    if (!run.thought) return;
+    this.emit(session, 'reasoning_end', { reasoningId: run.thought.id, summary: [run.thought.text] });
+    run.thought = undefined;
   }
 
   /** 保留原生回复文本及首次输出事件。 */
@@ -763,40 +831,81 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     this.emit(session, 'message_update', { message: { id: run.messageId, role: 'assistant' }, assistantMessageEvent: { type: 'text_delta', delta } });
   }
 
-  /** 只向 ACP 回送单次批准、拒绝或取消。 */
-  private async approveTool(connection: AcpConnection, id: RpcId, session: SessionBinding | undefined, params: Record<string, unknown>): Promise<void> {
+  /** 提问和权限共用等待与取消机制，回写保持原始请求、选项和会话身份。 */
+  private async handleInteraction(connection: AcpConnection, id: RpcId, session: SessionBinding | undefined, params: Record<string, unknown>, form: boolean): Promise<void> {
     const run = session?.run;
     const tool = record(params.toolCall);
-    const options = Array.isArray(params.options) ? params.options.map(record) : [];
-    const allow = options.find((item) => item.kind === 'allow_once');
-    const deny = options.find((item) => item.kind === 'reject_once');
-    let selected: unknown;
-    if (session && run && allow && typeof tool.toolCallId === 'string') {
-      const approved = await this.approve(
-        {
-          session: session.identity,
-          nativeRunId: run.id,
-          requestId: `acp:${id}`,
-          toolCallId: tool.toolCallId,
-          toolName: String(tool.title ?? tool.kind ?? 'Antigravity'),
-          args: record(tool.rawInput),
-          signal: run.abort.signal,
-        },
-        tool,
-      ).catch(() => false);
-      if (!run.abort.signal.aborted) selected = approved ? allow?.optionId : deny?.optionId;
+    const toolId = typeof tool.toolCallId === 'string' ? tool.toolCallId : undefined;
+    const question = form || Boolean(toolId?.startsWith('interaction_'));
+    const cancelled = form ? { action: 'cancel' } : { outcome: { outcome: 'cancelled' } };
+    const selected = (optionId: string) => ({ outcome: { outcome: 'selected', optionId } });
+    const existing = toolId ? run?.tools.get(toolId) : undefined;
+    if (!session || !run || run.abort.signal.aborted || (!question && (existing?.status === 'completed' || existing?.status === 'failed'))) return connection.reply({ id, result: cancelled });
+    let confirm!: (written: boolean) => void;
+    const delivered = new Promise<boolean>((resolve) => {
+      confirm = resolve;
+    });
+    let result: object = cancelled;
+    let live = false;
+    try {
+      const call = !question && toolId ? this.projectTool(session, run, toolId, tool) : tool;
+      const operation = readAcpTool(call);
+      const request: PiZeusToolRequest = {
+        session: session.identity,
+        nativeRunId: run.id,
+        requestId: `acp:${id}`,
+        toolCallId: toolId ?? String(params.toolCallId ?? id),
+        toolName: operation.toolName,
+        args: operation.args,
+        signal: run.abort.signal,
+      };
+      if (question) {
+        const plans = acpQuestions(form, params);
+        if (!plans) {
+          if (!form) throw agyError('ZEUS_AGY_QUESTION_UNSUPPORTED', 'Antigravity 提供的问题格式无法在当前会话中回答。');
+          result = { action: 'decline' };
+        } else {
+          const response = await this.interact(request, { kind: 'question', questions: plans.map((plan) => plan.question), delivered });
+          const content = acpQuestionContent(plans, response);
+          if (content) result = form ? { action: 'accept', content } : selected(String(content[toolId!]));
+        }
+      } else {
+        if (!toolId) throw agyError('ZEUS_AGY_PERMISSION_INVALID', 'Antigravity 的权限请求缺少工具身份。');
+        const options = acpPermissionOptions(params);
+        const response = await this.interact(request, { kind: 'permission', tool: operation, decisions: [...options.keys(), 'cancel'], delivered });
+        const decision = record(response).decision;
+        const option = decision === 'accept' || decision === 'decline' ? options.get(decision) : undefined;
+        if (option) result = selected(option);
+      }
+      live = session.run === run && !run.abort.signal.aborted && connection === this.connection;
+    } catch (error) {
+      if (!run.abort.signal.aborted) {
+        const failure = error instanceof Error ? error : agyError('ZEUS_AGY_INTERACTION_FAILED', 'Antigravity 的交互请求未能处理。');
+        run.interactionError = failure;
+        try {
+          await connection.reply({ id, error: { code: -32603, message: 'Zeus could not complete this interaction.' } });
+        } finally {
+          confirm(false);
+        }
+        return;
+      }
     }
-    if (this.connection !== connection) return;
-    connection.write({ id, result: { outcome: typeof selected === 'string' ? { outcome: 'selected', optionId: selected } : { outcome: 'cancelled' } } });
+    let written = false;
+    try {
+      await connection.reply({ id, result: live ? result : cancelled });
+      written = live;
+    } finally {
+      confirm(written);
+    }
   }
 
   /** 将工具调用前的正文与之后的回复存为独立原生条目。 */
-  private endMessage(session: SessionBinding): void {
+  private endMessage(session: SessionBinding, phase?: 'toolUse' | 'prework'): void {
     const run = session.run;
     if (!run) return;
     if (run.verificationNotice) this.appendMessage(session, run, '');
     if (!run.text) return;
-    this.emit(session, 'message_end', { message: { id: run.messageId, role: 'assistant', content: [{ type: 'text', text: run.text }] } });
+    this.emit(session, 'message_end', { phase: phase ? 'prework' : undefined, message: { id: run.messageId, role: 'assistant', stopReason: phase === 'toolUse' ? phase : undefined, content: [{ type: 'text', text: run.text }] } });
     run.text = '';
     run.messageId = randomUUID();
   }
@@ -804,12 +913,21 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 收敛正常、取消和失败状态，保留已收到的正文。 */
   private finish(session: SessionBinding, cancelled: boolean, error: Error | null): void {
     if (!session.run) return;
-    session.run.abort.abort();
+    const run = session.run;
+    run.abort.abort();
+    this.endThought(session, run);
+    for (const [id, tool] of run.tools) {
+      if (tool.status === 'completed' || tool.status === 'failed') continue;
+      const outcome = cancelled ? 'cancelled' : 'outcome_unknown';
+      if (!cancelled && !error) session.unfinished.set(id, { runId: run.id, call: tool });
+      this.emit(session, 'tool_execution_end', { ...acpToolProgress(tool), toolCallId: id, status: outcome, outcome, isError: true, summary: cancelled ? '轮次已停止，未收到工具结果。' : '轮次结束前未收到工具结果。' });
+    }
     if (record(error).code === 'ZEUS_AGY_VERIFICATION_REQUIRED') session.run.verificationNotice = null;
     this.endMessage(session);
     if (record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') this.catalog = { status: 'sign_in_required', models: [], message: error!.message };
-    if (error) this.emit(session, 'runtime_error', { code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message });
-    else this.emit(session, 'agent_settled', { cancelled });
+    const counters = { stopReason: run.stopReason, usage: run.usage, contextUsed: run.contextUsed, contextSize: run.contextSize };
+    if (error) this.emit(session, 'runtime_error', { ...counters, code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message });
+    else this.emit(session, 'agent_settled', { ...counters, cancelled });
     session.run = undefined;
   }
 
@@ -825,13 +943,13 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   }
 
   /** 按原生会话与轮次的稳定身份提交事件。 */
-  private emit(session: SessionBinding, type: string, payload: unknown): void {
+  private emit(session: SessionBinding, type: string, payload: unknown, nativeRunId = session.run?.id ?? null): void {
     for (const listener of this.listeners)
       listener({
         agentKind: this.kind,
         runtimeInstanceId: session.identity.runtimeInstanceId,
         nativeSessionId: session.identity.nativeSessionId,
-        nativeRunId: session.run?.id ?? null,
+        nativeRunId,
         sequence: ++this.sequence,
         type,
         payload,
@@ -878,11 +996,6 @@ function antigravityVerificationError(): Error & { code: string } {
   return agyError('ZEUS_AGY_VERIFICATION_REQUIRED', '请在设置的 Google Antigravity 账号卡片中完成验证后重试。');
 }
 
-/** 读取 ACP 的对象字段时拒绝数组和非对象值。 */
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
 /** 读取 ACP 的分组选项。agy 的 thought_level 也可由配置 ID 识别。 */
 function selectConfig(result: Record<string, unknown>, category: 'model' | 'mode' | typeof thoughtLevelConfig): { id: string; current: string | null; options: AntigravityModel[] } | undefined {
   const config = Array.isArray(result.configOptions) ? result.configOptions.map(record).find((item) => item.type === 'select' && (item.category === category || item.id === category)) : undefined;
@@ -902,6 +1015,24 @@ function selectConfig(result: Record<string, unknown>, category: 'model' | 'mode
 /** agy 也可通过 ACP 的 models 扩展返回可选模型。 */
 function legacyModels(models: Record<string, unknown>): AntigravityModel[] {
   return Array.isArray(models.availableModels) ? models.availableModels.map(record).flatMap((model) => (typeof model.modelId === 'string' && typeof model.name === 'string' ? [{ id: model.modelId, name: model.name }] : [])) : [];
+}
+
+/** 只有正常结束才能完成轮次，原生限额、拒答及未知状态保留独立原因。 */
+function acpStopError(reason: unknown): Error | null {
+  switch (reason) {
+    case 'end_turn':
+      return null;
+    case 'refusal':
+      return agyError('ZEUS_AGY_REFUSAL', 'Antigravity 拒绝了本次请求。');
+    case 'max_tokens':
+      return agyError('ZEUS_AGY_MAX_TOKENS', 'Antigravity 已达到本轮输出 Token 上限。');
+    case 'max_turn_requests':
+      return agyError('ZEUS_AGY_MAX_TURN_REQUESTS', 'Antigravity 已达到本轮模型请求次数上限。');
+    case 'error':
+      return agyError('ZEUS_AGY_RUN_FAILED', 'Antigravity 报告本轮执行失败。');
+    default:
+      return agyError('ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', 'Antigravity 未确认本轮的停止原因。');
+  }
 }
 
 /** 仅转述 ACP 的已知故障类别，不记录包含授权信息的原始诊断。 */
