@@ -40,7 +40,9 @@ export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics
 import {
   cloneTaskManagementStatusConfig,
   defaultInputSuggestionSettings,
+  defaultTaskManagementStatusConfig,
   defaultTaskManagementStatusLabels,
+  findAwaitingReleaseTaskStatus,
   taskManagementStatusDefinitionsEquivalent,
   type ReadOnlyValidationDescriptor,
   taskBoardEmptyGroupId,
@@ -1154,6 +1156,27 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     });
     if (repaired) {
       appShellSettings = repaired;
+      await db.save();
+    }
+    /** 待发布只随资料升级引入一次，之后由用户管理。 */
+    const awaitingReleaseSeedKey = 'maintenance.task_status.awaiting_release';
+    if (!settings.getJson<boolean>(awaitingReleaseSeedKey)) {
+      /** 从内置配置取得统一的标识、名称来源和主色。 */
+      const awaitingRelease = defaultTaskManagementStatusConfig.statuses.find((status) => status.id === 'awaiting_release')!;
+      /** 保留已有状态的相对顺序及其承担的业务角色。 */
+      const template = appShellSettings.taskManagementStatusTemplate;
+      db.transaction(() => {
+        if (!findAwaitingReleaseTaskStatus(template.statuses)) {
+          /** 把待发布放在当前配置指定的完成状态之前。 */
+          const completedIndex = template.statuses.findIndex((status) => status.id === template.roles.completedStatusId);
+          /** 复制状态列表，避免改变之前的设置快照。 */
+          const statuses = [...template.statuses];
+          statuses.splice(completedIndex, 0, { ...awaitingRelease });
+          appShellSettings = { ...appShellSettings, taskManagementStatusTemplate: { ...template, statuses } };
+          settings.setJson(appShellSettingsKey, appShellSettings);
+        }
+        settings.setJson(awaitingReleaseSeedKey, true);
+      });
       await db.save();
     }
   }
