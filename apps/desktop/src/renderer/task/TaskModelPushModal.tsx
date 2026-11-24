@@ -985,7 +985,7 @@ export function TaskModelPushModal(props: {
                   size="regular"
                   ariaLabel={zh ? '速度' : 'Speed'}
                   value={serviceTierPickerValue(props.form.serviceTier, selectedModel)}
-                  options={serviceTierOptions(selectedModel, props.language)}
+                  options={serviceTierOptions(selectedModel, 'en-US')}
                   onChange={(value) => {
                     if (!selectedModel) return;
                     const selection = selectionFromEffectiveServiceTier(value);
