@@ -237,6 +237,8 @@ declare global {
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
       /** 只读取项目已有的 worktree，切换结果复用源码工作区身份。 */
       listProjectSourceWorktrees: (projectId: string) => Promise<import('@zeus/shared').ProjectSourceWorktree[]>;
+      /** 查询本窗口已有工作树身份中确认消失的根目录。 */
+      findMissingProjectSourceWorktrees: (projectId: string, sourceIds: string[]) => Promise<string[]>;
       selectProjectSourceWorktree: (input: { projectId: string; worktreeId: string }) => Promise<import('@zeus/shared').FilePreviewSourceWorkspace>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;

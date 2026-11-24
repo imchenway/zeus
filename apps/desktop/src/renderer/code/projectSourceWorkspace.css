@@ -55,8 +55,7 @@
 
 .project-source-toolbar-actions > button:not(.zeus-button),
 .project-source-tree-toggle,
-.project-source-operation-modal header button,
-.project-source-message button {
+.project-source-operation-modal header button {
   display: inline-flex;
   min-width: 26px;
   min-height: 26px;
@@ -70,8 +69,7 @@
 }
 
 .project-source-tree-toggle:hover:not(:disabled):not([aria-disabled='true']),
-.project-source-operation-modal header button:hover:not(:disabled):not([aria-disabled='true']),
-.project-source-message button:hover:not(:disabled):not([aria-disabled='true']) {
+.project-source-operation-modal header button:hover:not(:disabled):not([aria-disabled='true']) {
   color: var(--zeus-control-text);
   background: var(--zeus-interaction-hover);
 }
@@ -82,29 +80,6 @@
 }
 .project-source-tree-toggle {
   display: none;
-}
-
-.project-source-message {
-  display: flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  border-bottom: 0;
-  font-size: 12px;
-}
-
-.project-source-message > span {
-  min-width: 0;
-  flex: 1;
-}
-.project-source-message.failed {
-  color: var(--zeus-control-danger-text);
-  background: color-mix(in srgb, var(--zeus-control-danger-bg) 45%, transparent);
-}
-.project-source-message button {
-  min-height: 24px;
-  font: inherit;
 }
 
 .project-source-main {
@@ -375,17 +350,26 @@
 .project-source-statusbar {
   display: flex;
   min-height: 26px;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 14px;
+  gap: 4px 14px;
   padding: 0 12px;
   border-top: 0;
   color: var(--zeus-control-muted-text);
   background: var(--zeus-product-panel-muted);
   font-size: 10px;
 }
-.project-source-statusbar strong {
-  margin-right: auto;
+/* 恢复按钮随现有状态栏换行，窄窗口仍可操作。 */
+.project-source-status-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-inline-end: auto;
+}
+.project-source-status-actions strong {
   color: var(--zeus-control-danger-text);
 }
 

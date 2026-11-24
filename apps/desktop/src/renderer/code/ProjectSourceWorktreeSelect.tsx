@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { refreshMissingSourceTrees } from './projectSourceTreeCache.js';
 
 /** 项目源码切换目录时沿用主页面的未保存保护，选择器不直接重建编辑器。 */
 export function ProjectSourceWorktreeSelect(props: {
@@ -38,9 +39,11 @@ export function ProjectSourceWorktreeSelect(props: {
     if (inFlight.current) return;
     inFlight.current = true;
     const version = revision.current;
+    /** Git 查询失败时也由磁盘逐个核实，空清单本身不触发删除。 */
+    let choices: ProjectSourceWorktree[] = [];
     try {
       if (!window.zeus) throw new Error('源码工作目录服务不可用。');
-      const choices = await window.zeus.listProjectSourceWorktrees(props.projectId);
+      choices = await window.zeus.listProjectSourceWorktrees(props.projectId);
       if (version !== revision.current) return;
       setWorktrees(choices);
       setLoadError(null);
@@ -48,8 +51,9 @@ export function ProjectSourceWorktreeSelect(props: {
       if (version === revision.current) setLoadError(reason);
     } finally {
       if (version === revision.current) {
-        inFlight.current = false;
         setLoading(false);
+        await refreshMissingSourceTrees(props.projectId, choices);
+        if (version === revision.current) inFlight.current = false;
       }
     }
   }, [props.projectId]);

@@ -59,7 +59,7 @@ export class ProjectSourceWorkspaceService {
       entries.push(...(await Promise.all(batch.map((name) => describeEntry(root, joinRelative(directory.relativePath, name))))));
     }
     entries.sort(compareEntries);
-    return { relativePath: directory.relativePath, entries };
+    return { relativePath: directory.relativePath, entries, ...(directory.relativePath === '' ? { worktreeRoot: root } : {}) };
   }
 
   async search(projectId: string, query: string): Promise<ProjectSourceSearchResult> {

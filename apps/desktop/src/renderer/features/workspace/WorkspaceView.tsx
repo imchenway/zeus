@@ -1180,10 +1180,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceZh ? '项目源码' : 'Project source'}>
               <div className="project-code-mode-host">
                 <div className="project-code-mode-pane">
-                  <Suspense fallback={null}>
+                  <Suspense key={activeSourceTarget?.project.localPath ?? selectedProject.localPath} fallback={null}>
                     <ProjectSourceWorkspace
                       key={activeSourceTarget?.project.id ?? selectedProject.id}
                       ref={setSourceRef}
+                      ownerProjectId={selectedProject.id}
                       project={activeSourceTarget?.project ?? selectedProject}
                       language={appShellSettings.appLanguage}
                       preference={
