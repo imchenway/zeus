@@ -84,8 +84,10 @@ export interface DigitalEmployeeApiClient {
   /** 已配置项目流程时返回真实流程身份，否则返回独立工作运行。 */
   createTaskWorkItem(taskId: string, preview: TaskWorkPreview): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] } | { workflowRunId: string }>;
   acceptTaskWorkDeliverable(taskId: string, deliverable: TaskWorkDeliverableRecord): Promise<unknown>;
-  requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string): Promise<unknown>;
-  retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
+  /** 原环境已关闭时，本次确认可同时新建任务分支。 */
+  requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string, createWorkspace?: boolean): Promise<unknown>;
+  /** 失败重试仅在明确选择时新建分支。 */
+  retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord, createWorkspace?: boolean): Promise<unknown>;
   cancelTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
   resolveTaskWorkDecision(taskId: string, decision: TaskWorkDecisionRecord, response: Record<string, unknown>): Promise<unknown>;
 }
@@ -212,13 +214,13 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       const body = await command(workManagementClientCommandTypes.taskWorkDeliverableAccept, 'task', () => taskId, 'task_work_deliverable_accept_', value, deliverable.revision);
       return transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverable.id)}/accept`, jsonRequest('POST', body));
     },
-    requestTaskWorkDeliverableChanges: async (taskId, deliverable, reason) => {
-      const value = { expectedRevision: deliverable.revision, reason };
+    requestTaskWorkDeliverableChanges: async (taskId, deliverable, reason, createWorkspace) => {
+      const value = { expectedRevision: deliverable.revision, reason, ...(createWorkspace ? { createWorkspace: true } : {}) };
       const body = await command(workManagementClientCommandTypes.taskWorkDeliverableRequestChanges, 'task', () => taskId, 'task_work_deliverable_changes_', value, deliverable.revision);
       return transport.request(`${taskPath(taskId)}/work-deliverables/${encodeURIComponent(deliverable.id)}/request-changes`, jsonRequest('POST', body));
     },
-    retryTaskWorkItem: async (taskId, item) => {
-      const value = { expectedRevision: item.revision };
+    retryTaskWorkItem: async (taskId, item, createWorkspace) => {
+      const value = { expectedRevision: item.revision, ...(createWorkspace ? { createWorkspace: true } : {}) };
       const body = await command(workManagementClientCommandTypes.taskWorkItemRetry, 'task', () => taskId, 'task_work_item_retry_', value, item.revision);
       return transport.request(`${taskPath(taskId)}/work-items/${encodeURIComponent(item.id)}/retry`, jsonRequest('POST', body));
     },

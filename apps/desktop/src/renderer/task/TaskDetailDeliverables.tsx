@@ -74,7 +74,7 @@ export function TaskDetailDeliverables(props: {
     return subscribe?.(
       (event) => {
         if (event.payload.taskId !== taskId) return;
-        if (event.type === 'task.work_management.changed') void reloadWork();
+        if (event.type === 'task.work_management.changed' || event.type === 'task.git_delivery.changed') void reloadWork();
         if (event.type === 'task.workflow.changed') void reloadStages();
       },
       (connection) => {
@@ -155,7 +155,7 @@ export function TaskDetailDeliverables(props: {
             readOnly={readOnly}
             busy={busy}
             onOpenDecision={openDecision}
-            onRetry={(item) => act(`retry:${item.id}`, () => client.retryTaskWorkItem(taskId, item))}
+            onRetry={(item, createWorkspace) => act(`retry:${item.id}`, () => client.retryTaskWorkItem(taskId, item, createWorkspace))}
           />
           {operationError && !decision ? (
             <p className="task-inline-edit-feedback is-error" role="alert">
@@ -240,7 +240,7 @@ export function TaskDetailDeliverables(props: {
           onDismiss={() => openDecision(null)}
           onOpenConversation={openOutcomeConversation}
           onAccept={(deliverable) => act('decision', () => client.acceptTaskWorkDeliverable(taskId, deliverable))}
-          onRequestChanges={(deliverable, reason) => act('decision', () => client.requestTaskWorkDeliverableChanges(taskId, deliverable, reason))}
+          onRequestChanges={(deliverable, reason, createWorkspace) => act('decision', () => client.requestTaskWorkDeliverableChanges(taskId, deliverable, reason, createWorkspace))}
           onRespond={(response) => act('decision', () => client.resolveTaskWorkDecision(taskId, currentDecision ?? decision, response))}
         />
       ) : null}

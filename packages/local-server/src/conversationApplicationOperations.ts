@@ -34,6 +34,7 @@ import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictP
 import {
   parseCanonicalRequestUserInputQuestions,
   renderTaskPushLayoutText,
+  taskPushSupplementalInfoMaxCharacters,
   type TaskPushMessageLayout,
   type TaskPushPromptAttachment,
   type TaskPushPromptParentContext,
@@ -3735,7 +3736,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskStage = requestedTaskStage(body, task, ['plan', 'implementation', 'code_review']);
         if (!modelName) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push model is required.');
         if (!workMode) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push workMode must be default or plan.');
-        if (supplementalInfo.length > 20_000) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', 'Task push supplementalInfo must be no longer than 20000 characters.');
+        if (supplementalInfo.length > taskPushSupplementalInfoMaxCharacters) throw nativeApiError('ZEUS_INVALID_TASK_PUSH', `Task push supplementalInfo must be no longer than ${taskPushSupplementalInfoMaxCharacters} characters.`);
         const permissionMode = body.permissionMode === undefined ? 'read-only' : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         // 提交阶段只需要复验模型、账户和附件能力；仓库发现与远端刷新由
