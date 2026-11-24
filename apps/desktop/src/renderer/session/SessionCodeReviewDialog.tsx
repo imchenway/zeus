@@ -276,7 +276,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
                 size="regular"
                 ariaLabel={zh ? '代码审查速度' : 'Code review speed'}
                 value={serviceTierPickerValue(form?.serviceTierSelection ?? { type: 'standard' }, selectedModel)}
-                options={serviceTierOptions(selectedModel, props.language)}
+                options={serviceTierOptions(selectedModel, 'en-US')}
                 onChange={(value) => {
                   const selection = selectionFromEffectiveServiceTier(value);
                   setForm((current) => (current ? { ...current, serviceTierSelection: selection, serviceTierDowngraded: false } : current));
