@@ -315,42 +315,14 @@
   opacity: 0.5;
 }
 
-/* 网页预加载没有全局按钮样式；本地提交复用同一批注的忙碌反馈。 */
+/* 网页批注保留等待光标。 */
 .session-response-annotation-editor button[aria-busy='true'] {
   cursor: progress;
-  position: relative;
-}
-
-.session-response-annotation-editor button[aria-busy='true']::after {
-  animation: zeus-comment-saving 900ms ease-in-out 120ms infinite;
-  background: currentColor;
-  border-radius: 50%;
-  content: '';
-  height: 5px;
-  opacity: 0;
-  position: absolute;
-  right: 2px;
-  top: 2px;
-  width: 5px;
-}
-
-@keyframes zeus-comment-saving {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 /* 减少动态效果时，编号标记保持静态反馈。 */
 @media (prefers-reduced-motion: reduce) {
   .session-response-annotation-marker {
     transition: none;
-  }
-  .session-response-annotation-editor button[aria-busy='true']::after {
-    animation: none;
-    opacity: 0.7;
   }
 }

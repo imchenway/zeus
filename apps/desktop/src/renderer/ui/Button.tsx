@@ -13,12 +13,14 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   busy?: boolean;
+  /** 原地等待操作回执时显示的文案，由操作入口提供。 */
+  busyLabel?: string;
   /** 专用控件保留自身外观与原生默认提交语义，只复用交互反馈。 */
   unstyled?: boolean;
 };
 
-/** 所有按钮共享异步反馈，专用按钮通过 unstyled 保留原有布局。 */
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ busy = false, className, disabled, onClick, onDoubleClick, size = 'regular', title, type, unstyled = false, variant = 'secondary', ...buttonProps }, ref) {
+/** 按钮共享异步互斥，原地等待的操作可以切换文案。 */
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({ busy = false, busyLabel, children, className, disabled, onClick, onDoubleClick, size = 'regular', title, type, unstyled = false, variant = 'secondary', ...buttonProps }, ref) {
   /** 已经打开工作面的读取不占用来源按钮，关闭后仍可重新进入。 */
   const background = buttonProps['data-busy-behavior'] === 'background';
   /** 单击选择与双击命令共用互斥状态；文件导航通过 background 保留原生双击序列。 */
@@ -29,6 +31,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const buttonType = type ?? (unstyled ? undefined : 'button');
   /** 忙碌范围只包含本次动作和所属表单，不读取页面级加载标记。 */
   const pending = busy || action.pending || (formPending && (buttonType === undefined || buttonType === 'submit'));
+  /** 后台读取由目标内容显示状态，入口只在明确提供文案时切换。 */
+  const showBusyLabel = Boolean(busyLabel && pending && !background);
   return (
     <button
       {...buttonProps}
@@ -40,8 +44,16 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       onDoubleClick={onDoubleClick ? (background ? onDoubleClick : action.execute) : undefined}
       disabled={disabled || (!background && pending)}
       aria-busy={pending || buttonProps['aria-busy'] || undefined}
+      data-button-waiting={showBusyLabel || undefined}
       {...(pending ? { 'data-loading': 'true' } : {})}
       {...(unstyled ? {} : { 'data-zeus-primitive': 'button', 'data-button-size': size, 'data-button-variant': variant })}
-    />
+    >
+      {busyLabel && !background ? (
+        <span className="zeus-button-labels">
+          <span aria-hidden={showBusyLabel || undefined}>{children}</span>
+          <span aria-hidden={!showBusyLabel || undefined}>{busyLabel}</span>
+        </span>
+      ) : children}
+    </button>
   );
 });

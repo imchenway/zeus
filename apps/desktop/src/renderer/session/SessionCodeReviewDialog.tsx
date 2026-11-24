@@ -314,8 +314,8 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
             <Button type="button" size="compact" onClick={close} disabled={busy}>
               {zh ? '取消' : 'Cancel'}
             </Button>
-            <Button type="submit" variant="primary" size="compact" busy={busy} disabled={!form || !selectedModel || status === 'loading' || status === 'preparing'}>
-              {busy ? (zh ? '正在启动…' : 'Starting…') : zh ? '确认并开始审查' : 'Confirm and start review'}
+            <Button type="submit" variant="primary" size="compact" busy={busy} busyLabel={zh ? '启动中…' : 'Starting…'} disabled={!form || !selectedModel || status === 'loading' || status === 'preparing'}>
+              {zh ? '确认并开始审查' : 'Confirm and start review'}
             </Button>
           </span>
         </footer>

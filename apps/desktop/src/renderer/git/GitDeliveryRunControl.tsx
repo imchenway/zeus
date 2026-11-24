@@ -427,7 +427,7 @@ export function GitDeliveryRunControl(props: {
               <Button
                 variant="primary"
                 size="compact"
-                busy={busy}
+                busyLabel={props.zh ? '启动中…' : 'Starting…'}
                 disabled={controlsDisabled || !props.input.repositories.length || !summary || (commandCount > 0 && !commandsLoaded)}
                 data-icon-tooltip={
                   finalTaskStatus && taskId
@@ -454,6 +454,7 @@ export function GitDeliveryRunControl(props: {
             zh={props.zh}
             busy={busy}
             submitLabel={props.zh ? '保存' : 'Save'}
+            submitBusyLabel={props.zh ? '保存中…' : 'Saving…'}
             onClose={() => {
               setDraft(null);
               setSettingsOpen(false);
@@ -493,6 +494,7 @@ export function GitDeliveryRunControl(props: {
             zh={props.zh}
             busy={busy}
             submitLabel={props.zh ? '保存解决结果' : 'Save resolution'}
+            submitBusyLabel={props.zh ? '保存中…' : 'Saving…'}
             submitDisabled={!document || countUnresolvedConflictBlocks(document) > 0}
             onClose={() => {
               setConflict(null);

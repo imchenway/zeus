@@ -1638,7 +1638,7 @@ export function DecisionDialog(props: {
               </>
             ) : null}
             {props.decision.kind === 'command_confirmation' ? (
-              <Button variant="primary" size="compact" busy={props.busy} onClick={() => props.onRespond({ parameters: commandParameters })}>
+              <Button variant="primary" size="compact" busy={props.busy} busyLabel={zh ? '启动中…' : 'Starting…'} onClick={() => props.onRespond({ parameters: commandParameters })}>
                 {zh ? '确认并启动命令' : 'Confirm and start command'}
               </Button>
             ) : null}
