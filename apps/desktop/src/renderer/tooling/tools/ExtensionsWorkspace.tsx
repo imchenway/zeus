@@ -531,6 +531,7 @@ function ConnectorDialog(props: {
       zh={props.zh}
       busy={Boolean(props.busyKey)}
       submitLabel={props.zh ? '保存连接' : 'Save connection'}
+      submitBusyLabel={props.zh ? '保存中…' : 'Saving…'}
       submitDisabled={!connectorId.trim() || !config.trim()}
       onClose={props.onClose}
       onSubmit={(event) => submit(event)}

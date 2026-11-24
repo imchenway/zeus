@@ -73,6 +73,7 @@ export function TaskDeadlineField(props: {
           zh={zh}
           busy={saving || Boolean(props.disabled)}
           submitLabel={zh ? '保存' : 'Save'}
+          submitBusyLabel={zh ? '保存中…' : 'Saving…'}
           onClose={() => setDraft(null)}
           onSubmit={(event) => {
             event.preventDefault();

@@ -13,6 +13,8 @@ export function FormDialog(props: {
   zh: boolean;
   busy: boolean;
   submitLabel: string;
+  /** 保存等操作在表单原位等待提交回执时可提供具体文案。 */
+  submitBusyLabel?: string;
   submitDisabled?: boolean;
   danger?: boolean;
   children?: ReactNode;
@@ -42,8 +44,8 @@ export function FormDialog(props: {
           <Button onClick={props.onClose} disabled={props.busy}>
             {props.zh ? '取消' : 'Cancel'}
           </Button>
-          <Button type="submit" variant={props.danger ? 'danger' : 'primary'} busy={props.busy} disabled={props.submitDisabled}>
-            <span role="status">{props.busy ? (props.zh ? '处理中…' : 'Working…') : props.submitLabel}</span>
+          <Button type="submit" variant={props.danger ? 'danger' : 'primary'} busy={props.busy} busyLabel={props.submitBusyLabel ?? (props.zh ? '处理中…' : 'Working…')} disabled={props.submitDisabled}>
+            {props.submitLabel}
           </Button>
         </footer>
       </Form>

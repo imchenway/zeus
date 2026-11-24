@@ -6339,10 +6339,6 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   --zeus-log-command-line: oklch(86% 0.002 255);
   --zeus-log-ai-bg: oklch(96.4% 0.012 285);
   --zeus-log-ai-line: oklch(84.5% 0.032 285);
-  --zeus-control-loading-bg: oklch(94.8% 0.001 255);
-  --zeus-control-loading-line: oklch(82% 0.002 255);
-  --zeus-control-loading-text: oklch(38% 0.003 255);
-  --zeus-control-loading-dot: var(--zeus-product-accent);
   --zeus-focus-line: oklch(50% 0.004 255 / 0.72);
   --zeus-control-focus: 0 0 0 2px oklch(28% 0.004 255 / 0.18);
 }
@@ -6582,49 +6578,10 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   color: var(--zeus-control-error-text);
 }
 
-/* 提交动作阻止重复点击；只读取缩略图的资源入口继续允许打开附件。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not([data-busy-behavior='background'], :has(.resource-loading))) {
-  background: var(--zeus-control-loading-bg);
-  border-color: var(--zeus-control-loading-line);
-  color: var(--zeus-control-loading-text);
-  cursor: progress;
+/* 在途操作保持原文字可读并阻止重复点击，后台读取的入口继续可用。 */
+.macos-ai-app :where(button, a):is([aria-busy='true'], [data-loading='true']):where(:not([data-busy-behavior='background'], :has(.resource-loading))) {
   opacity: 1;
-  position: relative;
   pointer-events: none;
-}
-
-/* 已有命令圆环或附件骨架的按钮，以及自带行末状态图标的会话行，不再追加圆点。 */
-.macos-ai-app
-  :where(button, a):where([aria-busy='true'], [data-loading='true']):where(
-    :not([data-busy-behavior='background'], :has(> .session-command-spinner, .resource-loading), .session-conversation-tree-row:has(> .session-conversation-status-icon))
-  )::after {
-  animation: zeus-control-loading-pulse 900ms ease-out infinite;
-  animation-delay: 120ms;
-  opacity: 0;
-  position: absolute;
-  inset-block-start: 4px;
-  inset-inline-end: 4px;
-  background: var(--zeus-control-loading-dot);
-  block-size: 5px;
-  border-radius: 999px;
-  content: '';
-  display: inline-block;
-  inline-size: 5px;
-}
-
-@keyframes zeus-control-loading-pulse {
-  0% {
-    opacity: 0.34;
-    transform: scale(0.82);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0.34;
-    transform: scale(0.82);
-  }
 }
 
 .macos-ai-app :where(button[aria-pressed='true'], button.selected, .selected > button) {
@@ -6652,11 +6609,6 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 @media (prefers-reduced-motion: reduce) {
   .macos-ai-app :where(button, input, select, textarea, a) {
     transition: none;
-  }
-
-  .macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true'])::after {
-    animation: none;
-    opacity: 0.6;
   }
 }
 
@@ -19928,10 +19880,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   position: relative;
 }
 
-.macos-ai-app .task-detail-attachments > .task-detail-section-heading .zeus-button[data-loading='true']::after {
-  display: none;
-}
-
 @keyframes task-save-spinner-rotate {
   to {
     transform: rotate(360deg);
@@ -23240,10 +23188,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-table-row-actions .task-table-row-action > svg {
   block-size: 15px;
   inline-size: 15px;
-}
-
-.macos-ai-app .task-table-row-actions .task-table-row-action[data-loading='true']::after {
-  display: none;
 }
 
 .macos-ai-app .task-table-row-action-spinner {

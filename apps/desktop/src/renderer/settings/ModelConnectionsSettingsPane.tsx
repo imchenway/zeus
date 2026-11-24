@@ -811,6 +811,7 @@ export function ModelConnectionsSettingsPane(props: {
             <FormDialog
               title={zh ? '价格源配置' : 'Price source settings'}
               submitLabel={zh ? '保存' : 'Save'}
+              submitBusyLabel={zh ? '保存中…' : 'Saving…'}
               zh={zh}
               busy={busy}
               onClose={() => setPricingSourceDraft(null)}
@@ -988,7 +989,7 @@ export function ModelConnectionsSettingsPane(props: {
           ) : null}
           <footer className="model-connection-actions">
             {!draft.id || props.onComplete || saveState === 'failed' ? (
-              <Button variant="primary" size="compact" onClick={() => save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'}>
+              <Button variant="primary" size="compact" onClick={() => save()} disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()} busy={status === 'saving'} busyLabel={zh ? '保存中…' : 'Saving…'}>
                 {draft.id ? (zh ? '保存供应商' : 'Save provider') : zh ? '创建供应商' : 'Create provider'}
               </Button>
             ) : null}
@@ -1218,7 +1219,7 @@ function ModelReasoningSection(props: { language: 'zh-CN' | 'en-US'; model: Mode
           <Button size="compact" variant="secondary" disabled={busy || rows.length === 0} onClick={() => setRows((value) => value.slice(0, -1))}>
             {zh ? '减少一档' : 'Remove last'}
           </Button>
-          <Button size="compact" disabled={busy || props.context.connectionId === null || rows.length === 0} busy={status === 'saving'} onClick={() => saveOverride(rows)}>
+          <Button size="compact" disabled={busy || props.context.connectionId === null || rows.length === 0} busy={status === 'saving'} busyLabel={zh ? '保存中…' : 'Saving…'} onClick={() => saveOverride(rows)}>
             {zh ? '保存清单' : 'Save list'}
           </Button>
           <Button size="compact" variant="secondary" disabled={busy || props.context.connectionId === null} onClick={() => saveOverride(null)}>

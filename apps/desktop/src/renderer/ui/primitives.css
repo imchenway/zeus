@@ -403,9 +403,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app :where(button, input, select, textarea, [role='button'], [role='option']):is(:disabled, [aria-disabled='true']) {
   cursor: not-allowed;
 }
-.macos-ai-app :where(button, [role='button'])[aria-busy='true'] {
-  cursor: progress;
-}
 /* 仅剩外观的退出层不接收鼠标，也不能成为下一个焦点。 */
 .macos-ai-app [inert],
 .macos-ai-app [inert] * {
@@ -705,11 +702,31 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 /* 图标独立占位，避免 SVG 的基线空隙与文字挤在一起；纯图标按钮仍整体居中。 */
-.macos-ai-app .zeus-button[data-zeus-primitive='button'] > svg {
+.macos-ai-app .zeus-button[data-zeus-primitive='button'] > svg,
+.macos-ai-app .zeus-button[data-zeus-primitive='button'] > .zeus-button-labels > span > svg {
   display: block;
   flex: 0 0 auto;
   inline-size: 16px;
   block-size: 16px;
+}
+
+/* 两种文案共用一个网格单元，切换时按较宽的内容保留原位置。 */
+.zeus-button-labels {
+  display: inline-grid;
+  gap: inherit;
+  min-inline-size: 0;
+}
+
+.zeus-button-labels > span {
+  align-items: center;
+  display: inline-flex;
+  gap: inherit;
+  grid-area: 1 / 1;
+  justify-content: center;
+}
+
+.zeus-button-labels > span[aria-hidden='true'] {
+  visibility: hidden;
 }
 
 .macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-size='compact'] {
@@ -774,21 +791,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   box-shadow: var(--zeus-control-danger-focus);
 }
 
-.macos-ai-app .zeus-button[data-zeus-primitive='button']:disabled {
+/* 只有明确等待回执或本来不可用的按钮显示禁用底色。 */
+.macos-ai-app .zeus-button[data-zeus-primitive='button']:disabled:where(:not([aria-busy='true'], [data-loading='true']), [data-busy-behavior='background'], [data-button-waiting='true']) {
   background: var(--zeus-control-disabled-bg);
   border-color: var(--zeus-control-disabled-line);
   color: var(--zeus-control-disabled-text);
 }
 
 /* 主操作禁用时保留浅品牌色，与可用态的实心品牌色保持明确区分。 */
-.macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-variant='primary']:disabled {
+.macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-variant='primary']:disabled:where(:not([aria-busy='true'], [data-loading='true']), [data-busy-behavior='background'], [data-button-waiting='true']) {
   background: color-mix(in srgb, var(--zeus-product-accent) 14%, var(--zeus-control-disabled-bg));
   border-color: color-mix(in srgb, var(--zeus-product-accent) 24%, var(--zeus-control-disabled-line));
   color: color-mix(in srgb, var(--zeus-product-accent) 55%, var(--zeus-control-disabled-text));
 }
 
-.macos-ai-app .zeus-button[data-zeus-primitive='button'][data-loading='true'] {
-  cursor: progress;
+/* 等待文案使用正文颜色，便于辨认正在进行的动作。 */
+.macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-waiting='true']:disabled {
+  color: var(--zeus-control-text);
 }
 
 /* 旧页面尚未迁移为 Button 的危险动作仍强制消费同一语义色和危险焦点环，禁止出现浅色描边。 */

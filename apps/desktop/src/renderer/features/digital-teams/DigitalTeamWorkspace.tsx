@@ -1102,7 +1102,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                     </div>
                   ) : null}
                 </div>
-                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || !templateNeedsSave} onClick={() => saveTemplate()}>
+                <Button size="compact" variant="primary" busyLabel={zh ? '保存中…' : 'Saving…'} disabled={busy || !draft.name.trim() || Boolean(draft.sourceIssues?.length) || !templateNeedsSave} onClick={() => saveTemplate()}>
                   {zh ? '保存' : 'Save'}
                 </Button>
                 {dirty ? (
@@ -1113,6 +1113,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <Button
                   size="compact"
                   variant="primary"
+                  busyLabel={props.task ? (zh ? '启动中…' : 'Starting…') : undefined}
                   disabled={!draft.name.trim() || validationIssues.length > 0 || loading || busy || (props.task ? runs.some((run) => !terminalRunStatuses.has(run.status)) : !props.onCreateTask || !projectId)}
                   onClick={() => {
                     if (props.task) return createRun();

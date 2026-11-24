@@ -688,7 +688,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   }
 
   function selectHistoryRun(runId: string): void {
+    if (runId === selectedRunId) return;
     setSelectedRunId(runId);
+    setError(null);
     setRunSyncState('syncing');
     setRunDetail((current) => (current?.run.id === runId ? current : null));
   }
@@ -847,6 +849,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       const command = runningCommand;
       if (currentDefinitionsQuery.current !== definitionsQuery) return;
       setRunningCommand(null);
+      /** 先显示服务端回执，历史列表随后补齐，避免新运行短暂显示为空。 */
+      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
       /** 运行已受理，日志目录读取在新打开的历史面板内继续。 */
       void openRunHistory(command, run.id);
       setNotice(zh ? `已启动 ${command.title}。` : `${command.title} started.`);
@@ -874,6 +878,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
 
   /** 项目已由工作区导航标明，页面标题只说明当前操作。 */
   const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? '命令' : 'Commands';
+  /** 等待回执或读取历史的错误在当前弹窗内显示。 */
+  const panelError = (editing || runningCommand || historyCommand ? null : error) ?? definitionsSnapshot.error;
 
   return (
     <div className="command-center-workspace">
@@ -899,9 +905,9 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         <div className="command-center-live" role="status" aria-live="polite">
           {notice ? <span>{notice}</span> : null}
         </div>
-        {error || definitionsSnapshot.error ? (
+        {panelError ? (
           <p className="command-center-empty" role="alert">
-            <VisibleApplicationError error={error ?? definitionsSnapshot.error} language={zh ? 'zh-CN' : 'en'} />
+            <VisibleApplicationError error={panelError} language={props.language} />
           </p>
         ) : null}
 
@@ -990,6 +996,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
             <CommandDefinitionModal
               draft={draft}
               busy={busy}
+              error={error}
               language={props.language}
               title={editing === 'new' ? (zh ? '新建命令' : 'New command') : zh ? '编辑命令' : 'Edit command'}
               onChange={setDraft}
@@ -1012,6 +1019,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               project={props.project}
               values={runParameters}
               busy={busy}
+              error={error}
               language={props.language}
               onValuesChange={setRunParameters}
               onClose={() => setRunningCommand(null)}
@@ -1033,6 +1041,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               projectedRunLogContent={projectedRunLogContent}
               client={props.client}
               busy={busy}
+              error={editing || runningCommand ? null : error}
               language={props.language}
               onClose={closeRunHistory}
               onSelectRun={selectHistoryRun}
@@ -1091,6 +1100,8 @@ function CommandRunHistoryModal(props: {
   projectedRunLogContent: string;
   client: DashboardClient;
   busy: boolean;
+  /** 读取执行详情或请求停止失败时在执行窗口内展示原错误。 */
+  error: unknown;
   language: 'zh-CN' | 'en-US';
   onClose: () => void;
   onSelectRun: (runId: string) => void;
@@ -1104,6 +1115,12 @@ function CommandRunHistoryModal(props: {
   const stopUnavailable = activeRunSyncState !== 'live';
   /** 当前记录的状态在详情标题旁展示，避免重复占用统计卡片。 */
   const selectedStatus = props.runDetail ? commandRunStatusPresentation(props.runDetail.run, props.runDetail.run.id, props.syncState, zh) : null;
+  /** 同一提示可用于有详情、仅有回执及目录读取失败的情况。 */
+  const visibleError = props.error ? (
+    <p className="command-modal-error" role="alert">
+      <VisibleApplicationError error={props.error} language={props.language} />
+    </p>
+  ) : null;
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-history-modal-title">
       <div className="command-modal command-history-modal zeus-solid-form-surface" data-modal-surface="dialog">
@@ -1121,7 +1138,7 @@ function CommandRunHistoryModal(props: {
         </header>
         <div className="command-history-modal-body">
           {props.runs.length === 0 ? (
-            <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
+            visibleError ?? <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
           ) : (
             <div className="command-run-layout">
               <aside className="command-run-sidebar">
@@ -1168,6 +1185,7 @@ function CommandRunHistoryModal(props: {
                       ) : null}
                     </div>
                   </header>
+                  {visibleError}
                   {activeRunSyncState === 'stale' ? (
                     <p className="command-run-sync-warning" role="status" aria-live="polite">
                       <WarningCircle aria-hidden="true" />
@@ -1205,8 +1223,14 @@ function CommandRunHistoryModal(props: {
                     zh={zh}
                   />
                 </section>
-              ) : (
-                <p className="command-center-empty">{zh ? '选择一条记录查看执行详情。' : 'Select a run to view its details.'}</p>
+              ) : visibleError ?? (
+                <p className="command-center-empty" role="status">
+                  {props.syncState === 'stale'
+                    ? (zh ? '连接中断，执行状态待确认。' : 'Connection lost. Run status is unconfirmed.')
+                    : props.selectedRunId
+                      ? (zh ? '正在读取执行详情…' : 'Loading run details…')
+                      : (zh ? '选择一条记录查看执行详情。' : 'Select a run to view its details.')}
+                </p>
               )}
             </div>
           )}
@@ -1220,6 +1244,8 @@ function CommandDefinitionModal(props: {
   draft: CommandDraft;
   title: string;
   busy: boolean;
+  /** 保存失败时在编辑内容旁显示错误。 */
+  error: unknown;
   language: 'zh-CN' | 'en-US';
   onChange: (draft: CommandDraft) => void;
   onClose: () => void;
@@ -1245,6 +1271,11 @@ function CommandDefinitionModal(props: {
           </Button>
         </header>
         <div className="command-modal-body" inert={props.busy} aria-busy={props.busy || undefined}>
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              <VisibleApplicationError error={props.error} language={props.language} />
+            </p>
+          ) : null}
           <div className="command-editor-grid">
             <label>
               {zh ? '名称' : 'Name'}
@@ -1372,7 +1403,7 @@ function CommandDefinitionModal(props: {
           <Button onClick={props.onClose} disabled={props.busy}>
             {zh ? '取消' : 'Cancel'}
           </Button>
-          <Button type="submit" variant="primary" busy={props.busy}>
+          <Button type="submit" variant="primary" busy={props.busy} busyLabel={zh ? '保存中…' : 'Saving…'}>
             {zh ? '保存命令' : 'Save command'}
           </Button>
         </footer>
@@ -1444,6 +1475,8 @@ function CommandRunModal(props: {
   project: ProjectRecord;
   values: Record<string, string | number | boolean>;
   busy: boolean;
+  /** 启动失败时在确认参数的同一界面显示错误。 */
+  error: unknown;
   language: 'zh-CN' | 'en-US';
   onValuesChange: (values: Record<string, string | number | boolean>) => void;
   onClose: () => void;
@@ -1481,6 +1514,11 @@ function CommandRunModal(props: {
           </Button>
         </header>
         <div className="command-modal-body command-run-body" inert={props.busy} aria-busy={props.busy || undefined}>
+          {props.error ? (
+            <p className="command-modal-error" role="alert">
+              <VisibleApplicationError error={props.error} language={props.language} />
+            </p>
+          ) : null}
           <div className="command-run-context">
             <FolderSimple aria-hidden="true" />
             <span data-icon-tooltip={props.project.localPath} aria-label={`${zh ? '项目目录' : 'Project directory'} ${props.project.localPath}`}>
@@ -1552,7 +1590,7 @@ function CommandRunModal(props: {
           <Button onClick={props.onClose} disabled={props.busy}>
             {zh ? '取消' : 'Cancel'}
           </Button>
-          <Button autoFocus={requiredParameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}>
+          <Button autoFocus={requiredParameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy} busyLabel={zh ? '启动中…' : 'Starting…'}>
             <Play aria-hidden="true" />
             {zh ? '运行' : 'Run'}
           </Button>

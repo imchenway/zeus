@@ -357,6 +357,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             zh={zh}
             busy={Boolean(busyId)}
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
+            submitBusyLabel={editingId === 'new' ? undefined : zh ? '保存中…' : 'Saving…'}
             submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !actionValid || !triggerValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
             onClose={() => setEditingId(null)}
             onSubmit={(event) => submit(event)}

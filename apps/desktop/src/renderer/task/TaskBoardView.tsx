@@ -1049,7 +1049,7 @@ function TaskBoardSettingsDialog(props: {
             <Button variant="secondary" size="regular" disabled={props.saving} onClick={props.onDismiss}>
               {zh ? '取消' : 'Cancel'}
             </Button>
-            <Button variant="primary" size="regular" busy={props.saving} onClick={() => props.onSave(draft)}>
+            <Button variant="primary" size="regular" busy={props.saving} busyLabel={zh ? '保存中…' : 'Saving…'} onClick={() => props.onSave(draft)}>
               {zh ? '保存' : 'Save'}
             </Button>
           </span>
