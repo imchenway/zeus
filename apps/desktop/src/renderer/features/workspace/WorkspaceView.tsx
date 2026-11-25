@@ -513,6 +513,18 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskBoardSettings,
     workspaceDrawerPortalStyle,
   } = operations;
+  /** 任务完成后从已保存的状态更新侧栏和归档目录。 */
+  async function completeSidebarTask(taskId: string): Promise<void> {
+    const result = await updateTaskManagementStatus(taskId, activeTaskManagementStatusConfig.roles.completedStatusId, { feedbackInConversationRow: true });
+    if (result?.kind === 'conflict') {
+      throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '任务已在其他位置更新，请核对当前状态后重试。' : 'The task changed elsewhere. Review its current status and try again.');
+    }
+    if (result?.kind === 'updated') {
+      void refreshArchivedConversations();
+      await refreshNativeConversationChoices(taskId).catch(() => undefined);
+    }
+  }
+
   /** 任务详情各展示形态统一用任务编码作为顶栏身份，避免重复展示泛化标题。 */
   const taskDetailPresentationLabel = taskDetailPaneTask
     ? `${taskWorkspaceCopy.taskCodeLabel ?? (appShellSettings.appLanguage === 'zh-CN' ? '任务编码' : 'Task code')} ${taskDetailPaneTask.taskCode?.trim() || taskDetailPaneTask.id}`
@@ -1119,7 +1131,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onCreateConversation={() => prepareNewConversationDraft()}
           onSelectConversation={(conversation) => selectNativeConversation(conversation)}
           onPrepareConversation={state.prioritizeConversation}
-          onArchiveConversation={archiveConversation}
+          onArchiveConversation={props.nativeConversationClient ? archiveConversation : undefined}
+          onCompleteTask={props.onUpdateTaskManagementStatus ? completeSidebarTask : undefined}
           onRenameConversation={props.nativeConversationClient ? renameConversation : undefined}
           onNavigate={handleMainNavigate}
           onOpenAutomaticUpdate={() => openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}

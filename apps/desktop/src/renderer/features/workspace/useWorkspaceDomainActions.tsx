@@ -2387,7 +2387,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function updateTaskManagementStatus(
     taskId: string,
     status: TaskManagementStatus,
-    options: { expectedUpdatedAt?: string; reopenConversationId?: string; /** 本次批量操作已经取得清理确认。 */ confirmWorktreeCleanup?: boolean } = {},
+    options: {
+      expectedUpdatedAt?: string;
+      reopenConversationId?: string;
+      /** 本次批量操作已经取得清理确认。 */
+      confirmWorktreeCleanup?: boolean;
+      /** 会话行保留到归档回执，并在原处显示等待和失败。 */
+      feedbackInConversationRow?: boolean;
+    } = {},
   ): Promise<TaskEditResult | undefined> {
     /** 会话和列表的状态下拉以目录快照为准，详情编辑以传入的版本为准。 */
     const snapshotTask = snapshot.tasks.find((task) => task.id === taskId);
@@ -2401,14 +2408,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings);
     const statusLabel = formatConfiguredTaskManagementStatus(status, projectStatusConfig, appShellSettings.appLanguage);
     const terminalStatus = status === projectStatusConfig.roles.completedStatusId || status === projectStatusConfig.roles.cancelledStatusId;
-    const clearOptimisticTerminalStatus = (): void =>
+    /** 只有使用乐观状态的入口负责清理该状态。 */
+    const clearOptimisticTerminalStatus = (): void => {
+      if (options.feedbackInConversationRow) return;
       setOptimisticTerminalTaskStatuses((current) => {
         if (!(taskId in current)) return current;
         const next = { ...current };
         delete next[taskId];
         return next;
       });
-    if (terminalStatus) setOptimisticTerminalTaskStatuses((current) => (current[taskId] === status ? current : { ...current, [taskId]: status }));
+    };
+    if (terminalStatus && !options.feedbackInConversationRow) setOptimisticTerminalTaskStatuses((current) => (current[taskId] === status ? current : { ...current, [taskId]: status }));
     return enqueueTaskMutation<TaskEditResult | undefined>(taskId, async () => {
       /** 保存和终态清理确认使用提交前核对的同一任务版本。 */
       let expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
@@ -2456,6 +2466,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setActionState('idle');
         return { kind: 'updated', task: updatedTask };
       } catch (error) {
+        if (options.feedbackInConversationRow) setActionState('idle');
         if (error instanceof ZeusApiError && error.error === 'ZEUS_TASK_EDIT_CONFLICT') {
           const latest = await loadLatestTaskAfterConflict(taskId);
           if (latest) {
@@ -2465,7 +2476,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           }
         }
         clearOptimisticTerminalStatus();
-        recordLocalError('task-management-status-update', error);
+        if (!options.feedbackInConversationRow) recordLocalError('task-management-status-update', error);
         throw error;
       }
     }).finally(() => {
