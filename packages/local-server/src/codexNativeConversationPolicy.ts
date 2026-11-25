@@ -76,11 +76,7 @@ export interface FileApprovalTargetAudit {
 }
 
 /** 将持久请求投影为交互卡字段，沿用各入口的 JSON 解析规则。 */
-export function projectPendingRequestFields(
-  request: ZeusConversationServerRequestRecord,
-  parseRecord: (json: string) => Record<string, unknown>,
-  transcripts?: ConversationTranscriptRepository,
-) {
+export function projectPendingRequestFields(request: ZeusConversationServerRequestRecord, parseRecord: (json: string) => Record<string, unknown>, transcripts?: ConversationTranscriptRepository) {
   return {
     id: request.id,
     conversationId: request.conversationId,
