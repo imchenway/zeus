@@ -22,7 +22,8 @@ export type PiRuntimeWorkerMethod =
   | 'invalidateModelRuntime'
   | 'close';
 
-export type PiRuntimeWorkerReverseMethod = 'load_connections' | 'tool_execute' | 'tool_image_read' | 'tool_respond' | 'run_acceptance' | 'run_rejected' | 'provider_payload_observed';
+/** 需要由 Core 执行或持久登记的 Worker 反向调用。 */
+export type PiRuntimeWorkerReverseMethod = 'load_connections' | 'tool_execute' | 'tool_image_read' | 'tool_respond' | 'run_acceptance' | 'run_rejected' | 'provider_payload_observed' | 'compaction_request_observed';
 
 export interface PiRuntimeWorkerWireError {
   code: string;
@@ -192,8 +193,18 @@ function isWorkerMethod(value: unknown): value is PiRuntimeWorkerMethod {
   );
 }
 
+/** 反向调用仅接纳 Worker 协议所定义的方法。 */
 function isReverseMethod(value: unknown): value is PiRuntimeWorkerReverseMethod {
-  return value === 'load_connections' || value === 'tool_execute' || value === 'tool_image_read' || value === 'tool_respond' || value === 'run_acceptance' || value === 'run_rejected' || value === 'provider_payload_observed';
+  return (
+    value === 'load_connections' ||
+    value === 'tool_execute' ||
+    value === 'tool_image_read' ||
+    value === 'tool_respond' ||
+    value === 'run_acceptance' ||
+    value === 'run_rejected' ||
+    value === 'provider_payload_observed' ||
+    value === 'compaction_request_observed'
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

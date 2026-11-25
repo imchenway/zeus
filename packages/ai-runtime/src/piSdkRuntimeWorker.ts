@@ -21,8 +21,10 @@ interface WorkerInitialization {
   nativeTools: PiZeusToolDefinitionSpec[];
 }
 
-interface SerializedStartInput extends Omit<StartAgentRunInput, 'preflightResult' | 'durableTransactionSync' | 'providerWriteMayStart' | 'providerPayloadObserved'> {
+/** IPC 提交用标志表示 Core 是否提供摘要请求回调。 */
+interface SerializedStartInput extends Omit<StartAgentRunInput, 'preflightResult' | 'durableTransactionSync' | 'providerWriteMayStart' | 'providerPayloadObserved' | 'compactionRequestObserved'> {
   callbackToken: string;
+  observeCompactionRequests: boolean;
 }
 
 /** 把模型请求诊断路由到当前原生轮次对应的 Core 回调。 */
@@ -169,6 +171,13 @@ async function startRun(runtime: PiSdkRuntimeDriver, request: PiRuntimeWorkerReq
         preflightResult: (accepted) => {
           preflightAccepted = accepted;
         },
+        ...(input.observeCompactionRequests
+          ? {
+              compactionRequestObserved: async (observation) => {
+                await reverseRequest('compaction_request_observed', { callbackToken: input.callbackToken, observation }, undefined, traceIdentity);
+              },
+            }
+          : {}),
       },
       async (acceptance) => {
         runCallbacks.set(input.session.nativeSessionId, { nativeRunId: acceptance.nativeRunId, callbackToken: input.callbackToken, traceIdentity });

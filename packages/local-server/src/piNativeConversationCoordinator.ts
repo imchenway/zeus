@@ -8,6 +8,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import {
+  type AgentCompactionRequestObservation,
   type AgentImageInput,
   type AgentModelIdentity,
   type AgentProviderPayloadDiagnostic,
@@ -308,7 +309,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   /** 每次真实模型响应开始时锁定目录；缺价刷新在后台进行。 */
-  function captureRequestPrice(run: PiRunContext): RequestPriceCapture {
+  function captureRequestPrice(run: Pick<PiRunContext, 'sourceId' | 'modelId'>): RequestPriceCapture {
     const connection = options.modelConnections.listMetadata().find((candidate) => candidate.id === run.sourceId);
     if (!connection) return { pricingCatalog: null };
     void options.modelConnections.pricing.refreshForModel(connection, run.modelId).catch(() => undefined);
@@ -325,6 +326,80 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const interruptedRuns = new Set<string>();
   const processProjector = new TurnProcessProjector(options.execution);
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText, runtimeKind);
+
+  /** 自动摘要可以先于用户消息接纳，独立登记请求并与原会话关联。 */
+  function createCompactionObserver(submission: ZeusConversationSubmissionRecord, projectId: string, model: AgentModelIdentity, traceIdentity: string | null) {
+    /** 此提交内仍待供应商结果的请求及其写前价目。 */
+    const requests = new Map<string, { outboxId: string; nativeRunId: string; startedAt: string; price: RequestPriceCapture }>();
+    return (observation: AgentCompactionRequestObservation, session: AgentSessionIdentity): void => {
+      const { requestId, nativeRunId, state } = observation;
+      const { sourceId, modelId } = observation.model;
+      if (!sourceId || sourceId !== model.sourceId || modelId !== model.modelId || session.agentKind !== 'pi') {
+        throw piError('ZEUS_PI_COMPACTION_ROUTE_MISMATCH', 'Pi 摘要请求与提交的模型连接不一致。');
+      }
+      const pending = requests.get(requestId);
+      if (state === 'started') {
+        if (pending) throw piError('ZEUS_PI_COMPACTION_REQUEST_ALREADY_STARTED', 'Pi 摘要请求已登记写出。');
+        const startedAt = options.now();
+        const price = captureRequestPrice({ sourceId, modelId });
+        const command = providerCommands.prepare({
+          operation: 'session_compact',
+          commandKey: requestId,
+          scope: { kind: 'submission', id: submission.id },
+          idempotencyKey: requestId,
+          issuedAt: startedAt,
+          resourceId: session.nativeSessionId,
+          requestIdentity: { requestId, nativeRunId, nativeSessionId: session.nativeSessionId, sourceId, modelId },
+          providerGenerationId: session.runtimeInstanceId,
+          traceIdentity,
+        });
+        command.markProviderWriteStarted();
+        requests.set(requestId, { outboxId: command.outboxId, nativeRunId, startedAt, price });
+        return;
+      }
+      if (!pending || pending.nativeRunId !== nativeRunId) return;
+      const occurredAt = options.now();
+      const usage = readPiUsage(observation.usage);
+      const { startedAt, price } = pending;
+      const completed = state === 'completed';
+      options.db.durableTransactionSync(() => {
+        if (usage || completed) {
+          /** 摘要单独记账，避免把历史压缩量当作用户消息当前占用的上下文。 */
+          const billedUsage = usage ?? emptyTokenUsageBreakdown();
+          const meteredUsage = readMeteredUsage(observation.usage, price.pricingUsageProfile, completed, Boolean(usage));
+          const estimate =
+            usage || price.pricingCatalog?.prices.some((item) => item.model === modelId && (item.perRequest !== null || item.metered))
+              ? estimateModelPrice(modelId, billedUsage, price.pricingCatalog, startedAt, meteredUsage)
+              : unavailablePriceEstimate(modelId, 0);
+          if (price.pricingSource && !estimate.rateSnapshot.sourceUrls.length) estimate.rateSnapshot.sourceUrls = [price.pricingSource];
+          options.usageLedger.upsert({
+            providerId: managedProviderId(sourceId),
+            accountScopeId: sourceId,
+            projectId,
+            conversationId: submission.conversationId,
+            providerThreadId: session.nativeSessionId,
+            providerTurnId: requestId,
+            model: modelId,
+            usage: billedUsage,
+            usageComplete: completed && Boolean(usage),
+            estimate: aggregateRequestPrices([{ id: requestId, occurredAt, startedAt, pricingAccountScope: price.pricingAccountScope, meteredUsage, usage: billedUsage, estimate }]),
+            occurredAt,
+          });
+        }
+        options.commandDeliveries.recordOutcomeInCurrentTransaction({
+          outboxId: pending.outboxId,
+          outcome: completed ? 'accepted' : 'outcome_unknown_after_write',
+          providerId: runtimeKind,
+          providerGenerationId: session.runtimeInstanceId,
+          nativeSessionId: session.nativeSessionId,
+          evidence: { source: 'pi_sdk_compaction', requestId, nativeRunId, state, usage },
+          occurredAt,
+        });
+      });
+      requests.delete(requestId);
+    };
+  }
+
   const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string; delivered?: Promise<boolean>; responding?: boolean }>();
   let eventSequence = 0;
   const zeusToolBroker =
@@ -983,6 +1058,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           : (options.conversations.getById(input.conversationId)?.contextCapacityTokens ?? null),
         session,
         traceIdentity: runCommand.traceIdentity,
+        ...(runtimeKind === 'pi' ? { compactionRequestObserved: createCompactionObserver(submission, input.projectId, input.model, runCommand.traceIdentity) } : {}),
         content: providerPrompt,
         clientRequestId: input.clientUserMessageId,
         model: input.model,
@@ -1353,6 +1429,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         contextCapacityTokens,
         session: context.session,
         traceIdentity: runCommand.traceIdentity,
+        ...(runtimeKind === 'pi' ? { compactionRequestObserved: createCompactionObserver(submission, context.projectId, input.model, runCommand.traceIdentity) } : {}),
         content: providerContent,
         clientRequestId: input.clientUserMessageId,
         model: input.model,

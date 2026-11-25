@@ -80,7 +80,9 @@ interface PendingWorkerRequest {
 interface RunCallbacks {
   commandRequestId: string;
   traceIdentity: string | null;
-  callbacks: Pick<StartAgentRunInput, 'preflightResult' | 'durableTransactionSync' | 'providerWriteMayStart' | 'providerPayloadObserved'>;
+  /** 摘要可以早于 run acceptance，只能使用 Core 派发时绑定的会话。 */
+  session: AgentSessionIdentity;
+  callbacks: Pick<StartAgentRunInput, 'preflightResult' | 'durableTransactionSync' | 'providerWriteMayStart' | 'providerPayloadObserved' | 'compactionRequestObserved'>;
 }
 
 interface SessionBinding {
@@ -312,6 +314,7 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
       else if (request.method === 'run_acceptance') value = await acceptRun(request);
       else if (request.method === 'run_rejected') value = rejectRun(request);
       else if (request.method === 'provider_payload_observed') value = observeProviderPayload(request);
+      else if (request.method === 'compaction_request_observed') await observeCompactionRequest(request);
       sendToWorker({ kind: 'reverse_response', protocolVersion: piRuntimeWorkerProtocolVersion, generationId: request.generationId, traceIdentity: request.traceIdentity ?? null, id: request.id, ok: true, value });
     } catch (error) {
       try {
@@ -394,6 +397,27 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     const payload = asRecord(request.payload);
     const callbackToken = requiredString(payload.callbackToken, 'callbackToken');
     runCallbacks.get(callbackToken)?.callbacks.providerPayloadObserved?.(payload.diagnostic as Parameters<NonNullable<StartAgentRunInput['providerPayloadObserved']>>[0]);
+  }
+
+  /** 未接纳的摘要使用待接纳 RPC 身份，后续摘要使用已接纳轮次身份。 */
+  async function observeCompactionRequest(request: PiRuntimeWorkerReverseRequest): Promise<void> {
+    const payload = asRecord(request.payload);
+    const callbackToken = requiredString(payload.callbackToken, 'callbackToken');
+    const observation = asRecord(payload.observation);
+    const nativeRunId = requiredString(observation.nativeRunId, 'nativeRunId');
+    const binding = runCallbacks.get(callbackToken);
+    const notify = binding?.callbacks.compactionRequestObserved;
+    if (!notify || !binding || binding.traceIdentity !== (request.traceIdentity ?? null) || (pendingRequests.get(binding.commandRequestId)?.method !== 'startRun' && activeRuns.get(nativeRunId)?.callbackToken !== callbackToken)) {
+      throw driverError('ZEUS_PI_WORKER_COMPACTION_IDENTITY_MISMATCH', 'Pi 摘要回执不属于当前提交。');
+    }
+    const requestId = requiredString(observation.requestId, 'requestId');
+    const state = observation.state;
+    const model = asRecord(observation.model);
+    if (!/^pi_compaction_[a-f0-9-]{36}$/u.test(requestId) || (state !== 'started' && state !== 'completed' && state !== 'failed' && state !== 'aborted')) {
+      throw driverError('ZEUS_PI_WORKER_COMPACTION_RECEIPT_INVALID', 'Pi 摘要回执身份或状态无效。');
+    }
+    const identity = { requestId, nativeRunId, model: { sourceId: requiredString(model.sourceId, 'sourceId'), modelId: requiredString(model.modelId, 'modelId'), displayName: null } };
+    await notify(state === 'started' ? { ...identity, state } : { ...identity, state, usage: observation.usage }, binding.session);
   }
 
   function handleRuntimeEvent(event: AgentRuntimeEvent): void {
@@ -592,13 +616,17 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     async startRun(input: StartAgentRunInput): Promise<AcceptedAgentRun> {
       await ensureReady(false);
       const callbackToken = `pi_callbacks_${randomUUID()}`;
-      const { preflightResult, durableTransactionSync, providerWriteMayStart, providerPayloadObserved, ...serializable } = withCurrentSession(input);
+      const { preflightResult, durableTransactionSync, providerWriteMayStart, providerPayloadObserved, compactionRequestObserved, ...serializable } = withCurrentSession(input);
       if (!generationId) throw driverError('ZEUS_PI_WORKER_UNAVAILABLE', 'Pi Worker 当前不可用。');
       const commandRequestId = `${generationId}:${requestSequence + 1}`;
       const traceIdentity = serializable.traceIdentity ?? null;
-      runCallbacks.set(callbackToken, { commandRequestId, traceIdentity, callbacks: { preflightResult, durableTransactionSync, providerWriteMayStart, providerPayloadObserved } });
+      runCallbacks.set(callbackToken, { commandRequestId, traceIdentity, session: serializable.session, callbacks: { preflightResult, durableTransactionSync, providerWriteMayStart, providerPayloadObserved, compactionRequestObserved } });
       try {
-        return (await requestCurrentGeneration('startRun', { ...serializable, callbackToken }, { timeoutMs: timeoutForMethod('startRun'), effectful: true, traceIdentity })) as AcceptedAgentRun;
+        return (await requestCurrentGeneration(
+          'startRun',
+          { ...serializable, callbackToken, observeCompactionRequests: Boolean(compactionRequestObserved) },
+          { timeoutMs: timeoutForMethod('startRun'), effectful: true, traceIdentity },
+        )) as AcceptedAgentRun;
       } catch (error) {
         runCallbacks.delete(callbackToken);
         throw error;
@@ -639,22 +667,8 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
       return (await request('reviewPermission', input, 35_000)) as PiPermissionReviewResult;
     },
     async invalidateModelRuntime(): Promise<void> {
-      if (!child || !generationId) {
-        if (circuitReason === 'authentication' || circuitReason === 'rate_limit') {
-          circuitState = 'closed';
-          circuitOpenedAt = null;
-          circuitReason = null;
-          lifecycle = 'stopped';
-        }
-        return;
-      }
+      if (!child || !generationId) return;
       await requestCurrentGeneration('invalidateModelRuntime', {}, { timeoutMs: 15_000, effectful: false });
-      if (circuitReason === 'authentication' || circuitReason === 'rate_limit') {
-        circuitState = 'closed';
-        circuitOpenedAt = null;
-        circuitReason = null;
-        lifecycle = 'healthy';
-      }
     },
     async close(): Promise<void> {
       if (closing) return;
@@ -757,8 +771,9 @@ function classifyRuntimeEventFailure(event: AgentRuntimeEvent): AgentRuntimeFail
   return failure('unknown', code, message, payload.resultUnknown === true);
 }
 
+/** 进程、RPC 和协议故障可中断整个 Worker；供应商拒绝由当前请求收尾。 */
 function shouldOpenCircuit(snapshot: AgentRuntimeFailureSnapshot): boolean {
-  return snapshot.kind === 'startup' || snapshot.kind === 'timeout' || snapshot.kind === 'authentication' || snapshot.kind === 'rate_limit' || snapshot.kind === 'protocol_incompatible' || snapshot.kind === 'process_exit';
+  return snapshot.kind === 'startup' || snapshot.kind === 'timeout' || snapshot.kind === 'protocol_incompatible' || snapshot.kind === 'process_exit';
 }
 
 function isAuthenticationFailure(message: string, code: string): boolean {
