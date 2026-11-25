@@ -243,6 +243,11 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     return this.catalog;
   }
 
+  /** 只有通过账号检查的目录可以供模型选择器使用。 */
+  readAvailableModels(): AntigravityModel[] {
+    return this.catalog.status === 'ready' ? this.catalog.models : [];
+  }
+
   /** 仅在账号仍待验证时向显式的验证操作提供官方链接。 */
   readVerificationUrl(): string | null {
     return this.catalog.status === 'verification_required' ? this.verificationUrl : null;
@@ -258,7 +263,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   refreshAccount(): Promise<AntigravityAccountCatalog> {
     if (this.accountOperation) return this.accountOperation;
     if (!this.googleAccountSelected) {
-      this.catalog = { status: readManagedAntigravity(this.probeDirectory) ? 'sign_in_required' : 'missing_cli', models: [] };
+      this.setAccountCatalog({ status: readManagedAntigravity(this.probeDirectory) ? 'sign_in_required' : 'missing_cli', models: [] });
       return Promise.resolve(this.catalog);
     }
     if (this.catalog.status === 'verification_required') {
@@ -283,7 +288,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       this.accountRevision++;
       this.installationAbort?.abort();
       this.accountOperation = null;
-      this.catalog = { status: readManagedAntigravity(this.probeDirectory) ? 'sign_in_required' : 'missing_cli', models: [] };
+      this.setAccountCatalog({ status: readManagedAntigravity(this.probeDirectory) ? 'sign_in_required' : 'missing_cli', models: [] });
       this.connection?.close();
     }
     return this.catalog;
@@ -300,7 +305,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       await disableRestore();
       this.googleAccountSelected = false;
       this.verificationUrl = null;
-      this.catalog = { status: 'sign_in_required', models: [] };
+      this.setAccountCatalog({ status: 'sign_in_required', models: [] });
       this.connection?.close();
       return this.catalog;
     })();
@@ -308,7 +313,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     try {
       return await operation;
     } catch (error) {
-      this.catalog = previous;
+      this.setAccountCatalog(previous);
       throw error;
     } finally {
       this.accountOperation = null;
@@ -527,7 +532,8 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private checkAccount(login: boolean, background = false): Promise<AntigravityAccountCatalog> {
     const revision = ++this.accountRevision;
     const needsInstallation = login && !readManagedAntigravity(this.probeDirectory);
-    if (!background) this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
+    if (!background && (login || this.catalog.status !== 'ready'))
+      this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
     const operation = (async () => {
       /** 同一连接的诊断也用于识别授权或建探测会话时的验证要求。 */
       let connection: AcpConnection | undefined;
@@ -569,7 +575,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           if (verification) this.requireVerification(models, verification.url);
           else {
             this.verificationUrl = null;
-            this.catalog = { status: 'ready', models };
+            this.setAccountCatalog({ status: 'ready', models });
           }
         }
       } catch (error) {
@@ -583,11 +589,11 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
           this.verificationUrl = null;
           const code = record(error).code;
           if (background && this.catalog.status === 'ready' && code !== 'ZEUS_AGY_AUTH_REQUIRED') return this.catalog;
-          this.catalog = {
+          this.setAccountCatalog({
             status: code === 'ZEUS_AGY_MISSING' ? 'missing_cli' : code === 'ZEUS_AGY_AUTH_REQUIRED' ? 'sign_in_required' : 'unavailable',
             models: [],
             message: error instanceof Error ? error.message : undefined,
-          };
+          });
         }
       }
       return this.catalog;
@@ -624,7 +630,14 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   /** 账号已授权，Google 需要验证后才接受模型请求。 */
   private requireVerification(models: AntigravityModel[], url: string | null): void {
     this.verificationUrl = url;
-    this.catalog = { status: 'verification_required', models, verificationAvailable: Boolean(url), message: antigravityVerificationError().message };
+    this.setAccountCatalog({ status: 'verification_required', models, verificationAvailable: Boolean(url), message: antigravityVerificationError().message });
+  }
+
+  /** 检查结果、账号退出和连接中断都使各窗口重新读取同一份目录。 */
+  private setAccountCatalog(catalog: AntigravityAccountCatalog): void {
+    const previous = this.catalog;
+    this.catalog = catalog;
+    if (catalog.status !== previous.status || catalog.verificationAvailable !== previous.verificationAvailable || JSON.stringify(catalog.models) !== JSON.stringify(previous.models)) this.options.onAccountCatalogChanged();
   }
 
   /** 会话的模型或可选档位变化时，用账号探测结果刷新公共目录。 */
@@ -638,10 +651,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     const modelOptionsChanged = JSON.stringify(previousModel?.options) !== JSON.stringify(nextModel?.options);
     const effortOptionsChanged = previousModel?.current === nextModel?.current && JSON.stringify(previousEfforts) !== JSON.stringify(selectConfig(session.config, thoughtLevelConfig)?.options);
     if (!modelOptionsChanged && !effortOptionsChanged) return;
-    const catalogBefore = this.catalog;
-    void this.checkAccount(false, true).then((catalog) => {
-      if (catalog.status !== catalogBefore.status || JSON.stringify(catalog.models) !== JSON.stringify(catalogBefore.models)) this.options.onAccountCatalogChanged();
-    });
+    void this.checkAccount(false, true);
   }
 
   /** 过滤替代认证环境，使用 Zeus 持有的官方 CLI 启动 ACP。 */
@@ -924,7 +934,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     }
     if (record(error).code === 'ZEUS_AGY_VERIFICATION_REQUIRED') session.run.verificationNotice = null;
     this.endMessage(session);
-    if (record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') this.catalog = { status: 'sign_in_required', models: [], message: error!.message };
+    if (record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') this.setAccountCatalog({ status: 'sign_in_required', models: [], message: error!.message });
     const counters = { stopReason: run.stopReason, usage: run.usage, contextUsed: run.contextUsed, contextSize: run.contextSize };
     if (error) this.emit(session, 'runtime_error', { ...counters, code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message });
     else this.emit(session, 'agent_settled', { ...counters, cancelled });
@@ -935,7 +945,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private onClose(connection: AcpConnection, error: Error): void {
     if (this.connection !== connection) return;
     this.connection = null;
-    if (this.catalog.status === 'ready') this.catalog = { status: 'unavailable', models: [], message: error.message };
+    if (this.catalog.status === 'ready') this.setAccountCatalog({ status: 'unavailable', models: [], message: error.message });
     for (const session of this.sessions.values()) {
       this.finish(session, false, agyError('ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', 'Antigravity CLI 已断开，此轮结果待核对。'));
     }

@@ -4,7 +4,8 @@ import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
 
-export type DigitalEmployeeAgentKind = 'codex' | 'pi' | 'copilot';
+/** 员工模型绑定可保存所有已接入的原生运行时。 */
+export type DigitalEmployeeAgentKind = 'codex' | 'pi' | 'copilot' | 'antigravity';
 export type DigitalEmployeePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type DigitalEmployeeWorkMode = 'default' | 'plan';
 export type DigitalEmployeeAutomationTriggerKind = 'immediate' | 'once' | 'daily' | 'weekly' | 'interval' | 'task_created' | 'task_updated' | 'task_status_changed' | 'code_changed';

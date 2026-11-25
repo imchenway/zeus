@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, resolveEmployeeConfiguration, assertContextCapacity } from '@zeus/shared';
+import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, resolveEmployeeConfiguration, assertContextCapacity, parseModelRef } from '@zeus/shared';
 import { migrateDigitalEmployeeIdentity } from './digitalEmployeeIdentityMigration.js';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -7,7 +7,7 @@ import type { ZeusDatabasePort } from './databasePort.js';
 export const digitalEmployeeSchemaMigrationId = '20260825_0001_digital_employees_v1';
 
 /** 数字员工允许绑定已实现原生会话驱动的 Agent。 */
-export const digitalEmployeeAgentKinds = ['codex', 'pi', 'copilot'] as const;
+export const digitalEmployeeAgentKinds = ['codex', 'pi', 'copilot', 'antigravity'] as const;
 export const digitalEmployeePermissionModes = ['read-only', 'auto', 'auto-review', 'full-access'] as const;
 export const digitalEmployeeWorkModes = ['default', 'plan'] as const;
 export const digitalEmployeeAutomationTriggerKinds = ['immediate', 'once', 'daily', 'weekly', 'interval', 'task_created', 'task_updated', 'task_status_changed', 'code_changed'] as const;
@@ -1599,6 +1599,10 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
 /** 校验身份、提示词与默认执行参数；实际模型能力由派发预检核对。 */
 function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit<DigitalEmployeeTemplateRecord, 'id' | 'identityKind' | 'builtIn' | 'revision' | 'createdAt' | 'updatedAt'> {
   assertContextCapacity(input.contextCapacityTokens ?? null);
+  /** 复合模型引用明确绑定供应商，历史裸模型沿用原 Agent 类型。 */
+  const model = nullableText(input.model, 512);
+  const source = model ? parseModelRef(model)?.sourceId : undefined;
+  const fallbackKind = oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind');
   return {
     memoryEnabled: input.memoryEnabled !== false,
     name: boundedText(input.name, 'template.name', 1, 120),
@@ -1609,8 +1613,8 @@ function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit
     skillIds: normalizeEmployeeSkillIds(input.skillIds ?? []),
     contextCapacityTokens: input.contextCapacityTokens ?? null,
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
-    agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
-    model: nullableText(input.model, 512),
+    agentKind: source ? (source === 'codex' || source === 'copilot' || source === 'antigravity' ? source : 'pi') : fallbackKind,
+    model,
     reasoningEffort: nullableText(input.reasoningEffort, 120),
     serviceTier: nullableText(input.serviceTier, 120),
     permissionMode: oneOf(input.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'template.permissionMode'),

@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { PlugsConnectedIcon } from '@phosphor-icons/react/dist/csr/PlugsConnected';
+import { compareModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
+import { ModelProviderBadge } from '../modelProviderAppearance.js';
 import type { SubscriptionSetupProvider } from './useModelSetup.js';
 
 /** 订阅账号和接入选项共用同一份品牌素材。 */
@@ -23,5 +25,45 @@ export function ModelProviderIdentity({ provider, name, connected, busy, childre
         </span>
       </div>
     </header>
+  );
+}
+
+/** 订阅账号的只读模型目录，名称和排序与模型选择器一致。 */
+export function ModelProviderAvailableModels({
+  provider,
+  zh,
+  models,
+  message,
+}: {
+  provider: SubscriptionSetupProvider;
+  zh: boolean;
+  models: readonly ModelOptionSource[] | null;
+  message: string;
+}): React.JSX.Element {
+  /** 标题与列表的关系在同一个窗口的多个账号卡片中保持唯一。 */
+  const titleId = useId();
+  /** 空目录与尚未完成读取分别显示零个模型和等待状态。 */
+  const available = models?.filter((model) => model.available !== false).sort(compareModelOptions);
+  return (
+    <section className="codex-available-models" aria-labelledby={titleId}>
+      <strong id={titleId}>
+        {zh ? '当前可用模型' : 'Available models'}
+        {available ? ` · ${available.length}` : ''}
+      </strong>
+      {available?.length ? (
+        <ul>
+          {available.map((model) => (
+            <li key={model.id}>
+              <span className="model-provider-labelled">
+                <ModelProviderBadge sourceId={provider} />
+                {model.displayName?.trim() || model.model}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small role="status">{message}</small>
+      )}
+    </section>
   );
 }

@@ -8,6 +8,7 @@ import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { PermissionModeControl } from '../../session/PermissionModeControl.js';
 import { resolveModelCapability } from '../../session/modelSelection.js';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
+import { codexCapabilitiesChangedEvent, modelCatalogGeneration } from '../integrations/modelCatalogEvents.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
 import { SkillSelector } from '../skills/SkillSelector.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
@@ -51,20 +52,26 @@ export function EmployeeExecutionSettings(props: {
   const zh = props.language === 'zh-CN';
   useEffect(() => {
     let active = true;
-    void props.client
-      ?.loadDigitalEmployeeCapabilities()
-      .then((snapshot) => {
-        if (active) {
+    /** 账号恢复或退出后只更新选项，保留员工已填写的配置。 */
+    const refresh = () => {
+      const generation = modelCatalogGeneration();
+      void props.client
+        ?.loadDigitalEmployeeCapabilities()
+        .then((snapshot) => {
+          if (!active || generation !== modelCatalogGeneration()) return;
           setModels(snapshot.models);
           setPreferredModel(snapshot.preferredModel ?? null);
           setError(null);
-        }
-      })
-      .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
-      });
+        })
+        .catch((cause: unknown) => {
+          if (active && generation === modelCatalogGeneration()) setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
+        });
+    };
+    refresh();
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
     return () => {
       active = false;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
     };
   }, [props.client, zh]);
   /** 缺省字段继承，显式 null 保留模型默认语义。 */

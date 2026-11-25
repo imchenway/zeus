@@ -7,13 +7,12 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ManagedCliProgress } from './ManagedCliProgress.js';
-import { ModelProviderIdentity, ModelProviderMark } from './ModelProviderIdentity.js';
+import { ModelProviderAvailableModels, ModelProviderIdentity, ModelProviderMark } from './ModelProviderIdentity.js';
 import { ModelConnectionsSettingsPane } from './ModelConnectionsSettingsPane.js';
 import { CodexInstallationGuide } from './CodexInstallationGuide.js';
 import { AntigravityAccountSettings } from './AntigravityAccountSettings.js';
 import { CopilotAccountSettings } from './CopilotAccountSettings.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { ModelProviderBadge } from '../modelProviderAppearance.js';
 
 /** 模型供应商设置顶部的常驻订阅入口，状态来自实际账号查询。 */
 export function CodexAccountSettings({ controller }: { controller: ModelSetupController }) {
@@ -36,8 +35,6 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
   const showUpdate = !installationMissing && !controller.installingCodex && controller.operation !== 'updating' && controller.updateCheck?.managedInstallation !== false;
   /** 只有检测到受管程序的目标版本才提供安装更新。 */
   const updateAvailable = showUpdate && controller.updateCheck?.managedInstallation && controller.updateCheck.status === 'available';
-  /** 复用所有模型选择入口的稳定排序，不在设置页另造目录顺序。 */
-  const presentedModels = presentModelOptions(controller.models, '', zh ? 'zh-CN' : 'en-US').models;
   /** 更新结果与本机版本分开表达，未检测时不猜测是否最新。 */
   const updateLabel = controller.updateCheck
     ? controller.updateCheck.status === 'available'
@@ -136,28 +133,24 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
         ) : null}
       </div>
       {controller.operation === 'updating' || (controller.installingCodex && controller.step === null) ? <ManagedCliProgress program="Codex CLI" zh={zh} {...controller.updateProgress} /> : null}
-      <section className="codex-available-models" aria-labelledby="codex-available-models-title">
-        <strong id="codex-available-models-title">
-          {zh ? '当前可用模型' : 'Available models'}
-          {controller.modelsChecked ? ` · ${presentedModels.length}` : ''}
-        </strong>
-        {!controller.modelsChecked ? (
-          <small>{controller.error ? (zh ? '暂时无法读取当前账号的模型目录。' : 'The current account model catalog is temporarily unavailable.') : zh ? '正在读取当前账号的模型目录…' : 'Loading the current account model catalog…'}</small>
-        ) : presentedModels.length === 0 ? (
-          <small>{zh ? '当前运行时没有返回可用的 Codex 模型。' : 'The current runtime returned no available Codex models.'}</small>
-        ) : (
-          <ul>
-            {presentedModels.map((model) => (
-              <li key={model.id}>
-                <span className="model-provider-labelled">
-                  <ModelProviderBadge sourceId="codex" />
-                  {model.displayName?.trim() || model.model}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <ModelProviderAvailableModels
+        provider="codex"
+        zh={zh}
+        models={controller.modelsChecked ? controller.models : null}
+        message={
+          controller.modelsChecked
+            ? zh
+              ? '当前运行时没有返回可用的 Codex 模型。'
+              : 'The current runtime returned no available Codex models.'
+            : controller.error
+              ? zh
+                ? '暂时无法读取当前账号的模型目录。'
+                : 'The current account model catalog is temporarily unavailable.'
+              : zh
+                ? '正在读取当前账号的模型目录…'
+                : 'Loading the current account model catalog…'
+        }
+      />
       {!controller.step && controller.error ? (
         <p role="status">
           <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />

@@ -4,7 +4,7 @@ import { codexCapabilitiesChangedEvent, type AntigravityAccountCatalog } from '.
 import type { NativeConversationAppClient } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
 import { ManagedCliProgress } from './ManagedCliProgress.js';
-import { ModelProviderIdentity } from './ModelProviderIdentity.js';
+import { ModelProviderAvailableModels, ModelProviderIdentity } from './ModelProviderIdentity.js';
 
 /** 修改当前 Antigravity 接入状态的账号操作。 */
 type AccountAction = 'login' | 'refresh' | 'cancel' | 'logout';
@@ -32,6 +32,8 @@ export function AntigravityAccountSettings({
   const [busyAction, setBusyAction] = useState<AccountAction | 'verify' | null>(null);
   /** 自动检查与按钮操作共用同步锁，避免同一帧发出两个请求。 */
   const actionInFlight = useRef(false);
+  /** 只接受最后一次读取或账号操作的回执。 */
+  const catalogRevision = useRef(0);
   /** 发起验证后才复查。监听已在账号卡片挂载时建立。 */
   const awaitingVerification = useRef(false);
   const busy = busyAction !== null;
@@ -45,16 +47,24 @@ export function AntigravityAccountSettings({
   useEffect(() => {
     if (!client) return;
     let active = true;
-    void client.loadAntigravityAccount().then(
-      (value) => {
-        if (active) setCatalog(value);
-      },
-      (cause: unknown) => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause));
-      },
-    );
+    /** 读取冷启动、其他窗口或 ACP 报告的最新账号状态。 */
+    const read = () => {
+      if (actionInFlight.current) return;
+      const revision = ++catalogRevision.current;
+      void client.loadAntigravityAccount().then(
+        (value) => {
+          if (active && revision === catalogRevision.current) setCatalog(value);
+        },
+        (cause: unknown) => {
+          if (active && revision === catalogRevision.current) setError(cause instanceof Error ? cause.message : String(cause));
+        },
+      );
+    };
+    read();
+    window.addEventListener(codexCapabilitiesChangedEvent, read);
     return () => {
       active = false;
+      window.removeEventListener(codexCapabilitiesChangedEvent, read);
     };
   }, [client]);
 
@@ -64,15 +74,16 @@ export function AntigravityAccountSettings({
     let timer: number;
     /** 只有上一轮读完才发出下一次状态查询。 */
     const poll = async () => {
+      if (actionInFlight.current) return;
+      const revision = ++catalogRevision.current;
       try {
         const value = await client.loadAntigravityAccount();
         if (!active) return;
-        setCatalog(value);
-        if (value.status === 'ready' || value.status === 'verification_required') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+        if (revision === catalogRevision.current) setCatalog(value);
         if (value.status !== 'installing' && value.status !== 'signing_in' && value.status !== 'checking') return;
       } catch (cause) {
         if (!active) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (revision === catalogRevision.current) setError(cause instanceof Error ? cause.message : String(cause));
       }
       timer = window.setTimeout(() => void poll(), 1200);
     };
@@ -87,6 +98,7 @@ export function AntigravityAccountSettings({
   async function changeAccount(action: AccountAction): Promise<AntigravityAccountCatalog | null> {
     if (!client || actionInFlight.current) return null;
     actionInFlight.current = true;
+    catalogRevision.current += 1;
     setBusyAction(action);
     setError(null);
     try {
@@ -95,7 +107,6 @@ export function AntigravityAccountSettings({
       const next = await update[action]();
       setCatalog(next);
       if (next.status !== 'verification_required') awaitingVerification.current = false;
-      if (action === 'refresh' || action === 'logout') window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
       return next;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -226,7 +237,16 @@ export function AntigravityAccountSettings({
       </div>
       {catalog?.status === 'installing' && installation ? <ManagedCliProgress program="Antigravity CLI" zh={zh} stage={installation.stage} progress={bytes?.total ? bytes.received / bytes.total : null} bytes={bytes} /> : null}
       {catalog?.status === 'verification_required' && !catalog.verificationAvailable ? <p role="status">{zh ? 'Google 暂未提供验证链接，请刷新状态。' : 'Google has not provided a verification link. Refresh status.'}</p> : null}
-      {catalog?.status === 'ready' && catalog.models.length === 0 ? <p role="status">{zh ? '此账号暂无可用模型。' : 'No models are available for this account.'}</p> : null}
+      {catalog?.status === 'ready' && !onChooseModel ? (
+        <ModelProviderAvailableModels
+          provider="antigravity"
+          zh={zh}
+          models={catalog.models.map((model) => ({ id: model.id, model: model.id, displayName: model.name }))}
+          message={zh ? '此账号暂无可用模型。' : 'No models are available for this account.'}
+        />
+      ) : catalog?.status === 'ready' && catalog.models.length === 0 ? (
+        <p role="status">{zh ? '此账号暂无可用模型。' : 'No models are available for this account.'}</p>
+      ) : null}
       {error || (catalog?.status === 'unavailable' && catalog.message) ? (
         <p className="model-connection-message" role="alert">
           {error ?? catalog?.message}

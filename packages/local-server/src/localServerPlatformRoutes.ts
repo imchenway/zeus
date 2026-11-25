@@ -1576,7 +1576,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,
       listSelectableModels: (selectedModelRef) => modelConnections.listSelectableModels(selectedModelRef),
     },
-    readAntigravityModels: () => antigravityNativeCoordinator.antigravityDriver?.readAccount().models ?? [],
+    readAntigravityModels: () => antigravityNativeCoordinator.antigravityDriver?.readAvailableModels() ?? [],
     copilotCatalog: {
       readAccount: () => copilotRuntimeManager.readAccount(),
       readModels: () => copilotRuntimeManager.readModels(),

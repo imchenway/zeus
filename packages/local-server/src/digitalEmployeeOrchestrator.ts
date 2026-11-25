@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isManagedAgentKind } from '@zeus/ai-runtime';
 import {
   type AutomationActionConfig,
   type AutomationExecutionReference,
@@ -36,7 +37,7 @@ import {
 } from '@zeus/storage';
 import type { FastifyInstance } from 'fastify';
 import { commandCenterCommandTypes, commandCenterInputSha256 } from './commandCenterCommandApplication.js';
-import type { ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
+import { resolveModelCapability, type ConversationCapabilityModel, type ConversationCapabilityQueryApplication } from './conversationCapabilityQueryApplication.js';
 import { conversationWorkExecutionState } from './conversationWorkExecutionState.js';
 import type { TaskStageApplication } from './taskStageApplication.js';
 import type { CreateUserTaskInput } from './workManagementCoreCommandRoutes.js';
@@ -313,12 +314,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     if (skillSelection.invalidIds.length > 0) throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工执行快照包含无效的 Skill 身份。', false);
     const nativeSkillId = skillSelection.nativeSkillIds[0] ?? null;
     const capability = await options.conversationCapabilities.readTaskPush(project.id, task.id);
-    const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel).filter((candidate) => candidate.agentKind === snapshot.agentKind) : [];
+    const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : [];
+    /** 历史员工配置的裸模型名仍用原供应商范围消歧。 */
+    const compatibleModels = models.filter((candidate) => candidate.agentKind === snapshot.agentKind);
     const preferredModel = typeof capability.preferredModel === 'string' ? capability.preferredModel : null;
     const configuredModel = snapshot.model?.trim() || null;
     const model = configuredModel
-      ? (models.find((candidate) => candidate.id === configuredModel || candidate.model === configuredModel) ?? null)
-      : ((preferredModel ? models.find((candidate) => candidate.id === preferredModel || candidate.model === preferredModel) : null) ?? models.find((candidate) => candidate.available) ?? null);
+      ? (models.find((candidate) => candidate.id === configuredModel) ?? resolveModelCapability(compatibleModels, configuredModel))
+      : (resolveModelCapability(models, preferredModel) ?? compatibleModels.find((candidate) => candidate.available) ?? null);
     if (!model || model.available === false) {
       throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_MODEL_UNAVAILABLE', snapshot.model ? `数字员工配置的模型当前不可用：${snapshot.model}` : '当前项目没有可供数字员工运行的模型。', false);
     }
@@ -1034,8 +1037,8 @@ function deliveryStageLabel(stage: 'commit' | 'push' | 'merge'): string {
   return '合入';
 }
 
-function isCapabilityModel(value: unknown): value is { id: string; model: string; agentKind: 'codex' | 'pi' | 'copilot'; available: boolean } {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.model === 'string' && (value.agentKind === 'codex' || value.agentKind === 'pi' || value.agentKind === 'copilot') && typeof value.available === 'boolean';
+function isCapabilityModel(value: unknown): value is Pick<ConversationCapabilityModel, 'id' | 'model' | 'sourceId' | 'agentKind' | 'available'> {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.model === 'string' && (value.agentKind === 'codex' || isManagedAgentKind(value.agentKind)) && typeof value.available === 'boolean';
 }
 
 function isRepositoryCapability(value: unknown): value is { id: string; name: string; suggestedBranchName: string; sourceRefs: Array<{ ref: string; kind: string; current: boolean }> } {

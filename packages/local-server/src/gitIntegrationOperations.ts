@@ -1,6 +1,6 @@
 import { conversationExecutionWorkspace, resolveConversationGitRepository } from './conversationGitWorkspace.js';
 import { inspectConversationWorktrees, removeConversationWorktrees } from './conversationWorktreeLifecycle.js';
-import { createAiRuntimeSessionManager, parseModelRef, type AiRuntimeSession } from '@zeus/ai-runtime';
+import { createAiRuntimeSessionManager, isManagedAgentKind, parseModelRef, type AiRuntimeSession, type ManagedAgentKind } from '@zeus/ai-runtime';
 import {
   withGitRepositoryOperation,
   buildGitPatchExport,
@@ -2025,7 +2025,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return workspaceGitResponse(
       {
         path,
-        agentKind: conversation.agentKind === 'copilot' ? 'copilot' : conversation.agentKind === 'pi' ? 'pi' : 'codex',
+        agentKind: isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex',
         modelSourceId: conversation.modelSourceId,
         modelId: conversation.modelId ?? conversation.providerModel ?? '',
         conversationId: conversation.id,
@@ -2196,7 +2196,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     conflictFingerprint: string;
     idempotencyKey: string;
     clientUserMessageId: string;
-    agentKind: 'codex' | 'pi' | 'copilot';
+    agentKind: 'codex' | ManagedAgentKind;
     model: { sourceId: string | null; modelId: string; displayName: string | null };
     /** 准备重试保留本轮全部 Skill；历史单项由共用读取入口归一化。 */
     skills?: NativeConversationSkillInput[];
@@ -2253,11 +2253,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         lastError: null,
       });
       const settings = conversations.getNextTurnSettings(attempt.conversationId);
-      const selectedPiModelRef = (input.agentKind === 'pi' || input.agentKind === 'copilot') && settings?.model ? parseModelRef(settings.model) : null;
+      const selectedManagedModelRef = isManagedAgentKind(input.agentKind) && settings?.model ? parseModelRef(settings.model) : null;
       const selectedModel =
-        input.agentKind === 'pi' || input.agentKind === 'copilot'
-          ? selectedPiModelRef
-            ? { sourceId: selectedPiModelRef.sourceId, modelId: selectedPiModelRef.modelId, displayName: null }
+        isManagedAgentKind(input.agentKind)
+          ? selectedManagedModelRef
+            ? { sourceId: selectedManagedModelRef.sourceId, modelId: selectedManagedModelRef.modelId, displayName: null }
             : input.model
           : settings?.model
             ? { sourceId: null, modelId: settings.model, displayName: null }
@@ -2357,7 +2357,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         conflictFingerprint,
         idempotencyKey: submission.idempotencyKey,
         clientUserMessageId: submission.clientMessageId,
-        agentKind: conversation.agentKind === 'copilot' ? 'copilot' : conversation.agentKind === 'pi' ? 'pi' : 'codex',
+        agentKind: isManagedAgentKind(conversation.agentKind) ? conversation.agentKind : 'codex',
         model: { sourceId: conversation.modelSourceId, modelId: conversation.modelId ?? conversation.providerModel ?? '', displayName: null },
         ...(skills.length ? { skills } : {}),
         ...(generationIdentity

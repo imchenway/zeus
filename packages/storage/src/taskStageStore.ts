@@ -12,8 +12,9 @@ export type TaskStageStatus = 'pending' | 'ready' | 'running' | 'awaiting_accept
 export type TaskStageAttemptStatus = 'starting' | 'active' | 'completed' | 'failed' | 'outcome_unknown' | 'cancelled';
 export type TaskStageDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
 export type TaskStageAdvanceMode = 'manual' | 'auto';
-/** 阶段冻结真实执行内核，允许 GitHub Copilot 作为独立来源。 */
-export type TaskStageAgentKind = 'codex' | 'pi' | 'copilot';
+/** 阶段和执行尝试使用同一组原生运行时身份。 */
+const taskStageAgentKinds = ['codex', 'pi', 'copilot', 'antigravity'] as const;
+export type TaskStageAgentKind = (typeof taskStageAgentKinds)[number];
 export type TaskStagePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type TaskStageWorkMode = 'default' | 'plan';
 export type TaskStageEmployeeMode = 'none' | 'inherit' | 'explicit';
@@ -468,8 +469,16 @@ export function migrateTaskStageSchema(db: ZeusDatabasePort): void {
 
 /** 现有阶段表保留全部列和索引，仅扩大 Agent 类型约束以接纳 Copilot。 */
 export function migrateTaskStageCopilotSchema(db: ZeusDatabasePort): void {
-  /** 独立迁移账本避免改写已执行的阶段工作流迁移身份。 */
-  const migrationId = '20261109_task_stage_copilot';
+  migrateTaskStageAgentConstraint(db, '20261109_task_stage_copilot', 'copilot', '任务阶段与执行尝试允许 GitHub Copilot Agent');
+}
+
+/** 使存量阶段及执行尝试能保存实际选中的 Google Antigravity 运行时。 */
+export function migrateTaskStageAntigravitySchema(db: ZeusDatabasePort): void {
+  migrateTaskStageAgentConstraint(db, '20261125_task_stage_antigravity', 'antigravity', '任务阶段与执行尝试允许 Google Antigravity Agent');
+}
+
+/** 事务内扩大阶段 Agent 约束，保留原有行、列、外键和索引。 */
+function migrateTaskStageAgentConstraint(db: ZeusDatabasePort, migrationId: string, agentKind: 'copilot' | 'antigravity', description: string): void {
   if (db.get('SELECT 1 FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
   /** SQLite 重建两张表时暂时关闭外键，提交前用 foreign_key_check 核对完整引用。 */
   const foreignKeysEnabled = db.get<{ foreign_keys: number }>('PRAGMA foreign_keys')?.foreign_keys === 1;
@@ -481,24 +490,27 @@ export function migrateTaskStageCopilotSchema(db: ZeusDatabasePort): void {
       for (const table of tables) {
         const original = db.get<{ sql: string }>('SELECT sql FROM sqlite_master WHERE type = ? AND name = ?', ['table', table]);
         if (!original?.sql) throw new Error(`缺少任务阶段表：${table}`);
-        const expanded = original.sql.replace(/agent_kind\s+TEXT\s+NOT NULL\s+CHECK\s*\(\s*agent_kind\s+IN\s*\(\s*'codex'\s*,\s*'pi'\s*\)\s*\)/i, "agent_kind TEXT NOT NULL CHECK (agent_kind IN ('codex', 'pi', 'copilot'))");
-        if (expanded === original.sql && !original.sql.includes("'copilot'")) throw new Error(`无法识别任务阶段 Agent 约束：${table}`);
-        if (expanded === original.sql) continue;
-        /** 显式恢复所有用户索引，SQLite 自动约束索引随原建表语句恢复。 */
-        const indexes = db.select<{ sql: string }>('SELECT sql FROM sqlite_master WHERE type = ? AND tbl_name = ? AND sql IS NOT NULL', ['index', table]);
-        const replacement = `${table}_copilot_migration`;
+        /** 只替换 agent_kind 的 CHECK，其他定义沿用本机表结构。 */
+        const constraint = /(agent_kind\s+TEXT\s+NOT NULL\s+CHECK\s*\(\s*agent_kind\s+IN\s*\()([^)]*)(\)\s*\))/i;
+        const current = original.sql.match(constraint);
+        if (!current) throw new Error(`无法识别任务阶段 Agent 约束：${table}`);
+        if (current[2]!.split(',').some((kind) => kind.trim() === `'${agentKind}'`)) continue;
+        const expanded = original.sql.replace(constraint, (_, start: string, kinds: string, end: string) => `${start}${kinds.trimEnd()}, '${agentKind}'${end}`);
+        /** 自动约束索引随建表语句恢复，显式索引和触发器逐条复原。 */
+        const definitions = db.select<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name = ? AND sql IS NOT NULL", [table]);
+        const replacement = `${table}_agent_kind_migration`;
         db.execute(expanded.replace(new RegExp(`CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?["\\x60]?${table}["\\x60]?`, 'i'), `CREATE TABLE ${replacement}`));
         db.execute(`INSERT INTO ${replacement} SELECT * FROM ${table}`);
         db.execute(`DROP TABLE ${table}`);
         db.execute(`ALTER TABLE ${replacement} RENAME TO ${table}`);
-        for (const index of indexes) db.execute(index.sql);
+        for (const definition of definitions) db.execute(definition.sql);
       }
       /** 检查所有表的外键，发现孤儿记录时回滚整个迁移。 */
       const broken = db.select('PRAGMA foreign_key_check');
-      if (broken.length > 0) throw new Error('任务阶段 Copilot 迁移发现外键不完整，已回滚。');
+      if (broken.length > 0) throw new Error('任务阶段 Agent 迁移发现外键不完整，已回滚。');
       db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
         migrationId,
-        '任务阶段与执行尝试允许 GitHub Copilot Agent',
+        description,
         `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
         new Date().toISOString(),
       ]);
@@ -1022,7 +1034,7 @@ function normalizeCreateStage(stage: CreateTaskStageInput): CreateTaskStageInput
     kind,
     title: boundedString(stage.title, 'title', 160),
     description: boundedString(stage.description, 'description', 2_000, true),
-    agentKind: enumValue(stage.agentKind, ['codex', 'pi', 'copilot'] as const, 'agentKind'),
+    agentKind: enumValue(stage.agentKind, taskStageAgentKinds, 'agentKind'),
     modelRef: boundedString(stage.modelRef, 'modelRef', 300, true),
     effort: nullableString(stage.effort, 'effort', 80),
     serviceTier: nullableString(stage.serviceTier, 'serviceTier', 120),
@@ -1041,7 +1053,7 @@ function normalizeStageUpdate(stage: ZeusTaskStageRecord, input: UpdateTaskStage
     ...stage,
     title: input.title === undefined ? stage.title : boundedString(input.title, 'title', 160),
     description: input.description === undefined ? stage.description : boundedString(input.description, 'description', 2_000, true),
-    agentKind: input.agentKind === undefined ? stage.agentKind : enumValue(input.agentKind, ['codex', 'pi', 'copilot'] as const, 'agentKind'),
+    agentKind: input.agentKind === undefined ? stage.agentKind : enumValue(input.agentKind, taskStageAgentKinds, 'agentKind'),
     modelRef: input.modelRef === undefined ? stage.modelRef : boundedString(input.modelRef, 'modelRef', 300, true),
     effort: input.effort === undefined ? stage.effort : nullableString(input.effort, 'effort', 80),
     serviceTier: input.serviceTier === undefined ? stage.serviceTier : nullableString(input.serviceTier, 'serviceTier', 120),

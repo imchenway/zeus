@@ -167,9 +167,12 @@ export class ConversationCapabilityQueryApplication {
   async readDigitalEmployee(): Promise<DigitalEmployeeCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels(), this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : []).map(
-      (model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }),
-    );
+    const models = mapConversationCapabilityModels(
+      codexCapabilities,
+      await this.ports.modelCatalog.listSelectableModels(),
+      this.ports.copilotCatalog.readAccount()?.authenticated ? this.ports.copilotCatalog.readModels() : [],
+      this.ports.readAntigravityModels?.(),
+    ).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
     const preferred = this.ports.readDefaultModel();
     const snapshot = {
       preferredModel: preferred ? (resolveModelCapability(models, preferred)?.id ?? preferred) : (models.find((model) => model.available !== false)?.id ?? null),
@@ -210,7 +213,7 @@ export class ConversationCapabilityQueryApplication {
     const repositoryDiscovery = readProjectRepositoryDiscovery(this.ports.settings, project);
     // GUI 查询把账号与 Git 并行读取；服务端内部调用继续跳过账号通道，避免增加命令路径延迟。
     const [capabilities, repositoryCapabilities] = await Promise.all([
-      this.readExisting(project, { readProviderAccount: options.readProviderAccount === true, includeAntigravity: false }),
+      this.readExisting(project, { readProviderAccount: options.readProviderAccount === true }),
       mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository, taskBranchPrefix)),
     ]);
     const primaryRepository = repositoryCapabilities[0];
@@ -308,7 +311,7 @@ export class ConversationCapabilityQueryApplication {
   }
 
   /** 目录查询只读本地账户缓存，单一供应商账号故障不能阻断其他来源。 */
-  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean; selectedModelRef?: string; includeAntigravity?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
+  private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean; selectedModelRef?: string } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     /** 缓存缺失属于未知状态，只有其他读取异常才将 Codex 标记为不可用。 */
@@ -325,7 +328,7 @@ export class ConversationCapabilityQueryApplication {
     ]);
     try {
       /** 账号故障只影响 Codex，独立供应商仍使用自己的目录与可用性证据。 */
-      const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog, options.includeAntigravity === false ? [] : this.ports.readAntigravityModels?.());
+      const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog, this.ports.readAntigravityModels?.());
       if (codexAccountReadFailed) {
         return {
           ...snapshot,
@@ -574,7 +577,7 @@ function conversationFeatureCatalog(model: ConversationCapabilityModel, piTools:
       imageInput: unknown('是否支持图片以 Antigravity 会话为准。'),
       imageGeneration: localOnly,
       questions: available('通过 Antigravity 原生提问收集本轮回答。'),
-      plan: localOnly,
+      plan: unknown('是否支持计划模式以 Antigravity 会话公布的模式为准。'),
       processes: localOnly,
       steering: localOnly,
       goals: localOnly,

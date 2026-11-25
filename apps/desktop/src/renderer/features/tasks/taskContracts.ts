@@ -90,7 +90,8 @@ export type TaskStageStatus = 'pending' | 'ready' | 'running' | 'awaiting_accept
 export type TaskStageAttemptStatus = 'starting' | 'active' | 'completed' | 'failed' | 'outcome_unknown' | 'cancelled';
 export type TaskStageDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
 export type TaskStageAdvanceMode = 'manual' | 'auto';
-export type TaskStageAgentKind = 'codex' | 'pi' | 'copilot';
+/** 阶段保存所选模型的实际运行时。 */
+export type TaskStageAgentKind = 'codex' | 'pi' | 'copilot' | 'antigravity';
 export type TaskStagePermissionMode = 'read-only' | 'auto' | 'full-access';
 export type TaskStageWorkMode = 'default' | 'plan';
 export type TaskStageEmployeeMode = 'none' | 'inherit' | 'explicit';
