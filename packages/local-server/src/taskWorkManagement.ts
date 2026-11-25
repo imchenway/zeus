@@ -1,3 +1,4 @@
+import { isManagedAgentKind } from '@zeus/ai-runtime';
 import { ConversationGoalRepository, taskWorkSkillReferenceGeneration } from '@zeus/storage';
 import { restrictToolPermission } from './conversationToolPolicy.js';
 import { conversationCommandTypes, conversationInputSha256 } from './conversationCommandApplication.js';
@@ -938,6 +939,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       await resolveEmployeeSkills(options, projectId, skillIds, blockers);
       const permissionMode = selection.permissionMode ?? employee.permissionMode;
       const selected = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((item) => item.id === model?.id);
+      checkWorkflowToolSupport(selected, blockers);
       if (permissionMode === 'auto-review' && (!selected || ['unsupported', 'needs_configuration'].includes(selected.features?.autoReview?.state ?? '')))
         blockers.push({ code: 'ZEUS_TASK_WORK_AUTO_REVIEW_UNAVAILABLE', message: '当前模型不支持替我批准。' });
       if ((selection.workMode ?? employee.workMode) === 'plan' && selected?.features && !['available', 'unknown'].includes(selected.features.plan.state))
@@ -1622,6 +1624,7 @@ async function resolvePreview(
     model = resolveAgentModel(capability, blockers, employee, selection);
     /** 与会话共用真实功能目录，切换到 Pi 后不按品牌关闭已经接入的目标。 */
     const selectedCapability = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((candidate) => candidate.id === model?.id);
+    if (executionMode) checkWorkflowToolSupport(selectedCapability, blockers);
     if (authority.permissionMode === 'auto-review' && (!selectedCapability || ['unsupported', 'needs_configuration'].includes(selectedCapability.features?.autoReview?.state ?? '')))
       blockers.push({ code: 'ZEUS_TASK_WORK_AUTO_REVIEW_UNAVAILABLE', message: '当前模型不支持替我批准，请选择其他权限模式。' });
     if (workMode === 'plan' && selectedCapability?.features && !['available', 'unknown'].includes(selectedCapability.features.plan.state)) blockers.push({ code: 'ZEUS_TASK_WORK_PLAN_UNAVAILABLE', message: '当前模型不支持计划模式。' });
@@ -3339,11 +3342,17 @@ function isCapabilityModel(value: unknown): value is ConversationCapabilityModel
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.model === 'string' &&
-    (value.agentKind === 'codex' || value.agentKind === 'pi' || value.agentKind === 'copilot') &&
+    (value.agentKind === 'codex' || isManagedAgentKind(value.agentKind)) &&
     typeof value.available === 'boolean' &&
     Array.isArray(value.supportedReasoningEfforts) &&
     Array.isArray(value.serviceTiers)
   );
+}
+
+/** 团队节点通过 Zeus 工具提交结构化结果，普通会话式交付不依赖该通道。 */
+function checkWorkflowToolSupport(model: ConversationCapabilityModel | undefined, blockers: TaskWorkPreview['blockers']): void {
+  if (model?.features?.mcp.state === 'unsupported')
+    blockers.push({ code: 'ZEUS_DIGITAL_TEAM_TOOL_UNAVAILABLE', message: '当前运行时无法调用数字团队的结构化提交工具，请选择支持该工具的模型。' });
 }
 function normalizeIdentities(value: unknown[]): string[] {
   return [...new Set(value.map((entry) => requiredText(entry, '身份无效。', 512)))];

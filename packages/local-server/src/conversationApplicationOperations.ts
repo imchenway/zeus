@@ -1800,7 +1800,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const capabilities = await resolveConversationCapabilities(project, requestedModel);
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel);
     if (!selectedModel || selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel?.availabilityReason || '所选模型当前不可运行。');
-    assertAntigravityConversationRoute(conversation, selectedModel.agentKind, selectedModel.model);
     /** 暂停队首改模型时仍保留原提交容量，隔离随后设置的下一轮偏好。 */
     const frozenSnapshot = original.executionSnapshotId ? conversationExecution.getExecutionSnapshot(original.executionSnapshotId) : undefined;
     const frozenCapacity = frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : conversation.contextCapacityTokens;
@@ -2151,7 +2150,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const clientUserMessageId = normalizeNativeClientUserMessageId(body.clientUserMessageId, `native-client-${createHash('sha256').update(`${conversation.id}\0${idempotencyKey}`).digest('hex').slice(0, 24)}`);
     const effectiveModel = selectedModel ?? conversation.modelId ?? conversation.providerModel;
     if (!effectiveModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前会话没有可冻结的目标模型。');
-    assertAntigravityConversationRoute(conversation, selectedAgentKind, effectiveModel);
     if (selectedAgentKind === 'antigravity') delivery = 'queue';
     const effectiveModelSourceId = selectedModelSourceId ?? (selectedAgentKind === 'codex' ? 'codex' : conversation.modelSourceId);
     const executionRoot = resolveNativeConversationExecutionRoot(conversation) ?? project.localPath;
@@ -3258,15 +3256,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
   }
 
-  /** Antigravity 原生历史留在原会话，切换模型需要新项目会话。 */
-  function assertAntigravityConversationRoute(conversation: ZeusConversationWithMessagesRecord, kind: 'codex' | ManagedAgentKind, modelId: string): void {
-    const current = conversationExecution.currentSegment(conversation.id);
-    if (!current) return;
-    if ((kind === 'antigravity' || current.runtimeKind === 'antigravity') && (kind !== current.runtimeKind || modelId !== (conversation.modelId ?? conversation.providerModel))) {
-      throw nativeApiError('ZEUS_AGY_ROUTE_CHANGED', '请新建项目会话来切换 Antigravity 供应商或模型。');
-    }
-  }
-
   async function resolveConversationExecutionRoute(input: {
     agentKind: 'codex' | ManagedAgentKind;
     modelSourceId: string | null;
@@ -3434,6 +3423,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         clientUserMessageId: plan.clientUserMessageId,
         ...(plan.environmentId ? { environmentId: plan.environmentId } : {}),
         ...(plan.workspaceId ? { workspaceId: plan.workspaceId } : {}),
+        ...(plan.agentKind === 'antigravity' && plan.writableRoots ? { writableRoots: plan.writableRoots } : {}),
         providerWriteLifecycle: plan.providerWriteLifecycle,
         segmentLifecycle,
       });
@@ -3611,7 +3601,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     },
   ) {
     if (!stage) return startNativeTaskConversationFromPlan(plan);
-    if (plan.agentKind === 'antigravity') throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', 'Antigravity 可用于普通项目会话。');
     const actual = {
       agentKind: plan.agentKind,
       modelRef: input.modelRef,
@@ -3783,7 +3772,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const capabilities = await resolveTaskPushExecutionCapabilities(project, modelName);
         const selectedModel = resolveModelCapability(capabilities.models, modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
-        if (selectedModel.agentKind === 'antigravity') throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', 'Antigravity 可用于普通项目会话。');
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
         const requestedServiceTier = readServiceTierOverride(body);
         const serviceTier = normalizeServiceTierForCapability(requestedServiceTier, selectedModel);

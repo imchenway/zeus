@@ -1,6 +1,6 @@
 import { TextFilePreview } from '../code/TextFilePreview.js';
 import { FileFindButton, fileFindShortcut, openFileFindIn } from '../code/fileFind.js';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CachedQuery } from '../cachedQuery.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
 import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
@@ -70,13 +70,32 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
   const deliverableCacheRef = useRef<{ client: TaskWorkflowClient; taskId: string; sha256: string; content: string } | null>(null);
   const [operationError, setError] = useState<string | null>(null);
   const error = operationError ?? (workflowSnapshot.error ? visibleError(workflowSnapshot.error, zh) : null);
+  /** 目录通知使用当前任务的读取函数，父组件重绘不取消同一任务的请求。 */
+  const loadEditorCapabilities = useEffectEvent(() => props.loadCapabilities());
 
   useEffect(() => {
-    /** 配置或登录变化后，下一次模型操作重新读取当前目录。 */
-    const invalidate = () => setCapabilities(null);
-    window.addEventListener(codexCapabilitiesChangedEvent, invalidate);
-    return () => window.removeEventListener(codexCapabilitiesChangedEvent, invalidate);
-  }, []);
+    let active = true;
+    /** 编辑中的列表原地刷新，阶段已选模型和其他表单值继续由工作流记录持有。 */
+    const refresh = () => {
+      if (!editingStageId) {
+        setCapabilities(null);
+        return;
+      }
+      const generation = modelCatalogGeneration();
+      void loadEditorCapabilities()
+        .then((loaded) => {
+          if (active && currentQueryRef.current === workflowQuery && generation === modelCatalogGeneration()) setCapabilities(loaded);
+        })
+        .catch((caught: unknown) => {
+          if (active && currentQueryRef.current === workflowQuery && generation === modelCatalogGeneration()) setError(visibleError(caught, zh));
+        });
+    };
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      active = false;
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, [editingStageId, workflowQuery, zh]);
 
   useEffect(() => {
     deliverableRequestRef.current += 1;
@@ -372,7 +391,7 @@ function TaskStageItem(props: {
                   const model = props.models.find((candidate) => candidate.id === modelRef);
                   return props.onUpdate({
                     modelRef,
-                    agentKind: model?.agentKind === 'copilot' ? 'copilot' : model?.agentKind === 'pi' ? 'pi' : 'codex',
+                    agentKind: model?.agentKind ?? stage.agentKind,
                     effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null,
                     serviceTier: null,
                   });
@@ -571,7 +590,7 @@ function createDefaultStage(
     kind,
     title,
     description,
-    agentKind: model?.agentKind === 'copilot' ? 'copilot' : model?.agentKind === 'pi' ? 'pi' : 'codex',
+    agentKind: model?.agentKind ?? 'codex',
     modelRef: model?.id ?? '',
     effort: model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts[0] ?? null,
     serviceTier: null,

@@ -16,7 +16,8 @@ import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 import { Form } from '../ui/Form.js';
 
 export interface SessionCodeReviewSelection {
-  agentKind: 'codex' | 'pi' | 'copilot';
+  /** 审查请求使用所选模型的实际运行时。 */
+  agentKind: NonNullable<CodexTaskPushModelCapability['agentKind']>;
   model: string;
   effort: string;
   serviceTierSelection: NativeServiceTierSelection;
@@ -120,7 +121,8 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     };
   }, [inheritedEffort, inheritedModel, props.capabilities, props.conversation.projectId, props.onLoadCapabilities, interactionOpen, zh]);
 
-  const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language), [capabilities?.models, form?.model, props.language]);
+  /** 可用目录变化时保留显式选择，待恢复或重选后再提交。 */
+  const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], form?.model ?? '', props.language, { preserveMissingSelection: true }), [capabilities?.models, form?.model, props.language]);
   const selectedModel = useMemo(() => resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? undefined, [modelPresentation.models, modelPresentation.selectedId]);
   const skillClient = useMemo(() => (props.onLoadSkills ? { loadSkills: props.onLoadSkills } : null), [props.onLoadSkills]);
 
@@ -166,7 +168,7 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
     setError(null);
     try {
       const accepted = await props.onStart({
-        agentKind: selectedModel.agentKind === 'copilot' ? 'copilot' : selectedModel.agentKind === 'pi' ? 'pi' : 'codex',
+        agentKind: selectedModel.agentKind ?? 'codex',
         model: selectedModel.id,
         effort: form.effort,
         serviceTierSelection: form.serviceTierSelection,

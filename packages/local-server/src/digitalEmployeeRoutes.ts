@@ -535,7 +535,7 @@ function stageEmployeeInput(stage: ZeusTaskStageRecord, employee: DigitalEmploye
     expectedRevision: stage.revision,
     employeeMode: 'explicit' as const,
     employeeId: employee.id,
-    agentKind: employee.agentKind,
+    agentKind: employee.model ? employee.agentKind : stage.agentKind,
     modelRef,
     effort: employee.reasoningEffort,
     serviceTier: employee.serviceTier,

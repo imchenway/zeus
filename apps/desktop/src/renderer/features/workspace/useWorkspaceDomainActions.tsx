@@ -52,6 +52,7 @@ import {
   preloadCodexConversationCapabilities,
   type ProjectSessionWorkspaceStartInput,
   readCachedCodexConversationCapabilities,
+  refreshCodexConversationCapabilities,
   type SessionWorkspaceActions,
   type SessionWorkspaceStartInput,
   startNativeConversationWithDurableAcceptance,
@@ -2578,7 +2579,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     let taskCapabilitiesResolved = false;
     void preloadCodexConversationCapabilities(client, task.projectId)
       .then((runtimeCapabilities) => {
-        if (!runtimeCapabilities || taskCapabilitiesResolved || !isTaskModelPushRequestCurrent(request, origin)) return;
+        if (!runtimeCapabilities || taskCapabilitiesResolved || catalogGeneration !== modelCatalogGeneration() || !isTaskModelPushRequestCurrent(request, origin)) return;
         setTaskModelPushRuntimeCapabilities(runtimeCapabilities);
         setTaskModelPushForm((current) => {
           if (current.stageId) return current;
@@ -2593,8 +2594,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const rawCapabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
     taskCapabilitiesResolved = true;
     if (!isTaskModelPushRequestCurrent(request, origin)) return;
-    const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
-    cacheCodexConversationCapabilities(client, capabilities, catalogGeneration);
+    /** 仓库查询可能比账号恢复慢，仅在目录已更新时补读模型和首选项。 */
+    const updatedCatalog = catalogGeneration !== modelCatalogGeneration() ? await refreshCodexConversationCapabilities(client, task.projectId) : null;
+    if (!isTaskModelPushRequestCurrent(request, origin)) return;
+    const capabilities = normalizeTaskModelPushCapabilities(updatedCatalog ? { ...rawCapabilities, models: updatedCatalog.models, preferredModel: updatedCatalog.preferredModel } : rawCapabilities);
+    if (!updatedCatalog) cacheCodexConversationCapabilities(client, capabilities, catalogGeneration);
     setTaskModelPushRuntimeCapabilities(capabilities);
     /** 首次加载只根据同一份完整快照选择下一工作面，不再发起独立模型预检。 */
     const destination = resolveTaskModelPushEntry(capabilities, capabilities.hasConfiguredProvider);
