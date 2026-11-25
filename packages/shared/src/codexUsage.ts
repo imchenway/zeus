@@ -194,7 +194,7 @@ export interface UsageOverviewRangeSummary {
   costBreakdown: UsageModelCostBreakdown[];
   /** 当前范围内按实际请求模型和速度档位归组的输出速率。 */
   outputRateBreakdown: UsageModelOutputRateBreakdown[];
-  /** 当前范围内所有账本记录是否都包含完整用量。 */
+  /** 当前范围内有完整用量，且没有未补齐的写入失败。 */
   complete: boolean;
 }
 
@@ -252,6 +252,8 @@ export interface UsageProviderSummary {
   /** 菜单栏快捷时间筛选所需的轻量汇总。 */
   overviewRanges: Record<UsageOverviewRange, UsageOverviewRangeSummary>;
   dailyLocal: CodexLocalUsageDay[];
+  /** 本地自然日内有未补齐的用量写入，趋势不能将空白日期显示为零。 */
+  incompleteLocalDates?: string[];
   collectionStartedAt: string | null;
   updatedAt: string;
   stale: boolean;
@@ -330,6 +332,10 @@ export interface UsageProviderAnalytics {
   };
   local: {
     totals: CodexLocalUsageTotals;
+    /** 当前时间、项目和模型筛选下的用量是否完整。 */
+    complete?: boolean;
+    /** 筛选范围内有未补齐写入的本地日期。 */
+    incompleteDates?: string[];
     daily: CodexLocalUsageDay[];
     byModel: CodexLocalUsageGroup[];
     byProject: CodexLocalUsageGroup[];

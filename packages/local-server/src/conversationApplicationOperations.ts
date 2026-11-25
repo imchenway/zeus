@@ -36,6 +36,7 @@ import {
   parseCanonicalRequestUserInputQuestions,
   renderTaskPushLayoutText,
   taskPushSupplementalInfoMaxCharacters,
+  type TaskPushConversationHistory,
   type TaskPushMessageLayout,
   type TaskPushPromptAttachment,
   type TaskPushPromptParentContext,
@@ -160,7 +161,7 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
     task: ZeusTaskRecord,
     supplementalInfo: string,
     promptAttachments: TaskPushPromptAttachment[],
-    currentConversationPaths: string[],
+    currentConversationHistory: TaskPushConversationHistory[],
     parentContexts: TaskPushPromptParentContext[],
     relatedContexts: TaskPushPromptRelatedContext[],
     supplementalAttachments: TaskPushSupplementalAttachment[],
@@ -3789,7 +3790,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         }
         const taskContextInput = resolveSelectedTaskPushContext(project, task, (body as Record<string, unknown>).taskContext) as {
           attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
-          currentConversationPaths: string[];
+          currentConversationHistory: TaskPushConversationHistory[];
           parentContexts: TaskPushPromptParentContext[];
           relatedContexts: TaskPushPromptRelatedContext[];
         };
@@ -3804,7 +3805,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           task,
           [stageSupplementalInfo, automationInstruction ? `## 本次自动化指令\n\n${automationInstruction}` : '', reworkReviewHandoff].filter(Boolean).join('\n\n'),
           currentAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
-          taskContextInput.currentConversationPaths,
+          taskContextInput.currentConversationHistory,
           filterContextAttachments(taskContextInput.parentContexts),
           filterContextAttachments(taskContextInput.relatedContexts),
           supplementalAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
@@ -3812,12 +3813,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));
         const taskPushPrompt = renderTaskPushLayoutText(taskPushLayout);
+        /** 旧会话中的内容只作为引用，不能触发当前任务的 Plugin 或 Skill。 */
+        const taskPushDisplayText = renderTaskPushLayoutText(taskPushLayout, false);
         /** 显示正文与完整任务输入分开保存，内部上下文仍交给 Provider。 */
-        const displayText = body.displayText === undefined ? undefined : normalizeComposerDisplayText(body.displayText, taskPushPrompt);
+        const displayText = body.displayText === undefined && taskPushPrompt === taskPushDisplayText ? undefined : normalizeComposerDisplayText(body.displayText, taskPushDisplayText);
         if (displayText) taskPushLayout.displayText = displayText;
         const goalObjective = parseGoalObjective((body as Record<string, unknown>).goalObjective);
         if (goalObjective && (selectedModel.agentKind !== 'codex' || capabilities.goals?.enabled !== true)) throw nativeApiError('ZEUS_CODEX_GOALS_UNAVAILABLE', '当前 Agent 或 app-server 不支持原生目标。');
-        const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushPrompt, body.pluginReferences);
+        const pluginReferences = await resolveNewConversationPluginReferences(project.id, taskPushDisplayText, body.pluginReferences);
         if (selectedModel.agentKind === 'codex') await assertCodexAccountReady();
         // 先在用户实际选择 Skill 的项目目录复验身份，避免失效选择在创建 Worktree 后才失败；
         // Worktree 就绪后再按相同稳定 ID 解析一次，确保 repo Skill 使用该工作目录中的真实文件。

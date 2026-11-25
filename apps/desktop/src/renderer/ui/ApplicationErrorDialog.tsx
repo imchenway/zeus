@@ -159,11 +159,12 @@ function errorOperation(error: unknown): string | null {
   return candidate?.trim() || null;
 }
 
-function errorOccurredAt(error: unknown): string {
+/** 只有错误自带的有效时间用于区分历史故障。 */
+function errorOccurredAt(error: unknown): string | null {
   if (error && typeof error === 'object' && 'occurredAt' in error && typeof error.occurredAt === 'string' && Number.isFinite(Date.parse(error.occurredAt))) {
     return new Date(error.occurredAt).toISOString();
   }
-  return new Date().toISOString();
+  return null;
 }
 
 /** 只取错误字段和最多四层原因，保留服务端详情并排除业务正文。 */
@@ -198,6 +199,8 @@ export function VisibleApplicationError(props: {
   summary?: string;
   /** 详情窗口标明发生问题的对象。 */
   title?: string;
+  /** 需要显式入口的行内提示可以显示可点击的详情文字。 */
+  detailsLabel?: string;
   /** 显式处理入口，不自动重试或重发。 */
   action?: ApplicationErrorOptions['action'];
 }) {
@@ -210,7 +213,7 @@ export function VisibleApplicationError(props: {
   /** 本机离线已证实时使用统一网络提示。 */
   const summary = networkIssue === 'offline' && !explanation.outcomeUnconfirmed ? offlineNetworkNotice(language) : (props.summary ?? explanation.message);
   /** 说明按钮使用可读名称，图标不代替键盘与读屏入口。 */
-  const detailsLabel = language === 'zh-CN' ? '查看完整说明' : 'View full explanation';
+  const detailsLabel = props.detailsLabel ?? (language === 'zh-CN' ? '查看完整说明' : 'View full explanation');
   return (
     <span className={`application-error-inline${props.className ? ` ${props.className}` : ''}`} data-network-issue={networkIssue ?? undefined}>
       <span className="application-error-inline-summary" data-zeus-selectable="text">
@@ -222,10 +225,10 @@ export function VisibleApplicationError(props: {
           type="button"
           className="application-error-details-link"
           aria-label={detailsLabel}
-          data-icon-tooltip={detailsLabel}
+          data-icon-tooltip={props.detailsLabel ? undefined : detailsLabel}
           onClick={() => reportApplicationError(props.error, { language, summary: props.summary, title: props.title, action: props.action, showDetails: true })}
         >
-          <WarningCircle aria-hidden="true" />
+          {props.detailsLabel ?? <WarningCircle aria-hidden="true" />}
         </Button>
       )}
       {props.action ? (
@@ -270,7 +273,10 @@ export function reportApplicationError(error: unknown, options: ApplicationError
   ]
     .filter(Boolean)
     .join('\n');
-  const details = redactDetails(`${copy.occurredAt}: ${errorOccurredAt(error)}\n${detailsBody}`);
+  /** 展开详情和故障报告共用同一次记录时间。 */
+  const recordedAt = errorOccurredAt(error);
+  const occurredAt = recordedAt ?? new Date().toISOString();
+  const details = redactDetails(`${copy.occurredAt}: ${occurredAt}\n${detailsBody}`);
   if (networkIssue) {
     if (!options.background) {
       networkNotice = { language, summary, action: options.action };
@@ -287,12 +293,12 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     summary,
     showDetails: options.showDetails === true,
     details,
-    dedupeKey: `${options.title ?? copy.title}\n${summary}\n${detailsBody}`,
+    dedupeKey: `${options.title ?? copy.title}\n${summary}\n${detailsBody}\n${recordedAt ?? ''}`,
     code,
     action: options.action,
     report: normalizeFaultReportInput({
       reportId: crypto.randomUUID(),
-      occurredAt: errorOccurredAt(error),
+      occurredAt,
       title: options.title ?? copy.title,
       summary,
       code: code ?? '',

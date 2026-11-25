@@ -5,8 +5,8 @@ import type { CodexUsageEstimate } from './codexUsage.js';
 export interface ConversationInformation {
   /** 输入包含缓存读写，按次计费单独保留。 */
   cost: { input: EstimatedMoney[]; output: EstimatedMoney[]; perRequest: EstimatedMoney[]; complete: boolean };
-  /** 只包含有调用或技能读取事实的资源，不使用已安装目录冒充使用记录。 */
-  resources: { mcp: string[]; skills: string[] };
+  /** 空数组代表已采集且未使用，null 代表缺少采集证据。 */
+  resources: { mcp: string[] | null; skills: string[] | null };
 }
 
 /** 按每次请求冻结的费率拆分，不使用当前模型价格或 Token 比例分摊。 */
@@ -45,7 +45,7 @@ export function conversationCostBreakdown(requests: UsageRequestPriceSnapshot[])
 }
 
 /** 原生与历史工具记录共用资源提取，不扫描助手正文或任意命令文本。 */
-export function conversationUsedResources(items: Array<{ type: string; payload: Record<string, unknown> }>, selectedSkills: string[] = []): ConversationInformation['resources'] {
+export function conversationUsedResources(items: Array<{ type: string; payload: Record<string, unknown> }>, selectedSkills: string[] = [], captureComplete = false): ConversationInformation['resources'] {
   /** 同一工具重复调用只展示一次，顺序保留首次出现位置。 */
   const mcp = new Set<string>();
   /** 仅合入已接受提交中明确使用的技能。 */
@@ -96,7 +96,7 @@ export function conversationUsedResources(items: Array<{ type: string; payload: 
       }
     }
   }
-  return { mcp: [...mcp], skills: [...skills] };
+  return { mcp: mcp.size || captureComplete ? [...mcp] : null, skills: skills.size || captureComplete ? [...skills] : null };
 }
 
 /** 外部工具参数仅接受普通对象形态。 */

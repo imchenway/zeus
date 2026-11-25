@@ -272,9 +272,12 @@ function TaskPushMessageContent(
               </section>
             );
           })}
-          {block.conversationPaths.length > 0 ? (
+          {block.conversationHistory?.length || block.conversationPaths.length > 0 ? (
             <section className="session-task-push-field">
-              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息：' : '会话文件路径：'}</strong>
+              <strong>{props.language === 'zh-CN' ? '历史会话' : 'Conversation history'}</strong>
+              {block.conversationHistory?.map((conversation) => (
+                <p key={conversation.id}>{conversation.title}</p>
+              ))}
               {block.conversationPaths.map((path) => (
                 <code key={path}>{path}</code>
               ))}
@@ -996,12 +999,18 @@ function structuredMessageTokens(text: string): StructuredMessageToken[] {
   return tokens;
 }
 
-function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
+/** 行内摘要和详情共用同一份错误，旧条目沿用自身记录的时间。 */
+export function visibleThreadItemError(item: NativeSessionItemBuffer): unknown {
+  /** 已投影的错误带发生时间，旧错误沿用进入时间线的时间。 */
+  const occurredAt = item.timelineAt ?? item.updatedAt;
+  /** 消息投递和运行失败都能附带结构化诊断。 */
   const nested = [item.payload.deliveryError, item.payload.error].find((value) => typeof value === 'string' || isRecord(value));
-  if (nested) return nested;
+  if (isRecord(nested)) return { ...nested, occurredAt: nested.occurredAt ?? occurredAt };
+  /** 具体原因优先于条目的展示标题。 */
   const code = primitiveText(item.payload.code ?? item.payload.errorCode);
-  const message = item.text.trim() || primitiveText(item.payload.message) || 'Unknown error.';
-  return code ? { code, message } : message;
+  /** 旧错误可能只有一段文字，仍沿用该文字作为诊断。 */
+  const message = primitiveText(nested) ?? primitiveText(item.payload.message) ?? item.text.trim();
+  return { code, message, occurredAt, cause: item.payload.cause };
 }
 
 export function transcriptItemText(item: NativeSessionItemBuffer, language: SessionUiLanguage = 'zh-CN'): string {

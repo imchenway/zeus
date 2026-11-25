@@ -228,6 +228,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ],
     ['上次操作的结果尚未确认，Zeus 已暂停继续执行，避免重复操作。请检查实际处理状态。', 'The previous action’s result is unconfirmed. Zeus paused further execution to avoid duplicate actions. Check the actual processing state.'],
   ],
+  [['Secret-like provider field rejected: snapshot.reportedTokenFields'], ['本轮用量保存失败。你的对话已保留。', 'Usage for this turn could not be saved. Your conversation was kept.']],
+  [['ZEUS_CONVERSATION_EVENT_PERSIST_FAILED'], ['本轮记录保存失败。', 'This turn could not be saved.']],
   [
     ['ZEUS_PROJECT_CONVERSATION_START_PERSIST_FAILED', 'ZEUS_NATIVE_CONVERSATION_START_PERSIST_FAILED', 'ZEUS_CONVERSATION_COMMAND_PERSIST_FAILED', 'ZEUS_CONVERSATION_COMMAND_STORAGE_UNAVAILABLE'],
     ['Zeus 无法记录这次操作，已停止继续执行。请查看本机存储错误详情。', 'Zeus could not record this action and stopped further execution. See the local storage error details.'],

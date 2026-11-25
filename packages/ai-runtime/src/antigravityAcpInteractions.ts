@@ -92,11 +92,15 @@ export function acpToolProgress(call: Record<string, unknown>): Record<string, u
   const exitCode = output.exitCode ?? output.exit_code;
   const command = tool.command ?? textField(output.commandLine, output.command_line);
   const cwd = tool.cwd ?? textField(output.workingDir, output.working_dir);
+  /** ACP 工具明确提供服务器和工具身份时，交给公共 MCP 清单。 */
+  const server = textField(tool.args.ServerName);
+  const toolName = textField(tool.args.ToolName);
   return {
     toolCallId: call.toolCallId,
     toolName: tool.toolName,
     toolKind: tool.kind,
     arguments: tool.args,
+    ...(server && toolName ? { type: 'mcpToolCall', server, tool: toolName } : {}),
     ...(command ? { command } : {}),
     ...(cwd ? { cwd } : {}),
     ...(aggregatedOutput ? { aggregatedOutput, output: aggregatedOutput } : {}),

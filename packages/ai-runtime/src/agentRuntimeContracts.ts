@@ -1,3 +1,5 @@
+import type { TokenUsageBreakdown } from '@zeus/shared';
+
 export type AgentKind = 'codex' | 'pi' | 'copilot' | 'antigravity' | 'claude';
 
 /** 会话由 Zeus 的托管运行时编排持久派发。 */
@@ -274,6 +276,16 @@ export interface AgentSessionSnapshot {
   raw: unknown;
 }
 
+/** 供应商只上报整轮用量时，保留实际观察到的字段和完整性。 */
+export interface AgentTurnUsage {
+  /** 共享账本使用的 Token 计数。 */
+  usage: TokenUsageBreakdown;
+  /** 已确认的分类，缺失项无需对用户显示为零。 */
+  fields: (keyof TokenUsageBreakdown)[];
+  /** 输入与输出均有完整统计时为真。 */
+  complete: boolean;
+}
+
 export interface AgentRuntimeEvent {
   agentKind: AgentKind;
   runtimeInstanceId: string;
@@ -282,6 +294,10 @@ export interface AgentRuntimeEvent {
   sequence: number;
   type: string;
   payload: unknown;
+  /** 轮次终态携带的已归一化用量，独立于工具和上下文事件。 */
+  turnUsage?: AgentTurnUsage;
+  /** 结构化工具与技能事件已完整交付时由正常终态声明。 */
+  resourceCaptureComplete?: true;
   createdAt: string;
 }
 
@@ -325,6 +341,8 @@ export interface AgentRuntimeHealthSnapshot {
  */
 export interface AgentRuntimeDriver {
   readonly kind: AgentKind;
+  /** 只提供轮次用量的供应商不会使用请求级计价和测速。 */
+  readonly usageGranularity?: 'turn';
 
   probe(): Promise<AgentRuntimeProbe>;
 

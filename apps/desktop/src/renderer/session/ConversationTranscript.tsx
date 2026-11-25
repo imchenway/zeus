@@ -12,7 +12,7 @@ import type { UserFacingErrorCause } from '@zeus/shared';
 import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
-import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
+import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText, visibleThreadItemError } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import { WifiHighIcon } from '@phosphor-icons/react/dist/csr/WifiHigh';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
@@ -564,15 +564,23 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     () =>
       contentProjection?.items ??
       collapsedErrorItems.filter((item) => {
-        const turn = props.state.turnsByProviderId[item.turnId];
-        // 轮次失败卡片已经承载底层原因时，不再把同一诊断事件单独画成第二张红卡。
-        if (itemRole(item) === 'error' && turn?.status === 'failed' && turn.error) return false;
+        if (itemRole(item) === 'error') {
+          /** 轮次失败卡只有在覆盖同一原因时才接管行内错误。 */
+          const turn = turnByAnyIdentity(props.state.turnsByProviderId, item.turnId);
+          if (turn?.status === 'failed' && turn.error && (turn.error.code !== 'ZEUS_MODEL_RESPONSE_RETRYING' || turn.id === latestTurn?.id)) {
+            // 旧的轮次错误条目已经有终态表示，只有独立的运行警告需要核对诊断。
+            if (item.payload.processKind !== 'warning') return false;
+            /** 同一原因需要有实际内容，空诊断不能彼此替代。 */
+            const reason = transcriptErrorFingerprint(visibleThreadItemError(item));
+            if (reason && reason === transcriptErrorFingerprint(turn.error)) return false;
+          }
+        }
         // rollout 恢复项只承担缺失 server request 时的内容展示。真实请求一旦到达，
         // 无论仍在等待还是已经回答，都由带当前世代权限的请求投影接管。
         if (isRecoveredRequestUserInputItem(item) && props.state.pendingRequests.some((request) => authoritativeRequestMatchesRecoveredItem(request, item))) return false;
         return true;
       }),
-    [collapsedErrorItems, props.state.pendingRequests, props.state.turnsByProviderId],
+    [collapsedErrorItems, latestTurn, props.state.pendingRequests, props.state.turnsByProviderId],
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
@@ -1434,7 +1442,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       const retryable =
         // 送达尚未核对的提交只开放原恢复入口，不能从旧失败卡发起另一条续接。
         !props.state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) && !props.state.activeTurnId && latestTurn?.providerTurnId === row.turnId;
-      return <TurnFailureCard failure={row.failure} language={props.language} onRetry={retryable && props.onRetryFailedTurn ? () => props.onRetryFailedTurn?.(row.turnId) : undefined} />;
+      return <TurnFailureCard failure={row.failure} occurredAt={row.occurredAt} language={props.language} onRetry={retryable && props.onRetryFailedTurn ? () => props.onRetryFailedTurn?.(row.turnId) : undefined} />;
     }
     /** 邻近视口的预读失败留在原位；只有显式跳转失败才生成系统消息。 */
     if (row.kind === 'navigation_placeholder')
@@ -2027,8 +2035,8 @@ export function SystemMessageNotice(props: { message: ConversationSystemMessageI
   );
 }
 
-/** 失败卡保留官方原因，显式续跑只针对调用方确认可重试的轮次。 */
-function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; onRetry?: () => void | Promise<void> }) {
+/** 终态说明沿用本轮发生时间及用户发起的恢复操作。 */
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; occurredAt: string; language: SessionUiLanguage; onRetry?: () => void | Promise<void> }) {
   /** 请求提交期间禁用重复点击，失败原因保留在原提示中。 */
   const [pending, setPending] = useState(false);
   /** 手动续跑失败不能覆盖原轮次的官方错误。 */
@@ -2049,8 +2057,8 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
   /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
   return (
-    <ConversationNotice label={zh ? '模型返回错误' : 'Model error'}>
-      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    <ConversationNotice label={zh ? '本轮执行失败' : 'Turn failed'}>
+      <VisibleApplicationError error={{ ...props.failure, occurredAt: props.occurredAt }} language={zh ? 'zh-CN' : 'en'} detailsLabel={zh ? '查看详情' : 'View details'} />
       <span className="session-message-delivery-actions">
         {retryError ? (
           <Button unstyled type="button" className="application-error-details-link" onClick={() => reportApplicationError(retryError, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
@@ -2084,6 +2092,7 @@ export type TranscriptRow =
       motionActive: boolean;
     };
 
+/** 同轮同原因的运行错误只显示首次，完整诊断仍在会话记录中。 */
 function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
   const seen = new Set<string>();
   const result: NativeSessionItemBuffer[] = [];
@@ -2093,7 +2102,7 @@ function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): 
       continue;
     }
     // Provider 事件异常仍保留首条原始诊断；后续相同错误只在展示层合并，避免一轮出现多张相同红卡。
-    const key = `${item.turnId}\u0000${providerErrorFingerprint(item)}`;
+    const key = `${item.turnId}\u0000${transcriptErrorFingerprint(visibleThreadItemError(item)) || item.providerItemId || item.key}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(item);
@@ -2101,21 +2110,14 @@ function collapseRepeatedErrorItems(items: readonly NativeSessionItemBuffer[]): 
   return result;
 }
 
-function providerErrorFingerprint(item: NativeSessionItemBuffer): string {
-  const detail = providerErrorDetails(item);
-  const fingerprint = `${detail.code ?? ''}\u001f${detail.message}`;
-  return fingerprint === '\u001f' ? (item.providerItemId ?? item.key) : fingerprint;
-}
-
-function providerErrorDetails(item: NativeSessionItemBuffer): { code: string | null; message: string; method: string | null } {
-  const nestedError = recordValue(item.payload.error);
-  const code = primitiveValue(nestedError?.code ?? item.payload.code);
-  const message = primitiveValue(nestedError?.message ?? item.payload.message ?? item.text) ?? '';
-  return {
-    code,
-    message,
-    method: primitiveValue(item.payload.method),
-  };
+/** 核对错误码、消息和原因链，避免把共用一个错误码的不同故障合并。 */
+function transcriptErrorFingerprint(error: unknown): string {
+  /** 统一空白以兼容轮次诊断与原始事件的格式差异。 */
+  const reasons: string[][] = [];
+  for (let reason: UserFacingErrorCause | undefined = userFacingErrorCause(error); reason; reason = reason.cause) {
+    if (reason.code || reason.message) reasons.push([reason.code ?? '', reason.message.replace(/\s+/gu, ' ').trim()]);
+  }
+  return reasons.length ? JSON.stringify(reasons) : '';
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -2531,6 +2533,15 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onLoadToolResult={options.props.onLoadV2ToolResult}
         onLoadContent={options.props.onLoadV2Content}
       />
+    );
+  }
+  if (row.item.payload.processKind === 'warning' && itemRole(row.item) === 'error') {
+    /** 运行错误用既有提示容器，同时保留可见的详情入口。 */
+    const zh = options.props.language === 'zh-CN';
+    return (
+      <ConversationNotice label={zh ? '会话运行错误' : 'Conversation runtime error'}>
+        <VisibleApplicationError error={visibleThreadItemError(row.item)} language={zh ? 'zh-CN' : 'en'} detailsLabel={zh ? '查看详情' : 'View details'} />
+      </ConversationNotice>
     );
   }
   // 已送达的异步回答直接使用 PLAN 已答题组件，不再套用户消息及其操作栏。

@@ -49,6 +49,21 @@ export type ConversationSwitchState = 'preflight' | 'provisional' | 'outcome_unk
 export type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'context_update' | 'waiting' | 'warning';
 export type ConversationConfigEvidenceLayer = 'selected' | 'frozen' | 'adapter_serialized' | 'runtime_acknowledged' | 'provider_echo';
 
+/** 采集事实按本地轮次身份记录，重放不能产生第二条。 */
+export const conversationResourceCapturePrefix = 'conversation_resource_capture:';
+
+/** 只采用失败记录的业务身份和时间筛选缺失用量。 */
+export interface ConversationUsageWriteFailure {
+  /** 本机账本供应商标识。 */
+  providerId: string;
+  /** 发起模型请求的项目。 */
+  projectId: string;
+  /** 此次统计写入对应的模型。 */
+  model: string;
+  /** 对应请求或轮次的结束时间，使用 ISO 8601。 */
+  occurredAt: string;
+}
+
 export interface ConversationExecutionSnapshotRecord {
   id: string;
   conversationId: string;
@@ -1598,6 +1613,31 @@ export class ConversationExecutionRepository {
       [id, input.conversationId, input.turnId ?? null, input.submissionId ?? null, input.segmentId ?? null, input.layer, JSON.stringify(input.configuration), JSON.stringify(input.evidence), input.mismatch ? 1 : 0, input.observedAt],
     );
     return id;
+  }
+
+  /** 持久保留正常结束轮次的资源采集依据，历史读取可据此确认空清单。 */
+  recordResourceUsageCapture(conversationId: string, turnId: string, occurredAt: string): void {
+    /** 轮次 ID 已由本地仓储分配，用同一主键接续重放。 */
+    const id = `${conversationResourceCapturePrefix}${turnId}`;
+    if (this.db.get('SELECT 1 FROM conversation_timeline_events WHERE id = ?', [id])) return;
+    this.db.execute(
+      `INSERT INTO conversation_timeline_events (id, conversation_id, sequence, event_kind, turn_id, payload_json, occurred_at)
+       VALUES (?, ?, ?, 'resource_usage_captured', ?, '{}', ?)`,
+      [id, conversationId, this.nextSequence(conversationId, 'timeline_sequence'), turnId, occurredAt],
+    );
+  }
+
+  /** 已补齐的统计失败不再影响用量范围。 */
+  listUsageWriteFailures(): ConversationUsageWriteFailure[] {
+    return this.db.select(
+      `SELECT json_extract(payload_json, '$.providerId') AS providerId,
+              json_extract(payload_json, '$.projectId') AS projectId,
+              json_extract(payload_json, '$.model') AS model,
+              updated_at AS occurredAt
+       FROM conversation_persistent_warnings
+       WHERE resolved_at IS NULL AND warning_kind GLOB 'usage_write_failed:*' AND json_valid(payload_json)
+       ORDER BY updated_at, id`,
+    );
   }
 
   persistWarning(input: { conversationId: string; warningKind: string; payload: unknown; occurredAt: string }): ConversationPersistentWarningRecord {

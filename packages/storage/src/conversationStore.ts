@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { randomId } from './randomId.js';
-import { isReportedTokenFields, type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
+import { isReportedTokenFields, tokenUsageFields, type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type NativeTokenUsageSnapshot, type TokenUsageBreakdown } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { captureCompletedInputSuggestion } from './inputSuggestionStore.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
@@ -3180,10 +3180,13 @@ function validateNextTurnSettings(settings: unknown): asserts settings is Conver
   assertEnum(settings.collaborationMode, ['default', 'plan'] as const, 'conversation next turn collaboration mode');
 }
 
+/** 快照与账本使用同一批 Token 计数键，凭据检查按小写键匹配。 */
+const usageTokenCounterKeys = tokenUsageFields.map((field) => field.toLowerCase());
+
 function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot is ConversationProviderTokenUsageSnapshot {
   assertProviderSequenceSnapshot(snapshot);
   const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
-  assertNoSecretLikeProviderKeys(candidate, new Set(['reportedtokenfields', 'contextusedtokens', 'inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens', 'totaltokens']));
+  assertNoSecretLikeProviderKeys(candidate, new Set(['contextusedtokens', ...usageTokenCounterKeys]));
   assertOnlyKeys(
     candidate,
     [
@@ -3225,7 +3228,7 @@ function validateProviderTokenUsageSnapshot(snapshot: unknown): asserts snapshot
 
 export function validateTokenUsageBreakdown(value: unknown): asserts value is TokenUsageBreakdown {
   if (!isPlainRecord(value)) throw new Error('Invalid token usage breakdown');
-  assertOnlyKeys(value, ['totalTokens', 'inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens'], 'token usage breakdown');
+  assertOnlyKeys(value, tokenUsageFields, 'token usage breakdown');
   if (Object.values(value).some((entry) => typeof entry !== 'number' || !Number.isSafeInteger(entry) || entry < 0)) throw new Error('Invalid token usage breakdown');
 }
 
@@ -3252,10 +3255,7 @@ function validateCodexUsageEstimate(value: unknown): asserts value is CodexUsage
       validateCodexUsageEstimate(request.estimate);
     }
   }
-  assertNoSecretLikeProviderKeys(
-    value,
-    new Set(['input', 'cachedinput', 'cachewrite', 'output', 'billabletokens', 'pricedtokens', 'totaltokens', 'inputtokens', 'cachedinputtokens', 'cachewriteinputtokens', 'outputtokens', 'reasoningoutputtokens']),
-  );
+  assertNoSecretLikeProviderKeys(value, new Set(['billabletokens', 'pricedtokens', ...usageTokenCounterKeys]));
   for (const candidate of [value.credits, value.apiEquivalentUsd, value.cacheSavingsUsd, value.coverage]) {
     if (candidate !== null && (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0)) throw new Error('Invalid Codex usage estimate');
   }
@@ -3317,7 +3317,9 @@ function assertNoSecretLikeProviderKeys(value: unknown, allowedTokenCounters = n
   seen.add(value);
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
     const normalized = key.replace(/[^a-z0-9]/giu, '').toLowerCase();
-    const tokenLike = normalized.includes('token') && !allowedTokenCounters.has(normalized);
+    /** 只豁免由已定义计数分类组成的元数据数组，凭据检查继续覆盖其他字段和值的结构。 */
+    const knownUsageFields = key === 'reportedTokenFields' && isReportedTokenFields(nested);
+    const tokenLike = normalized.includes('token') && !allowedTokenCounters.has(normalized) && !knownUsageFields;
     const secretKeyLike =
       normalized === 'key' || ['apikey', 'accesskey', 'secretkey', 'privatekey', 'signingkey', 'encryptionkey', 'decryptionkey', 'sessionkey', 'serviceaccountkey', 'clientkey', 'keymaterial'].some((marker) => normalized.includes(marker));
     if (tokenLike || secretKeyLike || ['secret', 'authorization', 'credential', 'password', 'passphrase', 'bearer', 'cookie'].some((marker) => normalized.includes(marker))) {

@@ -19,8 +19,11 @@ import {
   type AiRuntimeSession,
   type CodexAppServerManager,
   bundledCodexReasoningCatalog,
+  createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
+  createAntigravityRuntimeRegistration,
   createCodexRuntimeGenerationManager,
+  createCopilotRuntimeRegistration,
   createOptionalNodePtyRuntimeSpawn,
   isManagedAgentKind,
   type ManagedAgentKind,
@@ -2150,10 +2153,41 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   server.addHook('onClose', () => codexUsageService.dispose());
   /** 关闭时取消 Kilo 账户查询，避免请求跨越宿主生命周期。 */
   server.addHook('onClose', () => modelConnections.kiloUsage.dispose());
+  /** 能力查询与本地用量共用运行时注册表，读取不会启动供应商进程。 */
+  const agentRuntimeRegistry = createAgentCapabilityCatalog(
+    {
+      /** 能力目录使用已启动的 Codex 运行世代和本地安装信息。 */
+      readEvidence() {
+        const checkedAt = now().toISOString();
+        if (!codexNativeEnabled) {
+          return { enabled: false, available: false, checkedAt, adapterVersion: null, reason: 'Zeus 当前已关闭 Codex 原生会话。' };
+        }
+        const transport = codexAppServerManager.getState();
+        if (transport.type !== 'ready') {
+          const reason = readManagedCodexStandalone().available ? `Zeus 管理的 Codex 已就绪，但当前 transport=${transport.type}；只读能力目录不会隐式启动 Provider。` : 'Zeus 管理的 Codex 尚未就绪；只读能力目录不会探测或启动 Provider。';
+          return { enabled: true, available: false, checkedAt, adapterVersion: null, reason };
+        }
+        const { models, providerVersion } = transport.capabilities;
+        return {
+          enabled: true,
+          available: models.length > 0,
+          checkedAt,
+          adapterVersion: providerVersion,
+          reason: models.length > 0 ? `Codex App Server 已在既有运行世代中就绪，并返回 ${models.length} 个模型。` : 'Codex App Server 已在既有运行世代中就绪，但没有返回可用模型。',
+        };
+      },
+      /** 复用 Codex 已缓存的订阅数据，保留未登录时的详情入口。 */
+      readUsageProvider() {
+        const official = codexUsageService.readCachedOfficialUsage();
+        return { name: 'Codex', kind: 'subscription', active: official.state === 'available', showInAnalytics: true, cacheUsageAvailable: true, official };
+      },
+    },
+    [createCopilotRuntimeRegistration(copilotRuntimeManager), createAntigravityRuntimeRegistration(() => antigravityNativeCoordinator.antigravityDriver?.readAccount())],
+  );
   const usageOverviewService = createUsageOverviewService({
     ledger: codexUsageLedger,
-    codexUsage: codexUsageService,
-    copilotRuntimeManager,
+    agentRuntimeRegistry,
+    codexPricingStatus: codexUsageService.pricingStatus,
     modelConnections,
     projects,
     conversations,
@@ -3379,6 +3413,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   // eslint-disable-next-line prefer-const
   let conversationCapabilityQueries!: ConversationCapabilityQueryApplication;
   const taskRuntimeOperations = createTaskRuntimeOperations({
+    conversationSnapshotV2,
     aiRuntimeManager,
     appendAuditLog,
     buildRuntimeProcessEnv: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['buildRuntimeProcessEnv']>) => supportOperations.buildRuntimeProcessEnv(...args),
@@ -4001,6 +4036,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
 
   const platformRoutes = await registerLocalServerPlatformRoutes({
+    agentRuntimeRegistry,
     server,
     prepareConversationArchive,
     // 计划修改与普通消息共用附件授权校验。

@@ -1,9 +1,23 @@
+import { userFacingErrorCause } from './userFacingError.js';
+
 /** 将实时事件和历史过程转换为同一组对话组件识别的类型与字段。 */
-export function conversationProcessPresentation(kind: string, detail: unknown): { type: string; payload: Record<string, unknown> } {
+export function conversationProcessPresentation(kind: string, detail: unknown, occurredAt?: string): { type: string; payload: Record<string, unknown> } {
   /** 原始记录保留协议来源，展示只依赖活动及工具定义。 */
   const record = processRecord(detail);
   /** 调用参数来自调用块，执行结果覆盖完成时更新的字段。 */
   const source = { ...processRecord(record.block), ...processRecord(record.payload ?? (record.block ? {} : record)) };
+  if (kind === 'warning') {
+    /** 运行时可能提供嵌套错误，也可能直接在事件载荷上提供诊断字段。 */
+    const nested = processRecord(source.error);
+    /** 详情只接受脱敏后的错误字段，时间来自过程记录。 */
+    const error = userFacingErrorCause({
+      ...source,
+      ...nested,
+      code: processString(nested.code) ?? processString(source.code) ?? processString(source.errorCode),
+      message: processString(nested.message) ?? processString(source.message) ?? processString(source.error) ?? processString(source.text) ?? processString(record.text),
+    });
+    return { type: 'error', payload: { error: { ...error, occurredAt } } };
+  }
   /** 只转发已有组件消费的字段，避免原始事件决定任意显示行为。 */
   const payload: Record<string, unknown> = {};
   for (const key of [
@@ -64,15 +78,15 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
           ? 'contextCompaction'
           : kind === 'context_update'
             ? 'contextUpdate'
-            : kind === 'warning'
-              ? 'error'
-              : kind === 'waiting'
-                ? record.provider === 'pi' && payload.recovery !== 'content_only'
-                  ? 'commentary'
-                  : 'requestUserInput'
-                : kind === 'retry'
-                  ? 'commentary'
-                  : 'dynamicToolCall';
+            : kind === 'waiting'
+              ? record.provider === 'pi' && payload.recovery !== 'content_only'
+                ? 'commentary'
+                : 'requestUserInput'
+              : kind === 'retry'
+                ? 'commentary'
+                : 'dynamicToolCall';
+  // 宿主已归一化的 MCP 身份交给所有运行时共用的工具清单。
+  if (kind === 'tool' && source.type === 'mcpToolCall' && typeof source.server === 'string' && typeof source.tool === 'string') return { type: 'mcpToolCall', payload };
   if (record.provider === 'antigravity' && kind === 'tool') {
     const toolKind = source.toolKind;
     if (toolKind === 'execute' || source.command) type = 'commandExecution';

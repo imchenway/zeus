@@ -29,11 +29,11 @@ import {
   resolveInteractiveShell,
   spawnManagedProcess,
   type AiCliAdapterStatus,
+  type AgentRuntimeRegistry,
   type CodexRuntimeMaintenanceControl,
   type CodexModelCapability,
   type CodexRemoteControlStatus,
   type CopilotRuntimeManager,
-  createAgentCapabilityCatalog,
   createAiRuntimeSessionManager,
   isNonCodexAiCliAdapterId,
   isManagedAgentKind,
@@ -514,6 +514,8 @@ async function stopCodexRemoteControlDaemon(commandPath: string, codexHome: stri
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   server: FastifyInstance;
+  /** 能力目录和用量共用已经注册的原生运行时。 */
+  agentRuntimeRegistry: AgentRuntimeRegistry;
   /** 平台通用时钟返回 Date；写入存储前由各领域显式序列化。 */
   now(): Date;
   aiRuntimeManager: ReturnType<typeof createAiRuntimeSessionManager>;
@@ -4578,45 +4580,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return buildGitPatchExport(diff);
   });
 
-  function readAgentCapabilityCatalog() {
-    const checkedAt = now().toISOString();
-    const managedCodex = readManagedCodexStandalone();
-    let codexStatus = {
-      available: false,
-      version: null as string | null,
-      checkedAt,
-      reason: 'Zeus 当前已关闭 Codex 原生会话。',
-    };
-    if (codexNativeEnabled) {
-      const transport = codexAppServerManager.getState();
-      const capabilities = transport.type === 'ready' ? transport.capabilities : null;
-      codexStatus = capabilities
-        ? {
-            available: capabilities.models.length > 0,
-            version: capabilities.providerVersion,
-            checkedAt,
-            reason: capabilities.models.length > 0 ? `Codex App Server 已在既有运行世代中就绪，并返回 ${capabilities.models.length} 个模型。` : 'Codex App Server 已在既有运行世代中就绪，但没有返回可用模型。',
-          }
-        : {
-            available: false,
-            version: null,
-            checkedAt,
-            reason: managedCodex.available ? `Zeus 管理的 Codex 已就绪，但当前 transport=${transport.type}；只读能力目录不会隐式启动 Provider。` : 'Zeus 管理的 Codex 尚未就绪；只读能力目录不会探测或启动 Provider。',
-          };
-    }
-    return createAgentCapabilityCatalog({
-      enabled: codexNativeEnabled,
-      available: codexStatus.available,
-      checkedAt: codexStatus.checkedAt,
-      adapterVersion: codexStatus.version,
-      binaryVersion: codexStatus.version,
-      reason: codexStatus.reason,
-    });
-  }
-
   server.get('/api/agents', async () => {
-    const registry = readAgentCapabilityCatalog();
-    return { items: registry.listPublic() };
+    return { items: dependencies.agentRuntimeRegistry.listPublic() };
   });
 
   server.get('/api/developer/agents', async (_request, reply) => {
@@ -4626,8 +4591,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         message: 'Developer agent catalog is disabled.',
       });
     }
-    const registry = readAgentCapabilityCatalog();
-    return { items: registry.listAll() };
+    return { items: dependencies.agentRuntimeRegistry.listAll() };
   });
 
   server.get<{ Querystring: { view?: string } }>('/api/model-connections', async (request) => {
