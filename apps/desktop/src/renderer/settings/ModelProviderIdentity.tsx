@@ -29,17 +29,7 @@ export function ModelProviderIdentity({ provider, name, connected, busy, childre
 }
 
 /** 订阅账号的只读模型目录，名称和排序与模型选择器一致。 */
-export function ModelProviderAvailableModels({
-  provider,
-  zh,
-  models,
-  message,
-}: {
-  provider: SubscriptionSetupProvider;
-  zh: boolean;
-  models: readonly ModelOptionSource[] | null;
-  message: string;
-}): React.JSX.Element {
+export function ModelProviderAvailableModels({ provider, zh, models, message }: { provider: SubscriptionSetupProvider; zh: boolean; models: readonly ModelOptionSource[] | null; message: string }): React.JSX.Element {
   /** 标题与列表的关系在同一个窗口的多个账号卡片中保持唯一。 */
   const titleId = useId();
   /** 空目录与尚未完成读取分别显示零个模型和等待状态。 */

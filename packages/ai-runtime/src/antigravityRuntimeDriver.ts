@@ -532,8 +532,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   private checkAccount(login: boolean, background = false): Promise<AntigravityAccountCatalog> {
     const revision = ++this.accountRevision;
     const needsInstallation = login && !readManagedAntigravity(this.probeDirectory);
-    if (!background && (login || this.catalog.status !== 'ready'))
-      this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
+    if (!background && (login || this.catalog.status !== 'ready')) this.catalog = needsInstallation ? { status: 'installing', models: [], installation: { stage: 'preparing' } } : { status: login ? 'signing_in' : 'checking', models: [] };
     const operation = (async () => {
       /** 同一连接的诊断也用于识别授权或建探测会话时的验证要求。 */
       let connection: AcpConnection | undefined;

@@ -2254,14 +2254,13 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       });
       const settings = conversations.getNextTurnSettings(attempt.conversationId);
       const selectedManagedModelRef = isManagedAgentKind(input.agentKind) && settings?.model ? parseModelRef(settings.model) : null;
-      const selectedModel =
-        isManagedAgentKind(input.agentKind)
-          ? selectedManagedModelRef
-            ? { sourceId: selectedManagedModelRef.sourceId, modelId: selectedManagedModelRef.modelId, displayName: null }
-            : input.model
-          : settings?.model
-            ? { sourceId: null, modelId: settings.model, displayName: null }
-            : input.model;
+      const selectedModel = isManagedAgentKind(input.agentKind)
+        ? selectedManagedModelRef
+          ? { sourceId: selectedManagedModelRef.sourceId, modelId: selectedManagedModelRef.modelId, displayName: null }
+          : input.model
+        : settings?.model
+          ? { sourceId: null, modelId: settings.model, displayName: null }
+          : input.model;
       const serviceTierPlan = input.agentKind === 'codex' ? await resolveDefaultModelServiceTierPlan() : null;
       const prompt = buildTaskConflictAiPrompt({
         sourceBranch: integration.targetBranch,

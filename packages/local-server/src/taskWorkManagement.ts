@@ -3351,8 +3351,7 @@ function isCapabilityModel(value: unknown): value is ConversationCapabilityModel
 
 /** 团队节点通过 Zeus 工具提交结构化结果，普通会话式交付不依赖该通道。 */
 function checkWorkflowToolSupport(model: ConversationCapabilityModel | undefined, blockers: TaskWorkPreview['blockers']): void {
-  if (model?.features?.mcp.state === 'unsupported')
-    blockers.push({ code: 'ZEUS_DIGITAL_TEAM_TOOL_UNAVAILABLE', message: '当前运行时无法调用数字团队的结构化提交工具，请选择支持该工具的模型。' });
+  if (model?.features?.mcp.state === 'unsupported') blockers.push({ code: 'ZEUS_DIGITAL_TEAM_TOOL_UNAVAILABLE', message: '当前运行时无法调用数字团队的结构化提交工具，请选择支持该工具的模型。' });
 }
 function normalizeIdentities(value: unknown[]): string[] {
   return [...new Set(value.map((entry) => requiredText(entry, '身份无效。', 512)))];
