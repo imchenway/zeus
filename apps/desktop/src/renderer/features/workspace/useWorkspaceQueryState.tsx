@@ -1230,6 +1230,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
               taskCode: task.taskCode?.trim() || task.id,
               taskTitle: task.title,
               managementStatus: resolveTaskManagementStatus(task),
+              canComplete: !terminalTaskIds.has(task.id),
               conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationWorkStartedDesc),
             })),
         };
@@ -1243,6 +1244,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       projectTaskModelPushManagementStatus,
       projectedTaskConversationChoices,
       snapshot.tasks,
+      terminalTaskIds,
     ],
   );
   /** 会话投影只更新状态，项目顺序由独立的小时统计决定。 */

@@ -10322,8 +10322,9 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border: 1px solid transparent;
   border-radius: 7px;
   display: flex;
-  /* 状态图标浮在末尾，剩余空间留给会话标题。 */
+  /* 主按钮与行末快捷按钮共用第一行，错误提示另起一行。 */
   gap: var(--zeus-sidebar-label-gap, 6px);
+  grid-area: 1 / 1;
   inline-size: 100%;
   min-block-size: 38px;
   padding: 6px 0 6px 32px;
@@ -10347,7 +10348,45 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   position: relative;
 }
 
-/* 归档错误留在对应会话行，不新增操作列。 */
+/* 保持与状态图标相同的中心，点击区域为 24 × 24px。 */
+.macos-ai-app .session-conversation-tree-item > .session-conversation-row-action {
+  align-items: center;
+  background: transparent;
+  block-size: 24px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-product-muted);
+  display: inline-flex;
+  grid-area: 1 / 1;
+  inline-size: 24px;
+  justify-content: center;
+  justify-self: end;
+  margin-inline-end: 1px;
+  min-block-size: 24px;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  position: relative;
+}
+
+.macos-ai-app .session-conversation-row-action > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+/* 悬停、键盘进入或等待回执时显示快捷操作。 */
+.macos-ai-app .session-conversation-tree-item:where(:hover, :focus-within) > .session-conversation-row-action,
+.macos-ai-app .session-conversation-row-action[aria-busy='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.macos-ai-app .session-conversation-row-action:hover:not([aria-disabled='true']) {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+}
+
+/* 失败原因保留在原会话行。 */
 .macos-ai-app .session-conversation-row-error {
   color: var(--zeus-danger);
   font-size: 11px;
@@ -10368,7 +10407,18 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent calc(100% - 22px));
 }
 
-.macos-ai-app .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+/* 给右侧按钮留出固定宽度，长标题在窄栏保持单行省略。 */
+.macos-ai-app .session-conversation-tree-row:has(+ .session-conversation-row-action) > .session-conversation-title {
+  margin-inline-end: 26px;
+  mask-image: none;
+}
+
+/* 空闲会话的未读提示与快捷按钮共用位置，焦点仍可读到状态。 */
+.macos-ai-app .session-conversation-tree-item:where(:hover, :focus-within) > .session-conversation-tree-row:has(+ .session-conversation-row-action) > .session-conversation-status-icon {
+  opacity: 0;
+}
+
+.macos-ai-app .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible, :has(+ .session-conversation-row-action:is(:hover, :focus-visible))) {
   background: var(--zeus-interaction-hover);
   border-color: var(--zeus-project-menu-line);
 }
@@ -10378,7 +10428,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border-color: var(--zeus-project-menu-line);
 }
 
-.macos-ai-app.zeus-shell.theme-dark .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+.macos-ai-app.zeus-shell.theme-dark .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible, :has(+ .session-conversation-row-action:is(:hover, :focus-visible))) {
   background: var(--zeus-interaction-hover);
   border-color: var(--zeus-interaction-line);
 }
@@ -10389,7 +10439,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 @media (prefers-color-scheme: dark) {
-  .macos-ai-app.zeus-shell.theme-system .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
+  .macos-ai-app.zeus-shell.theme-system .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible, :has(+ .session-conversation-row-action:is(:hover, :focus-visible))) {
     background: var(--zeus-interaction-hover);
     border-color: var(--zeus-interaction-line);
   }
@@ -20883,7 +20933,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button):focus-visible {
+/* 侧栏图标按钮共用焦点轮廓。 */
+.macos-ai-app.zeus-shell .project-first-sidebar :where(.project-conversation-filter-button, .project-add-button, .session-conversation-row-action):focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }

@@ -651,7 +651,10 @@ export function SidebarNav(props: {
   onSelectConversation: (conversation: NativeConversationChoice) => void;
   /** 经过会话行时优先在后台准备其可读首屏。 */
   onPrepareConversation?: (conversationId: string) => void;
-  onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
+  /** 客户端就绪时可归档已保存的会话。 */
+  onArchiveConversation?: (conversation: NativeConversationChoice) => Promise<void>;
+  /** 会话行使用既有任务完成流程。 */
+  onCompleteTask?: (taskId: string) => Promise<void>;
   /** 只在真实会话客户端就绪时提供重命名能力。 */
   onRenameConversation?: (conversation: NativeConversationChoice, title: string) => Promise<void>;
   onNavigate: (target: WorkspaceViewId) => void;
@@ -1241,6 +1244,7 @@ export function SidebarNav(props: {
                             onSelectConversation={props.onSelectConversation}
                             onPrepareConversation={props.onPrepareConversation}
                             onArchiveConversation={props.onArchiveConversation}
+                            onCompleteTask={props.onCompleteTask}
                             onRenameConversation={props.onRenameConversation}
                             language={props.appLanguage}
                             compactProjectLabel
