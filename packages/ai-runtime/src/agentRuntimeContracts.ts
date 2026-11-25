@@ -141,6 +141,13 @@ export interface AgentRunResourceSnapshot {
   readableRoots: string[];
 }
 
+/** 摘要的单次供应商请求及其原生轮次归属。 */
+export type AgentCompactionRequestObservation = {
+  requestId: string;
+  nativeRunId: string;
+  model: AgentModelIdentity;
+} & ({ state: 'started' } | { state: 'completed' | 'failed' | 'aborted'; usage: unknown });
+
 export interface StartAgentRunInput {
   /** 产品会话已冻结的原生上下文容量，必须透传到隔离 Worker。 */
   contextCapacityTokens?: number | null;
@@ -165,7 +172,7 @@ export interface StartAgentRunInput {
   permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 仅用于 Zeus 内部 Command/Worker/RPC/回执性能关联，不进入 Provider 正文。 */
   traceIdentity?: string | null;
-  /** Pi 在进入 agent run 前同步返回预检结论；false 表示请求不会写给模型。 */
+  /** Pi 在进入 agent run 前返回预检结论，决策只针对当前用户消息。 */
   preflightResult?: (accepted: boolean) => void;
   /** 只在预检成功时同步执行，回调抛错必须阻止 agent run。 */
   durableTransactionSync?: (acceptance: AcceptedAgentRun) => void;
@@ -173,6 +180,8 @@ export interface StartAgentRunInput {
   providerWriteMayStart?: () => void;
   /** Provider 适配器完成最终请求体序列化后的脱敏缓存证据。 */
   providerPayloadObserved?: (diagnostic: AgentProviderPayloadDiagnostic) => void;
+  /** 等 Core 独立登记 SDK 摘要请求，并在收到供应商结果时记录用量。 */
+  compactionRequestObserved?: (observation: AgentCompactionRequestObservation, session: AgentSessionIdentity) => Promise<void> | void;
 }
 
 export interface AgentProviderPayloadFingerprint {

@@ -1,5 +1,6 @@
 import { assertContextCapacitySupported, type PortableHistoryEntry, redactUserFacingErrorDetails } from '@zeus/shared';
 import { createModelConnectionDeadline, modelResponseRetryPolicy } from './modelResponseRetry.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -8,10 +9,23 @@ import { lazyStream } from '@earendil-works/pi-ai/api/lazy';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, estimateTokens, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition, VERSION } from '@earendil-works/pi-coding-agent';
+import {
+  type AgentSession,
+  type AgentSessionEvent,
+  createAgentSession,
+  type CreateAgentSessionOptions,
+  defineTool,
+  estimateTokens,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type ToolDefinition,
+  VERSION,
+} from '@earendil-works/pi-coding-agent';
 import { type TSchema, Type } from 'typebox';
 import type {
   AcceptedAgentRun,
+  AgentCompactionRequestObservation,
   AgentDescriptor,
   AgentModelIdentity,
   AgentProviderPayloadDiagnostic,
@@ -216,6 +230,10 @@ interface PiSessionEntry {
   identity: AgentSessionIdentity;
   cwd: string;
   session: AgentSession;
+  /** 同一原生会话重绑模型运行时所需的历史、工具和资源。 */
+  sessionOptions: CreateAgentSessionOptions;
+  /** 创建当前 SDK 会话时使用的模型连接修订。 */
+  modelRuntimeRevision: number;
   resourceLoader: PiHeadlessResourceLoader;
   applicationContextFingerprint: string | null;
   activeSkill: AgentRunSkillActivation | null;
@@ -230,6 +248,16 @@ interface PiSessionEntry {
   unsubscribe: () => void;
 }
 
+/** 模型目录、凭据及其配置修订来自同一次加载。 */
+interface LoadedPiModelRuntime {
+  runtime: ModelRuntime;
+  connections: PiRuntimeConnection[];
+  revision: number;
+}
+
+/** 同一摘要请求从放行到结算复用请求身份。 */
+type PiCompactionRequestObserver = (state: AgentCompactionRequestObservation['state'], usage?: unknown) => Promise<void>;
+
 interface PiTerminalFailure {
   code: string;
   message: string;
@@ -238,7 +266,7 @@ interface PiTerminalFailure {
 
 /** 新输入只能在原生会话空闲、上一轮已释放身份时创建独立轮次。 */
 function requireIdlePiSession(entry: PiSessionEntry): void {
-  if (entry.activeRunId || !entry.session.isIdle) throw runtimeError('ZEUS_PI_RUN_IN_PROGRESS', 'Pi 会话正在执行，请等当前轮次结束后再发送。');
+  if (entry.activeRunId || !entry.session.isIdle || entry.applicationContextUpdating) throw runtimeError('ZEUS_PI_RUN_IN_PROGRESS', 'Pi 会话正在执行或准备资源，请等当前操作结束后再发送。');
 }
 
 /** 原生排队只适用于目标轮次仍在处理的会话。 */
@@ -279,11 +307,17 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
   const sessions = new Map<string, PiSessionEntry>();
   const listeners = new Set<(event: AgentRuntimeEvent) => void>();
   const payloadObservers = new Map<string, NonNullable<StartAgentRunInput['providerPayloadObserved']>>();
-  let modelRuntimePromise: Promise<{ runtime: ModelRuntime; connections: PiRuntimeConnection[] }> | null = null;
+  /** SDK 摘要拥有独立路由 ID，通过异步调用上下文归属到实际发起它的轮次。 */
+  const turnScope = new AsyncLocalStorage<{ entry: PiSessionEntry; nativeRunId: string; notify: StartAgentRunInput['compactionRequestObserved'] }>();
+  /** 连接修订只在设置变更或恢复时前进，常规探测不触发会话重绑。 */
+  let modelRuntimeRevision = 0;
+  let modelRuntimePromise: Promise<LoadedPiModelRuntime> | null = null;
   let closed = false;
 
-  async function loadModelRuntime(force = false): Promise<{ runtime: ModelRuntime; connections: PiRuntimeConnection[] }> {
+  async function loadModelRuntime(force = false): Promise<LoadedPiModelRuntime> {
     if (!force && modelRuntimePromise) return modelRuntimePromise;
+    /** 保留发起加载时的修订，异步读取期间发生的配置更新仍需下一轮刷新。 */
+    const revision = modelRuntimeRevision;
     modelRuntimePromise = (async () => {
       const connections = await options.loadConnections();
       // 认证只由 Zeus 注入，不读取用户独立安装的 Pi 全局认证文件。
@@ -302,10 +336,10 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             auth: { apiKey: envApiKeyAuth(`${connection.name} API Key`, []) },
             models: connectionModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
             api: {
-              'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload, projectToolImages),
-              'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload, projectToolImages),
-              'openai-images': withModelTransport(openAiImageGenerationApi, authenticationSchemes, observePayload, projectToolImages, false),
-              'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload, projectToolImages),
+              'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload, projectToolImages, observeCompactionRequest),
+              'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload, projectToolImages, observeCompactionRequest),
+              'openai-images': withModelTransport(openAiImageGenerationApi, authenticationSchemes, observePayload, projectToolImages, observeCompactionRequest, false),
+              'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload, projectToolImages, observeCompactionRequest),
             },
           }),
         );
@@ -313,7 +347,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       }
       // 注册 Provider 会异步刷新目录；批量注册结束后等待最终认证快照，恢复会话才能按原模型选取。
       await runtime.refresh({ allowNetwork: false });
-      return { runtime, connections };
+      return { runtime, connections, revision };
     })();
     return modelRuntimePromise;
   }
@@ -392,10 +426,25 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     if (entry?.activeRunId) publishSyntheticEvent(entry, entry.activeRunId, 'pricing_request_started', {});
   }
 
+  /** 每次在当前用户轮次中发起的 SDK 自动摘要请求各有一份 Core 回执。 */
+  function observeCompactionRequest(model: Model<Api>): PiCompactionRequestObserver | undefined {
+    const scope = turnScope.getStore();
+    if (!scope?.notify || scope.entry.activeRunId !== scope.nativeRunId || !scope.entry.session.isCompacting) return;
+    const { entry, nativeRunId, notify } = scope;
+    const identity = {
+      requestId: `pi_compaction_${randomUUID()}`,
+      nativeRunId,
+      model: { sourceId: sourceIdFromPiProvider(model.provider), modelId: model.id, displayName: model.name },
+    };
+    return async (state, usage) => {
+      await notify(state === 'started' ? { ...identity, state } : { ...identity, state, usage }, entry.identity);
+    };
+  }
+
   async function createSession(input: OpenAgentSessionInput | (ResumeAgentSessionInput & { cwd: string }), sessionManager: SessionManager): Promise<PiSessionEntry> {
     assertOpen();
     await Promise.all([mkdir(options.agentDirectory, { recursive: true, mode: 0o700 }), mkdir(options.sessionDirectory, { recursive: true, mode: 0o700 })]);
-    const { runtime } = await loadModelRuntime();
+    const { runtime, revision } = await loadModelRuntime();
     const requestedModel = 'model' in input ? input.model : undefined;
     const model = requestedModel ? resolveModel(runtime, requestedModel) : undefined;
     const settingsManager = SettingsManager.inMemory(
@@ -427,7 +476,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     await resourceLoader.reload();
     if ('metadata' in input) seedPortableContext(sessionManager, input.metadata);
     let entryRef: PiSessionEntry | null = null;
-    const { session } = await createAgentSession({
+    /** 重绑时复用原会话管理器和工具注册，保持原生历史和宿主资源关联。 */
+    const sessionOptions: CreateAgentSessionOptions = {
       cwd: input.cwd,
       agentDir: options.agentDirectory,
       modelRuntime: runtime,
@@ -437,7 +487,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       resourceLoader,
       sessionManager,
       settingsManager,
-    });
+    };
+    const { session } = await createAgentSession(sessionOptions);
     const identity: AgentSessionIdentity = {
       agentKind: 'pi',
       nativeSessionId: session.sessionId,
@@ -448,6 +499,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       identity,
       cwd: input.cwd,
       session,
+      sessionOptions,
+      modelRuntimeRevision: revision,
       resourceLoader,
       applicationContextFingerprint: null,
       activeSkill: null,
@@ -462,6 +515,30 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     entry.unsubscribe = session.subscribe((event) => publishPiEvent(entry, event));
     sessions.set(identity.nativeSessionId, entry);
     return entry;
+  }
+
+  /** 空闲会话沿原会话管理器重绑最新目录和凭据。 */
+  async function refreshSessionModelRuntime(entry: PiSessionEntry, loaded: LoadedPiModelRuntime, model: Model<Api> | undefined): Promise<void> {
+    if (entry.modelRuntimeRevision === loaded.revision) return;
+    requireIdlePiSession(entry);
+    entry.applicationContextUpdating = true;
+    try {
+      /** SDK 从同一个历史管理器恢复，原生 ID 与路径必须保持一致。 */
+      const sessionOptions = { ...entry.sessionOptions, modelRuntime: loaded.runtime, model };
+      const { session } = await createAgentSession(sessionOptions);
+      if (session.sessionId !== entry.identity.nativeSessionId || (session.sessionFile ?? null) !== entry.identity.nativeSessionPath) {
+        session.dispose();
+        throw runtimeError('ZEUS_PI_SESSION_IDENTITY_MISMATCH', 'Pi 模型更新后会话身份不一致。');
+      }
+      entry.unsubscribe();
+      entry.session.dispose();
+      entry.session = session;
+      entry.sessionOptions = sessionOptions;
+      entry.modelRuntimeRevision = loaded.revision;
+      entry.unsubscribe = session.subscribe((event) => publishPiEvent(entry, event));
+    } finally {
+      entry.applicationContextUpdating = false;
+    }
   }
 
   function publishPiEvent(entry: PiSessionEntry, event: AgentSessionEvent): void {
@@ -498,15 +575,13 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     /** 资源或上下文无效时，会话仍可接收下一次有效提交。 */
     const { userContent, images, selectedSkill } = await preparePiInput(input, appendUntrustedContext(input.content, input.untrustedContext));
     /** 始终从注册目录取真实容量，不能用上轮会话副本反算预留。 */
-    const { runtime: budgetRuntime, connections } = await loadModelRuntime();
+    const loaded = await loadModelRuntime();
+    const { runtime: budgetRuntime, connections } = loaded;
     const canonicalModel = input.model ? resolveModel(budgetRuntime, input.model) : entry.session.model ? budgetRuntime.getModel(entry.session.model.provider, entry.session.model.id) : undefined;
     assertContextCapacitySupported(input.contextCapacityTokens ?? null, canonicalModel?.contextWindow);
+    await refreshSessionModelRuntime(entry, loaded, canonicalModel);
     await applyRunResources(entry, input.applicationContext, selectedSkill, input.resourceSnapshot?.skillCatalog ?? input.skillCatalog);
-    if (input.model) {
-      if (!entry.session.isIdle) throw runtimeError('ZEUS_PI_MODEL_CHANGE_IN_PROGRESS', 'Pi 模型只能在会话空闲时切换。');
-      const { runtime } = await loadModelRuntime();
-      await entry.session.setModel(resolveModel(runtime, input.model));
-    }
+    requireIdlePiSession(entry);
     if (canonicalModel) {
       // 资源重载后应用当前会话副本；默认重新采用目录模型，清除先前的窗口覆盖。
       const contextWindow = input.contextCapacityTokens ?? canonicalModel.contextWindow;
@@ -562,21 +637,23 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     }, piPreflightTimeoutMs);
     preflightTimeout.unref();
     /** prompt 的 Promise 覆盖整轮，预检完成后它仍负责清理轮次状态。 */
-    const operation = entry.session
-      .prompt(userContent, {
-        ...(images?.length ? { images } : {}),
-        preflightResult: (disposition) => {
-          clearTimeout(preflightTimeout);
-          if (disposition === 'started') {
-            sdkStarted = true;
-            entry.providerWriteAllowed = providerWriteAllowed;
-            resolvePreflight();
-          } else {
-            // 排队或已处理的输入可能产生效果，按异常回执处理以免自动重发。
-            rejectPreflight(runtimeError('ZEUS_PI_INPUT_DISPOSITION_UNEXPECTED', `Pi 返回 ${disposition}，本次提交没有启动新轮次。`));
-          }
-        },
-      })
+    const operation = turnScope
+      .run({ entry, nativeRunId, notify: input.compactionRequestObserved }, () =>
+        entry.session.prompt(userContent, {
+          ...(images?.length ? { images } : {}),
+          preflightResult: (disposition) => {
+            clearTimeout(preflightTimeout);
+            if (disposition === 'started') {
+              sdkStarted = true;
+              entry.providerWriteAllowed = providerWriteAllowed;
+              resolvePreflight();
+            } else {
+              // 排队或已处理的输入可能产生效果，按异常回执处理以免自动重发。
+              rejectPreflight(runtimeError('ZEUS_PI_INPUT_DISPOSITION_UNEXPECTED', `Pi 返回 ${disposition}，本次提交没有启动新轮次。`));
+            }
+          },
+        }),
+      )
       .finally(() => {
         clearTimeout(preflightTimeout);
         if (entry.providerWriteAllowed === providerWriteAllowed) entry.providerWriteAllowed = undefined;
@@ -725,7 +802,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     },
     async compactSession(input: CompactAgentSessionInput): Promise<CompactAgentSessionResult> {
       const entry = requireSession(input.session);
-      if (!entry.session.isIdle) throw runtimeError('ZEUS_PI_COMPACTION_SESSION_BUSY', 'Pi 会话正在执行，不能开始上下文压缩。');
+      if (!entry.session.isIdle || entry.applicationContextUpdating) throw runtimeError('ZEUS_PI_COMPACTION_SESSION_BUSY', 'Pi 会话正在执行，不能开始上下文压缩。');
       await applySessionThinkingLevel(entry, input.thinkingLevel, loadModelRuntime);
       const result = await entry.session.compact(input.customInstructions);
       return {
@@ -738,7 +815,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     async importPortableHistory(input: PiPortableHistoryImportInput): Promise<PiPortableHistoryImportResult> {
       assertOpen();
       const entry = requireSession(input.session);
-      if (!entry.session.isIdle || entry.activeRunId) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_SESSION_BUSY', 'Pi 会话正在执行，不能导入既有历史。');
+      if (!entry.session.isIdle || entry.activeRunId || entry.applicationContextUpdating) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_SESSION_BUSY', 'Pi 会话正在执行，不能导入既有历史。');
       if (input.entries.length === 0) throw runtimeError('ZEUS_PI_HISTORY_IMPORT_EMPTY', 'Pi 历史导入缺少可导入条目。');
       await applySessionThinkingLevel(entry, input.thinkingLevel, loadModelRuntime);
       const batches = splitPortableHistoryBatches(input.entries, portableHistoryBatchCharacters(input.batchTokens));
@@ -781,9 +858,11 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     },
     async recover(): Promise<void> {
       assertOpen();
-      await loadModelRuntime(true);
+      this.invalidateModelRuntime();
+      await loadModelRuntime();
     },
     invalidateModelRuntime(): void {
+      modelRuntimeRevision += 1;
       modelRuntimePromise = null;
     },
     async reviewPermission(input): Promise<PiPermissionReviewResult> {
@@ -1276,6 +1355,7 @@ function withModelTransport(
   authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>,
   observePayload: (sessionId: string | undefined, model: Model<Api>, payload: unknown) => Promise<void>,
   projectContext: (model: Model<Api>, context: TranscriptContext, options?: StreamOptions) => Promise<TranscriptContext>,
+  observeCompactionRequest: (model: Model<Api>) => PiCompactionRequestObserver | undefined,
   responseStartsStream = true,
 ): ProviderStreams {
   /** 只对网络建链计时；确认旧流结束后才允许恢复，不限制连接建立后的生成。 */
@@ -1289,7 +1369,15 @@ function withModelTransport(
     /** 外部停止优先，不能因超时改写为自动重试。 */
     const combined = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     /** 复用认证和写前接纳入口，只增加真实连接边界的计时。 */
-    const transportOptions = optionsFor(model, { ...options, signal: combined });
+    const transportOptions = applyModelAuthentication({ ...options, signal: combined }, authenticationSchemes.get(model.id) ?? 'bearer') ?? {};
+    const compaction = observeCompactionRequest(model);
+    let compactionStarted = false;
+    /** 回执写入异常保留在已持久登记的请求上，避免 SDK 重发已得到结果的请求。 */
+    async function finishCompaction(state: 'completed' | 'failed' | 'aborted', usage?: unknown): Promise<void> {
+      if (!compaction || !compactionStarted) return;
+      compactionStarted = false;
+      await compaction(state, usage).catch(() => undefined);
+    }
     /** 保留调用方和 Core 的原有请求体回调。 */
     const onPayload = transportOptions.onPayload;
     /** 响应头先结束建链计时，再执行调用方的回调。 */
@@ -1297,9 +1385,19 @@ function withModelTransport(
     transportOptions.onPayload = async (payload, observedModel) => {
       /** 持久接纳和请求体准备属于写前阶段，不能消耗网络建链时间。 */
       const replacement = await onPayload?.(payload, observedModel);
+      const serialized = replacement === undefined ? payload : replacement;
+      if (compaction) {
+        if (!compactionStarted) {
+          signal?.throwIfAborted();
+          await compaction('started');
+          compactionStarted = true;
+        }
+      } else {
+        await observePayload(transportOptions.sessionId, observedModel, serialized);
+      }
       stopDeadline();
       if (responseStartsStream) stopDeadline = createModelConnectionDeadline(() => deadline.abort());
-      return replacement;
+      return serialized;
     };
     transportOptions.onResponse = async (response, observedModel) => {
       stopDeadline();
@@ -1311,6 +1409,11 @@ function withModelTransport(
           for await (const event of lazyStream(model, () => setup(transportOptions))) {
             // 复用连接或非 HTTP 传输可能没有响应头回调，流开始同样明确结束建链。
             if (event.type === 'start') stopDeadline();
+            if (compactionStarted && (event.type === 'done' || event.type === 'error')) {
+              stopDeadline();
+              if (event.type === 'done') await finishCompaction('completed', event.message.usage);
+              else await finishCompaction(signal?.aborted || (!deadline.signal.aborted && event.reason === 'aborted') ? 'aborted' : 'failed', event.error.usage);
+            }
             if (event.type === 'error' && signal?.aborted) yield { ...event, reason: 'aborted' as const, error: { ...event.error, stopReason: 'aborted' as const } };
             else if (event.type === 'error' && deadline.signal.aborted)
               yield { ...event, reason: 'error' as const, error: { ...event.error, stopReason: 'error' as const, errorMessage: 'Model connection establishment timeout after 60000ms' } };
@@ -1318,23 +1421,11 @@ function withModelTransport(
           }
         } finally {
           stopDeadline();
+          if (compactionStarted) await finishCompaction(signal?.aborted ? 'aborted' : 'failed');
         }
       },
     }));
   }
-  const optionsFor = (model: Model<Api>, options: StreamOptions | undefined): StreamOptions => {
-    const authenticated = applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'bearer') ?? {};
-    const originalOnPayload = authenticated.onPayload;
-    return {
-      ...authenticated,
-      onPayload: async (payload, observedModel) => {
-        const replacement = await originalOnPayload?.(payload, observedModel);
-        const serialized = replacement === undefined ? payload : replacement;
-        await observePayload(authenticated.sessionId, observedModel, serialized);
-        return serialized;
-      },
-    };
-  };
   return {
     stream(model, context, options) {
       return projectStream(model, async (transportOptions) => streams.stream(model, await projectContext(model, context, transportOptions), transportOptions), options);
