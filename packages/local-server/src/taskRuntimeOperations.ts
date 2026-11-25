@@ -3,6 +3,7 @@ import {
   buildTaskPushLayout,
   isTaskAttachmentField,
   type TaskPushContextConversationOption,
+  type TaskPushConversationHistory,
   type TaskPushMessageLayout,
   type TaskPushParentAttachmentOption,
   type TaskPushParentContextOption,
@@ -14,12 +15,12 @@ import {
   type TaskPushRelatedContextSelection,
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import { type ZeusConversationWithMessagesRecord, type ZeusProjectRecord, type ZeusTaskRecord, type ZeusTaskWorkspaceRecord } from '@zeus/storage';
+import { type ConversationSnapshotV2Repository, type ZeusConversationWithMessagesRecord, type ZeusProjectRecord, type ZeusTaskRecord, type ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { getNextTaskStatus, type TaskStatus } from './taskCore.js';
 import { createTelegramBotMessageClient, createTelegramLongPollingClient, createTelegramPollingService, getTelegramConfigurationState, type TelegramPollingService } from './telegramAdapter.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, parse, relative, sep } from 'node:path';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, parse, relative, sep } from 'node:path';
 import { isNativeApiRecord, nativeApiError } from './conversationApplicationOperations.js';
 import type { NativeConversationAttachment } from './index.js';
 import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
@@ -30,7 +31,10 @@ import { resolveModelCapability, type ConversationCapabilitiesSnapshot } from '.
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type TaskRuntimeOperationDependencies = Record<string, any>;
+export type TaskRuntimeOperationDependencies = Record<string, any> & {
+  /** 任务推送从 Zeus 已保存的可见对话读取历史。 */
+  conversationSnapshotV2: Pick<ConversationSnapshotV2Repository, 'hasConfirmedDialogue' | 'readConfirmedDialogue'>;
+};
 
 export interface InspectedTaskPushAttachment {
   option: TaskPushParentAttachmentOption;
@@ -67,6 +71,7 @@ export interface TaskPushContextState {
 
 export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDependencies) {
   const {
+    conversationSnapshotV2,
     aiRuntimeManager,
     appendAuditLog,
     buildRuntimeProcessEnv,
@@ -221,7 +226,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     task: ZeusTaskRecord,
     supplementalInfo: string,
     attachments: TaskPushPromptAttachment[],
-    currentConversationPaths: string[] = [],
+    currentConversationHistory: TaskPushConversationHistory[] = [],
     parentContexts: TaskPushPromptParentContext[] = [],
     relatedContexts: TaskPushPromptRelatedContext[] = [],
     supplementalAttachments: TaskPushSupplementalAttachment[] = [],
@@ -231,7 +236,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       taskCode: task.taskCode,
       ...taskPushPromptContent(task),
       attachments,
-      conversationPaths: currentConversationPaths,
+      conversationHistory: currentConversationHistory,
       supplementalInfo,
       supplementalAttachments,
       parentContexts,
@@ -387,20 +392,30 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return ancestors.reverse();
   }
 
-  function inspectTaskPushConversationPath(conversation: ZeusConversationWithMessagesRecord): { path: string | null; available: boolean; unavailableReason: string | null } {
-    const storedPath = conversation.nativeSessionPath?.trim() ?? '';
-    if (!storedPath) return { path: null, available: false, unavailableReason: 'app-server 未返回该会话的 JSONL 文件路径。' };
-    if (!isAbsolute(storedPath) || !storedPath.toLowerCase().endsWith('.jsonl')) {
-      return { path: null, available: false, unavailableReason: '会话路径不是绝对 JSONL 文件路径。' };
-    }
-    try {
-      if (lstatSync(storedPath).isSymbolicLink()) return { path: null, available: false, unavailableReason: '会话路径是符号链接，不能作为普通 JSONL 文件发送。' };
-      const canonicalPath = realpathSync(storedPath);
-      if (!statSync(canonicalPath).isFile()) return { path: null, available: false, unavailableReason: '会话路径不是普通文件。' };
-      return { path: canonicalPath, available: true, unavailableReason: null };
-    } catch {
-      return { path: null, available: false, unavailableReason: '会话 JSONL 文件已缺失或当前不可读取。' };
-    }
+  /** 旧会话可能只有持久消息，仍使用其已保存的用户与助手正文。 */
+  function legacyTaskPushDialogue(conversation: ZeusConversationWithMessagesRecord): NonNullable<TaskPushConversationHistory['dialogue']> {
+    return conversation.messages.flatMap((message) => {
+      const role = message.role;
+      return (role === 'user' || role === 'assistant') && message.content.trim() ? [{ role, text: redactSensitiveText(message.content).text }] : [];
+    });
+  }
+
+  /** 选择列表只返回本任务的会话身份与可用状态。 */
+  function listTaskPushConversationOptions(task: ZeusTaskRecord): TaskPushContextConversationOption[] {
+    return (conversations.listAllByTask(task.id) as ZeusConversationWithMessagesRecord[])
+      .filter((conversation) => conversation.projectId === task.projectId)
+      .map((conversation) => {
+        const available = conversationSnapshotV2.hasConfirmedDialogue(conversation.id) || conversation.messages.some((message) => (message.role === 'user' || message.role === 'assistant') && message.content.trim());
+        return {
+          id: conversation.id,
+          title: conversation.title,
+          createdAt: conversation.createdAt,
+          activityAt: conversations.meaningfulActivityAt(conversation.id),
+          archived: conversation.archived,
+          available,
+          unavailableReason: available ? null : '没有可发送的已保存对话。',
+        };
+      });
   }
 
   /** 展示时间不参与上下文修订，避免会话继续活动时阻断已有历史会话选择。 */
@@ -411,21 +426,8 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
   }
 
   function resolveTaskPushCurrentConversationState(task: ZeusTaskRecord): TaskPushCurrentConversationState {
-    const revisionResources: unknown[] = [];
-    const options = conversations.listAllByTask(task.id).map((conversation: ZeusConversationWithMessagesRecord): TaskPushContextConversationOption => {
-      const availability = inspectTaskPushConversationPath(conversation);
-      revisionResources.push({ id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
-      return {
-        id: conversation.id,
-        title: conversation.title,
-        createdAt: conversation.createdAt,
-        activityAt: conversations.meaningfulActivityAt(conversation.id),
-        archived: conversation.archived,
-        ...availability,
-      };
-    });
-    const revision = taskPushContextRevision(options, revisionResources);
-    return { options, revision };
+    const options = listTaskPushConversationOptions(task);
+    return { options, revision: taskPushContextRevision(options, []) };
   }
 
   function resolveTaskPushParentContextState(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushParentContextState {
@@ -437,18 +439,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       tasksById.set(ancestor.id, ancestor);
       const inspectedAttachments = inspectTaskPushAttachments(ancestor, project.localPath).inspected;
       attachmentsByTaskId.set(ancestor.id, inspectedAttachments);
-      const conversationOptions = conversations.listAllByTask(ancestor.id).map((conversation: ZeusConversationWithMessagesRecord) => {
-        const availability = inspectTaskPushConversationPath(conversation);
-        revisionResources.push({ type: 'conversation', taskId: ancestor.id, id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
-        return {
-          id: conversation.id,
-          title: conversation.title,
-          createdAt: conversation.createdAt,
-          activityAt: conversations.meaningfulActivityAt(conversation.id),
-          archived: conversation.archived,
-          ...availability,
-        };
-      });
+      const conversationOptions = listTaskPushConversationOptions(ancestor);
       for (const attachment of inspectedAttachments) {
         revisionResources.push({ type: 'attachment', taskId: ancestor.id, option: attachment.option, localPath: attachment.attachment?.localPath ?? null });
       }
@@ -478,11 +469,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       tasksById.set(relatedTask.id, relatedTask);
       const inspectedAttachments = inspectTaskPushAttachments(relatedTask, project.localPath).inspected;
       attachmentsByTaskId.set(relatedTask.id, inspectedAttachments);
-      const conversationOptions = conversations.listAllByTask(relatedTask.id).map((conversation: ZeusConversationWithMessagesRecord) => {
-        const availability = inspectTaskPushConversationPath(conversation);
-        revisionResources.push({ type: 'conversation', taskId: relatedTask.id, id: conversation.id, path: availability.path, available: availability.available, archived: conversation.archived });
-        return { id: conversation.id, title: conversation.title, createdAt: conversation.createdAt, activityAt: conversations.meaningfulActivityAt(conversation.id), archived: conversation.archived, ...availability };
-      });
+      const conversationOptions = listTaskPushConversationOptions(relatedTask);
       for (const attachment of inspectedAttachments) {
         revisionResources.push({ type: 'attachment', taskId: relatedTask.id, option: attachment.option, localPath: attachment.attachment?.localPath ?? null });
       }
@@ -549,12 +536,12 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     task: ZeusTaskRecord,
     value: unknown,
   ): {
-    currentConversationPaths: string[];
+    currentConversationHistory: TaskPushConversationHistory[];
     parentContexts: TaskPushPromptParentContext[];
     relatedContexts: TaskPushPromptRelatedContext[];
     attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
   } {
-    if (value === undefined) return { currentConversationPaths: [], parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
+    if (value === undefined) return { currentConversationHistory: [], parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
     if (!isNativeApiRecord(value) || typeof value.revision !== 'string') {
       throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', 'taskContext must contain a revision.');
     }
@@ -568,15 +555,21 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
 
     const selectedAttachments: NativeConversationAttachment[] = [];
     const allowedRoots = new Set<string>();
-    const currentConversationById = new Map(state.current.options.map((conversation) => [conversation.id, conversation]));
-    const currentConversationPaths = currentConversationIds.map((conversationId) => {
-      const conversation = currentConversationById.get(conversationId);
-      if (!conversation?.available || !conversation.path) {
-        throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '当前任务历史会话信息已变化，请刷新后重试。');
-      }
-      allowedRoots.add(dirname(conversation.path));
-      return conversation.path;
-    });
+    /** 服务端重验所选会话归属，再为本次推送固定可见对话。 */
+    const resolveHistory = (taskId: string, options: TaskPushContextConversationOption[], ids: string[]): TaskPushConversationHistory[] => {
+      const availableIds = new Set(options.filter((option) => option.available).map((option) => option.id));
+      return ids.map((id) => {
+        const conversation: ZeusConversationWithMessagesRecord | undefined = availableIds.has(id) ? conversations.getById(id) : undefined;
+        if (!conversation || conversation.projectId !== project.id || conversation.taskId !== taskId) {
+          throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '所选历史会话已变化，请刷新后重试。');
+        }
+        const confirmedDialogue = conversationSnapshotV2.readConfirmedDialogue(id);
+        const dialogue = confirmedDialogue.length ? confirmedDialogue : legacyTaskPushDialogue(conversation);
+        if (!dialogue.length) throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '所选会话没有可发送的已保存对话，请刷新后重试。');
+        return { id, title: conversation.title, dialogue };
+      });
+    };
+    const currentConversationHistory = resolveHistory(task.id, state.current.options, currentConversationIds);
     const resolveSelections = <T extends TaskPushPromptParentContext | TaskPushPromptRelatedContext>(input: {
       kindLabel: string;
       options: Array<TaskPushParentContextOption | TaskPushRelatedContextOption>;
@@ -592,15 +585,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       for (const option of input.options) {
         const selection = selectionByTaskId.get(option.taskId);
         if (!selection) continue;
-        const conversationById = new Map(option.conversations.map((conversation) => [conversation.id, conversation]));
-        const conversationPaths = selection.conversationIds.map((conversationId) => {
-          const conversation = conversationById.get(conversationId);
-          if (!conversation?.available || !conversation.path) {
-            throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', `${input.kindLabel} ${option.taskCode} 的会话文件已变化，请刷新后重试。`);
-          }
-          allowedRoots.add(dirname(conversation.path));
-          return conversation.path;
-        });
+        const conversationHistory = resolveHistory(option.taskId, option.conversations, selection.conversationIds);
         const attachmentByKey = new Map((input.attachmentsByTaskId.get(option.taskId) ?? []).map((attachment) => [attachment.option.key, attachment]));
         const promptAttachments: TaskPushPromptAttachment[] = [];
         for (const attachmentKey of selection.attachmentKeys) {
@@ -620,7 +605,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
           });
         }
         const contextTask = input.tasksById.get(option.taskId)!;
-        contexts.push({ taskId: option.taskId, taskCode: option.taskCode, ...taskPushPromptContent(contextTask), attachments: promptAttachments, conversationPaths });
+        contexts.push({ taskId: option.taskId, taskCode: option.taskCode, ...taskPushPromptContent(contextTask), attachments: promptAttachments, conversationHistory });
       }
       return contexts as T[];
     };
@@ -640,7 +625,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       selections: relatedSelections,
     });
     for (const root of selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : []) allowedRoots.add(root);
-    return { currentConversationPaths, parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
+    return { currentConversationHistory, parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
   }
 
   function mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>) {
@@ -1257,7 +1242,6 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     normalizeTaskPushAttachments,
     normalizeTaskPushSupplementalAttachments,
     listTaskPushAncestors,
-    inspectTaskPushConversationPath,
     resolveTaskPushCurrentConversationState,
     resolveTaskPushParentContextState,
     resolveTaskPushRelatedContextState,

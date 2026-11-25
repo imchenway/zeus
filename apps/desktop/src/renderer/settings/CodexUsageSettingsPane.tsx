@@ -315,10 +315,14 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
                   </Button>
                 </th>
                 <td data-label={props.language === 'zh-CN' ? '当前范围 Token' : 'Range tokens'}>
-                  <strong>{formatTokens(analytics.local.totals.totalTokens, props.language)}</strong>
-                  {!props.filtered ? (
+                  <strong>{formatTokens(analytics.local.totals.totalTokens, props.language, analytics.local.complete)}</strong>
+                  {!props.filtered || analytics.local.complete === false ? (
                     <small>
-                      {copy.today} {formatTokens(analytics.provider.overviewRanges.today.local.totalTokens, props.language)}
+                      {analytics.local.complete === false
+                        ? props.language === 'zh-CN'
+                          ? '统计不完整'
+                          : 'Incomplete usage'
+                        : `${copy.today} ${formatTokens(analytics.provider.overviewRanges.today.local.totalTokens, props.language, analytics.provider.overviewRanges.today.complete)}`}
                     </small>
                   ) : null}
                 </td>
@@ -440,7 +444,10 @@ function LocalUsageTabs(props: { analytics: UsageProviderAnalytics; language: La
             </Button>
           ))}
         </nav>
-        <em>{copy.onlyZeus}</em>
+        <em>
+          {copy.onlyZeus}
+          {props.analytics.local.complete === false ? (props.language === 'zh-CN' ? ' · 统计不完整' : ' · Incomplete usage') : ''}
+        </em>
       </header>
       <small className="codex-usage-local-help">{copy.localHelp}</small>
       <section id={panelId('overview')} className="codex-usage-local-tab-panel" role="tabpanel" aria-labelledby={tabId('overview')} tabIndex={0} hidden={activeTab !== 'overview'}>
@@ -523,7 +530,7 @@ function LocalOverview(props: { analytics: UsageProviderAnalytics; language: Lan
       <MetricGrid
         language={props.language}
         items={[
-          [props.language === 'zh-CN' ? 'Token' : 'Tokens', formatTokens(totals.totalTokens, props.language)],
+          [props.language === 'zh-CN' ? 'Token' : 'Tokens', formatTokens(totals.totalTokens, props.language, local.complete)],
           [usageCostLabel(provider, props.language), formatUsageCost(totals, props.language)],
           [props.language === 'zh-CN' ? '缓存命中率' : 'Cache hit rate', provider.cacheUsageAvailable && totals.cacheHitRate !== null ? formatPercent(totals.cacheHitRate, props.language) : '—'],
           [props.language === 'zh-CN' ? '请求输出速率' : 'Request output rate', formatOutputRate(totals.outputTokensPerSecond, props.language)],
@@ -533,19 +540,23 @@ function LocalOverview(props: { analytics: UsageProviderAnalytics; language: Lan
         {props.language === 'zh-CN' ? `${totals.turnCount} 轮 · ${totals.conversationCount} 个会话` : `${totals.turnCount} turns · ${totals.conversationCount} conversations`}
         {totals.priceCoverage !== null ? ` · ${props.language === 'zh-CN' ? '计价覆盖率' : 'Price coverage'} ${formatPercent(totals.priceCoverage, props.language)}` : ''}
       </p>
-      {totals.turnCount === 0 ? <p className="codex-usage-state">{text[props.language].empty}</p> : <LocalUsageTrend days={local.daily} range={props.analytics.range} label={text[props.language].onlyZeus} language={props.language} />}
+      {totals.turnCount === 0 && !local.incompleteDates?.length ? (
+        <p className="codex-usage-state">{text[props.language].empty}</p>
+      ) : (
+        <LocalUsageTrend days={local.daily} incompleteDates={local.incompleteDates} range={props.analytics.range} label={text[props.language].onlyZeus} language={props.language} />
+      )}
       {totals.turnCount > 0 ? (
         <section className="codex-usage-token-detail" aria-label={props.language === 'zh-CN' ? 'Token 构成' : 'Token breakdown'}>
           <h4>{props.language === 'zh-CN' ? 'Token 构成' : 'Token breakdown'}</h4>
           <MetricGrid
             language={props.language}
             items={[
-              [props.language === 'zh-CN' ? '输入' : 'Input', formatTokens(totals.inputTokens, props.language)],
-              [props.language === 'zh-CN' ? '输出' : 'Output', formatTokens(totals.outputTokens, props.language)],
-              [props.language === 'zh-CN' ? '推理输出' : 'Reasoning output', formatTokens(totals.reasoningOutputTokens, props.language)],
-              [props.language === 'zh-CN' ? '缓存命中' : 'Cache hits', formatTokens(totals.cachedInputTokens, props.language)],
-              [props.language === 'zh-CN' ? '缓存未命中' : 'Cache misses', formatTokens(calculateUncachedInputTokens(totals), props.language)],
-              [props.language === 'zh-CN' ? '缓存写入' : 'Cache writes', formatTokens(totals.cacheWriteInputTokens, props.language)],
+              [props.language === 'zh-CN' ? '输入' : 'Input', formatTokens(totals.inputTokens, props.language, local.complete)],
+              [props.language === 'zh-CN' ? '输出' : 'Output', formatTokens(totals.outputTokens, props.language, local.complete)],
+              [props.language === 'zh-CN' ? '推理输出' : 'Reasoning output', formatTokens(totals.reasoningOutputTokens, props.language, local.complete)],
+              [props.language === 'zh-CN' ? '缓存命中' : 'Cache hits', formatTokens(totals.cachedInputTokens, props.language, local.complete)],
+              [props.language === 'zh-CN' ? '缓存未命中' : 'Cache misses', formatTokens(calculateUncachedInputTokens(totals), props.language, local.complete)],
+              [props.language === 'zh-CN' ? '缓存写入' : 'Cache writes', formatTokens(totals.cacheWriteInputTokens, props.language, local.complete)],
             ]}
           />
         </section>
@@ -707,11 +718,13 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
 }
 
 /** 当前范围使用连续日期柱图；全部历史按月汇总，避免裁掉早期记录。 */
-function LocalUsageTrend(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>; range: CodexUsageRange; label: string; language: Language }) {
-  /** 每个槽位保留完整时间间隔，没有记录的日期为零。 */
+function LocalUsageTrend(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 'totalTokens'>>; incompleteDates?: string[]; range: CodexUsageRange; label: string; language: Language }) {
+  /** 时间轴保留写入失败的日期，缺失用量与零值分别标记。 */
   const cells = useMemo(() => {
     /** 全部历史按月份合计，其余范围保持逐日。 */
     const monthly = props.range === 'all';
+    /** 有一日记录不全时，其月份合计也是已知下限。 */
+    const incomplete = new Set(props.incompleteDates?.map((date) => (monthly ? date.slice(0, 7) : date)));
     /** 日期键只来自后台账本，不混入官方账户统计。 */
     const totals = new Map<string, number>();
     for (const day of props.days) {
@@ -722,18 +735,18 @@ function LocalUsageTrend(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 
     /** 当前本地日期用于补齐空白日期。 */
     const today = startOfLocalDate(new Date());
     /** 全部历史从首条记录月份开始，空历史只保留当前月份。 */
-    const firstMonth = [...totals.keys()].sort()[0];
+    const firstMonth = [...totals.keys(), ...incomplete].sort()[0];
     /** 日期计算使用本地日历，避免夏令时带来的重复或缺日。 */
     const first = monthly ? (firstMonth ? new Date(`${firstMonth}-01T00:00:00`) : new Date(today.getFullYear(), today.getMonth(), 1)) : addLocalDays(today, -(props.range === '7d' ? 6 : props.range === '30d' ? 29 : 89));
     /** 柱图保留全部槽位，不对全部历史做静默截断。 */
-    const slots: Array<{ date: string; totalTokens: number }> = [];
+    const slots: Array<{ date: string; totalTokens: number; complete: boolean }> = [];
     for (let date = first; date <= today; date = monthly ? new Date(date.getFullYear(), date.getMonth() + 1, 1) : addLocalDays(date, 1)) {
       /** 月和日使用各自的展示键。 */
       const key = monthly ? localDateKey(date).slice(0, 7) : localDateKey(date);
-      slots.push({ date: key, totalTokens: totals.get(key) ?? 0 });
+      slots.push({ date: key, totalTokens: totals.get(key) ?? 0, complete: !incomplete.has(key) });
     }
     return slots;
-  }, [props.days, props.range]);
+  }, [props.days, props.incompleteDates, props.range]);
   /** 柱高只在同一供应商、同一统计范围内比较。 */
   const maximum = Math.max(1, ...cells.map((day) => day.totalTokens));
   return (
@@ -743,17 +756,17 @@ function LocalUsageTrend(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 
         <small>{props.label}</small>
       </header>
       <div className="codex-usage-trend-bars" role="list">
-        {cells.map((day) => (
-          <span
-            key={day.date}
-            role="listitem"
-            tabIndex={0}
-            data-icon-tooltip={`${day.date}: ${new Intl.NumberFormat(props.language).format(day.totalTokens)} Token`}
-            aria-label={`${day.date}: ${new Intl.NumberFormat(props.language).format(day.totalTokens)} Token`}
-          >
-            <i style={{ blockSize: `${Math.max(day.totalTokens > 0 ? 2 : 0, (day.totalTokens / maximum) * 100)}%` }} />
-          </span>
-        ))}
+        {cells.map((day) => {
+          /** 鼠标和键盘获得相同的缺失状态与已知数值。 */
+          const total = day.complete ? new Intl.NumberFormat(props.language).format(day.totalTokens) : formatTokens(day.totalTokens, props.language, false);
+          /** 部分数据仍可绘制已知部分，但不能作为当天合计。 */
+          const label = `${day.date} · ${total} Token${day.complete ? '' : props.language === 'zh-CN' ? ' · 统计不完整' : ' · Incomplete usage'}`;
+          return (
+            <span key={day.date} role="listitem" tabIndex={0} data-icon-tooltip={label} aria-label={label}>
+              <i style={{ blockSize: `${Math.max(day.totalTokens > 0 ? 2 : 0, (day.totalTokens / maximum) * 100)}%` }} />
+            </span>
+          );
+        })}
       </div>
       <footer>
         <span>{cells[0]?.date}</span>
@@ -923,9 +936,10 @@ function formatOutputRate(value: number | null, language: Language): string {
   return value === null ? '—' : `${new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(value)} tok/s`;
 }
 
-/** Token 使用本地化紧凑数值。 */
-function formatTokens(value: number | null, language: Language): string {
-  return value === null ? text[language].unavailable : new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+/** 用量不完整时正数表示已知下限，缺少已知值时保持未知。 */
+function formatTokens(value: number | null, language: Language, complete = true): string {
+  if (value === null || (!complete && value === 0)) return text[language].unavailable;
+  return `${complete ? '' : '≥'}${new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 }).format(value)}`;
 }
 
 /** 百分比只展示非负值，缺失值保持未知。 */

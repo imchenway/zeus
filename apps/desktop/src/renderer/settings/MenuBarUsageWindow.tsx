@@ -59,6 +59,7 @@ const copy = {
     localTokens: '本机 Token',
     /** 统计不完整时，供应商数只表示当前已记录的下限。 */
     providersUsed: (count: number, complete: boolean, range: UsageOverviewRange) => `${complete ? '' : '至少 '}${count} 个供应商${range === 'today' ? '今日' : ''}有用量`,
+    incomplete: '统计不完整',
     usagePeriod: '统计周期',
     sevenDayTrend: '近 7 天趋势',
     /** 只用于官方明确返回的 Codex 主额度的五小时窗口。 */
@@ -145,6 +146,7 @@ const copy = {
     localTokens: 'Local tokens',
     /** 统计不完整时，供应商数只表示当前已记录的下限。 */
     providersUsed: (count: number, complete: boolean, range: UsageOverviewRange) => `${complete ? '' : 'At least '}${count} ${count === 1 ? 'provider' : 'providers'} used${range === 'today' ? ' today' : ''}`,
+    incomplete: 'Incomplete usage',
     usagePeriod: 'Usage period',
     sevenDayTrend: '7-day trend',
     /** Shown for the official five-hour window in the main Codex quota. */
@@ -538,7 +540,10 @@ function AllProviders(props: { providers: UsageProviderSummary[]; fullCoverage: 
       <div className="menu-bar-usage-provider-total">
         <span>
           <b>{range === 'today' ? text.todayLocalTokens : text.localTokens}</b>
-          <small>{text.providersUsed(total.activeProviders, total.complete, range)}</small>
+          <small>
+            {text.providersUsed(total.activeProviders, total.complete, range)}
+            {total.complete ? '' : ` · ${text.incomplete}`}
+          </small>
         </span>
         <strong>{formatIncompleteTokens(total.tokens, total.complete, language)}</strong>
       </div>
@@ -706,7 +711,10 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
   return (
     <section className="menu-bar-usage-overview">
       <header className="menu-bar-usage-overview-head">
-        <h3>{text.overview}</h3>
+        <h3>
+          {text.overview}
+          {provider.overviewRanges[range].complete ? '' : ` · ${text.incomplete}`}
+        </h3>
         <UsageRangeControl range={range} language={language} onChange={setRange} />
       </header>
 
@@ -881,7 +889,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
     }
   };
   /** 费用维度依赖本地账本；没有本地记录时不再画一排空柱。 */
-  const hasLocalHistory = props.provider.dailyLocal.length > 0 || props.provider.collectionStartedAt !== null;
+  const hasLocalHistory = props.provider.dailyLocal.length > 0 || props.provider.collectionStartedAt !== null || Boolean(props.provider.incompleteLocalDates?.length);
   if (!sourceSelectable && !hasLocalHistory)
     return (
       <div className="menu-bar-usage-chart-empty">
@@ -1414,10 +1422,12 @@ function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimensi
     const date = new Date(today);
     date.setDate(date.getDate() - 6 + index);
     const dateKey = localDateKey(date);
+    /** 当天写入失败且没有已知值时保留未知，官方日统计不受本机写入影响。 */
+    const incomplete = !accountUsage && provider.incompleteLocalDates?.includes(dateKey);
     /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零，未定价日期按缺失处理。 */
     const recorded = bucketsByDate.get(dateKey);
-    const value = recorded === null ? null : recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
-    return { date: dateKey, value, complete: value !== null && (dimension !== 'cost' || recorded === undefined || pricingByDate.get(dateKey) === 1) };
+    const value = recorded === null ? null : recorded === undefined ? (!accountUsage && !incomplete && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
+    return { date: dateKey, value, complete: !incomplete && value !== null && (dimension !== 'cost' || recorded === undefined || pricingByDate.get(dateKey) === 1) };
   });
 }
 
@@ -1465,7 +1475,9 @@ function formatTokens(value: number, language: Language, maximumFractionDigits =
   return new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits }).format(value);
 }
 
+/** 用量缺失且没有已知用量时不显示零。 */
 function formatIncompleteTokens(value: number, complete: boolean | undefined, language: Language): string {
+  if (!complete && value === 0) return '—';
   const formatted = formatTokens(value, language);
   return complete === true ? formatted : `≥${formatted}`;
 }

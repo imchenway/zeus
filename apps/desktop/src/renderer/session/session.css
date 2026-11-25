@@ -4659,12 +4659,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border-top: 1px solid var(--session-line-soft);
   padding: 6px 16px 14px;
 }
-.session-information-resources summary {
-  cursor: pointer;
+.session-information-resources :is(summary, .session-information-resource-status) {
   font-size: 11px;
   padding-block: 10px;
 }
-.session-information-resources summary > span {
+.session-information-resources summary {
+  cursor: pointer;
+}
+.session-information-resources :is(summary, .session-information-resource-status) > span {
   color: var(--session-text-muted);
   margin-left: 8px;
   font-variant-numeric: tabular-nums;
@@ -10824,9 +10826,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   margin-inline: 0;
 }
 
-.session-codex-parity-v1
-  .session-live-turn-row
-  > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
+.session-codex-parity-v1 .session-live-turn-row > :where(.session-thread-item, .session-activity-group, .session-reasoning-summary, .session-plan-summary, .session-question-panel, .session-plan-progress, .session-transcript-thinking) {
   inline-size: 100%;
   margin-inline: 0;
 }

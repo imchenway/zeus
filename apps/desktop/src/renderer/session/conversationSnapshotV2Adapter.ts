@@ -299,7 +299,7 @@ export function mergeConversationContentV2(snapshot: NativeConversationSnapshot,
     const content = parseProjection(text, false);
     const processDetail = item.payload.v2ContentKind === 'process_detail';
     // 全文恢复后再次使用共享转换，短预览不能永久覆盖完整命令和结果。
-    const presentation = processDetail ? conversationProcessPresentation(String(item.payload.processKind), content) : null;
+    const presentation = processDetail ? conversationProcessPresentation(String(item.payload.processKind), content, item.completedAt ?? item.startedAt ?? undefined) : null;
     // 思考全文没有可读内容时保持为空，不能重新沿用预览阶段的通用标题。
     /** 完整读取复用首屏的用户上下文投影，评论无正文时不显示 JSON。 */
     const userPresentation = processDetail ? {} : historicalUserPresentation(content, item.type === 'userMessage');
@@ -642,7 +642,11 @@ function processItems(items: NativeConversationProcessV2Item[], providerTurnByLo
   return items.map((item) => {
     const detail = parseProjection(item.detail.preview, item.detail.truncated);
     // 分页元数据独立于正文预览，长命令或结果截断时仍保留活动类型和目标。
-    const presentation = conversationProcessPresentation(item.kind, { ...item.presentation, ...recordValue(detail), ...(item.sourceEventId?.startsWith('pi:') ? { provider: 'pi' } : {}) });
+    const presentation = conversationProcessPresentation(
+      item.kind,
+      item.kind === 'warning' && item.presentation ? item.presentation : { ...item.presentation, ...recordValue(detail), ...(item.sourceEventId?.startsWith('pi:') ? { provider: 'pi' } : {}) },
+      item.completedAt ?? item.startedAt,
+    );
     const type = presentation.type;
     const text = processProjectionText(item, detail);
     return {

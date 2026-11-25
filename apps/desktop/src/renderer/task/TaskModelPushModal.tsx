@@ -5,6 +5,7 @@ import {
   formatZeusDateTime,
   buildTaskPushLayout,
   type TaskPushContextConversationOption,
+  type TaskPushConversationHistory,
   type TaskPushContextOption,
   type TaskPushMessageLayout,
   type TaskPushParentContextOption,
@@ -188,7 +189,7 @@ export function buildTaskModelPushLayout(
   task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
   supplementalInfo: string,
   currentAttachments: TaskPushPromptAttachment[] = [],
-  currentConversationPaths: string[] = [],
+  currentConversationHistory: TaskPushConversationHistory[] = [],
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
   supplementalAttachments: TaskPushSupplementalAttachment[] = [],
@@ -206,7 +207,7 @@ export function buildTaskModelPushLayout(
     optimizationExpectedOutcome: task.optimizationExpectedOutcome,
     tags: task.tags,
     attachments: currentAttachments,
-    conversationPaths: currentConversationPaths,
+    conversationHistory: currentConversationHistory,
     supplementalInfo,
     supplementalAttachments,
     parentContexts,
@@ -258,9 +259,10 @@ export function mergeTaskPushSupplementalAttachments(current: TaskPushSupplement
   return [...byIdentity.values()];
 }
 
-export function selectedTaskPushCurrentConversationPaths(options: TaskPushContextConversationOption[], conversationIds: string[]): string[] {
+/** 预览只投影用户选中的会话身份，正文由服务端在发送时读取。 */
+export function selectedTaskPushConversationHistory(options: TaskPushContextConversationOption[], conversationIds: string[]): TaskPushConversationHistory[] {
   const selectedConversationIds = new Set(conversationIds);
-  return options.filter((conversation) => selectedConversationIds.has(conversation.id) && conversation.available && conversation.path).map((conversation) => conversation.path!);
+  return options.filter((conversation) => selectedConversationIds.has(conversation.id) && conversation.available).map(({ id, title }) => ({ id, title }));
 }
 
 /** 按服务端给出的根到父顺序生成正文上下文；附件只走结构化通道，不进入文本。 */
@@ -279,7 +281,6 @@ function selectedTaskPushContexts<T extends TaskPushContextOption>(
   return options.flatMap((option) => {
     const selection = selections[option.taskId];
     if (!selection?.selected) return [];
-    const selectedConversationIds = new Set(selection.conversationIds);
     const selectedAttachmentKeys = new Set(selection.attachmentKeys);
     return [
       {
@@ -295,7 +296,7 @@ function selectedTaskPushContexts<T extends TaskPushContextOption>(
         optimizationExpectedOutcome: option.optimizationExpectedOutcome,
         tags: option.tags,
         attachments: option.attachments.filter((attachment) => selectedAttachmentKeys.has(attachment.key) && attachment.available),
-        conversationPaths: option.conversations.filter((conversation) => selectedConversationIds.has(conversation.id) && conversation.available && conversation.path).map((conversation) => conversation.path!),
+        conversationHistory: selectedTaskPushConversationHistory(option.conversations, selection.conversationIds),
       },
     ];
   });
@@ -330,10 +331,7 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
                         {props.zh ? '最后更新：' : 'Last updated: '}
                         <time dateTime={conversation.activityAt}>{formatZeusDateTime(conversation.activityAt, props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
                       </small>
-                      <small>
-                        {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
-                        {conversation.available ? conversation.path : conversation.unavailableReason}
-                      </small>
+                      {conversation.archived || conversation.unavailableReason ? <small>{[conversation.archived ? (props.zh ? '已归档' : 'Archived') : '', conversation.unavailableReason].filter(Boolean).join(' · ')}</small> : null}
                     </span>
                   </label>
                 ))}
@@ -423,10 +421,7 @@ function TaskPushContextPicker(props: {
                               {props.zh ? '最后更新：' : 'Last updated: '}
                               <time dateTime={conversation.activityAt}>{formatZeusDateTime(conversation.activityAt, props.zh ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'medium' })}</time>
                             </small>
-                            <small>
-                              {conversation.archived ? (props.zh ? '已归档 · ' : 'Archived · ') : ''}
-                              {conversation.available ? conversation.path : conversation.unavailableReason}
-                            </small>
+                            {conversation.archived || conversation.unavailableReason ? <small>{[conversation.archived ? (props.zh ? '已归档' : 'Archived') : '', conversation.unavailableReason].filter(Boolean).join(' · ')}</small> : null}
                           </span>
                         </label>
                       ))
@@ -509,9 +504,12 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
               {field.text ? <p>{field.text}</p> : null}
             </section>
           ))}
-          {block.conversationPaths.length > 0 ? (
+          {block.conversationHistory?.length || block.conversationPaths.length > 0 ? (
             <section className="task-push-layout-field">
-              <strong>{block.contextKind === 'current' ? '当前任务历史会话信息：' : '会话文件路径：'}</strong>
+              <strong>{props.language === 'zh-CN' ? '历史会话' : 'Conversation history'}</strong>
+              {block.conversationHistory?.map((conversation) => (
+                <p key={conversation.id}>{conversation.title}</p>
+              ))}
               {block.conversationPaths.map((path) => (
                 <code key={path}>{path}</code>
               ))}
@@ -822,14 +820,14 @@ export function TaskModelPushModal(props: {
   const relatedContextOptions = props.capabilities?.relatedContextOptions ?? [];
   const currentAttachments = props.capabilities?.currentAttachmentOptions ?? [];
   const currentConversationOptions = props.capabilities?.currentConversationOptions ?? [];
-  const selectedCurrentConversationPaths = selectedTaskPushCurrentConversationPaths(currentConversationOptions, props.form.currentConversationIds);
+  const selectedCurrentConversationHistory = selectedTaskPushConversationHistory(currentConversationOptions, props.form.currentConversationIds);
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
   const selectedRelatedContexts = selectedTaskPushRelatedContexts(relatedContextOptions, props.form.relatedContextSelections);
   const taskPushLayout = buildTaskModelPushLayout(
     props.task,
     props.form.supplementalInfo,
     currentAttachments,
-    selectedCurrentConversationPaths,
+    selectedCurrentConversationHistory,
     selectedParentContexts,
     selectedRelatedContexts,
     taskPushSupplementalLayoutAttachments(props.form.supplementalAttachments),

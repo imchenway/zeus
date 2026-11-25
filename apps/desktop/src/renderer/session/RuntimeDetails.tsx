@@ -72,6 +72,8 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
   const complete = props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 && props.runtime.usage.historyComplete.state === 'available' && props.runtime.usage.historyComplete.value;
   /** 明细区只显示当前会话可确认的使用记录。 */
   const resources = information?.resources ?? props.resources;
+  /** 读取失败由现有详情提示说明，资源项保持未知。 */
+  const resourceReadFailed = Boolean(error && !resources);
   /** 简短提示同时供鼠标和键盘读取。 */
   const tokenHint = `${zh ? '累计输入' : 'Total input'}: ${tokenText(props.runtime.usage.inputTokens, props.language, false)}\n${zh ? '累计输出' : 'Total output'}: ${tokenText(props.runtime.usage.outputTokens, props.language, false)}`;
   /** 未完成读取时不将缺失明细显示成零费用。 */
@@ -147,9 +149,8 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           ) : null}
         </dl>
         <div className="session-information-resources">
-          <RuntimeResourceList label={zh ? '已触发 MCP' : 'MCP tools used'} values={resources?.mcp} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} />
-          <RuntimeResourceList label={zh ? '已使用 Skills' : 'Skills used'} values={resources?.skills} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} />
-          <p>{zh ? '仅展示会话中已记录的使用。' : 'Only recorded usage in this conversation is shown.'}</p>
+          <RuntimeResourceList label={zh ? '已触发 MCP' : 'MCP tools used'} values={resources?.mcp} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} readFailed={resourceReadFailed} />
+          <RuntimeResourceList label={zh ? '已使用 Skills' : 'Skills used'} values={resources?.skills} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} readFailed={resourceReadFailed} />
           {error ? (
             <div className="session-information-error">
               <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
@@ -179,34 +180,29 @@ function RuntimeUsageRow(props: { label: string; value: ReactNode; hint?: string
 }
 
 /** 长清单在浮层内展开，不增加正文或环境卡片的高度。 */
-function RuntimeResourceList(props: { label: string; values?: string[]; language: SessionUiLanguage; loading: boolean }) {
+/** 只有存在资源明细时才提供展开入口，空清单依采集证据展示。 */
+function RuntimeResourceList(props: { label: string; values?: string[] | null; language: SessionUiLanguage; loading: boolean; readFailed: boolean }) {
+  if (!props.values?.length) {
+    /** 0 只用于已确认采集后返回的空数组。 */
+    const status = props.loading ? '…' : props.readFailed ? '—' : props.values ? '0' : props.language === 'zh-CN' ? '未采集' : 'Not collected';
+    return (
+      <div className="session-information-resource-status">
+        {props.label}
+        <span>{status}</span>
+      </div>
+    );
+  }
   return (
     <details>
       <summary>
         {props.label}
-        <span>{props.loading ? '…' : (props.values?.length ?? '—')}</span>
+        <span>{props.values.length}</span>
       </summary>
-      {props.values?.length ? (
-        <ul>
-          {props.values.map((value) => (
-            <li key={value}>{value}</li>
-          ))}
-        </ul>
-      ) : (
-        <p>
-          {props.loading
-            ? props.language === 'zh-CN'
-              ? '读取中…'
-              : 'Loading…'
-            : props.values
-              ? props.language === 'zh-CN'
-                ? '暂无已记录的使用'
-                : 'No recorded usage'
-              : props.language === 'zh-CN'
-                ? '使用记录暂不可用'
-                : 'Usage records unavailable'}
-        </p>
-      )}
+      <ul>
+        {props.values.map((value) => (
+          <li key={value}>{value}</li>
+        ))}
+      </ul>
     </details>
   );
 }

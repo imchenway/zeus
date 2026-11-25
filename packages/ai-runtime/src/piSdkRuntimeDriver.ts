@@ -564,6 +564,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       sequence: (entry.sequence += 1),
       type: terminalFailure ? 'runtime_error' : event.type,
       payload: terminalFailure ?? event,
+      // SDK 将结构化工具活动和技能读取先交付给同一会话订阅，正常结束时确认采集范围。
+      ...(event.type === 'agent_settled' && !terminalFailure ? { resourceCaptureComplete: true } : {}),
       createdAt: now(),
     };
     for (const listener of listeners) listener(envelope);

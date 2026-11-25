@@ -1,5 +1,5 @@
 import type { AgentCapabilityEvidence, AgentCapabilityId, AgentDescriptor } from './agentRuntimeContracts.js';
-import { type AgentRuntimeRegistry, createAgentRuntimeRegistry } from './agentRuntimeRegistry.js';
+import { type AgentRuntimeRegistration, type AgentRuntimeRegistry, type AgentRuntimeUsageProvider, createAgentRuntimeRegistry } from './agentRuntimeRegistry.js';
 
 export interface CodexAgentCatalogEvidence {
   enabled: boolean;
@@ -14,8 +14,13 @@ const CODEX_CAPABILITIES: readonly AgentCapabilityId[] = ['session', 'streaming'
 
 const PI_DECLARED_CAPABILITIES: readonly AgentCapabilityId[] = ['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'user_input', 'usage', 'compaction'];
 
-export function createAgentCapabilityCatalog(codex: CodexAgentCatalogEvidence): AgentRuntimeRegistry {
-  return createAgentRuntimeRegistry([createCodexAgentDescriptor(codex), createPiFrameworkDescriptor()]);
+/** 原生账号运行时与 Pi 框架共用能力目录。 */
+export function createAgentCapabilityCatalog(codex: { readEvidence(): CodexAgentCatalogEvidence; readUsageProvider(): AgentRuntimeUsageProvider }, managed: readonly AgentRuntimeRegistration[]): AgentRuntimeRegistry {
+  return createAgentRuntimeRegistry([
+    { kind: 'codex', readDescriptor: () => createCodexAgentDescriptor(codex.readEvidence()), readUsageProvider: () => codex.readUsageProvider() },
+    { kind: 'pi', readDescriptor: createPiFrameworkDescriptor },
+    ...managed,
+  ]);
 }
 
 export function createCodexAgentDescriptor(input: CodexAgentCatalogEvidence): AgentDescriptor {

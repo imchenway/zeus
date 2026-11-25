@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type {
   AcceptedAgentRun,
+  AgentCapabilityEvidence,
   AgentDescriptor,
   AgentRuntimeEvent,
   AgentRuntimeFailureKind,
@@ -22,6 +23,7 @@ import type {
   SteerAgentRunInput,
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
+import type { AgentRuntimeRegistration } from './agentRuntimeRegistry.js';
 import { CopilotRuntimeManager } from './copilotRuntimeManager.js';
 import { CopilotSdkEventAdapter } from './copilotSdkEventAdapter.js';
 import {
@@ -58,9 +60,46 @@ export interface CreateCopilotRuntimeDriverOptions {
   now?: () => string;
 }
 
+/** 能力目录和用量共用 Copilot 的运行身份。 */
+const copilotIdentity = { kind: 'copilot', displayName: 'GitHub Copilot', transport: 'sdk' } as const;
+
+/** 将已观察到的 SDK 状态转换为能力描述。 */
+function describeCopilotRuntime(probe: Omit<AgentCapabilityEvidence, 'state'> & { available: boolean }, state: AgentCapabilityEvidence['state'] = probe.available ? 'supported' : 'unverified'): AgentDescriptor {
+  const evidence = { state, checkedAt: probe.checkedAt, adapterVersion: probe.adapterVersion, binaryVersion: probe.binaryVersion, reason: probe.reason };
+  return {
+    ...copilotIdentity,
+    supportStatus: probe.available ? 'experimental' : 'unavailable',
+    visibleToUsers: false,
+    preflightTokenCount: { state: 'unavailable', exact: false, source: null, checkedAt: probe.checkedAt, reason: 'Copilot SDK 未提供发送前的精确 token-count。' },
+    capabilities: Object.fromEntries(['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'approval', 'user_input', 'model_catalog', 'usage', 'compaction'].map((id) => [id, evidence])),
+  };
+}
+
+/** 注册 Copilot 时仅使用已有的登录快照，避免只读页面启动 SDK。 */
+export function createCopilotRuntimeRegistration(manager: Pick<CopilotRuntimeManager, 'readAccount'>): AgentRuntimeRegistration {
+  return {
+    kind: copilotIdentity.kind,
+    /** 登录快照可描述账号是否就绪，能力字段仍需实际探测。 */
+    readDescriptor() {
+      const account = manager.readAccount();
+      return describeCopilotRuntime(
+        {
+          available: account?.authenticated === true,
+          checkedAt: account?.checkedAt ?? null,
+          adapterVersion: 'copilot-sdk',
+          binaryVersion: null,
+          reason: account?.authenticated ? 'Copilot 已登录。' : account ? 'Copilot 尚未登录。' : '尚未读取 Copilot 账号状态。',
+        },
+        'unverified',
+      );
+    },
+    readUsageProvider: () => ({ name: copilotIdentity.displayName, kind: 'subscription', active: manager.readAccount()?.authenticated === true }),
+  };
+}
+
 /** 复用 Agent 驱动契约，封装 SDK 会话、持久接纳、事件和进程恢复。 */
 export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdkRuntimeDriver {
-  readonly kind = 'copilot' as const;
+  readonly kind = copilotIdentity.kind;
   private readonly bindings = new Map<string, CopilotSessionBinding>();
   private readonly listeners = new Set<(event: AgentRuntimeEvent) => void>();
   private readonly now: () => string;
@@ -97,17 +136,7 @@ export class CopilotRuntimeDriver implements SupervisedAgentRuntimeDriver, PiSdk
 
   /** 模型目录和会话能力以实际 SDK 探测为准，不把类型声明写成运行验收。 */
   async readCapabilities(): Promise<AgentDescriptor> {
-    const probe = await this.probe();
-    const evidence = { state: probe.available ? ('supported' as const) : ('unverified' as const), checkedAt: probe.checkedAt, adapterVersion: probe.adapterVersion, binaryVersion: probe.binaryVersion, reason: probe.reason };
-    return {
-      kind: 'copilot',
-      displayName: 'GitHub Copilot',
-      transport: 'sdk',
-      supportStatus: probe.available ? 'experimental' : 'unavailable',
-      visibleToUsers: false,
-      preflightTokenCount: { state: 'unavailable', exact: false, source: null, checkedAt: probe.checkedAt, reason: 'Copilot SDK 未提供发送前的精确 token-count。' },
-      capabilities: Object.fromEntries(['session', 'streaming', 'steer', 'follow_up', 'interrupt', 'approval', 'user_input', 'model_catalog', 'usage', 'compaction'].map((id) => [id, evidence])),
-    };
+    return describeCopilotRuntime(await this.probe());
   }
 
   /** 新会话固定工作目录及 Zeus 工具目录；SDK 自行持久化会话身份。 */

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenUsageFields } from '@zeus/shared';
 import type {
   AcceptedAgentRun,
   AgentDescriptor,
@@ -11,6 +12,7 @@ import type {
   AgentRuntimeProbe,
   AgentSessionIdentity,
   AgentSessionSnapshot,
+  AgentTurnUsage,
   InterruptAgentRunInput,
   OpenAgentSessionInput,
   ReadAgentSessionInput,
@@ -19,6 +21,7 @@ import type {
   StartAgentRunInput,
   SupervisedAgentRuntimeDriver,
 } from './agentRuntimeContracts.js';
+import type { AgentRuntimeRegistration } from './agentRuntimeRegistry.js';
 import { installManagedAntigravity, readManagedAntigravity, type AntigravityInstallProgress } from './antigravityInstallation.js';
 import { acpPermissionOptions, acpQuestionContent, acpQuestions, acpRecord as record, acpToolProgress, mergeAcpTool, readAcpTool, type AntigravityInteraction } from './antigravityAcpInteractions.js';
 export type { AntigravityInteraction } from './antigravityAcpInteractions.js';
@@ -46,6 +49,31 @@ export interface AntigravityAccountCatalog {
   /** 仅在准备受管 CLI 时公开具体阶段。 */
   installation?: AntigravityInstallProgress;
   message?: string;
+}
+
+/** 能力目录和用量共用 Antigravity 的运行身份。 */
+const antigravityIdentity = { kind: 'antigravity', displayName: 'Google Antigravity', transport: 'rpc' } as const;
+
+/** 能力目录反映现有账号状态和已知的 Token 预检限制。 */
+function describeAntigravityRuntime(available: boolean): AgentDescriptor {
+  return {
+    ...antigravityIdentity,
+    supportStatus: available ? 'experimental' : 'unavailable',
+    visibleToUsers: available,
+    capabilities: {},
+    preflightTokenCount: { state: 'unavailable', exact: false, source: null, checkedAt: null, reason: 'Antigravity ACP 未报告精确的预检 Token 数。' },
+  };
+}
+
+/** 注册 Antigravity 时只读 ACP 维护的账号状态，未构造驱动时也保留供应商名称。 */
+export function createAntigravityRuntimeRegistration(readAccount: () => AntigravityAccountCatalog | undefined): AgentRuntimeRegistration {
+  /** 账号完成验证并返回模型目录后会进入 ready。 */
+  const isActive = () => readAccount()?.status === 'ready';
+  return {
+    kind: antigravityIdentity.kind,
+    readDescriptor: () => describeAntigravityRuntime(isActive()),
+    readUsageProvider: () => ({ name: antigravityIdentity.displayName, kind: 'subscription', active: isActive() }),
+  };
 }
 
 /** 由 Zeus 提供的规则真源目录和账号目录变更通知。 */
@@ -201,7 +229,9 @@ const verificationNotice = '⚠ Verification Required';
 /** 将官方 ACP 会话接入 Zeus 已有的持久派发和审批。 */
 export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedAgentRuntimeDriver {
   /** 持久会话和模型目录共用的 Provider 身份。 */
-  readonly kind = 'antigravity' as const;
+  readonly kind = antigravityIdentity.kind;
+  /** ACP 返回整轮用量，工具之间的消息块不代表独立请求。 */
+  readonly usageGranularity = 'turn' as const;
   /** ID 由 agy 分配，不在 Zeus 重建。 */
   private readonly sessions = new Map<string, SessionBinding>();
   /** 原生事件仅投影到绑定本运行时的宿主。 */
@@ -327,15 +357,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
 
   /** 标记 Antigravity 的会话操作及确实缺失的计数能力。 */
   async readCapabilities(): Promise<AgentDescriptor> {
-    return {
-      kind: this.kind,
-      displayName: 'Google Antigravity',
-      transport: 'rpc',
-      supportStatus: this.catalog.status === 'ready' ? 'experimental' : 'unavailable',
-      visibleToUsers: this.catalog.status === 'ready',
-      capabilities: {},
-      preflightTokenCount: { state: 'unavailable', exact: false, source: null, checkedAt: null, reason: 'Antigravity ACP 未报告精确的预检 Token 数。' },
-    };
+    return describeAntigravityRuntime(this.catalog.status === 'ready');
   }
 
   /** 在项目目录创建独立的原生会话。 */
@@ -784,7 +806,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
       const size = run.contextSize;
       if (typeof update.used === 'number' && Number.isSafeInteger(update.used) && update.used >= 0) run.contextUsed = update.used;
       if (typeof update.size === 'number' && Number.isSafeInteger(update.size) && update.size > 0) run.contextSize = update.size;
-      if (run.contextUsed !== used || run.contextSize !== size) this.emit(session, 'acp_context_usage', { contextUsed: run.contextUsed, contextSize: run.contextSize });
+      if (run.contextUsed !== used || run.contextSize !== size) this.emit(session, 'context_usage', { contextUsed: run.contextUsed, contextSize: run.contextSize });
     } else if (update.sessionUpdate === 'agent_thought_chunk') {
       const part = record(update.content);
       if (part.type !== 'text' || typeof part.text !== 'string' || !part.text) return;
@@ -934,9 +956,11 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
     if (record(error).code === 'ZEUS_AGY_VERIFICATION_REQUIRED') session.run.verificationNotice = null;
     this.endMessage(session);
     if (record(error).code === 'ZEUS_AGY_AUTH_REQUIRED') this.setAccountCatalog({ status: 'sign_in_required', models: [], message: error!.message });
-    const counters = { stopReason: run.stopReason, usage: run.usage, contextUsed: run.contextUsed, contextSize: run.contextSize };
-    if (error) this.emit(session, 'runtime_error', { ...counters, code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message });
-    else this.emit(session, 'agent_settled', { ...counters, cancelled });
+    /** 上下文是即时读数，账本用量由 ACP 响应单独归一化。 */
+    const context = { stopReason: run.stopReason, contextUsed: run.contextUsed, contextSize: run.contextSize };
+    const usage = readAntigravityTurnUsage(run.usage);
+    if (error) this.emit(session, 'runtime_error', { ...context, code: record(error).code ?? 'ZEUS_AGY_RUN_FAILED', message: error.message }, run.id, usage);
+    else this.emit(session, 'agent_settled', { ...context, cancelled }, run.id, usage);
     session.run = undefined;
   }
 
@@ -952,7 +976,7 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
   }
 
   /** 按原生会话与轮次的稳定身份提交事件。 */
-  private emit(session: SessionBinding, type: string, payload: unknown, nativeRunId = session.run?.id ?? null): void {
+  private emit(session: SessionBinding, type: string, payload: unknown, nativeRunId = session.run?.id ?? null, turnUsage?: AgentTurnUsage): void {
     for (const listener of this.listeners)
       listener({
         agentKind: this.kind,
@@ -962,9 +986,45 @@ export class AntigravityRuntimeDriver implements PiSdkRuntimeDriver, SupervisedA
         sequence: ++this.sequence,
         type,
         payload,
+        ...(turnUsage ? { turnUsage } : {}),
         createdAt: this.now(),
       });
   }
+}
+
+/** ACP 的输入和输出包含缓存与推理子项，只有明确收到的分类才标为已知。 */
+function readAntigravityTurnUsage(value: unknown): AgentTurnUsage | undefined {
+  const raw = record(value);
+  /** Token 计数必须是非负整数，兼容 ACP 字段的两种命名方式。 */
+  const count = (value: unknown) => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null);
+  const total = count(raw.totalTokens) ?? count(raw.total_tokens);
+  const nativeInput = count(raw.inputTokens) ?? count(raw.input_tokens);
+  const nativeOutput = count(raw.outputTokens) ?? count(raw.output_tokens);
+  const input = nativeInput ?? (total !== null && nativeOutput !== null && total >= nativeOutput ? total - nativeOutput : null);
+  const output = nativeOutput ?? (total !== null && nativeInput !== null && total >= nativeInput ? total - nativeInput : null);
+  const cacheRead = count(raw.cachedReadTokens) ?? count(raw.cached_read_tokens);
+  const cacheWrite = count(raw.cachedWriteTokens) ?? count(raw.cached_write_tokens);
+  const thought = count(raw.thoughtTokens) ?? count(raw.thought_tokens);
+  /** 只有输入、输出均已知时，才可从两者推导总量。 */
+  const complete = input !== null && output !== null;
+  const observed = { totalTokens: total ?? (complete ? input + output : null), inputTokens: input, outputTokens: output, cachedInputTokens: cacheRead, cacheWriteInputTokens: cacheWrite, reasoningOutputTokens: thought };
+  const fields = tokenUsageFields.filter((field) => observed[field] !== null);
+  if (!fields.length) return undefined;
+  const inputTokens = input ?? (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const outputTokens = output ?? thought ?? 0;
+  const cachedInputTokens = Math.min(inputTokens, cacheRead ?? 0);
+  return {
+    usage: {
+      totalTokens: total ?? inputTokens + outputTokens,
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      cacheWriteInputTokens: Math.min(inputTokens - cachedInputTokens, cacheWrite ?? 0),
+      reasoningOutputTokens: Math.min(outputTokens, thought ?? 0),
+    },
+    fields,
+    complete,
+  };
 }
 
 /** 只在匹配 Google 结构化 403 时接收验证链接，链接必须指向 Google 账号站点。 */

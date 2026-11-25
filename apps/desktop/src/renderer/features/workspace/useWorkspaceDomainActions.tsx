@@ -78,7 +78,7 @@ import {
   resolveTaskModelPushEntry,
   resolveTaskModelPushInitialForm,
   selectTaskModelPushModel,
-  selectedTaskPushCurrentConversationPaths,
+  selectedTaskPushConversationHistory,
   selectedTaskPushParentContexts,
   selectedTaskPushRelatedContexts,
   type TaskModelPushForm,
@@ -658,7 +658,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           setStorageRecoveryFault((current) => (current?.phase === 'running' ? { ...fault, phase: 'running' } : fault));
           return;
         }
-        if (event.type === 'codex.usage.changed') setCodexUsageRevision((current) => current + 1);
+        // 带会话身份的用量更新包括非 Codex 记账失败及补写。
+        if (event.type === 'codex.usage.changed' || (event.type === 'usage.changed' && typeof event.payload.conversationId === 'string')) setCodexUsageRevision((current) => current + 1);
         if (typeof event.payload.projectId === 'string' && isProjectConversationAttentionState(event.payload.conversationAttentionState)) {
           const projectId = event.payload.projectId;
           const attentionState = event.payload.conversationAttentionState;
@@ -2855,11 +2856,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               clientUserMessageId: createSessionOperationId(),
             };
       const targetProject = snapshot.projects.find((project) => project.id === task.projectId);
-      const currentConversationPaths = selectedTaskPushCurrentConversationPaths(capabilities.currentConversationOptions, form.currentConversationIds);
+      const currentConversationHistory = selectedTaskPushConversationHistory(capabilities.currentConversationOptions, form.currentConversationIds);
       const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
       const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
       const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
-      const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationPaths, parentContexts, relatedContexts, supplementalAttachments);
+      const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationHistory, parentContexts, relatedContexts, supplementalAttachments);
       const pending: TrackedTaskModelPushState = {
         ...createTaskModelPushPendingState({
           task,

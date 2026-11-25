@@ -29,7 +29,7 @@ import {
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
-import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, modelHistoryContentWithToolProjectionSql, readConversationSessionMetrics } from './conversationExecutionStore.js';
+import { conversationResourceCapturePrefix, conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, modelHistoryContentWithToolProjectionSql, readConversationSessionMetrics } from './conversationExecutionStore.js';
 import { ConversationTranscriptRepository, modelHistoryVisibleInTranscriptSql, providerFacet } from './conversationTranscriptStore.js';
 import { createHash } from 'node:crypto';
 import { inputSuggestionUserTurnSql } from './inputSuggestionStore.js';
@@ -1366,7 +1366,20 @@ export class ConversationSnapshotV2Repository {
     const items = this.db
       .select<{ kind: string; detail_json: string }>(`SELECT kind, detail_json FROM conversation_process_items WHERE conversation_id = ? AND kind IN ('tool', 'command') ORDER BY process_sequence`, [conversationId])
       .map((row) => conversationProcessPresentation(row.kind, parseJsonRecordOrNull(row.detail_json)));
-    return { cost: conversationCostBreakdown(requests), resources: conversationUsedResources(items, selectedSkills) };
+    /** 活动轮次和未保留采集证据的历史都不能确认空清单。 */
+    const capture = this.db.get<{ complete: number }>(
+      `WITH observed_turns AS (
+         SELECT id AS turn_id FROM conversation_turns WHERE conversation_id = ? AND provider_turn_id IS NOT NULL
+         UNION
+         SELECT turn_id FROM conversation_model_history WHERE conversation_id = ? AND role = 'assistant'
+       )
+       SELECT COUNT(*) > 0 AND COUNT(*) = COUNT(capture.id) AS complete
+       FROM observed_turns
+       LEFT JOIN conversation_timeline_events AS capture
+         ON capture.id = ? || observed_turns.turn_id AND capture.conversation_id = ? AND capture.event_kind = 'resource_usage_captured'`,
+      [conversationId, conversationId, conversationResourceCapturePrefix, conversationId],
+    );
+    return { cost: conversationCostBreakdown(requests), resources: conversationUsedResources(items, selectedSkills, capture?.complete === 1) };
   }
 
   /** 有界核对当前已加载显示身份的位置和显式删除状态。 */
@@ -1673,7 +1686,7 @@ export class ConversationSnapshotV2Repository {
               substr(detail_json, 1, ?) AS detail_preview,
               length(CAST(detail_json AS BLOB)) AS detail_bytes,
               length(detail_json) AS detail_characters,
-              CASE WHEN kind = 'waiting' THEN detail_json
+              CASE WHEN kind IN ('waiting', 'warning') THEN detail_json
                    /* 原生工具和 Pi 共用有界身份字段，长结果截断也不能丢失操作来源与终态。 */
                    WHEN kind IN ('tool', 'command') THEN
                      json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', json_extract(detail_json, '$.itemType'), 'payload', json_object(
@@ -1720,8 +1733,13 @@ export class ConversationSnapshotV2Repository {
         sourceEventId: row.source_event_id,
         startedAt: row.started_at,
         completedAt: row.completed_at,
-        // 工具元数据单独有界读取，预览截断也不丢类型、参数和目标；敏感文本沿用同一脱敏规则。
-        presentation: row.kind === 'waiting' ? recoveredRequestUserInputPresentation(row.presentation_json) : parseJsonRecordOrNull(row.presentation_json ? redactSensitivePreview(row.presentation_json).text : null),
+        // 独立投影保留工具身份和脱敏诊断，即使正文预览被截断也能查看错误原因。
+        presentation:
+          row.kind === 'waiting'
+            ? recoveredRequestUserInputPresentation(row.presentation_json)
+            : row.kind === 'warning'
+              ? { payload: conversationProcessPresentation(row.kind, parseJsonRecordOrNull(row.presentation_json), row.completed_at ?? row.started_at).payload }
+              : parseJsonRecordOrNull(row.presentation_json ? redactSensitivePreview(row.presentation_json).text : null),
         detail: boundedProjection(
           row.detail_preview,
           row.detail_bytes,
@@ -2070,6 +2088,39 @@ export class ConversationSnapshotV2Repository {
       [conversationId, turnId, requiredIdentity(input.providerItemId, 'providerItemId')],
     );
     return row ? redactSensitivePreview(row.content).text : null;
+  }
+
+  /** 复用已确认的可见对话，只读取正文，排除工具、思考和附件元数据。 */
+  readConfirmedDialogue(conversationId: string): Array<{ role: 'user' | 'assistant'; text: string }> {
+    const rows = this.db.select<{ role: 'user' | 'assistant'; source: string; content: string }>(
+      `SELECT role, content_json AS source, ${modelHistoryVisibleContentSql} AS content
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND ${modelHistoryDialogueSql} AND ${modelHistoryVisibleInTranscriptSql}
+        ORDER BY sequence`,
+      [requiredIdentity(conversationId, 'conversationId')],
+    );
+    return rows.flatMap((row) => {
+      const source = parseJsonRecordOrNull(row.source);
+      const projection = source?.text === row.content || source?.displayText === row.content ? null : parseJsonRecordOrNull(row.content);
+      const text = typeof projection?.text === 'string' ? projection.text : projection ? '' : row.content;
+      return text.trim() ? [{ role: row.role, text: redactSensitivePreview(text).text }] : [];
+    });
+  }
+
+  /** 列出历史选项时只核对对话存在性，正文等到用户选择发送再读取。 */
+  hasConfirmedDialogue(conversationId: string): boolean {
+    return Boolean(
+      this.db.get(
+        `SELECT 1 FROM conversation_model_history
+          WHERE conversation_id = ? AND ${modelHistoryDialogueSql} AND ${modelHistoryVisibleInTranscriptSql}
+            AND length(trim(CASE WHEN json_valid(content_json) THEN
+              CASE WHEN json_type(content_json) = 'object' THEN COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), json_extract(content_json, '$.text'), '')
+                   WHEN json_type(content_json) = 'text' THEN json_extract(content_json, '$') ELSE '' END
+              ELSE content_json END)) > 0
+          LIMIT 1`,
+        [requiredIdentity(conversationId, 'conversationId')],
+      ),
+    );
   }
 
   /** 正文分页保持句柄身份、修订与脱敏校验；对话调用方可收紧内容类型。 */

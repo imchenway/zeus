@@ -28,8 +28,10 @@ import {
   type ModelProtocolFamily,
   parseModelRef,
   piRuntimeWorkerProtocolVersion,
+  type PiSdkRuntimeDriver,
   type PiToolImageReference,
   type PiZeusToolBroker,
+  type SupervisedAgentRuntimeDriver,
   type PiZeusToolContentItem,
   type PiZeusToolRequest,
   type PiZeusToolResult,
@@ -68,6 +70,7 @@ import type {
   ConversationSubmissionRepository,
   ConversationTranscriptRepository,
   ConversationTurnRepository,
+  UpsertCodexUsageLedgerInput,
   ZeusConversationServerRequestRecord,
   ZeusConversationItemRecord,
   ZeusConversationSubmissionRecord,
@@ -136,7 +139,7 @@ interface PiRunContext {
   /** 本轮 SDK 实际使用的窗口，不能读取后续修改的目录或偏好。 */
   contextWindow: number | null;
   modelRequestCount: number;
-  /** 已落账的请求快照，用稳定身份防止事件重放重复记账。 */
+  /** 已观测的请求快照，用稳定身份防止事件重放重复记账。 */
   priceRequests: UsageRequestPriceSnapshot[];
   /** 实际发送边界捕获的价目和用量口径。 */
   pendingRequestPrice?: RequestPriceCapture & { startedAt: string };
@@ -363,29 +366,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const { startedAt, price } = pending;
       const completed = state === 'completed';
       options.db.durableTransactionSync(() => {
-        if (usage || completed) {
-          /** 摘要单独记账，避免把历史压缩量当作用户消息当前占用的上下文。 */
-          const billedUsage = usage ?? emptyTokenUsageBreakdown();
-          const meteredUsage = readMeteredUsage(observation.usage, price.pricingUsageProfile, completed, Boolean(usage));
-          const estimate =
-            usage || price.pricingCatalog?.prices.some((item) => item.model === modelId && (item.perRequest !== null || item.metered))
-              ? estimateModelPrice(modelId, billedUsage, price.pricingCatalog, startedAt, meteredUsage)
-              : unavailablePriceEstimate(modelId, 0);
-          if (price.pricingSource && !estimate.rateSnapshot.sourceUrls.length) estimate.rateSnapshot.sourceUrls = [price.pricingSource];
-          options.usageLedger.upsert({
-            providerId: managedProviderId(sourceId),
-            accountScopeId: sourceId,
-            projectId,
-            conversationId: submission.conversationId,
-            providerThreadId: session.nativeSessionId,
-            providerTurnId: requestId,
-            model: modelId,
-            usage: billedUsage,
-            usageComplete: completed && Boolean(usage),
-            estimate: aggregateRequestPrices([{ id: requestId, occurredAt, startedAt, pricingAccountScope: price.pricingAccountScope, meteredUsage, usage: billedUsage, estimate }]),
-            occurredAt,
-          });
-        }
         options.commandDeliveries.recordOutcomeInCurrentTransaction({
           outboxId: pending.outboxId,
           outcome: completed ? 'accepted' : 'outcome_unknown_after_write',
@@ -397,6 +377,37 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         });
       });
       requests.delete(requestId);
+      if (usage || completed) {
+        /** 摘要用量按实际请求身份记录，与主轮次分别核算。 */
+        const usageIdentity = {
+          providerId: managedProviderId(sourceId),
+          accountScopeId: sourceId,
+          projectId,
+          conversationId: submission.conversationId,
+          providerThreadId: session.nativeSessionId,
+          providerTurnId: requestId,
+          model: modelId,
+          occurredAt,
+        };
+        recordConversationUsage(submission.conversationId, () =>
+          writeConversationUsage(usageIdentity, () => {
+            /** 摘要单独记账，避免把历史压缩量当作用户消息当前占用的上下文。 */
+            const billedUsage = usage ?? emptyTokenUsageBreakdown();
+            const meteredUsage = readMeteredUsage(observation.usage, price.pricingUsageProfile, completed, Boolean(usage));
+            const estimate =
+              usage || price.pricingCatalog?.prices.some((item) => item.model === modelId && (item.perRequest !== null || item.metered))
+                ? estimateModelPrice(modelId, billedUsage, price.pricingCatalog, startedAt, meteredUsage)
+                : unavailablePriceEstimate(modelId, 0);
+            if (price.pricingSource && !estimate.rateSnapshot.sourceUrls.length) estimate.rateSnapshot.sourceUrls = [price.pricingSource];
+            options.usageLedger.upsert({
+              ...usageIdentity,
+              usage: billedUsage,
+              usageComplete: completed && Boolean(usage),
+              estimate: aggregateRequestPrices([{ id: requestId, occurredAt, startedAt, pricingAccountScope: price.pricingAccountScope, meteredUsage, usage: billedUsage, estimate }]),
+            });
+          }),
+        );
+      }
     };
   }
 
@@ -518,7 +529,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   /** ACP 权限请求进入与其他运行时相同的持久交互，保留单次人工决定。 */
   const antigravityDriver = runtimeKind === 'antigravity' ? new AntigravityRuntimeDriver(options.agentDirectory, handleAntigravityInteraction, (input) => broker.respond!(input), options.now, options.antigravity!) : null;
-  const driver =
+  const driver: PiSdkRuntimeDriver & SupervisedAgentRuntimeDriver =
     antigravityDriver ??
     (runtimeKind === 'copilot'
       ? new CopilotRuntimeDriver({ manager: options.copilotRuntimeManager!, toolBroker: broker, ...(zeusToolBroker ? { nativeTools: zeusToolBroker.registry.piTools } : {}), now: options.now })
@@ -550,7 +561,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         const context = run ? contexts.get(run.providerThreadId) : undefined;
         if (context) await driver.interruptRun({ session: context.session, nativeRunId: runId }).catch(() => undefined);
         /** 原始错误码与诊断随失败一起入库，避免把本地故障笼统报成 Provider 结果未知。 */
-        await handleRuntimeEvent({ ...event, type: 'runtime_error', payload: { code: 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN', message, cause: failureCause(error) } }).catch((failure: unknown) => {
+        await handleRuntimeEvent({ ...event, type: 'runtime_error', payload: { code: 'ZEUS_CONVERSATION_EVENT_PERSIST_FAILED', message, cause: failureCause(error) } }, true).catch((failure: unknown) => {
           console.error('Pi 失败状态无法落盘；保留存储故障供宿主恢复。', options.redactSensitiveText(String(failure)).text);
         });
       })
@@ -589,13 +600,13 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     for (const processItem of processItems) {
       const detail = asRecord(JSON.parse(processItem.detailJson));
       // 与历史回看使用同一转换，实时事件不再另造工具字段和类型。
-      const presentation = conversationProcessPresentation(processItem.kind, detail);
+      const presentation = conversationProcessPresentation(processItem.kind, detail, processItem.completedAt ?? processItem.startedAt);
       /** 实时载荷先过预算：完整明细已在处理项存储里，推送只带可渲染的摘要。 */
       const livePayload = boundLiveProcessPayload({
         ...presentation.payload,
         processKind: processItem.kind,
         title: processItem.title,
-        detail,
+        ...(processItem.kind === 'warning' ? {} : { detail }),
         protocolFamily: detail.protocolFamily,
         stageId: detail.stageId,
         ...(detail.reasoningPresentation !== undefined ? { reasoningPresentation: detail.reasoningPresentation } : {}),
@@ -617,11 +628,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         stageId: detail.stageId,
         status: processItem.status,
         phase: 'prework',
-        textContent: processText(processItem.title, processItem.detailJson),
+        textContent: processItem.kind === 'warning' ? processItem.title : processText(processItem.title, processItem.detailJson),
       });
     }
     if (processItems.some((item) => item.status !== 'in_progress' && (item.kind === 'tool' || item.kind === 'command' || item.kind === 'retry'))) {
-      publish('conversation.sessionMetrics.changed', run.conversationId, {});
+      recordConversationUsage(run.conversationId, () => publish('conversation.sessionMetrics.changed', run.conversationId, {}));
     }
   }
 
@@ -1969,8 +1980,64 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return { conversationId: submission.conversationId, submissionId: replacement.id, providerThreadId: nativeSessionId, providerTurnId: null, status: 'queued' };
   }
 
-  /** 以会话内递增的序号保存 ACP 上下文读数；重启后承接最后一个持久序号。 */
-  function saveAntigravityUsage(run: PiRunContext, snapshot: NativeTokenUsageSnapshot, contextUsed: unknown): NativeTokenUsageSnapshot | null {
+  /** 用量更新失败只留下脱敏诊断，不进入会话的停止及恢复流程。 */
+  function recordConversationUsage(conversationId: string, record: () => void): void {
+    try {
+      record();
+    } catch (error) {
+      /** 账本错误可含本机细节，日志沿用运行时的脱敏规则。 */
+      const message = options.redactSensitiveText(error instanceof Error ? error.message : String(error)).text;
+      console.warn('会话用量更新失败', { conversationId, message });
+    }
+  }
+
+  /** 多次观察合并到同一个供应商与原生轮次的用量记录。 */
+  function runUsageIdentity(run: PiRunContext, occurredAt: string) {
+    return {
+      providerId: managedProviderId(run.sourceId),
+      accountScopeId: run.sourceId,
+      projectId: run.projectId,
+      conversationId: run.conversationId,
+      providerThreadId: run.providerThreadId,
+      providerTurnId: run.providerTurnId,
+      model: run.modelId,
+      occurredAt,
+    };
+  }
+
+  /** 写入失败按实际请求记录，成功补写与清除提示共同提交。 */
+  function writeConversationUsage<T>(identity: Pick<UpsertCodexUsageLedgerInput, 'providerId' | 'providerThreadId' | 'providerTurnId' | 'conversationId' | 'projectId' | 'model' | 'occurredAt'>, write: () => T): T {
+    /** 缺失记录与账本使用同一组键，重放或中途写入不会产生多条提示。 */
+    const warningKind = `usage_write_failed:${stableSha256(JSON.stringify([identity.providerId, identity.providerThreadId, identity.providerTurnId]))}`;
+    /** 标记变更独立通知两个用量界面刷新。 */
+    const publishChange = () => options.publish('usage.changed', { providerId: identity.providerId, conversationId: identity.conversationId, updatedAt: identity.occurredAt });
+    try {
+      /** 关闭记录与用量写入在一个事务内；通知只在提交后发出。 */
+      const result = options.db.durableTransactionSync(() => {
+        /** 先确认账本写入，再清除此轮的未解决记录。 */
+        const value = write();
+        return { value, resolved: options.execution.resolveWarning(identity.conversationId, warningKind, identity.occurredAt) };
+      });
+      if (result.resolved) recordConversationUsage(identity.conversationId, publishChange);
+      return result.value;
+    } catch (error) {
+      recordConversationUsage(identity.conversationId, () => {
+        options.db.durableTransactionSync(() =>
+          options.execution.persistWarning({
+            conversationId: identity.conversationId,
+            warningKind,
+            payload: { providerId: identity.providerId, projectId: identity.projectId, model: identity.model },
+            occurredAt: identity.occurredAt,
+          }),
+        );
+        publishChange();
+      });
+      throw error;
+    }
+  }
+
+  /** 以会话内递增的序号保存上下文读数；重启后承接最后一个持久序号。 */
+  function saveTurnUsage(run: PiRunContext, snapshot: NativeTokenUsageSnapshot, contextUsed: unknown): NativeTokenUsageSnapshot | null {
     const previous = options.conversations.getProviderTokenUsageSnapshot(run.conversationId);
     snapshot.generationId = run.providerThreadId;
     eventSequence = Math.max(eventSequence, previous?.generationId === run.providerThreadId ? previous.sequence : 0);
@@ -1980,7 +2047,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return saved === snapshot ? saved : null;
   }
 
-  async function handleRuntimeEvent(event: AgentRuntimeEvent): Promise<void> {
+  /** 处理运行时事实或本地会话持久化失败后的恢复事件。 */
+  async function handleRuntimeEvent(event: AgentRuntimeEvent, recoveringFromWriteFailure = false): Promise<void> {
     if (!event.nativeRunId) return;
     const run = runs.get(event.nativeRunId);
     if (!run) {
@@ -2004,18 +2072,21 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     await options.transcripts.waitUntilReady(run.conversationId);
     const payload = asRecord(event.payload);
-    if (runtimeKind === 'antigravity' && event.type === 'acp_context_usage') {
+    if (event.type === 'context_usage') {
       run.contextWindow = optionalTokenCount(payload.contextSize) ?? run.contextWindow;
-      const previous = options.conversations.getProviderTokenUsageSnapshot(run.conversationId);
-      const rows = previous ? [] : options.usageLedger.list({ conversationId: run.conversationId });
-      const snapshot =
-        previous ?? buildPiUsageSnapshot({ rows, last: emptyTokenUsageBreakdown(), lastEstimate: unavailablePriceEstimate(run.modelId, 0), modelContextWindow: run.contextWindow, generationId: run.providerThreadId, sequence: 0 });
-      if (!previous && !rows.length) snapshot.reportedTokenFields = [];
-      snapshot.modelContextWindow = run.contextWindow;
-      const saved = saveAntigravityUsage(run, snapshot, payload.contextUsed);
-      if (!saved) return;
-      await options.db.save();
-      publish('conversation.provider.token_usage.updated', run.conversationId, { ...saved });
+      recordConversationUsage(run.conversationId, () => {
+        /** 上下文读数单独提交，只发布实际入库的快照。 */
+        const saved = options.db.durableTransactionSync(() => {
+          const previous = options.conversations.getProviderTokenUsageSnapshot(run.conversationId);
+          const rows = previous ? [] : options.usageLedger.list({ conversationId: run.conversationId });
+          const snapshot =
+            previous ?? buildPiUsageSnapshot({ rows, last: emptyTokenUsageBreakdown(), lastEstimate: unavailablePriceEstimate(run.modelId, 0), modelContextWindow: run.contextWindow, generationId: run.providerThreadId, sequence: 0 });
+          if (!previous && !rows.length) snapshot.reportedTokenFields = [];
+          snapshot.modelContextWindow = run.contextWindow;
+          return saveTurnUsage(run, snapshot, payload.contextUsed);
+        });
+        if (saved) publish('conversation.provider.token_usage.updated', run.conversationId, { ...saved });
+      });
       return;
     }
     if (event.type === 'auto_retry_start' || event.type === 'auto_retry_end') {
@@ -2153,96 +2224,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       const messageProtocolFamily = protocolFamily ?? projectionProtocolFamily(run, { executionSnapshotId: null });
       /** 完成事件可能省略已经流过的文字，保留同一请求的累计正文作为可靠后备。 */
       const pendingModelRequest = run.pendingModelRequest;
-      // ACP 按轮次提供用量；工具两侧的文字分段只投影到对话。
-      if (runtimeKind !== 'antigravity') {
-        const requestUsage = readPiUsage(message.usage);
-        /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
-        const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
-        /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
-        const recorded = options.usageLedger.findByProviderTurn(managedProviderId(run.sourceId), run.providerThreadId, run.providerTurnId);
-        if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
-          run.priceRequests = recorded.estimate.requests;
-          run.usage = { ...recorded.usage };
-          run.usageComplete = recorded.usageComplete;
-        }
-        /** 重放只跳过费用累加，仍完成消息与执行状态投影。 */
-        const recordedRequest = run.priceRequests.find((request) => request.id === requestId);
-        if (!recordedRequest) {
-          if (!requestUsage) run.usageComplete = false;
-          addUsage(run.usage, requestUsage);
-        }
-        /** 缺少请求开始事件时不套用结束后才获取的费率。 */
-        const requestPrice = run.pendingRequestPrice;
-        run.pendingRequestPrice = undefined;
-        const captured = requestPrice ? requestPrice.pricingCatalog : pendingModelRequest?.pricingCatalog;
-        const startedAt = requestPrice?.startedAt;
-        const catalog = captured && !startedAt ? { ...captured, prices: captured.prices.filter((price) => !price.metered) } : (captured ?? null);
-        const meteredUsage = readMeteredUsage(failed && !requestUsage ? undefined : message.usage, (requestPrice ?? pendingModelRequest)?.pricingUsageProfile, !failed && Boolean(startedAt), Boolean(requestUsage));
-        const requestEstimate =
-          recordedRequest?.estimate ??
-          (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && (price.perRequest !== null || price.metered))
-            ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, startedAt ?? pendingModelRequest?.startedAt ?? event.createdAt, meteredUsage)
-            : unavailablePriceEstimate(run.modelId, 0));
-        if (!recordedRequest) {
-          const pricingSource = (requestPrice ?? pendingModelRequest)?.pricingSource;
-          if (pricingSource && !requestEstimate.rateSnapshot.sourceUrls.length) requestEstimate.rateSnapshot.sourceUrls = [pricingSource];
-          run.priceRequests.push({ id: requestId, occurredAt: event.createdAt, startedAt, pricingAccountScope: requestPrice?.pricingAccountScope, meteredUsage, usage: requestUsage ?? emptyTokenUsageBreakdown(), estimate: requestEstimate });
-        }
-        options.usageLedger.upsert({
-          providerId: managedProviderId(run.sourceId),
-          accountScopeId: run.sourceId,
-          projectId: run.projectId,
-          conversationId: run.conversationId,
-          providerThreadId: run.providerThreadId,
-          providerTurnId: run.providerTurnId,
-          model: run.modelId,
-          usage: run.usage,
-          usageComplete: run.usageComplete,
-          estimate: aggregateRequestPrices(run.priceRequests),
-          occurredAt: event.createdAt,
-        });
-        // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
-        if (requestUsage) run.lastRequestUsage = { ...requestUsage };
-        if (segment) {
-          const contextWindow = run.contextWindow;
-          const rawUsage = readPiUsageObservation(message.usage);
-          const hasReasoningContent = content.some((part) => part.type === 'thinking');
-          // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
-          // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
-          if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
-          const usageComplete = Object.values(rawUsage).every((value) => value !== null);
-          const pending = pendingModelRequest;
-          const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
-          const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
-          const measurementComplete =
-            usageComplete &&
-            pending?.boundaryStarted === true &&
-            pending?.firstTextOutputAt !== null &&
-            pending?.firstTextOutputAt !== undefined &&
-            Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
-            !hasNonTextOutput &&
-            !failed;
-          options.execution.observeModelRequest({
-            conversationId: run.conversationId,
-            turnId: run.turnId,
-            segmentId: segment.id,
-            requestKind: run.modelRequestCount === 0 ? 'inference' : 'tool_continuation',
-            observationIdentity: `${runtimeKind}:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
-            modelId: run.modelId,
-            contextWindow,
-            ...rawUsage,
-            estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
-            usageComplete,
-            providerRequestId,
-            firstVisibleOutputAt: pending?.firstVisibleOutputAt ?? null,
-            firstTextOutputAt: pending?.firstTextOutputAt ?? null,
-            completedAt: event.createdAt,
-            measurementComplete,
-            occurredAt: event.createdAt,
-          });
-          run.modelRequestCount += 1;
-        }
-      }
       // 接口实际返回的图片沿用工具图片存储；无需按模型名称猜测生图能力。
       const imageProjections: string[] = [];
       for (const [index, part] of content.entries()) {
@@ -2329,7 +2310,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       }
       await options.db.save();
       publishPiProcessItems(run, processItems);
-      publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (attention && attention.attentionRevision !== previousRevision) {
         publish('conversation.attention.changed', run.conversationId, {
           turnId: run.providerTurnId,
@@ -2358,99 +2338,171 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           }),
         });
       }
+      // 轮次级用量在终态入库；工具两侧的文字分段只投影到对话。
+      if (driver.usageGranularity !== 'turn') {
+        /** 已结束的请求消费一次写前费率，即使统计无法入库。 */
+        const requestPrice = run.pendingRequestPrice;
+        run.pendingRequestPrice = undefined;
+        recordConversationUsage(run.conversationId, () => {
+          const requestUsage = readPiUsage(message.usage);
+          /** 响应身份优先；事件时间仅用于供应商未返回身份的同一原生事件。 */
+          const requestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : `${event.nativeRunId}:${event.createdAt}`;
+          /** 宿主恢复后也沿用已经落盘的请求，不能仅依赖进程内集合。 */
+          const recorded = options.usageLedger.findByProviderTurn(managedProviderId(run.sourceId), run.providerThreadId, run.providerTurnId);
+          if (recorded?.estimate.requests && recorded.estimate.requests.length >= run.priceRequests.length) {
+            run.priceRequests = recorded.estimate.requests;
+            run.usage = { ...recorded.usage };
+            run.usageComplete = recorded.usageComplete;
+          }
+          /** 重放只跳过费用累加，仍完成消息与执行状态投影。 */
+          const recordedRequest = run.priceRequests.find((request) => request.id === requestId);
+          /** 缺少请求开始事件时不套用结束后才获取的费率。 */
+          const captured = requestPrice ? requestPrice.pricingCatalog : pendingModelRequest?.pricingCatalog;
+          const startedAt = requestPrice?.startedAt;
+          const catalog = captured && !startedAt ? { ...captured, prices: captured.prices.filter((price) => !price.metered) } : (captured ?? null);
+          const meteredUsage = readMeteredUsage(failed && !requestUsage ? undefined : message.usage, (requestPrice ?? pendingModelRequest)?.pricingUsageProfile, !failed && Boolean(startedAt), Boolean(requestUsage));
+          const requestEstimate =
+            recordedRequest?.estimate ??
+            (requestUsage || catalog?.prices.some((price) => price.model === run.modelId && (price.perRequest !== null || price.metered))
+              ? estimateModelPrice(run.modelId, requestUsage ?? emptyTokenUsageBreakdown(), catalog, startedAt ?? pendingModelRequest?.startedAt ?? event.createdAt, meteredUsage)
+              : unavailablePriceEstimate(run.modelId, 0));
+          if (!recordedRequest) {
+            const pricingSource = (requestPrice ?? pendingModelRequest)?.pricingSource;
+            if (pricingSource && !requestEstimate.rateSnapshot.sourceUrls.length) requestEstimate.rateSnapshot.sourceUrls = [pricingSource];
+            if (!requestUsage) run.usageComplete = false;
+            addUsage(run.usage, requestUsage);
+            run.priceRequests.push({
+              id: requestId,
+              occurredAt: event.createdAt,
+              startedAt,
+              pricingAccountScope: requestPrice?.pricingAccountScope,
+              meteredUsage,
+              usage: requestUsage ?? emptyTokenUsageBreakdown(),
+              estimate: requestEstimate,
+            });
+          }
+          // 账本累加整轮消耗，快照的 last 只保留最后一次请求，两者口径不能互相冒充。
+          if (requestUsage) run.lastRequestUsage = { ...requestUsage };
+          /** 记录真实请求顺序，统计写入失败时下一次请求仍属于同一轮。 */
+          const requestKind = run.modelRequestCount === 0 ? 'inference' : 'tool_continuation';
+          if (segment) run.modelRequestCount += 1;
+          /** 账本增量和单请求观测需要共同提交。 */
+          const usageIdentity = runUsageIdentity(run, event.createdAt);
+          writeConversationUsage(usageIdentity, () => {
+            options.usageLedger.upsert({
+              ...usageIdentity,
+              usage: run.usage,
+              usageComplete: run.usageComplete,
+              estimate: aggregateRequestPrices(run.priceRequests),
+            });
+            if (segment) {
+              const contextWindow = run.contextWindow;
+              const rawUsage = readPiUsageObservation(message.usage);
+              const hasReasoningContent = content.some((part) => part.type === 'thinking');
+              // Pi 的 reasoning 拆分是可选字段；完整消息已证明只有文本时，缺失值可以精确归零。
+              // 一旦存在 thinking 内容却缺少拆分，仍保持 null，避免把推理 Token 当作可见输出。
+              if (rawUsage.reasoningOutputTokens === null && !hasReasoningContent) rawUsage.reasoningOutputTokens = 0;
+              const usageComplete = Object.values(rawUsage).every((value) => value !== null);
+              const pending = pendingModelRequest;
+              const hasNonTextOutput = pending?.hasNonTextOutput === true || content.some((part) => part.type === 'toolCall');
+              const providerRequestId = typeof message.responseId === 'string' ? message.responseId : typeof message.id === 'string' ? message.id : (pending?.providerRequestId ?? null);
+              const measurementComplete =
+                usageComplete &&
+                pending?.boundaryStarted === true &&
+                pending?.firstTextOutputAt !== null &&
+                pending?.firstTextOutputAt !== undefined &&
+                Date.parse(event.createdAt) > Date.parse(pending.firstTextOutputAt) &&
+                !hasNonTextOutput &&
+                !failed;
+              options.execution.observeModelRequest({
+                conversationId: run.conversationId,
+                turnId: run.turnId,
+                segmentId: segment.id,
+                requestKind,
+                observationIdentity: `${runtimeKind}:${event.nativeSessionId ?? run.providerThreadId}:${event.nativeRunId}:${typeof message.id === 'string' ? message.id : event.createdAt}`,
+                modelId: run.modelId,
+                contextWindow,
+                ...rawUsage,
+                estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
+                usageComplete,
+                providerRequestId,
+                firstVisibleOutputAt: pending?.firstVisibleOutputAt ?? null,
+                firstTextOutputAt: pending?.firstTextOutputAt ?? null,
+                completedAt: event.createdAt,
+                measurementComplete,
+                occurredAt: event.createdAt,
+              });
+            }
+          });
+        });
+      }
+      recordConversationUsage(run.conversationId, () => publish('conversation.sessionMetrics.changed', run.conversationId, {}));
       /** 本次响应已经以终态覆盖同一条目，下一次模型请求重新建立缓冲。 */
       run.pendingModelRequest = null;
     }
     if (event.type === 'agent_settled' || event.type === 'runtime_error') {
       const failed = event.type === 'runtime_error';
       const warning = failed && payload.code === 'ZEUS_PI_MODEL_REQUEST_FAILED';
-      const outcomeUnknown = failed && payload.code === 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN';
-      const interrupted = interruptedRuns.delete(event.nativeRunId) || (runtimeKind === 'antigravity' && payload.cancelled === true);
+      /** 本地失败与供应商结果未知分别保留原因，均不能自动重发。 */
+      const requiresRecovery = failed && (recoveringFromWriteFailure || payload.code === 'ZEUS_PROVIDER_WORKER_RESULT_UNKNOWN');
+      const interrupted = interruptedRuns.has(event.nativeRunId) || payload.cancelled === true;
       const status = interrupted ? 'interrupted' : failed ? 'failed' : 'completed';
       /** 失败和中断仍以本轮终态提醒。 */
       const operationHandoff = status === 'completed' && options.isOperationHandoff?.(run.conversationId, run.turnId) === true;
       const existingTurn = options.turns.getById(run.turnId);
-      options.turns.upsert({
-        id: run.turnId,
-        conversationId: run.conversationId,
-        providerThreadId: event.nativeSessionId ?? '',
-        providerTurnId: run.providerTurnId,
-        clientSubmissionId: run.submissionId,
-        status,
-        startedAt: existingTurn?.startedAt ?? null,
-        completedAt: event.createdAt,
-        createdAt: existingTurn?.createdAt ?? event.createdAt,
-        updatedAt: event.createdAt,
-        ...(failed ? { error: payload } : {}),
-        agentKind: runtimeKind,
-        nativeRunId: run.providerTurnId,
-      });
-      if (interrupted) {
-        settleInterruptedRun(run, event.createdAt);
-      } else if (outcomeUnknown) {
-        options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'recovery_required', error: payload, updatedAt: event.createdAt });
-        options.conversations.updateAgentRuntime(run.conversationId, {
-          providerState: 'paused',
-          status: 'open',
-        });
-      } else {
-        options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
-        options.conversations.updateAgentRuntime(run.conversationId, {
-          providerState: warning || !failed ? 'ready' : 'failed',
-          status: warning || !failed ? 'open' : 'failed',
-        });
-      }
-      if (!operationHandoff) {
-        options.conversations.markAttentionUnread(run.conversationId, {
-          // 供应商拒绝单次模型请求只提醒用户；Worker 结果未知则保留失败注意项和显式恢复门禁。
-          kind: warning ? 'unread' : status,
-          turnId: run.providerTurnId,
-          occurredAt: event.createdAt,
-        });
-      }
-      let usageSnapshot: NativeTokenUsageSnapshot | null = null;
-      const acp = runtimeKind === 'antigravity';
-      const acpUsage = acp ? readAntigravityUsage(payload.usage) : null;
-      if (acp) {
-        run.usageComplete = acpUsage?.complete ?? false;
-        if (acpUsage) run.usage = acpUsage.usage;
-        run.contextWindow = optionalTokenCount(payload.contextSize) ?? run.contextWindow;
-      }
-      if (acp || run.priceRequests.length > 0) {
-        const estimate = acp ? { ...unavailablePriceEstimate(run.modelId, run.usage.totalTokens), reportedTokenFields: acpUsage?.fields ?? [] } : aggregateRequestPrices(run.priceRequests);
-        options.usageLedger.upsert({
-          providerId: managedProviderId(run.sourceId),
-          accountScopeId: run.sourceId,
-          projectId: run.projectId,
+      /** 轮次、队列和计划确认共同落盘，会话完成不依赖用量统计。 */
+      const createdPlan = options.db.transaction(() => {
+        options.turns.upsert({
+          id: run.turnId,
           conversationId: run.conversationId,
-          providerThreadId: run.providerThreadId,
+          providerThreadId: event.nativeSessionId ?? '',
           providerTurnId: run.providerTurnId,
-          model: run.modelId,
-          usage: run.usage,
-          usageComplete: run.usageComplete,
-          estimate,
-          occurredAt: event.createdAt,
+          clientSubmissionId: run.submissionId,
+          status,
+          startedAt: existingTurn?.startedAt ?? null,
+          completedAt: event.createdAt,
+          createdAt: existingTurn?.createdAt ?? event.createdAt,
+          updatedAt: event.createdAt,
+          ...(failed ? { error: payload } : {}),
+          agentKind: runtimeKind,
+          nativeRunId: run.providerTurnId,
         });
-        usageSnapshot = buildPiUsageSnapshot({
-          rows: options.usageLedger.list({ conversationId: run.conversationId }),
-          // last 的既定语义是"最后一次真实模型请求"，与 Codex 路径保持一致；缺失时退回整轮累加值。
-          last: acp ? emptyTokenUsageBreakdown() : (run.lastRequestUsage ?? run.usage),
-          lastEstimate: run.priceRequests.at(-1)?.estimate ?? estimate,
-          modelContextWindow: run.contextWindow,
-          generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
-          sequence: eventSequence + 1,
-        });
-        if (acp) usageSnapshot = saveAntigravityUsage(run, usageSnapshot, payload.contextUsed);
-        else options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, usageSnapshot);
-      }
-      runs.delete(event.nativeRunId);
-      /** 与原生链一致，在轮次终态前发布确认项，避免前端提前释放实时订阅。 */
-      let createdPlan: ReturnType<ConversationPlanActionRepository['createPending']> | undefined;
-      if (!failed && !interrupted && contexts.get(run.providerThreadId)?.workMode === 'plan') {
-        const plan = options.providerItems.getLatestCompletedPlanByTurn(run.turnId);
-        if (plan) createdPlan = options.planActions.createPending({ conversationId: run.conversationId, turnId: run.turnId, planItemId: plan.id, createdAt: event.createdAt });
-      }
+        if (interrupted) {
+          settleInterruptedRun(run, event.createdAt);
+        } else if (requiresRecovery) {
+          options.submissions.updateStatus(run.submissionId, 'paused', { pausedReason: 'recovery_required', error: payload, updatedAt: event.createdAt });
+          options.conversations.updateAgentRuntime(run.conversationId, {
+            providerState: 'paused',
+            status: 'open',
+          });
+        } else {
+          options.submissions.updateStatus(run.submissionId, failed ? 'failed' : 'completed', { ...(failed ? { error: payload } : {}), resolvedAt: event.createdAt, updatedAt: event.createdAt });
+          options.conversations.updateAgentRuntime(run.conversationId, {
+            providerState: warning || !failed ? 'ready' : 'failed',
+            status: warning || !failed ? 'open' : 'failed',
+          });
+        }
+        if (!operationHandoff) {
+          options.conversations.markAttentionUnread(run.conversationId, {
+            // 供应商拒绝单次模型请求只提醒用户；Worker 结果未知则保留失败注意项和显式恢复门禁。
+            kind: warning ? 'unread' : status,
+            turnId: run.providerTurnId,
+            occurredAt: event.createdAt,
+          });
+        }
+        /** 与原生链一致，在轮次终态前发布确认项，避免前端提前释放实时订阅。 */
+        if (!failed && !interrupted && contexts.get(run.providerThreadId)?.workMode === 'plan') {
+          /** 已保存的正式计划才能生成确认项。 */
+          const plan = options.providerItems.getLatestCompletedPlanByTurn(run.turnId);
+          if (plan) return options.planActions.createPending({ conversationId: run.conversationId, turnId: run.turnId, planItemId: plan.id, createdAt: event.createdAt });
+        }
+      });
       await options.db.save();
+      interruptedRuns.delete(event.nativeRunId);
+      runs.delete(event.nativeRunId);
+      if (status === 'completed' && event.resourceCaptureComplete === true) {
+        recordConversationUsage(run.conversationId, () => options.db.durableTransactionSync(() => options.execution.recordResourceUsageCapture(run.conversationId, run.turnId, event.createdAt)));
+      }
       if (createdPlan)
         publish('conversation.plan_implementation_request.changed', run.conversationId, {
           requestId: createdPlan.id,
@@ -2459,10 +2511,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
           planItemId: createdPlan.planItemId,
           providerPlanItemId: options.providerItems.getById(createdPlan.planItemId)?.providerItemId,
         });
-      if (usageSnapshot) {
-        options.publish('usage.changed', { providerId: managedProviderId(run.sourceId), conversationId: run.conversationId, updatedAt: event.createdAt });
-        publish('conversation.provider.token_usage.updated', run.conversationId, { ...usageSnapshot });
-      }
       publish('conversation.turn.completed', run.conversationId, {
         turnId: run.providerTurnId,
         submissionId: run.submissionId,
@@ -2475,8 +2523,48 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         /** 建议使用真实正常完成事件，不从历史页面或正文增量补触发。 */
         inputSuggestionEligible: !failed && !interrupted && !operationHandoff,
       });
-      publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });
+      /** 目标预算使用本次已观测用量，独立于统计账本提交是否成功。 */
+      const turnAccounting = driver.usageGranularity === 'turn';
+      const turnUsage = event.turnUsage;
+      if (turnAccounting) {
+        run.usageComplete = turnUsage?.complete ?? false;
+        if (turnUsage) run.usage = turnUsage.usage;
+        run.contextWindow = optionalTokenCount(payload.contextSize) ?? run.contextWindow;
+      }
+      if (!recoveringFromWriteFailure && (turnAccounting || run.priceRequests.length > 0)) {
+        recordConversationUsage(run.conversationId, () => {
+          /** 账本与统计快照在自己的事务内提交，任一失败都不影响已确认终态。 */
+          const usageIdentity = runUsageIdentity(run, event.createdAt);
+          /** 缺失提示随账本与统计快照一起结清。 */
+          const usageSnapshot = writeConversationUsage(usageIdentity, () => {
+            const estimate = turnAccounting ? { ...unavailablePriceEstimate(run.modelId, run.usage.totalTokens), reportedTokenFields: turnUsage?.fields ?? [] } : aggregateRequestPrices(run.priceRequests);
+            options.usageLedger.upsert({
+              ...usageIdentity,
+              usage: run.usage,
+              usageComplete: run.usageComplete,
+              estimate,
+            });
+            const snapshot = buildPiUsageSnapshot({
+              rows: options.usageLedger.list({ conversationId: run.conversationId }),
+              // last 只包含最后一次真实请求，轮次级回执不能当作单次请求用量。
+              last: turnAccounting ? emptyTokenUsageBreakdown() : (run.lastRequestUsage ?? run.usage),
+              lastEstimate: run.priceRequests.at(-1)?.estimate ?? estimate,
+              modelContextWindow: run.contextWindow,
+              generationId: options.conversations.getById(run.conversationId)?.nativeSessionId ?? 'pi-sdk',
+              sequence: eventSequence + 1,
+            });
+            if (turnAccounting) return saveTurnUsage(run, snapshot, payload.contextUsed);
+            options.conversations.upsertProviderTokenUsageSnapshot(run.conversationId, snapshot);
+            return snapshot;
+          });
+          if (usageSnapshot) {
+            options.publish('usage.changed', { providerId: managedProviderId(run.sourceId), conversationId: run.conversationId, updatedAt: event.createdAt });
+            publish('conversation.provider.token_usage.updated', run.conversationId, { ...usageSnapshot });
+          }
+        });
+      }
+      recordConversationUsage(run.conversationId, () => publish('conversation.sessionMetrics.changed', run.conversationId, {}));
       await options.goals.settle({
         conversationId: run.conversationId,
         turnId: run.turnId,
@@ -3619,41 +3707,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   };
 }
 
-/** ACP 的 input/output 已含缓存和思考子项，计入总量一次即可。 */
-function readAntigravityUsage(value: unknown): { usage: TokenUsageBreakdown; fields: (keyof TokenUsageBreakdown)[]; complete: boolean } | null {
-  const raw = asRecord(value);
-  /** 新旧 ACP 字段均保留显式零。 */
-  const count = (camel: string, snake: string) => optionalTokenCount(raw[camel]) ?? optionalTokenCount(raw[snake]);
-  const total = count('totalTokens', 'total_tokens');
-  const nativeOutput = count('outputTokens', 'output_tokens');
-  const nativeInput = count('inputTokens', 'input_tokens');
-  const input = nativeInput ?? (total !== null && nativeOutput !== null && total >= nativeOutput ? total - nativeOutput : null);
-  const output = nativeOutput ?? (total !== null && nativeInput !== null && total >= nativeInput ? total - nativeInput : null);
-  const cacheRead = count('cachedReadTokens', 'cached_read_tokens');
-  const cacheWrite = count('cachedWriteTokens', 'cached_write_tokens');
-  const thought = count('thoughtTokens', 'thought_tokens');
-  const observed = { totalTokens: total, inputTokens: input, outputTokens: output, cachedInputTokens: cacheRead, cacheWriteInputTokens: cacheWrite, reasoningOutputTokens: thought };
-  const fields = tokenUsageFields.filter((field) => observed[field] !== null);
-  if (!fields.length) return null;
-  const inputTokens = input ?? (cacheRead ?? 0) + (cacheWrite ?? 0);
-  const outputTokens = output ?? thought ?? 0;
-  const cachedInputTokens = Math.min(inputTokens, cacheRead ?? 0);
-  // 账本可累计已知部分；估算记录中的 fields 决定界面可展示哪些分类。
-  if (!fields.includes('totalTokens')) fields.push('totalTokens');
-  return {
-    usage: {
-      totalTokens: total ?? inputTokens + outputTokens,
-      inputTokens,
-      outputTokens,
-      cachedInputTokens,
-      cacheWriteInputTokens: Math.min(inputTokens - cachedInputTokens, cacheWrite ?? 0),
-      reasoningOutputTokens: Math.min(outputTokens, thought ?? 0),
-    },
-    fields,
-    complete: input !== null && output !== null,
-  };
-}
-
 function readPiUsage(value: unknown): TokenUsageBreakdown | null {
   const usage = asRecord(value);
   const input = safeTokenCount(usage.input);
@@ -3893,7 +3946,7 @@ function appendPiAttachmentReferences(prompt: string, pathReferences: Array<{ na
 
 function orderPiTaskPushAttachments(layout: TaskPushMessageLayout, attachments: NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[] {
   const byKey = new Map(attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
-  return buildTaskPushInputParts(layout).flatMap((part) => (part.type === 'attachment' && byKey.has(part.attachmentKey) ? [byKey.get(part.attachmentKey)!] : []));
+  return buildTaskPushInputParts(layout, false).flatMap((part) => (part.type === 'attachment' && byKey.has(part.attachmentKey) ? [byKey.get(part.attachmentKey)!] : []));
 }
 
 /** Pi SDK 图片字节通过独立数组传入；文字中的同序标记保留字段语义与资源对应。 */
