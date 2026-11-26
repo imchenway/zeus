@@ -5,7 +5,7 @@ import { GitDeliveryRunControl, readGitDeliverySettings, type GitDeliveryClient 
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGitDiffReadAhead, useGitDeliveryFileDiff, type GitDiffRead, type GitDiffReadTarget } from '../git/gitDiffReadAhead.js';
-import { buildTaskCommitMessageSuggestion, gitConflictPreservationInstructions, type GitDeliveryInput, type GitDeliverySettings, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
+import { buildTaskCommitMessageSuggestion, defaultGitDeliveryMergeMode, gitConflictPreservationInstructions, type GitDeliveryInput, type GitDeliverySettings, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
   TaskBranchFileChange,
@@ -178,7 +178,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const [commitGenerationFeedback, setCommitGenerationFeedback] = useState('');
   /** 请求控制器同时防重复点击，并在关闭或选择变化时取消旧生成。 */
   const commitGenerationController = useRef<AbortController | null>(null);
-  const [mode, setMode] = useState<'merge' | 'squash'>('merge');
+  /** 单独合入和组合交付共用本次选定的合入方式。 */
+  const [mode, setMode] = useState<GitDeliveryInput['mode']>(defaultGitDeliveryMergeMode);
   /** 标题栏承载当前任务交付的设置入口。 */
   const [deliverySettingsHost, setDeliverySettingsHost] = useState<HTMLDivElement | null>(null);
   const [integration, setIntegration] = useState<TaskIntegrationRecord | null>(null);
@@ -422,7 +423,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         const recoverable = findRecoverableIntegration(integrationSnapshot.items, firstWorkspace?.id);
         setWorkspaceId(firstWorkspace?.id ?? '');
         setIntegration(recoverable ?? null);
-        setMode(recoverable?.mode ?? 'merge');
+        setMode(recoverable?.mode ?? defaultGitDeliveryMergeMode);
         setConflictPath('');
         setSnapshotRevision((current) => current + 1);
         setBusyAction(null);
@@ -991,7 +992,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     if (nextFile) setSelectedFile(nextFile);
     const recoverable = findRecoverableIntegration(integrations, nextId);
     setIntegration(recoverable ?? null);
-    setMode(recoverable?.mode ?? 'merge');
+    /** 合入方式覆盖整个目录。切换到有恢复记录的仓库时沿用记录值。 */
+    if (nextId !== workspaceId && recoverable) setMode(recoverable.mode);
     setConflictWorkspaceOpen(false);
     setConflictPath('');
     setError(null);
@@ -1238,6 +1240,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   onCopyBranch={copyBranchName}
                   mergeDisabled={directoryUnavailable}
                   mode={mode}
+                  onModeChange={setMode}
                   mergeCount={directoryUnavailable ? 0 : directoryWorkspaceIds.length}
                   mergeAll
                   onMerge={(settings) => mergeSelected(settings)}
@@ -1288,7 +1291,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   }
                   combination={
                     props.client ? (
-                      <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} input={directoryInput} onModeChange={setMode} onAccepted={props.onClose} />
+                      <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} input={directoryInput} onAccepted={props.onClose} />
                     ) : null
                   }
                   pushCount={selectedPushCandidateCount}

@@ -38,7 +38,7 @@ import {
   writeTaskIntegrationDraft,
   writeTaskIntegrationResolution,
 } from '@zeus/git-core';
-import { buildTaskCommitMessageSuggestion, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
+import { buildTaskCommitMessageSuggestion, defaultGitDeliveryMergeMode, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import {
   ConversationRepository,
   ConversationSubmissionRepository,
@@ -1838,7 +1838,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const { task, project, workspace } = requirePreparedWorkspace(opaque);
     if (workspace.state === 'discarded') workspaceGitReject(409, 'ZEUS_TASK_WORKSPACE_CLOSED', 'Discarded task branches cannot be merged.');
     if (value.targetBranch !== undefined && typeof value.targetBranch !== 'string') workspaceGitReject(400, 'ZEUS_TARGET_BRANCH_INVALID', 'targetBranch must be a string');
-    if (value.mode !== undefined && value.mode !== 'merge' && value.mode !== 'squash') workspaceGitReject(400, 'ZEUS_TASK_INTEGRATION_MODE_INVALID', 'mode must be merge or squash');
+    /** 省略合入方式的接口请求采用与交付界面一致的默认值。 */
+    const mode = value.mode === undefined ? defaultGitDeliveryMergeMode : value.mode;
+    if (mode !== 'merge' && mode !== 'squash') workspaceGitReject(400, 'ZEUS_TASK_INTEGRATION_MODE_INVALID', 'mode must be merge or squash');
     if (value.prepareOnly !== undefined && typeof value.prepareOnly !== 'boolean') workspaceGitReject(400, 'ZEUS_TASK_INTEGRATION_PREPARE_ONLY_INVALID', 'prepareOnly must be a boolean');
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const repository = await getGitRepositoryContext(repositoryPath);
@@ -1881,7 +1883,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       }
       await db.save();
     }
-    const mode = value.mode === 'squash' ? 'squash' : 'merge';
     const taskHeadSha = await getGitBranchHead(repositoryPath, workspace.branchName);
     /** 使用目标当前提交建立并发基线；unborn 首次交付以空字符串表示尚无提交。 */
     const targetHeadSha = targetUnborn ? '' : await getGitBranchHead(repositoryPath, targetBranch);

@@ -77,11 +77,14 @@ export interface GitDeliveryInput {
     /** 使用模型目录中已选的加速档位，空值表示标准速度。 */
     serviceTier: CodexServiceTierId | null;
   };
-  /** 任务入口支持已有的合入方式。 */
+  /** 本次交付在准备和完成合入时使用的方式。 */
   mode: 'merge' | 'squash';
   /** 本次冻结的仓库与文件；全目录入口不得因文件树取消勾选而漏掉仓库。 */
   repositories: GitDeliverySelection[];
 }
+
+/** 新交付默认把任务改动合成一个提交。 */
+export const defaultGitDeliveryMergeMode: GitDeliveryInput['mode'] = 'squash';
 
 /** AI 是合入的条件处理，任务状态是全局最后一步。 */
 export type GitDeliveryAction = 'commit' | 'merge' | 'push' | 'command' | 'task_status' | 'conversation_archive';

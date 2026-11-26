@@ -4274,7 +4274,7 @@ a {
   outline-offset: 2px;
 }
 /* 原生单选框覆盖全局文本框样式，保留方向键切换和系统选中状态。 */
-.macos-ai-app .project-git-update-strategies input[type='radio'] {
+.macos-ai-app :is(.project-git-update-strategies, .git-delivery-merge-mode-menu) input[type='radio'] {
   accent-color: var(--zeus-product-accent);
   appearance: auto;
   background: transparent;
@@ -16675,7 +16675,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 /* 独立动作在各分组标题的同一右边线上。 */
-.macos-ai-app .task-git-delivery-step-heading > .zeus-button {
+.macos-ai-app .task-git-delivery-step-heading > :is(.zeus-button, .git-delivery-merge-actions) {
   flex: none;
   margin-inline-start: auto;
 }
@@ -16688,6 +16688,18 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-delivery-actions .zeus-button[data-zeus-primitive='button'][data-button-size='compact'] {
   min-block-size: 28px;
   padding: 3px 10px;
+}
+
+/* 合入和选择方式各有独立点击区域，在窄栏中作为一组换行。 */
+.macos-ai-app .git-delivery-merge-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.macos-ai-app .task-git-delivery-actions .zeus-button.git-delivery-merge-mode-trigger[data-button-size='compact'] {
+  inline-size: 28px;
+  padding: 0;
 }
 
 /* 说明与生成工具共用输入边界，工具不再占一条独立表单行。 */
@@ -24157,6 +24169,60 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .git-delivery-checkbox input {
   flex: none;
+}
+/* 原生浮层与箭头右对齐，底部空间不足时在箭头上方展开。 */
+.macos-ai-app .git-delivery-merge-mode-menu {
+  position: fixed;
+  inset: auto;
+  top: anchor(bottom);
+  right: anchor(right);
+  position-try-fallbacks: flip-block;
+  box-sizing: border-box;
+  inline-size: min(146px, calc(100vw - 16px));
+  margin: 6px 0 0;
+  padding: 5px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-solid-surface-bg);
+  color: var(--zeus-product-text);
+  box-shadow: var(--zeus-popover-shadow);
+}
+
+.macos-ai-app .git-delivery-merge-mode-menu > .git-delivery-checkbox {
+  min-block-size: 34px;
+  justify-content: space-between;
+  padding-inline: 4px;
+  border-radius: 6px;
+}
+
+.macos-ai-app .git-delivery-merge-mode-menu > .git-delivery-checkbox:hover {
+  background: var(--zeus-interaction-hover);
+}
+
+.macos-ai-app .git-delivery-merge-mode-menu label {
+  flex: 1;
+  min-block-size: 30px;
+  cursor: pointer;
+}
+
+/* 问号角标与单选项同行，悬停和键盘焦点共用 24px 的触发区域。 */
+.git-delivery-merge-help {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  cursor: help;
+}
+.git-delivery-merge-help:focus-visible,
+.git-delivery-merge-mode-menu input:focus-visible {
+  outline: 2px solid var(--zeus-field-focus-line);
+  outline-offset: 2px;
 }
 /* 禁用时保留原勾选偏好，并降低控件和文字的对比度。 */
 .git-delivery-checkbox[aria-disabled='true'] {

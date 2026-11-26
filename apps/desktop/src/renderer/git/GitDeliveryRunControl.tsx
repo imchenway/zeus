@@ -172,8 +172,6 @@ export function GitDeliveryRunControl(props: {
   taskId?: string | null;
   /** 当前输入；点击时再次固定副本。 */
   input: Omit<GitDeliveryInput, 'settings'>;
-  /** 保存设置后，单步与组合交付同时使用选中的合入方式。 */
-  onModeChange: (mode: GitDeliveryInput['mode']) => void;
   /** 原页正在处理单步操作。 */
   disabled: boolean;
   /** 当前语言。 */
@@ -187,8 +185,8 @@ export function GitDeliveryRunControl(props: {
   const { settings, setSettings, executionSettings, followUps, setFollowUps, canMerge, stepsLocked, settingsOpen, setSettingsOpen, setRunning, combinationHost } = combination;
   /** 任务工作区与关联任务的普通会话共享任务收尾。 */
   const taskId = props.input.scope.kind === 'task' ? props.input.scope.taskId : props.taskId;
-  /** 设置草稿只包含该弹窗可编辑的合入与冲突选项。 */
-  const [draft, setDraft] = useState<(Pick<GitDeliverySettings, 'permissionMode' | 'skillId'> & Pick<GitDeliveryInput, 'mode'>) | null>(null);
+  /** 设置草稿承载需要保存的 AI 冲突权限与 Skill。 */
+  const [draft, setDraft] = useState<Pick<GitDeliverySettings, 'permissionMode' | 'skillId'> | null>(null);
   /** 项目当前真实状态定义。 */
   const [statuses, setStatuses] = useState<TaskManagementStatusDefinition[]>([]);
   /** 命令目录沿用项目与全局合并结果，不在交付页复制脚本配置。 */
@@ -261,15 +259,15 @@ export function GitDeliveryRunControl(props: {
     };
   }, [props.client, props.projectId]);
 
-  /** 每次打开交付设置时恢复当前合入方式和冲突选项。 */
+  /** 打开交付设置时读取当前 AI 冲突选项。 */
   useEffect(() => {
-    if (!settingsOpen) {
+    if (!settingsOpen || !settings.resolveConflicts) {
       setDraft(null);
       return;
     }
     let active = true;
     setError(null);
-    setDraft({ mode: props.input.mode, permissionMode: settings.permissionMode, skillId: settings.skillId });
+    setDraft({ permissionMode: settings.permissionMode, skillId: settings.skillId });
     void props.client
       .loadGitDeliveryOptions(props.projectId)
       .then((result) => {
@@ -281,7 +279,7 @@ export function GitDeliveryRunControl(props: {
     return () => {
       active = false;
     };
-  }, [settingsOpen, props.client, props.projectId, props.input.mode, settings.permissionMode, settings.skillId]);
+  }, [settingsOpen, props.client, props.projectId, settings.resolveConflicts, settings.permissionMode, settings.skillId]);
 
   /** 接纳与后台运行期间，功能旁的复选框不能改变正在执行的组合。 */
   useEffect(() => {
@@ -464,9 +462,9 @@ export function GitDeliveryRunControl(props: {
               onStart={start}
             >
               <div className="git-delivery-workflow-steps">
-                {combinationOption('commit', props.zh ? '提交' : 'Commit')}
-                {combinationOption('merge', props.zh ? '合入' : 'Merge')}
-                {combinationOption('push', props.zh ? '推送' : 'Push')}
+                {combinationOption('commit', actionLabel('commit', props.zh))}
+                {combinationOption('merge', actionLabel('merge', props.zh, props.input.mode))}
+                {combinationOption('push', actionLabel('push', props.zh))}
               </div>
               <div className="git-delivery-workflow-options">
                 <label className="git-delivery-checkbox" aria-disabled={stepsLocked || !settings.commit || undefined}>
@@ -558,7 +556,7 @@ export function GitDeliveryRunControl(props: {
                   {detailedSteps.map((step) => (
                     <li key={step.id}>
                       <div className="git-delivery-run-step-heading">
-                        <strong>{step.action === 'task_status' || step.action === 'conversation_archive' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh)}`}</strong>
+                        <strong>{step.action === 'task_status' || step.action === 'conversation_archive' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh, run.input.mode)}`}</strong>
                         <span data-state={step.state}>
                           {
                             {
@@ -574,7 +572,7 @@ export function GitDeliveryRunControl(props: {
                       </div>
                       {step.state === 'unknown' || step.message || step.error ? (
                         <small>
-                          <GitDeliveryStepError step={step} zh={props.zh} />
+                          <GitDeliveryStepError step={step} zh={props.zh} mode={run.input.mode} />
                         </small>
                       ) : null}
                       {step.conversationId ? (
@@ -596,7 +594,7 @@ export function GitDeliveryRunControl(props: {
           );
         })}
         {cleanupRun ? <GitDeliveryCleanupConfirmation run={cleanupRun} zh={props.zh} busy={busy} error={error} onClose={() => setCleanupRun(null)} onConfirm={() => resume(cleanupRun, true)} /> : null}
-        {draft ? (
+        {settingsOpen && settings.resolveConflicts && draft ? (
           <FormDialog
             title={props.zh ? '交付设置' : 'Delivery settings'}
             zh={props.zh}
@@ -609,30 +607,14 @@ export function GitDeliveryRunControl(props: {
             }}
             onSubmit={(event) => {
               event.preventDefault();
-              props.onModeChange(draft.mode);
               setSettings((current) => ({ ...current, permissionMode: draft.permissionMode, skillId: draft.skillId }));
               setDraft(null);
               setSettingsOpen(false);
             }}
           >
             {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
-            <fieldset className="project-git-update-strategies" disabled={!canMerge}>
-              <legend>{props.zh ? '合入方式' : 'Merge method'}</legend>
-              <label className="git-delivery-checkbox">
-                <input type="radio" name="git-delivery-merge-mode" value="merge" checked={draft.mode === 'merge'} onChange={() => setDraft({ ...draft, mode: 'merge' })} />
-                {props.zh ? '保留提交' : 'Preserve commits'}
-              </label>
-              <label className="git-delivery-checkbox">
-                <input type="radio" name="git-delivery-merge-mode" value="squash" checked={draft.mode === 'squash'} onChange={() => setDraft({ ...draft, mode: 'squash' })} />
-                {props.zh ? '合成一个提交' : 'Squash into one commit'}
-              </label>
-            </fieldset>
-            {settings.resolveConflicts ? (
-              <>
-                <ConflictAiPermissions zh={props.zh} value={draft.permissionMode} disabled={busy} onChange={(value) => setDraft({ ...draft, permissionMode: value })} />
-                <SkillSelector client={props.client} projectId={props.projectId} value={draft.skillId ?? ''} onChange={(value) => setDraft({ ...draft, skillId: value || null })} language={props.zh ? 'zh-CN' : 'en-US'} />
-              </>
-            ) : null}
+            <ConflictAiPermissions zh={props.zh} value={draft.permissionMode} disabled={busy} onChange={(value) => setDraft({ ...draft, permissionMode: value })} />
+            <SkillSelector client={props.client} projectId={props.projectId} value={draft.skillId ?? ''} onChange={(value) => setDraft({ ...draft, skillId: value || null })} language={props.zh ? 'zh-CN' : 'en-US'} />
           </FormDialog>
         ) : null}
         {conflict ? (
