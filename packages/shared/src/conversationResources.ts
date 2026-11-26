@@ -90,6 +90,7 @@ export type ConversationOpenTarget =
   | 'editor:cursor'
   | 'editor:windsurf'
   | 'editor:intellij-idea'
+  | 'editor:datagrip'
   | 'editor:rider'
   | 'editor:webstorm'
   | 'terminal:terminal'

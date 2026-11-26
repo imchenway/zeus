@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget, ZeusBrowserSettings } from '@zeus/shared';
 import type { RendererLocalServerConfig } from './localServerRuntime.js';
@@ -135,7 +135,7 @@ const editorTargets: EditorTargetDescriptor[] = [
     id: 'editor:intellij-idea',
     label: 'IntelliJ IDEA',
     appName: 'IntelliJ IDEA',
-    appPaths: ['/Applications/IntelliJ IDEA.app', '/Applications/IntelliJ IDEA CE.app'],
+    appPaths: ['/Applications/IntelliJ IDEA.app', '/Applications/IntelliJ IDEA Ultimate.app', '/Applications/IntelliJ IDEA CE.app'],
     windowsExecutables: ['idea64.exe'],
     windowsDirectories: ['JetBrains/IntelliJ IDEA'],
     supportsGoto: false,
@@ -160,6 +160,19 @@ const editorTargets: EditorTargetDescriptor[] = [
   },
 ];
 
+/** 工作目录还可作为 DataGrip 项目打开。 */
+const workingDirectoryEditorTargets: EditorTargetDescriptor[] = [
+  ...editorTargets,
+  {
+    id: 'editor:datagrip',
+    label: 'DataGrip',
+    appName: 'DataGrip',
+    appPaths: ['/Applications/DataGrip.app'],
+    windowsExecutables: ['datagrip64.exe'],
+    windowsDirectories: ['JetBrains/DataGrip'],
+  },
+];
+
 /** 终端只打开已授权文件所在目录，不执行文件或拼接 shell 命令。 */
 const terminalTargets: Array<Omit<EditorTargetDescriptor, 'id'> & { id: Extract<ConversationOpenTarget, `terminal:${string}`> }> = [
   { id: 'terminal:terminal', label: 'Terminal', appName: 'Terminal', appPaths: ['/System/Applications/Utilities/Terminal.app'] },
@@ -167,6 +180,68 @@ const terminalTargets: Array<Omit<EditorTargetDescriptor, 'id'> & { id: Extract<
   { id: 'terminal:windows-terminal', label: 'Windows Terminal', appName: 'Windows Terminal', appPaths: [], windowsExecutables: ['wt.exe'], windowsDirectories: [] },
   { id: 'terminal:powershell', label: 'Windows PowerShell', appName: 'Windows PowerShell', appPaths: [], windowsExecutables: ['powershell.exe'], windowsDirectories: [] },
 ];
+
+/** 工作目录菜单只提供已安装的编辑器和系统文件管理器。 */
+export async function listWorkingDirectoryOpenTargets(services: ConversationResourceOpenServices): Promise<ConversationResourceOpenTarget[]> {
+  /** 本机应用扫描彼此独立，保留目录中的首选顺序。 */
+  const editors = await Promise.all(
+    workingDirectoryEditorTargets.map(async (editor): Promise<ConversationResourceOpenTarget | null> => {
+      /** 实际安装路径同时用于可用性判断和菜单图标。 */
+      const applicationPath = await findInstalledApplication(editor, services);
+      if (!applicationPath) return null;
+      return { id: editor.id, label: editor.label, available: true, exactLocation: false, iconDataUrl: await services.getApplicationIcon(applicationPath) };
+    }),
+  );
+  /** 文件管理器是本机目录的兜底入口，系统图标缺失时仍可打开。 */
+  const fileManagerPath = process.platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe') : '/System/Library/CoreServices/Finder.app';
+  return [
+    ...editors.filter((editor) => editor !== null),
+    {
+      id: 'file_manager',
+      label: process.platform === 'win32' ? 'File Explorer' : 'Finder',
+      available: true,
+      exactLocation: false,
+      iconDataUrl: await services.getApplicationIcon(fileManagerPath),
+    },
+  ];
+}
+
+/** 按持久会话身份读取执行目录，打开前校验它仍与用户看到的目录一致。 */
+export async function openConversationWorkingDirectory(request: unknown, services: ConversationResourceOpenServices): Promise<void> {
+  /** 路径仅用于比对界面上的工作目录，应用由宿主目录选出。 */
+  const { projectId: project, conversationId: conversation, cwd: displayedPath, target } = asRecord(request);
+  /** 保留项目和会话身份校验，避免使用其他项目的目录。 */
+  const projectId = requireIdentifier(project, 'projectId');
+  const conversationId = requireIdentifier(conversation, 'conversationId');
+  /** 渲染层提供的标识只能指向受支持的编辑器。 */
+  const editor = workingDirectoryEditorTargets.find((candidate) => candidate.id === target);
+  if (!editor && target !== 'file_manager') throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected open target is unavailable for this resource.');
+  if (typeof displayedPath !== 'string' || displayedPath.includes('\0') || !isAbsolute(displayedPath)) {
+    throw resourceOpenError('ZEUS_WORKING_DIRECTORY_UNAVAILABLE', 'The conversation working directory is unavailable or has changed.');
+  }
+  /** Core 按直接目录、任务工作树或独立会话环境返回真实执行目录。 */
+  const url = new URL(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/execution-context`, services.config.baseUrl);
+  /** 采用执行根目录，忽略单次命令临时使用的路径。 */
+  const { cwd } = asRecord(await services.fetchJson(url.href, { headers: { authorization: `Bearer ${services.config.apiToken}` } }));
+  if (typeof cwd !== 'string' || !isAbsolute(cwd) || relative(cwd, displayedPath) || !(await stat(cwd).catch(() => null))?.isDirectory()) {
+    throw resourceOpenError('ZEUS_WORKING_DIRECTORY_UNAVAILABLE', 'The conversation working directory is unavailable or has changed.');
+  }
+  if (editor) {
+    /** 点击时重新探测，卸载后的菜单项不能启动其他应用。 */
+    const applicationPath = await findInstalledApplication(editor, services);
+    if (!applicationPath) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor is not installed.');
+    await openPathInApplication(applicationPath, cwd, services);
+    return;
+  }
+  /** 文件管理器进入工作目录，显示其中的文件。 */
+  const error = await services.openPath(cwd);
+  if (error) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_SYSTEM_OPEN_FAILED', error);
+}
+
+/** 直接传递文件或目录路径，macOS 通过系统打开已登记的应用包。 */
+function openPathInApplication(applicationPath: string, path: string, services: ConversationResourceOpenServices): Promise<unknown> {
+  return process.platform === 'win32' ? services.executeFile(applicationPath, [path]) : services.executeFile('/usr/bin/open', ['-a', applicationPath, path]);
+}
 
 export async function listConversationResourceOpenTargets(request: ConversationResourceRequest, services: ConversationResourceOpenServices): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
   const intent = await loadConversationResourceIntent(request, services);
@@ -340,7 +415,7 @@ async function openResourceIntent(
       throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor is not installed.');
     }
     if (editor.supportsGoto === false) {
-      await services.executeFile(process.platform === 'win32' ? applicationPath : '/usr/bin/open', process.platform === 'win32' ? [file.absolutePath] : ['-a', applicationPath, file.absolutePath]);
+      await openPathInApplication(applicationPath, file.absolutePath, services);
       return { opened: true, resourceId: intent.id, target, mode: 'file' };
     }
     const location = normalizeLocation(request.location) ?? normalizeLocation(intent.target.location);

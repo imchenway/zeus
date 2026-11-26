@@ -29,6 +29,7 @@ import { conversationAttachmentIdentity } from './ConversationComposerAttachment
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { SessionComputerPreview } from './SessionComputerPreview.js';
+import { SessionWorkingDirectoryLauncher } from './SessionWorkingDirectoryLauncher.js';
 import type { CodexConversationCapabilities, ConversationResource, ConversationResourcePreview, NativeConversationAttachment, NativeConversationChoice, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -137,6 +138,12 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const executionContext = props.state.snapshot?.executionContext;
   /** 执行上下文保留只读审查、冲突处理等精确范围；Git 聚合摘要只补充尚未加载的目录。 */
   const cwd = executionContext?.cwd ?? summary?.cwd ?? props.conversation.executionPath ?? (directWorkspace ? props.gitContext?.project.localPath : null) ?? null;
+  /** 工作目录保持单行，缺少路径时在原位置显示读取状态。 */
+  const workingDirectoryLabel = cwd
+    ? (zh ? '工作目录' : 'Working directory')
+    : workspaceState === 'idle' || workspaceState === 'loading'
+      ? (zh ? '正在读取工作目录…' : 'Loading working directory…')
+      : (zh ? '工作目录不可用' : 'Working directory unavailable');
   /** 任一目录模式有多个仓库时，不把首仓分支冒充整个工作区分支。 */
   const branch = (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? props.conversation.workspace?.branchName ?? null);
   /** 来源分支保持一行，完整仓库与分支仍可悬停读取，补载不移动操作按钮。 */
@@ -294,13 +301,15 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     if (!open) return;
     const closeFromOutside = (event: PointerEvent): void => {
       if (rootRef.current?.contains(event.target as Node) || cardRef.current?.contains(event.target as Node)) return;
+      // 应用选择器浮层挂在应用壳上，选中应用前保留环境卡。
+      if (event.target instanceof Element && event.target.closest('.session-working-directory-apps-popover')) return;
       if (docked) return;
       setOpen(false);
     };
     const closeFromKeyboard = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
-      // 原生屏幕控制详情先处理 Esc，保留下面的环境信息卡。
-      if (cardRef.current?.querySelector('.session-computer-preview-info:popover-open')) return;
+      // 子面板优先处理 Esc，收起后焦点留在环境信息卡。
+      if (cardRef.current?.querySelector('.session-computer-preview-info:popover-open, .session-working-directory-apps[data-open="true"]')) return;
       event.preventDefault();
       event.stopPropagation();
       setOpen(false);
@@ -457,14 +466,23 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 </header>
 
                 <div className="session-quick-actions-list">
-                  <div className="session-quick-actions-row is-static session-quick-actions-metadata" data-icon-tooltip={cwd ?? undefined}>
+                  <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
                     <Folder aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
-                      <strong>{zh ? '工作目录' : 'Working directory'}</strong>
-                      <small>{cwd ?? (workspaceState === 'idle' || workspaceState === 'loading' ? (zh ? '正在读取…' : 'Loading…') : zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
+                      <strong>{workingDirectoryLabel}</strong>
                     </span>
                     {cwd ? <RuntimeCopyButton text={cwd} label={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} /> : null}
                   </div>
+                  {cwd && window.zeus?.openWorkingDirectory ? (
+                    <SessionWorkingDirectoryLauncher
+                      key={JSON.stringify([props.conversation.projectId, props.conversation.id, cwd])}
+                      projectId={props.conversation.projectId}
+                      conversationId={props.conversation.id}
+                      cwd={cwd}
+                      visible={cardVisible}
+                      zh={zh}
+                    />
+                  ) : null}
 
                   <div className="session-quick-actions-row is-static session-quick-actions-metadata" data-icon-tooltip={branch ?? undefined}>
                     <GitBranch aria-hidden="true" weight="regular" />

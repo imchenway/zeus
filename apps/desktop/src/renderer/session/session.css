@@ -318,6 +318,60 @@
   opacity: 0.58;
 }
 
+/* 打开和选应用共用一行，窄卡片内只收缩应用名称。 */
+.session-codex-parity-v1 .session-working-directory-launcher {
+  background: var(--session-control-hover);
+  border-radius: 9px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-codex-parity-v1 .session-working-directory-launcher .session-working-directory-open {
+  grid-template-columns: 20px minmax(0, 1fr);
+  min-block-size: 34px;
+}
+
+.session-codex-parity-v1 .session-working-directory-launcher:has(.session-working-directory-apps) .session-working-directory-open {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.session-codex-parity-v1 .session-working-directory-app-icon {
+  display: grid;
+  place-items: center start;
+}
+
+.session-codex-parity-v1 .session-working-directory-app-icon > :is(img, svg) {
+  block-size: 17px;
+  color: var(--session-text-muted);
+  inline-size: 17px;
+  object-fit: contain;
+}
+
+.session-codex-parity-v1 .session-working-directory-launcher .session-working-directory-apps[data-control-size] > .zeus-select-trigger {
+  background: transparent;
+  block-size: 100%;
+  border: 0;
+  border-inline-start: 1px solid var(--session-line);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  box-shadow: none;
+  grid-template-columns: 1fr;
+  inline-size: 36px;
+  justify-items: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-working-directory-launcher .session-working-directory-open:hover:not([aria-disabled='true']),
+.session-codex-parity-v1 .session-working-directory-launcher .session-working-directory-apps[data-control-size] > .zeus-select-trigger:is(:hover, [aria-expanded='true']) {
+  background: var(--session-selected);
+}
+
+.session-codex-parity-v1 .session-working-directory-launcher :is(.session-working-directory-open, .session-working-directory-apps[data-control-size] > .zeus-select-trigger):focus-visible {
+  outline: 2px solid var(--zeus-brand-text);
+  outline-offset: -2px;
+}
+
 /* 环境工具行显示当前打开状态，使用会话已有的选中配色。 */
 .session-quick-actions-list button.session-quick-actions-row[aria-pressed='true'] {
   background: var(--session-selected);
@@ -354,7 +408,7 @@
   cursor: default;
 }
 
-/* 目录与分支固定容纳两行，异步补齐信息不推动下方操作入口。 */
+/* 分支行预留来源分支的空间，异步补齐信息时保持操作入口的位置。 */
 .session-codex-parity-v1 .session-quick-actions-row.session-quick-actions-metadata {
   min-block-size: 46px;
 }
