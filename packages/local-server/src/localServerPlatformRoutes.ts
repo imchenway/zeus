@@ -598,6 +598,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   close(): Promise<void>;
   /** 原生工作工具由已注册的工作管理器处理。 */
   workTools: TaskWorkToolPort;
+  /** 队列派发通过工作管理器恢复现有 Agent 工作。 */
+  resumeFailedAgentWork: TaskWorkManagementController['resumeFailedAgentWork'];
   recover(): void;
   projectGitQueries: ProjectGitQueryApplication;
   conversationCapabilityQueries: ConversationCapabilityQueryApplication;
@@ -5378,6 +5380,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         if (!taskWorkManagement) throw new Error('工作服务已停止。');
         return taskWorkManagement.workTools.invoke(input);
       },
+    },
+    /** 同一会话的显式续跑沿用独立工作的正式交付路径。 */
+    resumeFailedAgentWork: async (submission) => {
+      await taskWorkManagement?.resumeFailedAgentWork(submission);
     },
     recover: () => {
       if (!readOnlyValidation) {

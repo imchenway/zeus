@@ -56,6 +56,7 @@ import {
   TaskWorkStoreError,
   type TaskWorkWorkspaceSnapshot,
   type WorkContextManifestV1,
+  type ZeusConversationSubmissionRecord,
   type ZeusProjectRecord,
   type ZeusTaskRecord,
 } from '@zeus/storage';
@@ -256,6 +257,8 @@ export interface TaskWorkManagementController {
   /** 原生工具绑定本次工作的真实会话。 */
   workTools: TaskWorkToolPort;
   kick(): void;
+  /** 同一会话的续跑进入派发前，恢复仍归属于此会话的失败工作。 */
+  resumeFailedAgentWork(submission: ZeusConversationSubmissionRecord): Promise<void>;
   hasAutomationSource(sourceRef: string): boolean;
   /** 默认任务池不重复承接已有明确安排的完整任务。 */
   hasExistingTaskWork(taskId: string): boolean;
@@ -841,6 +844,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   return {
     workTools: { invoke: invokeWorkTool },
     kick,
+    resumeFailedAgentWork,
     claimPlannedWork: (taskId, employeeId) => {
       const plan = options.planning.get(taskId);
       if (!plan) return false;
@@ -1037,6 +1041,39 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       if (active) await active;
     },
   };
+
+  /** 续跑复用原运行身份，保留会话中的失败轮次与冻结的工作上下文。 */
+  async function resumeFailedAgentWork(submission: ZeusConversationSubmissionRecord): Promise<void> {
+    if (closed || options.readOnlyValidation) return;
+    const conversation = options.conversations.getRecordById(submission.conversationId);
+    const task = conversation?.taskId ? options.tasks.getById(conversation.taskId) : undefined;
+    if (!conversation || conversation.archived || !task || task.projectId !== conversation.projectId || options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') return;
+    const run = options.runs.listByTask(task.id).find((candidate) => candidate.conversationId === conversation.id && candidate.entrypointKind === 'agent' && candidate.status === 'failed' && !candidate.runtimeCompletedAt);
+    const item = run ? options.items.getById(run.workItemId) : undefined;
+    if (!run || !item || item.currentRunId !== run.id || !['failed', 'blocked'].includes(item.status)) return;
+    /** 团队和阶段分工由所属流程决定何时恢复。 */
+    if (item.arrangement?.stageId || item.arrangement?.parentWorkItemId || item.arrangement?.cancellationRequested || isDigitalTeamWorkItem(item)) return;
+
+    const turn = options.conversationTurns.listByConversation(conversation.id).at(-1);
+    /** 原工作失败后新开的普通会话轮次不再归属于该工作。 */
+    if (turn?.status !== 'failed' || !turn.providerTurnId || (run.completedAt && turn.createdAt > run.completedAt)) return;
+    /** 队列的原路由重试沿用续跑来源，编辑或改路由创建的提交不能接管工作。 */
+    let source = submission;
+    while (source.replacementReason === 'retry' && source.replacementOfSubmissionId) {
+      const previous = options.conversationSubmissions.getById(source.replacementOfSubmissionId);
+      if (!previous || previous.conversationId !== conversation.id) return;
+      source = previous;
+    }
+    if (source.idempotencyKey !== `connection-retry:${turn.providerTurnId}`) return;
+
+    options.transaction(() => {
+      options.runs.update(run.id, { expectedRevision: run.revision, status: 'active', retryConversationId: conversation.id, errorCode: null, errorMessage: null, completedAt: null });
+      options.items.update(item.id, { expectedRevision: item.revision, status: 'active', completedAt: null });
+    });
+    await options.save();
+    publishChanged(options, task.id, item.id, 'agent_retry_resumed');
+    kick();
+  }
 
   /** 模型工具只在原生轮次绑定的工作内生效，调用方不能传入其他任务身份。 */
   async function invokeWorkTool(call: Parameters<TaskWorkToolPort['invoke']>[0]): ReturnType<TaskWorkToolPort['invoke']> {

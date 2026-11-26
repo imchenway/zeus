@@ -566,6 +566,8 @@ export class TaskWorkRunRepository {
       enabledSkillIds?: string[];
       skillSnapshot?: Record<string, unknown>;
       conversationId?: string | null;
+      /** 恢复失败的 Agent 运行时必须匹配原会话身份。 */
+      retryConversationId?: string;
       commandRunId?: string | null;
       workspaceSnapshot?: TaskWorkWorkspaceSnapshot | null;
       environmentId?: string | null;
@@ -579,7 +581,9 @@ export class TaskWorkRunRepository {
     const current = this.require(id);
     if (input.expectedRevision !== undefined && current.revision !== input.expectedRevision) conflict('工作运行已更新，请刷新后重试。');
     const status = input.status ?? current.status;
-    assertRunTransition(current.status, status);
+    /** 只有原会话的显式续跑可以恢复失败的运行，普通状态更新仍服从终态约束。 */
+    const resuming = current.status === 'failed' && status === 'active' && current.entrypointKind === 'agent' && input.retryConversationId === current.conversationId && input.conversationId === undefined;
+    if (!resuming) assertRunTransition(current.status, status);
     if (input.entrypointSnapshot && (current.status !== 'prepared' || status !== 'dispatching')) conflict('只有首次派发可以保存入口快照。');
     const conversationId = input.conversationId === undefined ? current.conversationId : input.conversationId;
     const commandRunId = input.commandRunId === undefined ? current.commandRunId : input.commandRunId;

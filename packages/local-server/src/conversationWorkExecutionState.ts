@@ -13,8 +13,8 @@ export type ConversationWorkExecutionState =
 
 /** 工作编排消费耐久提交与确认轮次，取消提交不会丢失停止结果或覆盖后续工作。 */
 export function conversationWorkExecutionState(conversation: ZeusConversationRecord, submissions: readonly ZeusConversationSubmissionRecord[], turns: readonly ZeusConversationTurnRecord[]): ConversationWorkExecutionState {
-  // 只判定当前最后一次有效提交；已经被后续人工重试并完成的历史失败不能永久污染工作项。
-  const current = latest(submissions.filter((submission) => !['resolved', 'cancelled', 'deleted'].includes(submission.status)));
+  /** 队首阻塞产生的跟随暂停不携带独立结果，重试后的提交仍按最新耐久状态判定。 */
+  const current = latest(submissions.filter((submission) => !['resolved', 'cancelled', 'deleted'].includes(submission.status) && !(submission.status === 'paused' && submission.pausedReason === 'blocked_by_head')));
   /** 本地取消提交不能替代 Provider 停止确认，继续监测待确认轮次而不释放队列。 */
   const pendingStop = turns.find(isProviderStopPendingTurn);
   if (pendingStop) return { type: 'waiting' };
@@ -47,7 +47,8 @@ export function conversationWorkExecutionState(conversation: ZeusConversationRec
     const error = parseSubmissionError(lastTurn?.status === 'interrupted' ? (lastTurn.errorJson ?? cancelled?.errorJson ?? null) : (cancelled?.errorJson ?? null), 'ZEUS_CONVERSATION_CANCELLED', '会话执行已停止。');
     return { type: 'cancelled', ...error };
   }
-  if (conversation.stage === 'failed' || conversation.providerState === 'failed') {
+  /** 新续跑已经排队或执行时，原 Provider 的失败投影会保留到本次派发接纳。 */
+  if (conversation.stage === 'failed' || (conversation.providerState === 'failed' && conversation.stage !== 'queued' && conversation.stage !== 'running')) {
     const error = parseSubmissionError(current?.errorJson ?? null, 'ZEUS_CONVERSATION_FAILED', '会话执行失败，请查看会话详情。');
     return { type: 'failed', ...error };
   }

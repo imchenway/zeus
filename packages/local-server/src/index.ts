@@ -118,6 +118,7 @@ import {
   TurnChangeFileRepository,
   TurnChangeSetRepository,
   type ZeusAuditLogRecord,
+  type ZeusConversationSubmissionRecord,
   type ZeusConversationWithMessagesRecord,
   type ZeusDatabase,
   type ZeusProjectRecord,
@@ -891,6 +892,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   });
   let dispatchUnifiedConversationQueueHead: ((conversationId: string) => Promise<void>) | null = null;
   let dispatchQueuedExpertRound: ((submissionId: string) => Promise<void>) | null = null;
+  /** 独立工作服务就绪后，显式续跑在再次写入 Provider 前恢复工作账本。 */
+  let resumeFailedAgentWork: ((submission: ZeusConversationSubmissionRecord) => Promise<void>) | null = null;
   const conversationToolResults = new ManagedConversationToolResultStore(dataLayout.conversationToolResults, conversationExecution, artifactStore);
   /** 来源身份与原文读取共用产品持久记录，模型不接触本机日志路径。 */
   const conversationSources = new ConversationSourceContextReader(conversations, conversationSubmissions, conversationProviderItems, conversationSnapshotV2);
@@ -2331,8 +2334,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (conversationExperts.hasExecutingRound(conversationId)) return;
     const head = selectAutomaticQueueDispatchCandidate(conversationSubmissions.listDispatchQueueByConversation(conversationId));
     if (!head || head.status !== 'queued') return;
-    const persistedInput = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
-    if (persistedInput.expertRound === true) {
+    const input: unknown = JSON.parse(head.inputJson);
+    const persisted = isNativeApiRecord(input) ? input : {};
+    if (persisted.expertRound === true) {
       const dispatch = dispatchQueuedExpertRound;
       if (dispatch) queueMicrotask(() => void dispatch(head.id));
       return;
@@ -2354,7 +2358,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     // 的升级/断线窗口；在这里用任意历史非终态 turn 提前返回会永久丢失该恢复 owner。
     if (mustWaitForInProcessRuntimeTurn(frozen.runtimeKind, inProgressTurns)) return;
     try {
-      const persisted = isNativeApiRecord(JSON.parse(head.inputJson)) ? (JSON.parse(head.inputJson) as Record<string, unknown>) : {};
       const persistedContext = isNativeApiRecord(persisted.context) ? persisted.context : {};
       if (persistedContext.holdDispatch === true) {
         /** 冲突准备仍由所属流程推进；普通会话只在目录就绪后解除等待。 */
@@ -2385,6 +2388,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         publishNativeConversationEvent('conversation.queue.changed', { conversationId });
         return;
       }
+      /** 只有服务端接纳的显式续跑才能恢复同会话的工作。 */
+      if (persisted.internalOperation === true && head.idempotencyKey.startsWith('connection-retry:')) await resumeFailedAgentWork?.(head);
       const content = typeof persisted.text === 'string' ? persisted.text : '';
       const attachments = Array.isArray(persisted.attachments) ? persisted.attachments : [];
       const browserComments = Array.isArray(persisted.browserComments) ? persisted.browserComments.filter(isNativeApiRecord) : [];
@@ -4295,6 +4300,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
   };
   taskWorkTools = platformRoutes.workTools;
+  resumeFailedAgentWork = platformRoutes.resumeFailedAgentWork;
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;
