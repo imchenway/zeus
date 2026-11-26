@@ -612,6 +612,12 @@ const selectConversationMessageFields = `id, conversation_id, role, content, sou
 const selectAliasedConversationMessageFields = `message.id, message.conversation_id, message.role, message.content, message.source, message.metadata_json, message.created_at,
   message.provider_thread_id, message.provider_turn_id, message.provider_item_id, message.client_message_id`;
 
+/** SQLite trim 使用与 String.trim() 相同的空白字符，历史列表和发送共用可用性口径。 */
+export const conversationDialogueWhitespaceSql = 'char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)';
+
+/** 旧消息只将含正文的用户和助手消息用于历史推送。 */
+const legacyDialogueWhereSql = `conversation_id = ? AND role IN ('user', 'assistant') AND trim(content, ${conversationDialogueWhitespaceSql}) <> ''`;
+
 function latestIso(...values: Array<string | null | undefined>): string {
   return values.filter((value): value is string => Boolean(value)).sort((left, right) => right.localeCompare(left))[0] ?? '';
 }
@@ -1382,6 +1388,16 @@ export class ConversationRepository {
     return Boolean(this.db.get<{ present: number }>('SELECT 1 AS present FROM conversation_messages WHERE conversation_id = ? LIMIT 1', [conversationId]));
   }
 
+  /** 旧会话的选项只查询是否存在可发送正文。 */
+  hasLegacyDialogue(conversationId: string): boolean {
+    return Boolean(this.db.get(`SELECT 1 FROM conversation_messages WHERE ${legacyDialogueWhereSql} LIMIT 1`, [conversationId]));
+  }
+
+  /** 用户选中且通过归属校验后，按旧消息的显示顺序读取正文。 */
+  readLegacyDialogue(conversationId: string): Array<{ role: 'user' | 'assistant'; text: string }> {
+    return this.db.select(`SELECT role, content AS text FROM conversation_messages WHERE ${legacyDialogueWhereSql} ORDER BY created_at ASC, id ASC`, [conversationId]);
+  }
+
   listMessages(conversationId: string): ZeusConversationMessageRecord[] {
     return this.db
       .select<DbConversationMessageRow>(
@@ -1565,12 +1581,14 @@ export class ConversationRepository {
       });
   }
 
-  /** 父任务上下文选择需要同时看到未归档和已归档会话，不改变常规会话列表的隐藏规则。 */
-  listAllByTask(taskId: string): ZeusConversationWithMessagesRecord[] {
-    return this.db.select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY created_at ASC, id`, [taskId]).map((row) => {
-      const conversation = mapConversationRow(row);
-      return { ...conversation, messages: this.listMessages(conversation.id) };
-    });
+  /** 推送历史选项按创建顺序列出任务的会话主记录，包含已归档会话。 */
+  listAllRecordsByTask(taskId: string, projectId: string): ZeusConversationRecord[] {
+    return this.db
+      .select<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE task_id = ? AND project_id = ? AND listing_scope NOT IN ('expert_internal', 'subagent_internal') ORDER BY created_at ASC, id`, [
+        taskId,
+        projectId,
+      ])
+      .map(mapConversationRow);
   }
 
   listBySessionId(sessionId: string): ZeusConversationWithMessagesRecord[] {

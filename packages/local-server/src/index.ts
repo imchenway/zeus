@@ -10,7 +10,7 @@ import type { ConversationWorktreeOptions } from '@zeus/shared';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { parseJsonObject } from './localServerPlatformSupport.js';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
-import { userFacingErrorCause } from '@zeus/shared';
+import { redactRuntimeCredentialText as redactSensitiveText, userFacingErrorCause } from '@zeus/shared';
 import websocketPlugin from '@fastify/websocket';
 import { installBuiltinWechatCommands } from './builtinWechatCommands.js';
 import { installBuiltinReleaseCommand } from './builtinReleaseCommand.js';
@@ -4639,22 +4639,4 @@ function toSecurityAuditLogEntry(record: ZeusAuditLogRecord): SecurityAuditLogEn
     payload: parseJsonObject(record.payloadJson),
     createdAt: record.createdAt,
   };
-}
-
-function redactSensitiveText(value: string): {
-  text: string;
-  redacted: boolean;
-} {
-  let redacted = false;
-  const replace = (text: string, pattern: RegExp, replacer: string | ((...args: string[]) => string)): string =>
-    text.replace(pattern, (...args: string[]) => {
-      redacted = true;
-      return typeof replacer === 'string' ? replacer : replacer(...args);
-    });
-  let text = value;
-  text = replace(text, /(\b(?:token|api[-_]?key|secret|password)\s*=\s*)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
-  text = replace(text, /(--(?:api-key|token|secret|password)\s+)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
-  text = replace(text, /(\bbearer\s+)(?!or\s+basic\s+authentication\b)[^\s"']+/giu, (_match, prefix) => `${prefix}[REDACTED]`);
-  text = replace(text, /\bsecret-[A-Za-z0-9._-]+/gu, '[REDACTED]');
-  return { text, redacted };
 }

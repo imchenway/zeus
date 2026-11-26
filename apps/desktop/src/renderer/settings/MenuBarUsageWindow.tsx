@@ -1422,11 +1422,15 @@ function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimensi
     const date = new Date(today);
     date.setDate(date.getDate() - 6 + index);
     const dateKey = localDateKey(date);
-    /** 当天写入失败且没有已知值时保留未知，官方日统计不受本机写入影响。 */
+    /** 本地缺报日期的数值仅代表已经记录的用量。 */
     const incomplete = !accountUsage && provider.incompleteLocalDates?.includes(dateKey);
-    /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零，未定价日期按缺失处理。 */
     const recorded = bucketsByDate.get(dateKey);
-    const value = recorded === null ? null : recorded === undefined ? (!accountUsage && !incomplete && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
+    /** 本地采集以后，完整且没有记录的日期视为零。 */
+    const emptyLocalDay = recorded === undefined && !accountUsage && !incomplete && collectionStart !== null && dateKey >= collectionStart;
+    /** 官方缺日与未定价金额保留空值。 */
+    const knownValue = typeof recorded === 'number' ? Math.max(0, recorded) : emptyLocalDay ? 0 : null;
+    /** 账本将无已知 Token 的缺报记录保存为零，趋势使用缺失状态。 */
+    const value = dimension === 'tokens' && incomplete && knownValue === 0 ? null : knownValue;
     return { date: dateKey, value, complete: !incomplete && value !== null && (dimension !== 'cost' || recorded === undefined || pricingByDate.get(dateKey) === 1) };
   });
 }

@@ -13,6 +13,7 @@ export * from './notifications.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
+export * from './credentialTextRedaction.js';
 export * from './temporaryWorkspace.js';
 export * from './codexUsage.js';
 /** 会话和独立生成入口共用 Codex 加速档位。 */
