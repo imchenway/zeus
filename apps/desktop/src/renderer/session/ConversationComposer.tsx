@@ -295,6 +295,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
             displayText: structured.displayText,
             promptText: structured.promptText,
+            ...(structured.composerTokens?.length ? { composerTokens: structured.composerTokens } : {}),
           }
         : undefined;
     setInputResourceError(null);

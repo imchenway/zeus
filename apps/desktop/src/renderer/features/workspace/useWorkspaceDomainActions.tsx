@@ -90,10 +90,12 @@ import {
   acceptTaskModelPushPendingState,
   attachTaskModelPushChoice,
   createTaskModelPushPendingState,
+  editTaskModelPushDeferredMessage,
   enqueueTaskModelPushMessage,
   failTaskModelPushPendingState,
   identifyTaskModelPushPendingOperation,
   retryTaskModelPushPendingState,
+  taskModelPushDeferredMessageRequest,
   taskModelPushHasRealChoice,
   type TaskModelPushPendingState,
   updateTaskModelPushAttachments,
@@ -2783,6 +2785,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (taskModelPushDispatchingTaskIdsRef.current.has(task.id)) return;
     capabilities = normalizeTaskModelPushCapabilities(capabilities);
     const previousPending = taskModelPushPendingByTaskRef.current[task.id];
+    /** 只有从明确拒绝的原推送重新确认时，才把原输入交给新请求。 */
+    const recovery = previousPending?.contextRefreshRequired && previousPending.request.idempotencyKey === taskModelPushEntryRef.current?.recoveryRequestId && !taskModelPushHasRealChoice(previousPending) ? previousPending : undefined;
     let prepared: { pending: TrackedTaskModelPushState } | null = null;
     try {
       const selectedModel = resolveTaskModelPushCapability(capabilities, form.model);
@@ -2862,16 +2866,19 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
       const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationHistory, parentContexts, relatedContexts, supplementalAttachments);
       const pending: TrackedTaskModelPushState = {
-        ...createTaskModelPushPendingState({
-          task,
-          projectName: targetProject?.name ?? task.projectId,
-          request,
-          form: normalizedForm,
-          prompt: renderTaskPushLayoutText(layout),
-          layout,
-          currentAttachmentOptions: capabilities.currentAttachmentOptions,
-          capabilities,
-        }),
+        ...createTaskModelPushPendingState(
+          {
+            task,
+            projectName: targetProject?.name ?? task.projectId,
+            request,
+            form: normalizedForm,
+            prompt: renderTaskPushLayoutText(layout),
+            layout,
+            currentAttachmentOptions: capabilities.currentAttachmentOptions,
+            capabilities,
+          },
+          recovery,
+        ),
         origin: taskModelPushNavigationRef.current,
       };
 
@@ -3111,19 +3118,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           };
         });
         try {
-          const acceptance = await client.sendNativeMessage(current.task.projectId, current.choice.id, {
-            content: message.content,
-            attachments: message.attachments,
-            delivery: message.delivery,
-            ...(message.settings?.model ? { model: message.settings.model } : {}),
-            ...(message.settings?.agentKind ? { agentKind: message.settings.agentKind } : {}),
-            ...(message.settings?.effort ? { effort: message.settings.effort } : {}),
-            ...(message.settings && Object.prototype.hasOwnProperty.call(message.settings, 'serviceTier') ? { serviceTier: message.settings.serviceTier } : {}),
-            ...(message.settings?.permissionMode ? { permissionMode: message.settings.permissionMode } : {}),
-            collaborationMode: message.settings?.collaborationMode ?? (current.form.workMode === 'plan' ? 'plan' : 'default'),
-            idempotencyKey: message.idempotencyKey,
-            clientUserMessageId: message.clientUserMessageId,
-          });
+          const acceptance = await client.sendNativeMessage(current.task.projectId, current.choice.id, taskModelPushDeferredMessageRequest(current, message));
           if (acceptance.operation.status !== 'accepted') throw new Error('Deferred task-push message was not durably accepted.');
           updateTaskModelPushPendingByTask((states) => {
             const active = states[pending.task.id];
@@ -3152,18 +3147,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
+  /** 重读上下文时保留待发消息，等新首发准备完成后再接管。 */
   async function refreshChangedTaskModelPushParentContext(pending: TrackedTaskModelPushState): Promise<void> {
     const client = props.nativeConversationClient;
     taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
     taskModelPushEnvelopeRef.current.delete(pending.task.id);
-    updateTaskModelPushPendingByTask((current) => {
-      const active = current[pending.task.id];
-      if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
-      const next = { ...current };
-      delete next[pending.task.id];
-      return next;
-    });
-    taskModelPushEntryRef.current = null;
+    /** 刷新回执只属于当前工作面及原失败请求。 */
+    const origin = taskModelPushNavigationRef.current;
+    taskModelPushEntryRef.current = { taskId: pending.task.id, origin, pending: false, recoveryRequestId: pending.request.idempotencyKey };
     setTaskModelPushEntry('confirmation');
     setTaskModelPushTaskId(pending.task.id);
     setTaskModelPushCapabilities(null);
@@ -3178,7 +3169,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskModelPushCapabilityRequestRef.current = requestVersion;
     try {
       const capabilities = normalizeTaskModelPushCapabilities(await client.loadCodexTaskPushCapabilities(pending.task.projectId, pending.task.id));
-      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      if (!isTaskModelPushRequestCurrent(requestVersion, origin)) return;
       const availableCurrentConversationIds = new Set(capabilities.currentConversationOptions.filter((conversation) => conversation.available).map((conversation) => conversation.id));
       const currentConversationIds = pending.form.currentConversationIds.filter((id) => availableCurrentConversationIds.has(id));
       const parentContextSelections = Object.fromEntries(
@@ -3226,7 +3217,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           : 'Task context was refreshed. Model, workspace, supplemental information, attachments for this push, and still-valid selections were preserved. Review and confirm again.',
       );
     } catch (error) {
-      if (taskModelPushCapabilityRequestRef.current !== requestVersion) return;
+      if (!isTaskModelPushRequestCurrent(requestVersion, origin)) return;
       setTaskModelPushStatus('error');
       setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
     }
@@ -3302,7 +3293,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 待建会话消息的正文与附件一起替换，取消编辑不触碰原草稿。 */
   function editTaskModelPushPendingMessage(taskId: string, messageId: string, content: string, attachments: NativeConversationAttachment[]): void {
-    mutateTaskModelPushPending(taskId, (pending) => updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? { ...message, content, attachments } : message))));
+    mutateTaskModelPushPending(taskId, (pending) =>
+      updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? editTaskModelPushDeferredMessage(message, content, attachments) : message))),
+    );
   }
 
   function deleteTaskModelPushPendingMessage(taskId: string, messageId: string): void {

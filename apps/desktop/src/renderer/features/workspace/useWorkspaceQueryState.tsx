@@ -551,7 +551,14 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   /** 入口检查与接入期间不展示确认页，失败保留在任务操作旁。 */
   const [taskModelPushEntry, setTaskModelPushEntry] = useState<'checking' | 'choose' | 'custom' | 'confirmation' | 'error'>('confirmation');
   /** 同步阻止入口重复打开，失败时允许按原阶段和工作面身份重查。 */
-  const taskModelPushEntryRef = useRef<{ taskId: string; stage?: TaskStageRecord; origin: TaskModelPushNavigationTarget; pending: boolean } | null>(null);
+  const taskModelPushEntryRef = useRef<{
+    taskId: string;
+    stage?: TaskStageRecord;
+    origin: TaskModelPushNavigationTarget;
+    pending: boolean;
+    /** 重新确认只接续用户打开的那次失败推送。 */
+    recoveryRequestId?: string;
+  } | null>(null);
   const [taskModelPushCapabilities, setTaskModelPushCapabilities] = useState<CodexTaskPushCapabilities | null>(null);
   const [taskModelPushRuntimeCapabilities, setTaskModelPushRuntimeCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [taskModelPushForm, setTaskModelPushForm] = useState<TaskModelPushForm>({

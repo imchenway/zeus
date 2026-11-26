@@ -48,6 +48,8 @@ export interface StructuredComposerSelection {
   pluginReferences: PluginSkillReference[];
   /** 可选的电脑操作意图，不是每轮授权开关。 */
   computerUseRequested: boolean;
+  /** 保存可编辑草稿中引用的实际位置与身份。 */
+  composerTokens?: StructuredToken[];
 }
 
 export interface StructuredComposerInputProps {
@@ -490,6 +492,7 @@ export function selectionFromTokens(value: string, tokens: StructuredToken[]): S
     skillReferences: ordered.filter((token) => token.kind === 'skill').map((token) => ({ id: token.stableId })),
     pluginReferences: ordered.filter((token) => token.kind === 'plugin' || token.kind === 'plugin-skill').map((token) => ({ kind: token.kind === 'plugin' ? ('plugin' as const) : ('skill' as const), id: token.stableId })),
     computerUseRequested: ordered.some((token) => token.kind === 'computer'),
+    composerTokens: ordered,
   };
 }
 

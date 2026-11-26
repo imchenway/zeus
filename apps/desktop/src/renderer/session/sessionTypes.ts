@@ -1513,6 +1513,8 @@ export interface NativeTurnSettingsSelection {
   computerUseRequested?: boolean;
   displayText?: string;
   promptText?: string;
+  /** 本地排队编辑所需的引用位置。 */
+  composerTokens?: import('./StructuredComposerInput.js').StructuredToken[];
 }
 
 export interface PluginSkillReference {
