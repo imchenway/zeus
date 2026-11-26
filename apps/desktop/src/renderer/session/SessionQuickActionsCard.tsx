@@ -140,10 +140,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const cwd = executionContext?.cwd ?? summary?.cwd ?? props.conversation.executionPath ?? (directWorkspace ? props.gitContext?.project.localPath : null) ?? null;
   /** 工作目录保持单行，缺少路径时在原位置显示读取状态。 */
   const workingDirectoryLabel = cwd
-    ? (zh ? '工作目录' : 'Working directory')
+    ? zh
+      ? '工作目录'
+      : 'Working directory'
     : workspaceState === 'idle' || workspaceState === 'loading'
-      ? (zh ? '正在读取工作目录…' : 'Loading working directory…')
-      : (zh ? '工作目录不可用' : 'Working directory unavailable');
+      ? zh
+        ? '正在读取工作目录…'
+        : 'Loading working directory…'
+      : zh
+        ? '工作目录不可用'
+        : 'Working directory unavailable';
   /** 任一目录模式有多个仓库时，不把首仓分支冒充整个工作区分支。 */
   const branch = (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? props.conversation.workspace?.branchName ?? null);
   /** 来源分支保持一行，完整仓库与分支仍可悬停读取，补载不移动操作按钮。 */

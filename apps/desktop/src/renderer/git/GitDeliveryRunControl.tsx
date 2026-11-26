@@ -455,12 +455,7 @@ export function GitDeliveryRunControl(props: {
     <>
       {combinationHost
         ? createPortal(
-            <GitDeliveryCombinationPopover
-              zh={props.zh}
-              summary={summary}
-              runDisabled={controlsDisabled || !props.input.repositories.length || !summary || (commandCount > 0 && !commandsLoaded)}
-              onStart={start}
-            >
+            <GitDeliveryCombinationPopover zh={props.zh} summary={summary} runDisabled={controlsDisabled || !props.input.repositories.length || !summary || (commandCount > 0 && !commandsLoaded)} onStart={start}>
               <div className="git-delivery-workflow-steps">
                 {combinationOption('commit', actionLabel('commit', props.zh))}
                 {combinationOption('merge', actionLabel('merge', props.zh, props.input.mode))}

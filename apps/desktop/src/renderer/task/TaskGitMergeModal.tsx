@@ -1289,11 +1289,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       ) : null}
                     </>
                   }
-                  combination={
-                    props.client ? (
-                      <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} input={directoryInput} onAccepted={props.onClose} />
-                    ) : null
-                  }
+                  combination={props.client ? <GitDeliveryRunControl client={props.client} projectId={props.task.projectId} zh={zh} disabled={busy || directoryUnavailable} input={directoryInput} onAccepted={props.onClose} /> : null}
                   pushCount={selectedPushCandidateCount}
                   onPush={() => openPush()}
                 />

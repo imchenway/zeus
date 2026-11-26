@@ -1059,14 +1059,7 @@ export function GitDeliveryActions(props: {
           <section className="task-git-delivery-action-step">
             <div className="task-git-delivery-step-heading">
               <strong>{props.zh ? '远端' : 'Remote'}</strong>
-              <Button
-                variant="secondary"
-                size="compact"
-                aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '远端' : 'Remote'}`}
-                busy={props.busyAction === 'push'}
-                onClick={props.onPush}
-                disabled={busy || props.pushCount === 0}
-              >
+              <Button variant="secondary" size="compact" aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '远端' : 'Remote'}`} busy={props.busyAction === 'push'} onClick={props.onPush} disabled={busy || props.pushCount === 0}>
                 {pushLabel}
                 {props.pushCount > 0 ? ` (${props.pushCount})` : ''}
               </Button>
