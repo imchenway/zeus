@@ -11,9 +11,11 @@ import type {
   NativeQueuedSubmission,
   NativeSessionState,
   NativeTurnSettingsSelection,
+  SendNativeMessageRequest,
   StartTaskModelPushRequest,
 } from '../session/sessionTypes.js';
 import { resolveModelCapability } from '../session/modelSelection.js';
+import { reconcileTokens, selectionFromTokens } from '../session/StructuredComposerInput.js';
 import type { TaskModelPushForm } from './TaskModelPushModal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 
@@ -61,16 +63,20 @@ export interface TaskModelPushPendingState {
   error: string | null;
 }
 
-export function createTaskModelPushPendingState(input: {
-  task: TaskRecord;
-  projectName: string;
-  request: StartTaskModelPushRequest;
-  form: TaskModelPushForm;
-  prompt: string;
-  layout: TaskPushMessageLayout;
-  currentAttachmentOptions: TaskPushContextAttachmentOption[];
-  capabilities: CodexTaskPushCapabilities;
-}): TaskModelPushPendingState {
+/** 重建首发时可接续同一临时会话的草稿与待发队列。 */
+export function createTaskModelPushPendingState(
+  input: {
+    task: TaskRecord;
+    projectName: string;
+    request: StartTaskModelPushRequest;
+    form: TaskModelPushForm;
+    prompt: string;
+    layout: TaskPushMessageLayout;
+    currentAttachmentOptions: TaskPushContextAttachmentOption[];
+    capabilities: CodexTaskPushCapabilities;
+  },
+  recovery?: TaskModelPushPendingState,
+): TaskModelPushPendingState {
   const currentOptions = new Map<string, TaskPushContextAttachmentOption[]>();
   for (const attachment of input.currentAttachmentOptions) {
     const identity = `${attachment.field}\0${attachment.name}`;
@@ -93,11 +99,13 @@ export function createTaskModelPushPendingState(input: {
     ];
   });
   const attachments = [...currentAttachments, ...input.form.supplementalAttachments];
-  const navigationId = `task-push:${input.request.idempotencyKey}`;
+  /** 首发使用新请求身份，重新确认沿用界面身份以保留输入状态。 */
+  const navigationId = recovery?.navigationId ?? `task-push:${input.request.idempotencyKey}`;
   const capabilities = conversationCapabilities(input.capabilities);
   const selectedModel = resolveModelCapability(capabilities.models, input.request.model);
   const choice = createPendingChoice(input.task, navigationId, input.request.model, input.form, selectedModel);
-  return {
+  /** 新首发正文独立创建，旧输入只接管草稿和后续队列。 */
+  const pending: TaskModelPushPendingState = {
     ...input,
     navigationId,
     attachments,
@@ -111,6 +119,8 @@ export function createTaskModelPushPendingState(input: {
     status: 'submitting',
     error: null,
   };
+  if (!recovery) return pending;
+  return updateTaskModelPushDeferredMessages({ ...pending, session: { ...pending.session, draft: recovery.session.draft, attachments: recovery.session.attachments } }, () => recovery.deferredMessages);
 }
 
 /** 重试保留原消息身份并清除上一轮失败展示，避免连接期间仍显示旧错误。 */
@@ -173,7 +183,7 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
       queue: {
         throughEventSeq: 0,
         state: { type: 'idle' },
-        submissions: [],
+        submissions: pending.session.queue?.submissions ?? [],
       },
       error: deliveryError,
     },
@@ -266,24 +276,38 @@ export function enqueueTaskModelPushMessage(
   },
 ): TaskModelPushPendingState {
   const message: TaskModelPushDeferredMessage = { ...input, status: 'queued', error: null };
-  const deferredMessages = [...pending.deferredMessages, message];
+  return updateTaskModelPushDeferredMessages({ ...pending, session: { ...pending.session, draft: '', attachments: [] } }, (messages) => [...messages, message]);
+}
+
+/** 编辑待发消息时使用原提交身份，并同步更新引用与模型正文。 */
+export function editTaskModelPushDeferredMessage(message: TaskModelPushDeferredMessage, content: string, attachments: NativeConversationAttachment[]): TaskModelPushDeferredMessage {
+  if (!message.settings || content === message.content) return { ...message, content, attachments };
+  /** 引用使用编辑器的原位置规则，避免已删标签继续触发动作。 */
+  const tokens = reconcileTokens(message.content, content, message.settings.composerTokens ?? []);
+  return { ...message, content, attachments, settings: { ...message.settings, ...selectionFromTokens(content, tokens) } };
+}
+
+/** 使用提交时的结构化设置构造正式请求，编辑坐标只在本地保留。 */
+export function taskModelPushDeferredMessageRequest(pending: TaskModelPushPendingState, message: TaskModelPushDeferredMessage): SendNativeMessageRequest {
+  /** 模型正文和展示原稿各有独立字段。 */
+  const { promptText, displayText, ...settings }: Partial<NativeTurnSettingsSelection> = message.settings ?? {};
+  delete settings.composerTokens;
   return {
-    ...pending,
-    deferredMessages,
-    session: {
-      ...pending.session,
-      draft: '',
-      attachments: [],
-      queue: {
-        throughEventSeq: 0,
-        state: { type: 'active', turnId: pending.session.activeTurnId ?? `${pending.navigationId}:turn`, phase: 'prework' },
-        submissions: deferredMessages.filter((entry) => entry.status !== 'accepted').map(deferredMessageSubmission),
-      },
-    },
+    ...settings,
+    content: promptText?.trim() ?? message.content,
+    ...(displayText?.trim() ? { displayText: displayText.trim() } : {}),
+    composerDraft: message.content,
+    attachments: message.attachments,
+    delivery: message.delivery,
+    collaborationMode: settings.collaborationMode ?? (pending.form.workMode === 'plan' ? 'plan' : 'default'),
+    idempotencyKey: message.idempotencyKey,
+    clientUserMessageId: message.clientUserMessageId,
   };
 }
 
+/** 以本地待发记录刷新队列，失败时仍允许查看原消息。 */
 export function updateTaskModelPushDeferredMessages(pending: TaskModelPushPendingState, update: (messages: TaskModelPushDeferredMessage[]) => TaskModelPushDeferredMessage[]): TaskModelPushPendingState {
+  /** 保留用户调整后的队列顺序与消息身份。 */
   const deferredMessages = update(pending.deferredMessages);
   return {
     ...pending,
@@ -292,7 +316,7 @@ export function updateTaskModelPushDeferredMessages(pending: TaskModelPushPendin
       ...pending.session,
       queue: {
         throughEventSeq: 0,
-        state: { type: 'active', turnId: pending.session.activeTurnId ?? `${pending.navigationId}:turn`, phase: 'prework' },
+        state: pending.session.activeTurnId ? { type: 'active', turnId: pending.session.activeTurnId, phase: 'prework' } : { type: 'idle' },
         submissions: deferredMessages.filter((entry) => entry.status !== 'accepted').map(deferredMessageSubmission),
       },
     },
