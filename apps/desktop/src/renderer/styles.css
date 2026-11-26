@@ -3164,8 +3164,7 @@ a {
 .project-git-branch-repository:last-child {
   border-bottom: 0;
 }
-.project-git-branch-actions button,
-.project-git-common-branch-actions button {
+.project-git-branch-actions button {
   align-items: center;
   background: transparent;
   border: 0;
@@ -3184,12 +3183,10 @@ a {
   text-align: left;
   width: 100%;
 }
-.project-git-branch-actions button:hover:not(:disabled):not([aria-disabled='true']),
-.project-git-common-branch-actions button:hover:not(:disabled):not([aria-disabled='true']) {
+.project-git-branch-actions button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
 }
-.project-git-branch-actions button:disabled,
-.project-git-common-branch-actions button:disabled {
+.project-git-branch-actions button:disabled {
   color: var(--zeus-product-muted);
 }
 .project-git-branch-repository > header {
@@ -3219,22 +3216,6 @@ a {
 }
 .project-git-branch-repository > .project-git-source-repository-head small {
   max-width: 100%;
-}
-/* 批量选择只有一个操作时占满行，窄窗口允许两项操作换行。 */
-.project-git-common-branch-actions {
-  display: grid;
-  gap: 2px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
-  padding: 2px 8px 6px 30px;
-}
-/* 只有一个操作时，按钮使用两列的宽度，避免被空列挤到换行。 */
-.project-git-common-branch-actions > button:only-child {
-  grid-column: 1 / -1;
-}
-.project-git-common-branch-actions button {
-  background: var(--zeus-product-panel-muted);
-  justify-content: center;
-  min-height: 24px;
 }
 .project-git-branch-empty {
   color: var(--zeus-product-muted);

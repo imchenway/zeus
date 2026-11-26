@@ -492,8 +492,7 @@
   height: 14px;
   flex-shrink: 0;
 }
-.git-branch-collapsible-group[open] > summary > svg,
-.git-reference-tree button[aria-expanded='true']:has(+ .project-git-common-branch-actions) > svg:last-child {
+.git-branch-collapsible-group[open] > summary > svg {
   transform: rotate(90deg);
 }
 .git-branch-collapsible-group > summary:hover {
