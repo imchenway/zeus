@@ -102,8 +102,6 @@ export interface GitDeliveryCombinationState {
   followUps: GitDeliveryFollowUpPreferences;
   /** 更新当前操作栏的收尾选择。 */
   setFollowUps: Dispatch<SetStateAction<GitDeliveryFollowUpPreferences>>;
-  /** 具备有效目标分支时允许更改合入方式。 */
-  canMerge: boolean;
   /** 窗口标题栏打开本次交付的详细设置。 */
   settingsOpen: boolean;
   /** 关闭弹窗不改变尚未保存的详细设置。 */

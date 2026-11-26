@@ -1087,8 +1087,8 @@ export class GitDeliveryExecution {
             integrationId: `${step.id}_${step.attempt}`,
             targetBranch: selection.mergeBranch,
             taskBranch: selection.expectedBranch,
-            mode: 'merge',
-            commitMessage: run.input.message || `Merge ${selection.expectedBranch} into ${selection.mergeBranch}`,
+            mode: run.input.mode,
+            commitMessage: run.input.message || `Squash ${selection.expectedBranch} into ${selection.mergeBranch}`,
           }),
         );
         const merge: GitDeliveryMergeResult = {
@@ -1281,7 +1281,11 @@ export class GitDeliveryExecution {
     if (targetHead !== merge.targetHeadSha) throw deliveryError('接收合入的目标分支已变化，已保留隔离结果，请核对后继续。');
     if (!merge.resultHeadSha) {
       const completed = await this.external(run, step, 'complete', { sourceHeadSha: merge.sourceHeadSha, targetHeadSha: merge.targetHeadSha }, () =>
-        completeTaskIntegrationCommit({ integrationPath: merge.integrationPath, mode: 'merge', commitMessage: run.input.message || `Merge ${merge.sourceBranch}` }),
+        completeTaskIntegrationCommit({
+          integrationPath: merge.integrationPath,
+          mode: run.input.mode,
+          commitMessage: run.input.message || `Squash ${merge.sourceBranch} into ${merge.targetBranch}`,
+        }),
       );
       merge.resultHeadSha = completed.resultHeadSha as string;
       this.repository.updateStep(this.step(step), { result: { ...this.step(step).result, merge } });

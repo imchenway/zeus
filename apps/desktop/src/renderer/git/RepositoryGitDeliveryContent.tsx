@@ -1,5 +1,5 @@
 import { displayedFilePath } from '../ui/filePathActions.js';
-import type { GitDeliverySelection, GitDeliverySettings } from '@zeus/shared';
+import { defaultGitDeliveryMergeMode, type GitDeliveryInput, type GitDeliverySelection, type GitDeliverySettings } from '@zeus/shared';
 import { PushDialog } from './GitPushDialog.js';
 import { defaultPushTarget } from './GitRepositoryControls.js';
 import type { PushSelection, OperationTone } from './gitWorkbenchTypes.js';
@@ -131,7 +131,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const committedOnly = snapshot?.committedOnly === true;
   const scope = committedOnly ? 'committed' : selectedScope;
   /** 单独合入与组合交付使用同一合入方式。 */
-  const [mode, setMode] = useState<'merge' | 'squash'>('merge');
+  const [mode, setMode] = useState<GitDeliveryInput['mode']>(defaultGitDeliveryMergeMode);
   /** 标题栏承载当前交付操作区的设置入口。 */
   const [deliverySettingsHost, setDeliverySettingsHost] = useState<HTMLDivElement | null>(null);
   /** 手动编辑和生成失败均保留提交说明。 */
@@ -708,6 +708,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                 onCopyBranch={copyBranchName}
                 mergeDisabled={!props.conversation || snapshot.repositories.some((repository) => repository.snapshot.detached || Boolean(repository.snapshot.integrationState) || repository.snapshot.conflictFiles.length > 0)}
                 mode={mode}
+                onModeChange={setMode}
                 mergeCount={props.conversation ? snapshot.repositories.length : 0}
                 onMerge={(settings) => mergeSelected(settings)}
                 combination={
@@ -718,7 +719,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                       taskId={props.conversation.taskId}
                       zh={zh}
                       disabled={Boolean(busyAction)}
-                      onModeChange={setMode}
                       onAccepted={() => props.onClose?.()}
                       input={{
                         scope: { kind: 'conversation', conversationId: props.conversation.id },

@@ -12,13 +12,13 @@ import './gitDeliveryProgress.css';
 /** 工作台用既有命令页展示步骤指向的原执行记录。 */
 export const GitDeliveryCommandRunContext = createContext<((run: Pick<CommandRun, 'id' | 'projectId'>) => void) | null>(null);
 
-/** 操作按钮与进度共用步骤名称，执行前可标明压缩合入。 */
+/** Git 操作保留英文名称，按钮与进度用同一名称区分 Merge 和 Squash。 */
 export function gitDeliveryActionLabel(action: GitDeliveryStep['action'], zh: boolean, mode?: GitDeliveryInput['mode']): string {
-  if (action === 'merge' && mode === 'squash') return zh ? '压缩合入' : 'Squash merge';
+  if (action === 'merge' && mode === 'squash') return 'Squash';
   return {
-    commit: zh ? '提交' : 'Commit',
-    merge: zh ? '合入' : 'Merge',
-    push: zh ? '推送' : 'Push',
+    commit: 'Commit',
+    merge: 'Merge',
+    push: 'Push',
     command: zh ? '命令' : 'Command',
     task_status: zh ? '任务状态' : 'Task status',
     conversation_archive: zh ? '归档会话' : 'Archive conversation',
@@ -61,7 +61,7 @@ function describeGitDeliveryCommandFailure(step: GitDeliveryStep, zh: boolean) {
 }
 
 /** 结果待核对时用业务状态作摘要，原始命令与连接错误留在完整说明中。 */
-export function GitDeliveryStepError({ step, zh, summary, commandRunLinked = false }: { step: GitDeliveryStep; zh: boolean; summary?: string; commandRunLinked?: boolean }) {
+export function GitDeliveryStepError({ step, zh, mode, summary, commandRunLinked = false }: { step: GitDeliveryStep; zh: boolean; mode: GitDeliveryInput['mode']; summary?: string; commandRunLinked?: boolean }) {
   /** 首屏使用当前界面语言，详情保留真实错误链。 */
   const language = zh ? 'zh-CN' : 'en';
   const visibleSummary = summary ?? (step.state === 'unknown' || step.commitMessageFailed ? gitDeliveryStepErrorSummary(step, zh) : (step.message ?? undefined));
@@ -79,7 +79,7 @@ export function GitDeliveryStepError({ step, zh, summary, commandRunLinked = fal
       </span>
     );
   }
-  return <VisibleApplicationError error={error} summary={visibleSummary} title={`${step.repositoryName} · ${gitDeliveryActionLabel(step.action, zh)}`} language={language} />;
+  return <VisibleApplicationError error={error} summary={visibleSummary} title={`${step.repositoryName} · ${gitDeliveryActionLabel(step.action, zh, mode)}`} language={language} />;
 }
 
 /** 两个入口显示同一已完成步数，等待和异常不虚增进度。 */
@@ -97,7 +97,7 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
   const count = `${completed}/${run.steps.length}`;
   const countLabel = stopped ? (zh ? `已完成 ${count}` : `${count} completed`) : count;
   /** 当前动作与仓库名就近显示，任务收尾无需仓库前缀。 */
-  const action = step ? gitDeliveryActionLabel(step.action, zh) : '';
+  const action = step ? gitDeliveryActionLabel(step.action, zh, run.input.mode) : '';
   /** 文案依据真实运行状态，不以进度条推测完成。 */
   const label = run.stopping
     ? zh
@@ -158,7 +158,7 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
     const { action } = first;
     const current = steps.some((item) => item.id === step?.id);
     const commandRunId = action === 'command' ? first.commandRunId : undefined;
-    const label = action === 'command' ? `${gitDeliveryActionLabel(action, zh)} · ${first.repositoryName}` : current ? detail : gitDeliveryActionLabel(action, zh);
+    const label = action === 'command' ? `${gitDeliveryActionLabel(action, zh)} · ${first.repositoryName}` : current ? detail : gitDeliveryActionLabel(action, zh, run.input.mode);
     /** 分组计数与总进度采用相同的成功状态口径。 */
     const completed = steps.filter((item) => item.state === 'succeeded').length;
     /** 异常优先于活动状态，部分完成不等同于整组完成。 */
@@ -235,7 +235,11 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
                 {showErrorSummaries
                   ? group.errors.map(({ step, summary }) => (
                       <span key={step.id} className="git-delivery-progress-step-error">
-                        {step.state === 'unknown' || step.action === 'command' ? <GitDeliveryStepError step={step} zh={zh} summary={summary} commandRunLinked={Boolean(group.commandRunId && openCommandRun)} /> : summary}
+                        {step.state === 'unknown' || step.action === 'command' ? (
+                          <GitDeliveryStepError step={step} zh={zh} mode={run.input.mode} summary={summary} commandRunLinked={Boolean(group.commandRunId && openCommandRun)} />
+                        ) : (
+                          summary
+                        )}
                       </span>
                     ))
                   : null}
