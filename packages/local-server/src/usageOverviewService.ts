@@ -279,8 +279,9 @@ function buildProviderSummary(input: {
   const sevenDayStart = localDate(addDays(startOfLocalDay(readAt), -6));
   /** 快捷范围沿用账本时间边界，只标记范围内发生的失败。 */
   const failureTimes = usageFailures.map((failure) => failure.occurredAt);
-  /** 只有本地趋势需要按天标记缺失。 */
-  const incompleteLocalDates = [...new Set(failureTimes.map((timestamp) => localDate(new Date(timestamp))).filter((date) => date >= sevenDayStart && date <= today))];
+  /** 本地趋势和范围汇总都将缺报的账本记录和未补齐的写入视为不完整。 */
+  const incompleteTimes = [...failureTimes, ...sevenDayRows.filter((row) => !row.usageComplete).map((row) => row.occurredAt)];
+  const incompleteLocalDates = [...new Set(incompleteTimes.map((timestamp) => localDate(new Date(timestamp))).filter((date) => date >= sevenDayStart && date <= today))];
   /** 价格周期必须参考该供应源的全部账本目录，不能只看今日或近七日窗口。 */
   const pricePeriods = buildUsagePricePeriods(rows);
   /** 四个快捷范围共享同一聚合入口，避免 Renderer 自行重算账本口径。 */

@@ -9,6 +9,7 @@ import {
   type ConversationInformation,
   conversationNavigationExcerpt,
   conversationQuestionNavigationExcerpt,
+  redactConversationPreviewText as redactSensitivePreview,
   type ConversationNavigationEntry,
   type ConversationNavigationSnapshot,
   type ConversationProcessGroup,
@@ -36,7 +37,7 @@ import { inputSuggestionUserTurnSql } from './inputSuggestionStore.js';
 import { ConversationSystemMessageRepository } from './conversationSystemMessageStore.js';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { conversationImageAttachmentRef, CodexUsageLedgerRepository } from './conversationStore.js';
+import { conversationDialogueWhitespaceSql, conversationImageAttachmentRef, CodexUsageLedgerRepository } from './conversationStore.js';
 
 export { conversationSnapshotV2StructureGeneration };
 
@@ -93,6 +94,27 @@ function conversationNavigationPlacement(row: ConversationNavigationPlacementRow
   };
 }
 
+/** 用户正文优先采用已保存的显示文本，执行输入可能包含额外的上下文。 */
+const modelHistoryUserDisplayTextSql = `COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), NULLIF(json_extract(content_json, '$.taskPushLayout.displayText'), ''))`;
+
+/** 旧任务推送的布局只写入提交时，历史与引用都从同一提交补回显示文本。 */
+const modelHistoryTaskPushSubmissionSql = `FROM conversation_submissions AS submission
+   WHERE conversation_model_history.role = 'user'
+     AND submission.id = conversation_model_history.submission_id
+     AND submission.conversation_id = conversation_model_history.conversation_id
+     AND json_valid(conversation_model_history.content_json)
+     AND json_type(conversation_model_history.content_json, '$') = 'object'
+     AND json_type(conversation_model_history.content_json, '$.taskPushLayout') IS NULL
+     AND json_valid(submission.input_json)
+     AND json_type(submission.input_json, '$.taskPushLayout') = 'object'`;
+
+/** 旧任务推送的显示正文优先于保存的执行输入。 */
+const modelHistoryTaskPushDisplayTextSql = `COALESCE(
+       NULLIF(json_extract(conversation_model_history.content_json, '$.displayText'), ''),
+       NULLIF(json_extract(submission.input_json, '$.displayText'), ''),
+       NULLIF(json_extract(submission.input_json, '$.taskPushLayout.displayText'), ''),
+       json_extract(conversation_model_history.content_json, '$.text'))`;
+
 // 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
 // 用户消息的附件、任务布局、回答评论和网页评论是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
 // 继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
@@ -101,28 +123,16 @@ function conversationNavigationPlacement(row: ConversationNavigationPlacementRow
 // 展示短文案必须先替换 text，再截断 JSON；否则首屏会读到执行原文，全文到达后才切换摘要。
 const modelHistoryVisibleContentSql = `COALESCE(
   (SELECT json_patch(conversation_model_history.content_json, json_object(
-     'text', COALESCE(
-       NULLIF(json_extract(conversation_model_history.content_json, '$.displayText'), ''),
-       NULLIF(json_extract(submission.input_json, '$.displayText'), ''),
-       NULLIF(json_extract(submission.input_json, '$.taskPushLayout.displayText'), ''),
-       json_extract(conversation_model_history.content_json, '$.text')),
+     'text', ${modelHistoryTaskPushDisplayTextSql},
      'taskPushLayout', json_extract(submission.input_json, '$.taskPushLayout'),
      'attachments', COALESCE(json_extract(conversation_model_history.content_json, '$.attachments'), json_extract(submission.input_json, '$.attachments'), json('[]'))
    ))
-   FROM conversation_submissions AS submission
-   WHERE conversation_model_history.role = 'user'
-     AND submission.id = conversation_model_history.submission_id
-     AND submission.conversation_id = conversation_model_history.conversation_id
-     AND json_valid(conversation_model_history.content_json)
-     AND json_type(conversation_model_history.content_json, '$') = 'object'
-     AND json_type(conversation_model_history.content_json, '$.taskPushLayout') IS NULL
-     AND json_valid(submission.input_json)
-     AND json_type(submission.input_json, '$.taskPushLayout') = 'object'),
+   ${modelHistoryTaskPushSubmissionSql}),
   CASE
   WHEN conversation_model_history.role = 'user'
    AND json_valid(content_json)
-   AND COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), NULLIF(json_extract(content_json, '$.taskPushLayout.displayText'), '')) IS NOT NULL
-    THEN json_set(content_json, '$.text', COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), NULLIF(json_extract(content_json, '$.taskPushLayout.displayText'), '')))
+   AND ${modelHistoryUserDisplayTextSql} IS NOT NULL
+    THEN json_set(content_json, '$.text', ${modelHistoryUserDisplayTextSql})
   WHEN conversation_model_history.role = 'user'
    AND json_valid(content_json)
    AND (
@@ -187,6 +197,26 @@ const modelHistoryReasoningSummarySql = `CASE
 END`;
 /** 对话列表、引用正文和正文句柄共用的可见对话边界，排除工具配对与思考摘要。 */
 const modelHistoryDialogueSql = `role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0`;
+
+/** 可用性与实际发送共用正文投影，列表查询无需组装附件和任务布局。 */
+const confirmedDialogueRowsSql = `FROM (
+  SELECT role, sequence, CASE WHEN json_valid(content_json) THEN
+    CASE json_type(content_json)
+      WHEN 'text' THEN json_extract(content_json, '$')
+      WHEN 'object' THEN COALESCE(
+        CASE WHEN role = 'user' THEN COALESCE(
+          (SELECT ${modelHistoryTaskPushDisplayTextSql} ${modelHistoryTaskPushSubmissionSql}),
+          ${modelHistoryUserDisplayTextSql}
+        ) END,
+        CASE WHEN json_type(content_json, '$.text') = 'text' THEN json_extract(content_json, '$.text') END
+      )
+    END
+    ELSE content_json
+  END AS text
+  FROM conversation_model_history
+  WHERE conversation_id = ? AND ${modelHistoryDialogueSql} AND ${modelHistoryVisibleInTranscriptSql}
+)
+WHERE trim(text, ${conversationDialogueWhitespaceSql}) <> ''`;
 // 历史元数据按 Provider 消息身份取回；正文和时间只参与已有消息身份映射，不用于猜测问题。
 const modelHistoryAssistantMetadataSql = `COALESCE(
   CASE WHEN json_valid(content_json) THEN json_extract(content_json, '$.assistantMessage') ELSE NULL END,
@@ -2090,37 +2120,14 @@ export class ConversationSnapshotV2Repository {
     return row ? redactSensitivePreview(row.content).text : null;
   }
 
-  /** 复用已确认的可见对话，只读取正文，排除工具、思考和附件元数据。 */
+  /** 读取已确认的可见正文，任务推送在生成发送快照前执行脱敏。 */
   readConfirmedDialogue(conversationId: string): Array<{ role: 'user' | 'assistant'; text: string }> {
-    const rows = this.db.select<{ role: 'user' | 'assistant'; source: string; content: string }>(
-      `SELECT role, content_json AS source, ${modelHistoryVisibleContentSql} AS content
-         FROM conversation_model_history
-        WHERE conversation_id = ? AND ${modelHistoryDialogueSql} AND ${modelHistoryVisibleInTranscriptSql}
-        ORDER BY sequence`,
-      [requiredIdentity(conversationId, 'conversationId')],
-    );
-    return rows.flatMap((row) => {
-      const source = parseJsonRecordOrNull(row.source);
-      const projection = source?.text === row.content || source?.displayText === row.content ? null : parseJsonRecordOrNull(row.content);
-      const text = typeof projection?.text === 'string' ? projection.text : projection ? '' : row.content;
-      return text.trim() ? [{ role: row.role, text: redactSensitivePreview(text).text }] : [];
-    });
+    return this.db.select(`SELECT role, text ${confirmedDialogueRowsSql} ORDER BY sequence`, [requiredIdentity(conversationId, 'conversationId')]);
   }
 
   /** 列出历史选项时只核对对话存在性，正文等到用户选择发送再读取。 */
   hasConfirmedDialogue(conversationId: string): boolean {
-    return Boolean(
-      this.db.get(
-        `SELECT 1 FROM conversation_model_history
-          WHERE conversation_id = ? AND ${modelHistoryDialogueSql} AND ${modelHistoryVisibleInTranscriptSql}
-            AND length(trim(CASE WHEN json_valid(content_json) THEN
-              CASE WHEN json_type(content_json) = 'object' THEN COALESCE(NULLIF(json_extract(content_json, '$.displayText'), ''), json_extract(content_json, '$.text'), '')
-                   WHEN json_type(content_json) = 'text' THEN json_extract(content_json, '$') ELSE '' END
-              ELSE content_json END)) > 0
-          LIMIT 1`,
-        [requiredIdentity(conversationId, 'conversationId')],
-      ),
-    );
+    return Boolean(this.db.get(`SELECT 1 ${confirmedDialogueRowsSql} LIMIT 1`, [requiredIdentity(conversationId, 'conversationId')]));
   }
 
   /** 正文分页保持句柄身份、修订与脱敏校验；对话调用方可收紧内容类型。 */
@@ -3649,28 +3656,6 @@ function parseJsonRecordOrNull(value: string | null): Record<string, unknown> | 
   } catch {
     return null;
   }
-}
-
-function redactSensitivePreview(value: string): { text: string; redacted: boolean } {
-  const patterns: Array<[RegExp, string]> = [
-    [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/gu, '[REDACTED_PRIVATE_KEY]'],
-    [/\bBearer\s+[A-Za-z0-9._~+/-]{12,}={0,2}/giu, 'Bearer [REDACTED_TOKEN]'],
-    [/\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b/gu, '[REDACTED_TOKEN]'],
-  ];
-  let text = value;
-  let redacted = false;
-  for (const [pattern, replacement] of patterns) {
-    text = text.replace(pattern, () => {
-      redacted = true;
-      return replacement;
-    });
-  }
-  text = text.replace(/(?:"?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"?\s*[:=]\s*"?)[^"'\s,}]{8,}/giu, (match) => {
-    redacted = true;
-    const separator = Math.max(match.lastIndexOf(':'), match.lastIndexOf('='));
-    return `${match.slice(0, separator + 1)}[REDACTED_SECRET]`;
-  });
-  return { text, redacted };
 }
 
 function takeCodePointPrefixByBytes(value: string, byteLimit: number): { text: string; codePoints: number } {

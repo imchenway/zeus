@@ -2,6 +2,7 @@ import { type AiRuntimeLogEntry, type AiRuntimeSession, type CodexTransportState
 import {
   buildTaskPushLayout,
   isTaskAttachmentField,
+  redactTaskPushConversationHistory,
   type TaskPushContextConversationOption,
   type TaskPushConversationHistory,
   type TaskPushMessageLayout,
@@ -15,7 +16,7 @@ import {
   type TaskPushRelatedContextSelection,
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import { type ConversationSnapshotV2Repository, type ZeusConversationWithMessagesRecord, type ZeusProjectRecord, type ZeusTaskRecord, type ZeusTaskWorkspaceRecord } from '@zeus/storage';
+import { type ConversationSnapshotV2Repository, type ZeusConversationRecord, type ZeusProjectRecord, type ZeusTaskRecord, type ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { getNextTaskStatus, type TaskStatus } from './taskCore.js';
 import { createTelegramBotMessageClient, createTelegramLongPollingClient, createTelegramPollingService, getTelegramConfigurationState, type TelegramPollingService } from './telegramAdapter.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -392,30 +393,23 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return ancestors.reverse();
   }
 
-  /** 旧会话可能只有持久消息，仍使用其已保存的用户与助手正文。 */
-  function legacyTaskPushDialogue(conversation: ZeusConversationWithMessagesRecord): NonNullable<TaskPushConversationHistory['dialogue']> {
-    return conversation.messages.flatMap((message) => {
-      const role = message.role;
-      return (role === 'user' || role === 'assistant') && message.content.trim() ? [{ role, text: redactSensitiveText(message.content).text }] : [];
-    });
-  }
-
   /** 选择列表只返回本任务的会话身份与可用状态。 */
   function listTaskPushConversationOptions(task: ZeusTaskRecord): TaskPushContextConversationOption[] {
-    return (conversations.listAllByTask(task.id) as ZeusConversationWithMessagesRecord[])
-      .filter((conversation) => conversation.projectId === task.projectId)
-      .map((conversation) => {
-        const available = conversationSnapshotV2.hasConfirmedDialogue(conversation.id) || conversation.messages.some((message) => (message.role === 'user' || message.role === 'assistant') && message.content.trim());
-        return {
-          id: conversation.id,
-          title: conversation.title,
-          createdAt: conversation.createdAt,
-          activityAt: conversations.meaningfulActivityAt(conversation.id),
-          archived: conversation.archived,
-          available,
-          unavailableReason: available ? null : '没有可发送的已保存对话。',
-        };
-      });
+    /** 归档状态、创建顺序和内部会话过滤由会话仓储统一提供。 */
+    const records: ZeusConversationRecord[] = conversations.listAllRecordsByTask(task.id, task.projectId);
+    return records.map((conversation) => {
+      /** 存在已确认正文时无需查询旧消息。 */
+      const available = conversationSnapshotV2.hasConfirmedDialogue(conversation.id) || conversations.hasLegacyDialogue(conversation.id);
+      return {
+        id: conversation.id,
+        title: conversation.title,
+        createdAt: conversation.createdAt,
+        activityAt: conversations.meaningfulActivityAt(conversation.id),
+        archived: conversation.archived,
+        available,
+        unavailableReason: available ? null : '没有可发送的已保存对话。',
+      };
+    });
   }
 
   /** 展示时间不参与上下文修订，避免会话继续活动时阻断已有历史会话选择。 */
@@ -559,14 +553,16 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     const resolveHistory = (taskId: string, options: TaskPushContextConversationOption[], ids: string[]): TaskPushConversationHistory[] => {
       const availableIds = new Set(options.filter((option) => option.available).map((option) => option.id));
       return ids.map((id) => {
-        const conversation: ZeusConversationWithMessagesRecord | undefined = availableIds.has(id) ? conversations.getById(id) : undefined;
+        /** 先核验主记录，再读取该会话选中的正文。 */
+        const conversation: ZeusConversationRecord | undefined = availableIds.has(id) ? conversations.getRecordById(id) : undefined;
         if (!conversation || conversation.projectId !== project.id || conversation.taskId !== taskId) {
           throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '所选历史会话已变化，请刷新后重试。');
         }
         const confirmedDialogue = conversationSnapshotV2.readConfirmedDialogue(id);
-        const dialogue = confirmedDialogue.length ? confirmedDialogue : legacyTaskPushDialogue(conversation);
+        /** 仅在已确认对话为空时读取旧消息，兼容升级前保留的会话。 */
+        const dialogue: NonNullable<TaskPushConversationHistory['dialogue']> = confirmedDialogue.length ? confirmedDialogue : conversations.readLegacyDialogue(id);
         if (!dialogue.length) throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '所选会话没有可发送的已保存对话，请刷新后重试。');
-        return { id, title: conversation.title, dialogue };
+        return redactTaskPushConversationHistory({ id, title: conversation.title, dialogue });
       });
     };
     const currentConversationHistory = resolveHistory(task.id, state.current.options, currentConversationIds);

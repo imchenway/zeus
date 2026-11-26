@@ -1,4 +1,5 @@
 import type { TaskAttachmentField, TaskType } from './index.js';
+import { redactConversationPreviewText, redactRuntimeCredentialText } from './credentialTextRedaction.js';
 
 /** 任务首发补充信息去除首尾空白后的最大字符数。 */
 export const taskPushSupplementalInfoMaxCharacters = 20_000;
@@ -226,6 +227,25 @@ function pushText(parts: TaskPushInputPart[], text: string): void {
   else parts.push({ type: 'text', text });
 }
 
+/** 键或参数名确定凭据值的起点，带引号的值作为整体遮蔽。 */
+function redactTaskPushHistoryText(value: string): string {
+  /** 单独匹配赋值，避免把值内的冒号或等号当成分隔符。 */
+  const maskedAssignments = value.replace(
+    /((?:--(?:api-key|token|secret|password)(?:[ \t]*=[ \t]*|[ \t]+)|["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)["']?[ \t]*[:=][ \t]*))(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'|[^\s"']+)/giu,
+    '$1[REDACTED]',
+  );
+  return redactRuntimeCredentialText(redactConversationPreviewText(maskedAssignments).text).text;
+}
+
+/** 冻结推送与派发旧快照时都遮蔽历史标题和正文中的凭据。 */
+export function redactTaskPushConversationHistory(conversation: TaskPushConversationHistory): TaskPushConversationHistory {
+  return {
+    ...conversation,
+    title: redactTaskPushHistoryText(conversation.title),
+    ...(conversation.dialogue ? { dialogue: conversation.dialogue.map(({ role, text }) => ({ role, text: redactTaskPushHistoryText(text) })) } : {}),
+  };
+}
+
 /** 引用正文只进入执行输入，界面通过布局中的会话身份显示来源。 */
 function appendTaskBlockParts(parts: TaskPushInputPart[], block: TaskPushLayoutTaskBlock, includeHistory: boolean): void {
   if (block.contextKind === 'current') pushText(parts, `${block.taskTitle}\n`);
@@ -241,7 +261,9 @@ function appendTaskBlockParts(parts: TaskPushInputPart[], block: TaskPushLayoutT
   }
   if (includeHistory && block.conversationHistory?.length) {
     pushText(parts, `${block.contextKind === 'current' ? '当前任务历史会话信息' : '历史会话'}：\n`);
-    for (const conversation of block.conversationHistory) {
+    for (const history of block.conversationHistory) {
+      /** 已冻结的旧快照也经过与新推送相同的出站脱敏。 */
+      const conversation = redactTaskPushConversationHistory(history);
       if (conversation.dialogue?.length) {
         /** 转义标签字符，历史消息不能让内容提前跳出引用区。 */
         const dialogue = JSON.stringify({ title: conversation.title, messages: conversation.dialogue }).replaceAll('<', '\\u003c');

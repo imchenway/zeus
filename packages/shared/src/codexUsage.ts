@@ -252,7 +252,7 @@ export interface UsageProviderSummary {
   /** 菜单栏快捷时间筛选所需的轻量汇总。 */
   overviewRanges: Record<UsageOverviewRange, UsageOverviewRangeSummary>;
   dailyLocal: CodexLocalUsageDay[];
-  /** 本地自然日内有未补齐的用量写入，趋势不能将空白日期显示为零。 */
+  /** 本地自然日内有缺报用量或未补齐的账本写入。 */
   incompleteLocalDates?: string[];
   collectionStartedAt: string | null;
   updatedAt: string;
