@@ -288,6 +288,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_CONVERSATION_RESOURCE_PATH_UNAVAILABLE', 'The conversation file or its folder is unavailable.'],
     ['无法访问这个会话文件。请检查文件和所在工作目录。', 'Cannot access this conversation file. Check the file and its working folder.'],
   ],
+  [
+    ['ZEUS_WORKING_DIRECTORY_UNAVAILABLE', 'The conversation working directory is unavailable or has changed.'],
+    ['当前会话的工作目录已变化或无法访问，请确认目录后重试。', 'The working directory changed or cannot be accessed. Check its location and try again.'],
+  ],
+  [['The selected editor is not installed.'], ['所选编辑器已不可用，请选择其他应用。', 'The selected editor is unavailable. Choose another app.']],
   [['源码必须位于项目根目录内。'], ['这个文件不在当前项目内，无法从此入口打开。请切换到对应项目。', 'This file is outside the current project and cannot be opened here. Switch to its project.']],
   [
     ['预览授权已失效。', '文件已变化，请刷新预览。', '读取期间文件发生变化，请刷新。'],

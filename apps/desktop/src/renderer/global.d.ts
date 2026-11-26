@@ -397,6 +397,10 @@ declare global {
       /** 空值表示当前进程的更新入口已停用。 */
       onAutomaticUpdateIndicatorChanged: (listener: (state: AutomaticUpdateIndicatorState | null) => void) => () => void;
       listConversationResourceOpenTargets: (request: { projectId: string; conversationId: string; resourceId: string }) => Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }>;
+      /** 本机编辑器及系统文件管理器。 */
+      listWorkingDirectoryOpenTargets: () => Promise<ConversationResourceOpenTarget[]>;
+      /** cwd 表示界面正在显示的目录，主进程按会话身份核对后打开。 */
+      openWorkingDirectory: (request: { projectId: string; conversationId: string; cwd: string; target: ConversationOpenTarget }) => Promise<void>;
       openConversationResource: (request: { projectId: string; conversationId: string; resourceId: string; target: ConversationOpenTarget; location?: ConversationFileLocation }) => Promise<{
         opened: boolean;
         resourceId: string;

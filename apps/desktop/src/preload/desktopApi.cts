@@ -598,6 +598,10 @@ export function createDesktopApi(transport: DesktopTransport) {
     listConversationResourceOpenTargets: (request: unknown) => transport.invoke('zeus:conversation-resource:list-open-targets', request),
     /** 按所选目标打开已授权的会话资源。 */
     openConversationResource: (request: unknown) => transport.invoke('zeus:conversation-resource:open', request),
+    /** 列出可打开工作目录的本机应用。 */
+    listWorkingDirectoryOpenTargets: () => transport.invoke('zeus:working-directory:list-open-targets'),
+    /** 按会话身份核对工作目录后，在所选应用中打开。 */
+    openWorkingDirectory: (request: unknown) => transport.invoke('zeus:working-directory:open', request),
     /** 打开当前轮次变更涉及的文件。 */
     openTurnChangeFile: (request: unknown) => transport.invoke('zeus:turn-change-file:open', request),
     /** 通知宿主应用外壳设置已变化。 */

@@ -82,9 +82,11 @@ import { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
 import {
   type ConversationResourceRequest,
   listConversationResourceOpenTargets,
+  listWorkingDirectoryOpenTargets,
   loadConversationSourceBlame,
   openConversationResource,
   type OpenConversationResourceRequest,
+  openConversationWorkingDirectory,
   openTurnChangeFile,
   type OpenTurnChangeFileRequest,
 } from './conversationResourceOpen.js';
@@ -2904,6 +2906,22 @@ function setupIpc(): void {
       throw new Error('Conversation resource request came from an untrusted window.');
     }
     return openConversationResource(request, conversationResourceOpenServices(requestingWindow));
+  });
+  /** 安装信息仅交给 Zeus 窗口的主框架。 */
+  ipcMain.handle('zeus:working-directory:list-open-targets', (event) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error('Working directory request came from an untrusted window.');
+    }
+    return listWorkingDirectoryOpenTargets(conversationResourceOpenServices(requestingWindow));
+  });
+  /** 会话入口可以打开目录，程序路径始终由主进程解析。 */
+  ipcMain.handle('zeus:working-directory:open', (event, request: unknown) => {
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error('Working directory request came from an untrusted window.');
+    }
+    return openConversationWorkingDirectory(request, conversationResourceOpenServices(requestingWindow));
   });
   ipcMain.handle('zeus:turn-change-file:open', (event, request: OpenTurnChangeFileRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
