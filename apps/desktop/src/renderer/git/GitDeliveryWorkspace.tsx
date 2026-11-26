@@ -853,8 +853,8 @@ export function GitDeliveryActions(props: {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 后台运行与单步操作共用组合选择锁。 */
   const [combinationRunning, setCombinationRunning] = useState(false);
-  /** 提供右侧操作栏中独立于表单滚动的按钮位置。 */
-  const [footerHost, setFooterHost] = useState<HTMLElement | null>(null);
+  /** 组合按钮与浮层位于滚动表单之外。 */
+  const [combinationHost, setCombinationHost] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     /** 项目或交付入口变化时读取该项目的组合与收尾偏好。 */
     const restored = readGitDeliverySettings(props.projectId, props.currentDirectory);
@@ -868,23 +868,8 @@ export function GitDeliveryActions(props: {
   const mergeLabel = gitDeliveryActionLabel('merge', props.zh, props.mode);
   /** 任务交付的单步合入覆盖整个工作目录。 */
   const mergeButtonLabel = props.mergeAll ? (props.zh ? `全部${mergeLabel}` : `${mergeLabel} all`) : mergeLabel;
-  /** 组合选择集中在执行区，不改变上方独立动作的可用性。 */
-  function combinationOption(action: 'commit' | 'merge' | 'push', label: string): ReactNode {
-    return (
-      <label className="git-delivery-checkbox" aria-disabled={action === 'merge' && !canMerge ? true : undefined}>
-        <input
-          type="checkbox"
-          checked={settings[action]}
-          disabled={busy || (action === 'merge' && !canMerge)}
-          aria-label={props.zh ? `组合包含${label}` : `Include ${label} in combination`}
-          onChange={(event) => setSettings((current) => ({ ...current, [action]: event.target.checked }))}
-        />
-        <span>{label}</span>
-      </label>
-    );
-  }
   return (
-    <GitDeliveryCombinationContext.Provider value={{ settings, setSettings, executionSettings, followUps, setFollowUps, canMerge, settingsOpen, setSettingsOpen, setRunning: setCombinationRunning, footerHost }}>
+    <GitDeliveryCombinationContext.Provider value={{ settings, setSettings, executionSettings, followUps, setFollowUps, canMerge, stepsLocked: busy, settingsOpen, setSettingsOpen, setRunning: setCombinationRunning, combinationHost }}>
       {props.combination && props.settingsHost
         ? createPortal(
             <Button size="compact" disabled={busy} aria-haspopup="dialog" aria-label={props.zh ? '交付设置' : 'Delivery settings'} data-icon-tooltip={props.zh ? '交付设置' : 'Delivery settings'} onClick={() => setSettingsOpen(true)}>
@@ -894,6 +879,7 @@ export function GitDeliveryActions(props: {
           )
         : null}
       <aside className="task-git-review-options task-git-delivery-actions">
+        {props.combination ? <div className="git-delivery-combination-host" ref={setCombinationHost} /> : null}
         <div className="task-git-delivery-actions-scroll">
           <section className="task-git-delivery-action-step">
             <div className="task-git-delivery-step-heading">
@@ -1011,37 +997,8 @@ export function GitDeliveryActions(props: {
             </div>
             {props.pushFeedback}
           </section>
-          {props.combination ? (
-            <section className="task-git-delivery-action-step git-delivery-workflow" aria-label={props.zh ? '组合交付' : 'Combined delivery'}>
-              <strong>{props.zh ? '组合交付' : 'Combined delivery'}</strong>
-              <div className="git-delivery-workflow-steps">
-                {combinationOption('commit', props.zh ? '提交' : 'Commit')}
-                {combinationOption('merge', props.zh ? '合入' : 'Merge')}
-                {combinationOption('push', props.zh ? '推送' : 'Push')}
-              </div>
-              <div className="git-delivery-workflow-options">
-                <label className="git-delivery-checkbox" aria-disabled={busy || !settings.commit || undefined}>
-                  <input
-                    type="checkbox"
-                    checked={settings.generateCommitMessage}
-                    disabled={busy || !settings.commit}
-                    aria-label={props.zh ? '组合中 AI 生成提交说明' : 'Generate commit messages with AI in combination'}
-                    onChange={(event) => setSettings((current) => ({ ...current, generateCommitMessage: event.target.checked }))}
-                  />
-                  <span>{props.zh ? 'AI 生成提交说明' : 'AI commit message'}</span>
-                </label>
-                {canMerge ? (
-                  <label className="git-delivery-checkbox" aria-disabled={busy || !settings.merge || undefined}>
-                    <input type="checkbox" checked={settings.resolveConflicts} disabled={busy || !settings.merge} onChange={(event) => setSettings((current) => ({ ...current, resolveConflicts: event.target.checked }))} />
-                    <span>{props.zh ? 'AI 处理冲突' : 'AI conflict resolution'}</span>
-                  </label>
-                ) : null}
-              </div>
-              {props.combination}
-            </section>
-          ) : null}
+          {props.combination}
         </div>
-        {props.combination ? <footer className="git-delivery-combination-footer" ref={setFooterHost} /> : null}
       </aside>
     </GitDeliveryCombinationContext.Provider>
   );
