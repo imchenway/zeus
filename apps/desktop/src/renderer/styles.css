@@ -16257,6 +16257,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 /* 文件与操作共用上方高度，横向分隔条统一调整两区与底部差异的占比。 */
 .macos-ai-app .task-git-delivery-layout {
+  position: relative;
   grid-template-columns: minmax(0, 1fr) 8px clamp(240px, var(--git-delivery-actions, 320px), calc(100% - 188px));
   grid-template-rows: minmax(0, clamp(min(120px, 25%), var(--git-delivery-height, 42%), max(25%, calc(100% - 160px)))) 8px minmax(0, 1fr);
   grid-template-areas: 'files width-separator actions' 'separator separator separator' 'diff diff diff';
@@ -16612,7 +16613,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: var(--zeus-product-text);
 }
 
-/* 组合执行按钮固定在顶行，表单使用余下高度。 */
+/* 组合执行按钮固定在底栏，表单使用余下高度。 */
 .macos-ai-app .task-git-delivery-actions {
   grid-area: actions;
   min-inline-size: 0;
@@ -16621,7 +16622,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   overflow-wrap: anywhere;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 0;
   padding: 0;
   background: transparent;
@@ -16631,9 +16632,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   container-name: git-delivery-actions;
 }
 
-/* 交付步骤和错误详情在按钮下方独立滚动。 */
+/* 交付步骤和错误详情在底栏上方独立滚动。 */
 .macos-ai-app .task-git-delivery-actions-scroll {
-  grid-area: 2 / 1;
   min-block-size: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -16763,30 +16763,32 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   margin-block-start: 4px;
 }
 
-/* portal 中的按钮和浮层分别参与右栏的两条网格行。 */
-.git-delivery-combination-host {
-  display: contents;
+/* 底栏分隔滚动表单和固定的组合按钮。 */
+.git-delivery-combination-footer {
+  border-block-start: 1px solid var(--zeus-control-border);
+  padding: 8px 16px;
 }
 .git-delivery-combination-button {
-  grid-area: 1 / 1;
-  margin: 8px 16px 2px;
+  inline-size: 100%;
 }
 .git-delivery-combination-button[aria-disabled='true']:not(:disabled) {
   opacity: 0.55;
 }
 
-/* 浮层覆盖滚动表单，窄窗和分隔条调整只改变浮层可用高度。 */
+/* 浮层沿按钮两侧对齐，只使用按钮下方的交付布局空间。 */
 .macos-ai-app .task-git-delivery-actions .git-delivery-workflow {
-  grid-area: 2 / 1;
+  position: absolute;
+  position-area: bottom center;
   align-self: start;
-  z-index: 1;
+  justify-self: stretch;
+  z-index: 10;
   box-sizing: border-box;
   min-inline-size: 0;
-  max-block-size: calc(100% - 6px);
+  max-block-size: calc(100% - 8px);
   overflow: auto;
   overscroll-behavior: contain;
   gap: 8px;
-  margin: 0 16px 6px;
+  margin: 2px 0 6px;
   padding: 10px 12px 12px;
   border: 1px solid var(--zeus-control-border);
   border-radius: 8px;

@@ -50,6 +50,8 @@ function GitDeliveryCombinationPopover(props: {
 }) {
   /** 触发器向辅助技术标识它控制的表单。 */
   const optionsId = useId();
+  /** 浮层以当前底栏按钮为锚点，跟随操作区宽度和高度变化。 */
+  const optionsAnchor = `--delivery-combination-${optionsId.replace(/:/g, '')}`;
   /** 鼠标或键盘都能打开同一份交付配置。 */
   const [open, setOpen] = useState(false);
   /** 从配置用 Escape 退出时将焦点还给组合按钮。 */
@@ -110,6 +112,7 @@ function GitDeliveryCombinationPopover(props: {
       <Button
         ref={trigger}
         className="git-delivery-combination-button"
+        style={{ anchorName: optionsAnchor }}
         variant="primary"
         size="compact"
         busyLabel={props.zh ? '启动中…' : 'Starting…'}
@@ -148,6 +151,7 @@ function GitDeliveryCombinationPopover(props: {
         ref={panel}
         id={optionsId}
         className="task-git-delivery-action-step git-delivery-workflow"
+        style={{ positionAnchor: optionsAnchor }}
         aria-label={props.zh ? '组合交付' : 'Combined delivery'}
         hidden={!open}
         onPointerEnter={cancelClose}

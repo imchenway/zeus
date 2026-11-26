@@ -857,8 +857,8 @@ export function GitDeliveryActions(props: {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 后台运行与单步操作共用组合选择锁。 */
   const [combinationRunning, setCombinationRunning] = useState(false);
-  /** 组合按钮与浮层位于滚动表单之外。 */
-  const [combinationHost, setCombinationHost] = useState<HTMLDivElement | null>(null);
+  /** 底栏承载组合按钮及其浮层。 */
+  const [combinationHost, setCombinationHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     /** 项目或交付入口变化时读取该项目的组合与收尾偏好。 */
     const restored = readGitDeliverySettings(props.projectId, props.currentDirectory);
@@ -902,7 +902,6 @@ export function GitDeliveryActions(props: {
           )
         : null}
       <aside className="task-git-review-options task-git-delivery-actions">
-        {props.combination ? <div className="git-delivery-combination-host" ref={setCombinationHost} /> : null}
         <div className="task-git-delivery-actions-scroll">
           <section className="task-git-delivery-action-step">
             <div className="task-git-delivery-step-heading">
@@ -1068,6 +1067,7 @@ export function GitDeliveryActions(props: {
           </section>
           {props.combination}
         </div>
+        {props.combination ? <footer className="git-delivery-combination-footer" ref={setCombinationHost} /> : null}
       </aside>
     </GitDeliveryCombinationContext.Provider>
   );

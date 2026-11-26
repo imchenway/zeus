@@ -112,8 +112,8 @@ export interface GitDeliveryCombinationState {
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   /** 接纳请求或后台运行期间锁定组合选择。 */
   setRunning: Dispatch<SetStateAction<boolean>>;
-  /** 右栏顶部承载组合按钮及其浮层。 */
-  combinationHost: HTMLDivElement | null;
+  /** 右栏底部承载组合按钮及其浮层。 */
+  combinationHost: HTMLElement | null;
 }
 
 /** 任务和普通会话共用操作栏的选择、设置与组合入口。 */
