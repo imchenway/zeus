@@ -67,8 +67,8 @@ export const FilePreviewDataContext = createContext<{
   toolbarTarget: HTMLElement | null;
   onFullChange: (full: boolean) => void;
   onUnifiedChange: (unified: boolean) => void;
-  onPreview: () => void;
-  onRefresh: () => void;
+  onPreview?: () => void;
+  onRefresh?: () => void;
 } | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */

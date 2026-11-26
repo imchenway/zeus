@@ -58,24 +58,7 @@ export function DiffReviewToolbar(props: {
           {props.zh ? '全文' : 'Full file'}
         </Button>
       </span>
-      <span className="diff-review-navigation" role="group" aria-label={props.zh ? '定位差异' : 'Navigate changes'}>
-        <Button unstyled type="button" aria-label={props.zh ? '上一处差异' : 'Previous change'} data-icon-tooltip={props.zh ? '上一处差异' : 'Previous change'} disabled={props.current <= 0} onClick={() => props.onNavigate(-1)}>
-          <ArrowUpIcon size={16} aria-hidden="true" />
-        </Button>
-        <Button
-          unstyled
-          type="button"
-          aria-label={props.zh ? '下一处差异' : 'Next change'}
-          data-icon-tooltip={props.zh ? '下一处差异' : 'Next change'}
-          disabled={props.count === 0 || props.current >= props.count - 1}
-          onClick={() => props.onNavigate(1)}
-        >
-          <ArrowDownIcon size={16} aria-hidden="true" />
-        </Button>
-        <span className="diff-review-position" aria-live="polite">
-          {props.current < 0 ? (props.zh ? `${props.count} 处差异` : `${props.count} changes`) : `${props.current + 1} / ${props.count}`}
-        </span>
-      </span>
+      <DiffChangeNavigation zh={props.zh} current={props.current} count={props.count} onNavigate={props.onNavigate} />
       {props.onFind ? <FileFindButton zh={props.zh} onFind={props.onFind} /> : null}
       {hasOptions ? (
         <Button
@@ -121,5 +104,29 @@ export function DiffReviewToolbar(props: {
         </MenuSurface>
       ) : null}
     </div>
+  );
+}
+
+/** 上下导航共用同一边界规则，当前位置按当前文件内的差异块计数。 */
+export function DiffChangeNavigation(props: { zh: boolean; current: number; count: number; onNavigate: (direction: -1 | 1) => void }) {
+  return (
+    <span className="diff-review-navigation" role="group" aria-label={props.zh ? '定位差异' : 'Navigate changes'}>
+      <Button unstyled type="button" aria-label={props.zh ? '上一处差异' : 'Previous change'} data-icon-tooltip={props.zh ? '上一处差异' : 'Previous change'} disabled={props.current <= 0} onClick={() => props.onNavigate(-1)}>
+        <ArrowUpIcon size={16} aria-hidden="true" />
+      </Button>
+      <Button
+        unstyled
+        type="button"
+        aria-label={props.zh ? '下一处差异' : 'Next change'}
+        data-icon-tooltip={props.zh ? '下一处差异' : 'Next change'}
+        disabled={props.count === 0 || props.current >= props.count - 1}
+        onClick={() => props.onNavigate(1)}
+      >
+        <ArrowDownIcon size={16} aria-hidden="true" />
+      </Button>
+      <span className="diff-review-position" aria-live="polite">
+        {props.current < 0 ? (props.zh ? `${props.count} 处差异` : `${props.count} changes`) : `${props.current + 1} / ${props.count}`}
+      </span>
+    </span>
   );
 }

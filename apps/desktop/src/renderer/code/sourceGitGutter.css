@@ -1,46 +1,178 @@
-/* 变更栏紧邻行号区域的代码侧；预留 8 px 给色块及两侧间距。 */
+/* 色条仍宽 4 px，独立的点击轨道保留原有行号操作。 */
 .cm-gutter.cm-source-git-gutter {
-  width: 8px;
+  width: 24px;
 }
 
-/* 以 CodeMirror 实际渲染的行高定位，包含软换行。 */
 .cm-source-git-gutter .cm-gutterElement {
   position: relative;
 }
 
-/* 色块宽 4 px。纯增和修改在相邻行间连接成连续色带。 */
 .cm-source-git-marker {
   position: absolute;
   z-index: 1;
-  inset: 0 2px;
+  inset: 0 0 0 auto;
+  inline-size: 24px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
-/* 狭窄的标记保持与明暗主题行号栏背景可辨。 */
+.cm-source-git-marker::before {
+  position: absolute;
+  inset: 0 2px 0 auto;
+  inline-size: 4px;
+  background: var(--source-git-marker-color);
+  content: '';
+}
+
+/* 普通代码行高 20 px，两端的透明区域扩大点击目标。 */
+.cm-source-git-marker:not(.deletion)::after {
+  position: absolute;
+  inset: -2px 0;
+  content: '';
+}
+
+.cm-source-git-marker:hover,
+.cm-source-git-marker[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--source-git-marker-color) 16%, transparent);
+}
+
+.cm-source-git-marker:focus-visible {
+  outline: 2px solid var(--source-git-marker-color);
+  outline-offset: -2px;
+}
+
+/* 小色条在明暗主题下与行号栏可辨，正文仍使用共享差异底色。 */
 .cm-source-git-marker.addition {
-  background: light-dark(#42945b, #79c68e);
+  --source-git-marker-color: light-dark(#42945b, #79c68e);
 }
 .cm-source-git-marker.replacement {
-  background: light-dark(#487fcc, #86aff2);
+  --source-git-marker-color: light-dark(#487fcc, #86aff2);
+}
+.cm-source-git-marker.deletion {
+  --source-git-marker-color: light-dark(#7b828e, #a3a7b2);
 }
 
-.cm-source-git-marker.start {
+.cm-source-git-marker.start::before {
   inset-block-start: 1px;
   border-start-start-radius: 2px;
   border-start-end-radius: 2px;
 }
-.cm-source-git-marker.end {
+
+.cm-source-git-marker.end::before {
   inset-block-end: 1px;
   border-end-start-radius: 2px;
   border-end-end-radius: 2px;
 }
 
-/* 删除没有当前正文行。高度 6 px 的标记居中跨越行边界。 */
+/* 删除没有当前正文行，标记与点击区域都横跨实际删除位置。 */
 .cm-source-git-marker.deletion {
-  inset-block: -3px auto;
-  height: 6px;
-  border-radius: 2px;
-  background: light-dark(#7b828e, #a3a7b2);
+  inset-block: -12px auto;
+  block-size: 24px;
 }
 .cm-source-git-marker.deletion.at-end {
-  inset-block: auto -3px;
+  inset-block: auto -12px;
+}
+.cm-source-git-marker.deletion::before {
+  inset-block: 9px;
+  border-radius: 2px;
+}
+
+/* 区块宽度取当前视口，窄窗口时工具组折行而不会被长代码推出屏幕。 */
+.source-git-preview-slot {
+  box-sizing: border-box;
+  position: sticky;
+  min-inline-size: 0;
+  padding: 3px 8px;
+}
+
+.source-git-preview {
+  overflow: hidden;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 6px;
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
+  color: var(--zeus-product-text);
+}
+
+.source-git-preview .source-git-preview-toolbar {
+  display: flex;
+  min-block-size: 34px;
+  padding: 2px 4px;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+}
+
+.source-git-preview-label {
+  color: var(--zeus-product-muted);
+}
+
+.source-git-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-inline-start: auto;
+}
+
+.source-git-preview-actions button {
+  gap: 4px;
+}
+
+.source-git-original {
+  box-sizing: border-box;
+  max-block-size: min(240px, 40vh);
+  margin: 0;
+  padding: 2px 6px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font: inherit;
+}
+
+.source-git-original code {
+  font: inherit;
+}
+
+.source-git-preview.deletion .source-git-original {
+  background: var(--diff-deletion);
+}
+
+.source-git-preview.replacement .source-git-original,
+.cm-editor .cm-line.source-git-current.replacement {
+  background: var(--diff-replacement);
+}
+
+.cm-editor .cm-line.source-git-current.addition {
+  background: var(--diff-addition);
+}
+
+/* 字词强调保留当前代码的语法颜色，旧侧使用相同的修改语义。 */
+.source-git-current-word,
+.source-git-original mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--diff-replacement) 78%, var(--zeus-control-accent));
+  color: inherit;
+}
+
+.source-git-comparison > header {
+  align-items: center;
+  gap: 12px;
+}
+
+.source-git-comparison > header strong {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-git-comparison > .diff-review-toolbar {
+  padding: 0 12px 6px;
+}
+
+.source-git-comparison > p {
+  margin: 12px;
 }

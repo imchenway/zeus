@@ -1,5 +1,4 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { diffWordsWithSpace } from 'diff';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createPortal } from 'react-dom';
@@ -14,7 +13,7 @@ import { CommentWidget } from './SourceCodePreview.js';
 import './codeDiffView.css';
 import { FilePreviewDataContext } from './FilePreview.js';
 import { useGitDeliveryWindowFrame, useGitDiffContentFrame } from '../git/gitDeliveryPerformance.js';
-import { fullFileDiff, normalizedFileLine, refreshedFileDiff } from './fullFileDiff.js';
+import { changedWords, fullFileDiff, normalizedFileLine, refreshedFileDiff, type DiffWordRanges } from './fullFileDiff.js';
 import { useGitBlame } from './useGitBlame.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { diffAlignmentExtension, AlignmentSpace } from './conflictAlignment.js';
@@ -45,11 +44,6 @@ interface DiffRow {
   words?: () => DiffWordRanges;
   /** 折叠行只标识省略范围，不伪造源码行号。 */
   folded?: { key: string; count: number; unavailable?: boolean };
-}
-/** 字词偏移按各自原始文本计算，不含行号和显示补位。 */
-interface DiffWordRanges {
-  left: Array<[number, number]>;
-  right: Array<[number, number]>;
 }
 /** 当前可见行号的 React 门户容器。 */
 interface GutterPortal {
@@ -816,23 +810,6 @@ class DiffToneMarker extends GutterMarker {
   eq(other: DiffToneMarker): boolean {
     return this.tone === other.tone;
   }
-}
-
-/** 有界字词比较只处理配对修改行，保留语法高亮和鼠标选区。 */
-function changedWords(before: string, after: string): DiffWordRanges {
-  /** 两侧分别累计 UTF-16 字符偏移，与 CodeMirror 文档一致。 */
-  const result: DiffWordRanges = { left: [], right: [] };
-  const parts = before.length + after.length <= 16000 ? diffWordsWithSpace(before, after, { timeout: 5, maxEditLength: 500 }) : undefined;
-  if (!parts) return result;
-  let left = 0;
-  let right = 0;
-  for (const part of parts) {
-    if (part.removed) result.left.push([left, left + part.value.length]);
-    if (part.added) result.right.push([right, right + part.value.length]);
-    if (!part.added) left += part.value.length;
-    if (!part.removed) right += part.value.length;
-  }
-  return result;
 }
 
 /** 配对行首次进入可见区域才计算字词，左右两栏复用同一结果。 */

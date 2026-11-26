@@ -76,7 +76,8 @@
   min-inline-size: 20px;
 }
 /* 色板独立于状态文字颜色：新增浅绿、删除中性灰、修改浅蓝，深色主题保持同一语义。 */
-.code-diff-view {
+.code-diff-view,
+.project-source-editor-with-blame {
   --diff-addition: light-dark(#c7e9c4, #294333);
   --diff-deletion: light-dark(#dedede, #383a3d);
   --diff-replacement: light-dark(#e6effb, #273b54);

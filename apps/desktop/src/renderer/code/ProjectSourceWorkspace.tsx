@@ -949,7 +949,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     >
       {conflictComparison ? (
         <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={() => setConflictComparison(null)} role="dialog" aria-label={zh ? '比较变更' : 'Compare changes'}>
-          <section className="project-source-conflict-comparison" data-modal-surface="dialog" onKeyDown={fileFindShortcut}>
+          <section className="project-source-comparison" data-modal-surface="dialog" onKeyDown={fileFindShortcut}>
             <header>
               <strong>{zh ? '比较变更' : 'Compare changes'}</strong>
               <FileFindButton zh={zh} onFind={() => requestGroupedFileFind(conflictFind)} />
@@ -1181,6 +1181,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                         projectId={props.project.id}
                         revision={activeTab.document.revision.sha256}
                         dirty={activeTab.dirty}
+                        revertDisabled={activeTab.saving || activeTab.externalChange || gitFileStatuses[activeTab.document.relativePath] === 'conflict'}
                         zh={zh}
                         extensions={conflictExtensions}
                         path={activeTab.document.relativePath}

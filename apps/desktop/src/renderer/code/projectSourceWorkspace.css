@@ -101,7 +101,7 @@
   border-radius: 0;
   background: var(--zeus-product-panel-muted);
 }
-.project-source-conflict-comparison {
+.project-source-comparison {
   width: min(1200px, 94vw);
   height: 80vh;
   display: flex;
@@ -110,7 +110,7 @@
   border-radius: 10px;
   overflow: hidden;
 }
-.project-source-conflict-comparison > header {
+.project-source-comparison > header {
   display: flex;
   justify-content: space-between;
   padding: 12px;

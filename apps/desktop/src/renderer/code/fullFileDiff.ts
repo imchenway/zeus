@@ -1,5 +1,14 @@
 import type { FilePreviewItem, FileReviewDiff } from '@zeus/shared';
-import { diffArrays } from 'diff';
+import { diffArrays, diffWordsWithSpace } from 'diff';
+
+/** 两端正文可以来自授权文件预览，也可以来自当前编辑器的内存草稿。 */
+type DiffTextVersion = Pick<FilePreviewItem, 'kind' | 'missing' | 'truncated' | 'content'>;
+
+/** 字词偏移按各自原始文本计算，不含行号和显示补位。 */
+export interface DiffWordRanges {
+  left: Array<[number, number]>;
+  right: Array<[number, number]>;
+}
 
 /** 本页撤销成功后按新读取的两端重建差异，外部列表尚未刷新时也不继续展示旧补丁。 */
 export function refreshedFileDiff(file: FileReviewDiff, items: FilePreviewItem[] | null, refreshed?: boolean): FileReviewDiff {
@@ -64,7 +73,7 @@ export function normalizedFileLine(content: string, line: number): string {
 }
 
 /** Git 行号不包含文件结尾换行生成的虚拟空行；统一 CRLF 显示，保留真实空白行。 */
-function contentLines(item: FilePreviewItem): string[] {
+function contentLines(item: DiffTextVersion): string[] {
   if (item.missing) return [];
   /** 正文只来自完整且成功解码的授权版本。 */
   const lines = item.content!.split('\n').map((line, index) => normalizedFileLine(line, index + 1));
@@ -73,7 +82,7 @@ function contentLines(item: FilePreviewItem): string[] {
 }
 
 /** 原补丁提供增删身份，真实两端提供完整上下文；不猜测缺失文件或过期内容。 */
-export function fullFileDiff(file: FileReviewDiff, items: FilePreviewItem[]): FileReviewDiff | null {
+export function fullFileDiff(file: FileReviewDiff, items: DiffTextVersion[]): FileReviewDiff | null {
   if (items.length !== 2 || items.some((item) => !item.missing && (item.kind !== 'text' || item.truncated || item.content === undefined))) return null;
   /** 两端文本只按实际文件行分割，不从补丁补造全文。 */
   const left = contentLines(items[0]!);
@@ -105,4 +114,21 @@ export function fullFileDiff(file: FileReviewDiff, items: FilePreviewItem[]): Fi
   }
   if (!contextUntil(left.length + 1, right.length + 1)) return null;
   return { ...file, hunks: [{ header: '', oldStart: 1, newStart: 1, oldLines: left.length, newLines: right.length, lines }] };
+}
+
+/** 修改块只高亮两端实际变化的字词，偏移单位与 CodeMirror 文档一致。 */
+export function changedWords(before: string, after: string): DiffWordRanges {
+  const result: DiffWordRanges = { left: [], right: [] };
+  /** 限制字词比较长度和时间，长变更仍显示区块底色。 */
+  const parts = before.length + after.length <= 16000 ? diffWordsWithSpace(before, after, { timeout: 5, maxEditLength: 500 }) : undefined;
+  if (!parts) return result;
+  let left = 0;
+  let right = 0;
+  for (const part of parts) {
+    if (part.removed) result.left.push([left, left + part.value.length]);
+    if (part.added) result.right.push([right, right + part.value.length]);
+    if (!part.added) left += part.value.length;
+    if (!part.removed) right += part.value.length;
+  }
+  return result;
 }
