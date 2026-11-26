@@ -104,15 +104,17 @@ export interface GitDeliveryCombinationState {
   setFollowUps: Dispatch<SetStateAction<GitDeliveryFollowUpPreferences>>;
   /** 具备有效目标分支时允许更改合入方式。 */
   canMerge: boolean;
+  /** 执行期间锁定步骤与 AI 选项。 */
+  stepsLocked: boolean;
   /** 窗口标题栏打开本次交付的详细设置。 */
   settingsOpen: boolean;
   /** 关闭弹窗不改变尚未保存的详细设置。 */
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   /** 接纳请求或后台运行期间锁定组合选择。 */
   setRunning: Dispatch<SetStateAction<boolean>>;
-  /** 组合执行按钮留在滚动区外的操作栏底部。 */
-  footerHost: HTMLElement | null;
+  /** 右栏顶部承载组合按钮及其浮层。 */
+  combinationHost: HTMLDivElement | null;
 }
 
-/** 任务和普通会话复用同一操作栏状态，不依赖跨组件 DOM 定位。 */
+/** 任务和普通会话共用操作栏的选择、设置与组合入口。 */
 export const GitDeliveryCombinationContext = createContext<GitDeliveryCombinationState | null>(null);
