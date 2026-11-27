@@ -42,9 +42,7 @@ interface BranchReference {
 }
 
 /** 级联菜单锚定引用行，仓库为空时操作整个共同分支范围。 */
-type ReferenceActionMenu = MenuSubmenuAnchor &
-  { reference: string } &
-  ({ repository: ProjectGitBranchRepository; kind: BranchReference['kind'] } | { repository: null; kind: BranchKind });
+type ReferenceActionMenu = MenuSubmenuAnchor & { reference: string } & ({ repository: ProjectGitBranchRepository; kind: BranchReference['kind'] } | { repository: null; kind: BranchKind });
 
 /** 开合状态按仓库、引用类型和目录路径保存。 */
 interface BranchDisclosureState {
@@ -166,10 +164,7 @@ export function BranchSwitcher(props: {
   /** 来源模式下，共同分支只用于全部仓库或搜索结果。 */
   const showCommonBranches = !sourceMode || !props.selectedRepository || Boolean(normalizedQuery);
   /** 范围或分支刷新后，关闭已从列表消失的共同分支菜单。 */
-  if (
-    referenceMenu?.repository === null &&
-    (!showCommonBranches || !commonBranches.some(({ ref, kind }) => ref === referenceMenu.reference && kind === referenceMenu.kind))
-  ) {
+  if (referenceMenu?.repository === null && (!showCommonBranches || !commonBranches.some(({ ref, kind }) => ref === referenceMenu.reference && kind === referenceMenu.kind))) {
     setReferenceMenu(null);
   }
 
@@ -320,13 +315,7 @@ export function BranchSwitcher(props: {
             closeMenus();
           }}
         >
-          {sourceMode
-            ? props.zh
-              ? '设为来源分支'
-              : 'Set as source branch'
-            : props.zh
-              ? `在全部 ${props.repositories.length} 个仓库签出`
-              : `Checkout in all ${props.repositories.length} repositories`}
+          {sourceMode ? (props.zh ? '设为来源分支' : 'Set as source branch') : props.zh ? `在全部 ${props.repositories.length} 个仓库签出` : `Checkout in all ${props.repositories.length} repositories`}
         </Button>
         {!props.referenceSelection && props.onExecute ? (
           <Button
@@ -861,15 +850,7 @@ function ReferenceGroups<Item extends BranchReference>(props: {
           defaultOpen={props.searching || group.id === 'local' || group.id === 'recent' || expandRemotes || Boolean(props.isSelected && group.values.some(props.isSelected))}
           disclosure={props.disclosure}
         >
-          <ReferenceTree
-            scope={scope}
-            items={group.values}
-            disclosure={props.disclosure}
-            searching={props.searching}
-            expandRootFolders={expandRemotes}
-            isSelected={props.isSelected}
-            renderItem={props.renderItem}
-          />
+          <ReferenceTree scope={scope} items={group.values} disclosure={props.disclosure} searching={props.searching} expandRootFolders={expandRemotes} isSelected={props.isSelected} renderItem={props.renderItem} />
         </BranchDisclosure>
       );
     });

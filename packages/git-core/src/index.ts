@@ -1943,15 +1943,7 @@ async function commitSquashIntegration(integrationPath: string, input: TaskInteg
   /** 自动摘要至多 72 个字符，超长时保留完整的正文清单。 */
   const defaultTitle = summary.length > 72 ? `${summary.slice(0, 71).join('').trimEnd()}…` : summary.join('');
   /** 保留自填说明，并在正文末尾记录来源和目标分支。 */
-  const message = [
-    commitMessage?.trim() || defaultTitle,
-    '',
-    '原始提交',
-    ...subjects.map((subject) => `- ${subject}`),
-    '',
-    `Source-Branch: ${input.taskBranch}`,
-    `Target-Branch: ${input.targetBranch}`,
-  ].join('\n');
+  const message = [commitMessage?.trim() || defaultTitle, '', '原始提交', ...subjects.map((subject) => `- ${subject}`), '', `Source-Branch: ${input.taskBranch}`, `Target-Branch: ${input.targetBranch}`].join('\n');
   await runGit(integrationPath, ['commit', '-F', '-'], requireSafeGitText(message, 'commit message'));
 }
 
@@ -2180,11 +2172,13 @@ export async function writeTaskIntegrationDraft(integrationPath: string, path: s
 }
 
 /** 冲突全部解决后生成合入候选提交；仍有冲突时拒绝继续。 */
-export async function completeTaskIntegrationCommit(input: {
-  integrationPath: string;
-  /** 调用方填写的压缩提交说明。 */
-  commitMessage?: string;
-} & ({ mode: 'merge' } | ({ mode: 'squash' } & TaskIntegrationCommitContext))): Promise<{ resultHeadSha: string }> {
+export async function completeTaskIntegrationCommit(
+  input: {
+    integrationPath: string;
+    /** 调用方填写的压缩提交说明。 */
+    commitMessage?: string;
+  } & ({ mode: 'merge' } | ({ mode: 'squash' } & TaskIntegrationCommitContext)),
+): Promise<{ resultHeadSha: string }> {
   const conflicts = await readTaskIntegrationConflictPaths(input.integrationPath);
   if (conflicts.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve every conflict before completing the integration commit.');
   const localChanges = await readTaskIntegrationLocalChangesState(input.integrationPath);
