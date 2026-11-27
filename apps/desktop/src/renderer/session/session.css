@@ -408,14 +408,26 @@
   cursor: default;
 }
 
-/* 分支行预留来源分支的空间，异步补齐信息时保持操作入口的位置。 */
-.session-codex-parity-v1 .session-quick-actions-row.session-quick-actions-metadata {
-  min-block-size: 46px;
+/* 来源和目标占独立卡片，复制图标与同一行的分支对应。 */
+.session-codex-parity-v1 .session-quick-actions-row.session-quick-actions-branch {
+  background: var(--session-message-background);
+  border: 1px solid var(--session-line-soft);
+  gap: 8px;
+  margin-block: 2px;
+  min-block-size: 38px;
+  padding-block: 4px;
 }
 
-/* 来源尚未补齐时也保留第二行，分支标题不在行内上下跳动。 */
-.session-codex-parity-v1 .session-quick-actions-metadata > .session-quick-actions-copy {
-  min-block-size: 32px;
+/* 分支值可以截断，标签和复制按钮保持各自宽度。 */
+.session-codex-parity-v1 .session-quick-actions-branch > .session-quick-actions-copy {
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+/* 独立分支标签需要与旁边的单行值清楚区隔。 */
+.session-codex-parity-v1 .session-quick-actions-branch .session-quick-actions-copy > small {
+  font-size: 11px;
 }
 
 .session-codex-parity-v1 .session-quick-actions-row > svg {

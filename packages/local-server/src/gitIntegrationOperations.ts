@@ -1908,7 +1908,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         targetBranch,
         taskBranch: workspace.branchName,
         mode,
-        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
       });
       if (started.targetHeadSha !== targetHeadSha) throw nativeApiError('ZEUS_TARGET_HEAD_CHANGED', 'Target branch changed while the integration candidate was being created.');
       if (started.taskHeadSha !== taskHeadSha) throw nativeApiError('ZEUS_TASK_HEAD_CHANGED', 'Task branch changed while the integration candidate was being created.');
@@ -2064,8 +2063,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   async function executeTaskIntegrationFinalize(opaque: WorkspaceGitPreparedOpaque): Promise<WorkspaceGitRouteExecution> {
     const { task, project, integration, workspace } = requirePreparedIntegration(opaque);
     if (!integration.integrationPath) workspaceGitReject(409, 'ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
+    /** 核对后用于读取原始提交标题的任务头。 */
+    let taskHeadSha: string;
     try {
-      await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      taskHeadSha = await assertTaskIntegrationStillCurrent(project, workspace, integration);
     } catch (error) {
       if (isStaleTaskIntegrationError(error)) {
         /** 过期候选不能继续占用活跃槽位；保留隔离现场，仅关闭其业务状态。 */
@@ -2075,7 +2076,15 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       }
       throw error;
     }
-    const commit = await completeTaskIntegrationCommit({ integrationPath: integration.integrationPath, mode: integration.mode, commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}` });
+    /** 续提使用原候选的源和目标提交范围。 */
+    const commit = await completeTaskIntegrationCommit({
+      integrationPath: integration.integrationPath,
+      mode: integration.mode,
+      taskBranch: workspace.branchName,
+      taskHeadSha,
+      targetBranch: integration.targetBranch,
+      targetHeadSha: integration.targetHeadSha,
+    });
     const finalized = await finalizeTaskBranchIntegration({
       repositoryPath: workspace.repositoryPath || project.localPath,
       integrationPath: integration.integrationPath,
@@ -2149,8 +2158,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     });
   }
 
-  /** 保存冲突草稿或完成本地合入前重新校验候选使用的任务与来源精确提交。 */
-  async function assertTaskIntegrationStillCurrent(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord, integration: ZeusTaskIntegrationRecord): Promise<void> {
+  /** 校验候选使用的任务与来源提交，并返回已核对的任务头。 */
+  async function assertTaskIntegrationStillCurrent(project: ZeusProjectRecord, workspace: ZeusTaskWorkspaceRecord, integration: ZeusTaskIntegrationRecord): Promise<string> {
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const taskHeadSha = await getGitBranchHead(repositoryPath, workspace.branchName);
     if (!integration.taskHeadSha || integration.taskHeadSha !== taskHeadSha) {
@@ -2158,6 +2167,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     }
     const targetHeadSha = await getGitBranchHead(repositoryPath, integration.targetBranch).catch(() => (integration.targetBranch === workspace.sourceBranch ? workspace.sourceHeadSha : null));
     if (targetHeadSha !== integration.targetHeadSha) throw nativeApiError('ZEUS_TARGET_HEAD_CHANGED', 'Local target branch advanced while the integration was being prepared.');
+    return taskHeadSha;
   }
 
   function isStaleTaskIntegrationError(error: unknown): boolean {
@@ -2230,7 +2240,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         taskBranch: workspace.branchName,
         taskHeadSha,
         mode: integration.mode,
-        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
         ...(integration.integrationPath ? { localChangesFromPath: integration.integrationPath } : {}),
       });
 
@@ -2445,10 +2454,14 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if (attempt.targetHeadSha !== latestTargetHeadSha || attempt.taskHeadSha !== latestTaskHeadSha) {
         throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', '来源分支或任务分支已推进，已保留当前冲突处理成果；请在原会话代码交付中审阅并同步最新分支后继续。');
       }
+      /** 使用 AI 冲突工作树实际纳入的源和目标提交范围。 */
       const commit = await completeTaskIntegrationCommit({
         integrationPath: attempt.worktreePath,
         mode: integration.mode,
-        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+        taskBranch: workspace.branchName,
+        taskHeadSha: attempt.taskHeadSha,
+        targetBranch: integration.targetBranch,
+        targetHeadSha: attempt.targetHeadSha,
       });
       const finalized = await finalizeTaskBranchIntegration({
         repositoryPath,
@@ -2562,11 +2575,16 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if ('error' in resolved) throw nativeApiError(resolved.error.error, resolved.error.message);
       const { task, project, integration, workspace } = resolved;
       if (!integration.integrationPath) throw nativeApiError('ZEUS_TASK_INTEGRATION_PATH_UNAVAILABLE', 'Integration worktree is unavailable.');
-      await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      /** AI 续提使用当前候选已核对的任务头。 */
+      const taskHeadSha = await assertTaskIntegrationStillCurrent(project, workspace, integration);
+      /** 沿用当前 AI 会话关联的合入范围。 */
       const commit = await completeTaskIntegrationCommit({
         integrationPath: integration.integrationPath,
         mode: integration.mode,
-        commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+        taskBranch: workspace.branchName,
+        taskHeadSha,
+        targetBranch: integration.targetBranch,
+        targetHeadSha: integration.targetHeadSha,
       });
       const finalized = await finalizeTaskBranchIntegration({
         repositoryPath: workspace.repositoryPath || project.localPath,

@@ -57,6 +57,8 @@ export interface GitEnvironmentSummary {
 
 /** 环境卡片按需读取的状态，不包含文件数量或差异行数。 */
 export interface GitEnvironmentStatus extends Omit<GitEnvironmentSummary, 'files' | 'additions' | 'deletions'> {
+  /** 各仓的工作分支，分离 HEAD 时为 null。 */
+  workingBranches?: GitEnvironmentSummary['sourceBranches'];
   /** 范围内任一仓库存在已暂存、未暂存或未跟踪更改。 */
   dirty: boolean;
 }

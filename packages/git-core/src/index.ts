@@ -1929,6 +1929,32 @@ async function readWorkflowCandidateProgress(cwd: string, baseSha: string, upstr
   return upstreamCommitShas.length;
 }
 
+/** 压缩提交使用合入开始时固定的分支和提交身份。 */
+type TaskIntegrationCommitContext = Pick<TaskBranchIntegrationStartResult, 'targetBranch' | 'targetHeadSha' | 'taskBranch' | 'taskHeadSha'>;
+
+/** 用来源提交的标题和分支信息生成并写入压缩提交。 */
+async function commitSquashIntegration(integrationPath: string, input: TaskIntegrationCommitContext, commitMessage?: string): Promise<void> {
+  /** 只读取来源可达、目标不可达的提交。 */
+  const range = `${requireGitObjectId(input.targetHeadSha, 'target head')}..${requireGitObjectId(input.taskHeadSha, 'task head')}`;
+  /** 标题保留 Git 日志顺序，正文逐条列出。 */
+  const subjects = splitLines(await requireGitStdout(integrationPath, ['log', '--topo-order', '--no-show-signature', '--no-notes', '--encoding=UTF-8', '--format=%s', range, '--']));
+  /** 自动摘要组合去重后的标题，按 Unicode 字符计算长度。 */
+  const summary = Array.from([...new Set(subjects)].join(' / ') || `合入 ${input.taskBranch} 的改动`);
+  /** 自动摘要至多 72 个字符，超长时保留完整的正文清单。 */
+  const defaultTitle = summary.length > 72 ? `${summary.slice(0, 71).join('').trimEnd()}…` : summary.join('');
+  /** 保留自填说明，并在正文末尾记录来源和目标分支。 */
+  const message = [
+    commitMessage?.trim() || defaultTitle,
+    '',
+    '原始提交',
+    ...subjects.map((subject) => `- ${subject}`),
+    '',
+    `Source-Branch: ${input.taskBranch}`,
+    `Target-Branch: ${input.targetBranch}`,
+  ].join('\n');
+  await runGit(integrationPath, ['commit', '-F', '-'], requireSafeGitText(message, 'commit message'));
+}
+
 /**
  * 在隔离 worktree 内执行任务分支合入。无冲突时只产出候选结果，
  * 最终更新来源分支前仍需调用 finalizeTaskBranchIntegration 重新校验主工作区。
@@ -1941,7 +1967,8 @@ export async function startTaskBranchIntegration(input: {
   targetRef?: string;
   taskBranch: string;
   mode: 'merge' | 'squash';
-  commitMessage: string;
+  /** 调用方填写的压缩提交说明。 */
+  commitMessage?: string;
 }): Promise<TaskBranchIntegrationStartResult> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
@@ -1982,7 +2009,7 @@ export async function startTaskBranchIntegration(input: {
     } else {
       await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskHeadSha]);
       const staged = splitLines(await readGitStdout(integrationPath, ['diff', '--cached', '--name-only']));
-      if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
+      if (staged.length > 0) await commitSquashIntegration(integrationPath, { targetBranch, targetHeadSha, taskBranch, taskHeadSha }, input.commitMessage);
     }
   } catch (error) {
     const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
@@ -2024,7 +2051,8 @@ export async function startTaskIntegrationAttempt(input: {
   taskHeadSha: string;
   conflictBranch: string;
   mode: 'merge' | 'squash';
-  commitMessage: string;
+  /** 调用方填写的压缩提交说明。 */
+  commitMessage?: string;
   /** 来源草稿冲突需要从原隔离现场复制同一份快照。 */
   localChangesFromPath?: string;
 }): Promise<TaskBranchIntegrationStartResult> {
@@ -2064,7 +2092,7 @@ export async function startTaskIntegrationAttempt(input: {
     } else {
       await runGit(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--squash', taskHeadSha]);
       const staged = splitLines(await readGitStdout(integrationPath, ['diff', '--cached', '--name-only']));
-      if (staged.length > 0) await runGit(integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
+      if (staged.length > 0) await commitSquashIntegration(integrationPath, { targetBranch, targetHeadSha, taskBranch, taskHeadSha }, input.commitMessage);
     }
   } catch (error) {
     const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
@@ -2152,7 +2180,11 @@ export async function writeTaskIntegrationDraft(integrationPath: string, path: s
 }
 
 /** 冲突全部解决后生成合入候选提交；仍有冲突时拒绝继续。 */
-export async function completeTaskIntegrationCommit(input: { integrationPath: string; mode: 'merge' | 'squash'; commitMessage: string }): Promise<{ resultHeadSha: string }> {
+export async function completeTaskIntegrationCommit(input: {
+  integrationPath: string;
+  /** 调用方填写的压缩提交说明。 */
+  commitMessage?: string;
+} & ({ mode: 'merge' } | ({ mode: 'squash' } & TaskIntegrationCommitContext))): Promise<{ resultHeadSha: string }> {
   const conflicts = await readTaskIntegrationConflictPaths(input.integrationPath);
   if (conflicts.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve every conflict before completing the integration commit.');
   const localChanges = await readTaskIntegrationLocalChangesState(input.integrationPath);
@@ -2175,7 +2207,7 @@ export async function completeTaskIntegrationCommit(input: { integrationPath: st
   if (mergeHead) {
     await runGit(input.integrationPath, ['commit', '--no-edit']);
   } else if (input.mode === 'squash' && staged.length > 0) {
-    await runGit(input.integrationPath, ['commit', '-m', requireSafeGitText(input.commitMessage, 'commit message')]);
+    await commitSquashIntegration(input.integrationPath, input, input.commitMessage);
   } else if (staged.length > 0) {
     throw gitCoreError('ZEUS_TASK_WORKSPACE_DIRTY', '合入现场存在已暂存修改，但原合并状态已丢失；请核对现场后继续，不能忽略这些修改完成交付。');
   }

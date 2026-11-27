@@ -1088,7 +1088,7 @@ export class GitDeliveryExecution {
             targetBranch: selection.mergeBranch,
             taskBranch: selection.expectedBranch,
             mode: run.input.mode,
-            commitMessage: run.input.message || `${run.input.mode === 'squash' ? 'Squash' : 'Merge'} ${selection.expectedBranch} into ${selection.mergeBranch}`,
+            commitMessage: run.input.message,
           }),
         );
         const merge: GitDeliveryMergeResult = {
@@ -1284,7 +1284,11 @@ export class GitDeliveryExecution {
         completeTaskIntegrationCommit({
           integrationPath: merge.integrationPath,
           mode: run.input.mode,
-          commitMessage: run.input.message || `${run.input.mode === 'squash' ? 'Squash' : 'Merge'} ${merge.sourceBranch} into ${merge.targetBranch}`,
+          taskBranch: merge.sourceBranch,
+          taskHeadSha: merge.sourceHeadSha,
+          targetBranch: merge.targetBranch,
+          targetHeadSha: merge.targetHeadSha,
+          commitMessage: run.input.message,
         }),
       );
       merge.resultHeadSha = completed.resultHeadSha as string;
