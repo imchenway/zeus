@@ -2081,23 +2081,27 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
   return { run: attached, submissionId };
 }
 
+/** 原子写入阻塞状态和核对待办，确保进入未知结果的工作可以处置。 */
 function blockAgentRunForUnknownOutcome(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, code: string, message: string): void {
-  const completedAt = options.now().toISOString();
-  options.runs.update(run.id, { status: 'outcome_unknown', errorCode: code, errorMessage: message, completedAt });
-  const item = options.items.getById(run.workItemId);
-  if (item && item.status !== 'blocked') options.items.update(item.id, { status: 'blocked' });
-  options.decisions.create({
-    projectId: run.projectId,
-    taskId: run.taskId,
-    workItemId: run.workItemId,
-    runId: run.id,
-    deliverableId: null,
-    kind: 'outcome_unknown',
-    title: '核对 Agent 会话派发结果',
-    prompt: '会话可能已经写入 Provider，Zeus 不会自动重发。请核对会话现场后处置。',
-    requestPayload: { code, message, conversationId: run.conversationId },
-    operationIdentity: `agent-outcome:${run.id}`,
-    expiresAt: null,
+  options.transaction(() => {
+    /** 用本次状态变更写入的修订区分同一运行的多次未知结果。 */
+    const blockedRun = options.runs.update(run.id, { status: 'outcome_unknown', errorCode: code, errorMessage: message, completedAt: options.now().toISOString() });
+    /** 工作项状态与当前运行的核对待办一同写入。 */
+    const item = options.items.getById(run.workItemId);
+    if (item && item.status !== 'blocked') options.items.update(item.id, { status: 'blocked' });
+    options.decisions.create({
+      projectId: run.projectId,
+      taskId: run.taskId,
+      workItemId: run.workItemId,
+      runId: run.id,
+      deliverableId: null,
+      kind: 'outcome_unknown',
+      title: '核对 Agent 会话派发结果',
+      prompt: '会话可能已经写入 Provider，Zeus 不会自动重发。请核对会话现场后处置。',
+      requestPayload: { code, message, conversationId: run.conversationId },
+      operationIdentity: `agent-outcome:${run.id}:${blockedRun.revision}`,
+      expiresAt: null,
+    });
   });
   publishChanged(options, run.taskId, run.workItemId, 'outcome_unknown');
 }
