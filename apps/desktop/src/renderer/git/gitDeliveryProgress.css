@@ -215,6 +215,31 @@
 .git-delivery-progress[data-delivery-state='running'] .git-delivery-progress-spinner {
   animation: git-delivery-progress-spin 1.2s linear infinite;
 }
+@media (prefers-reduced-motion: no-preference) {
+  /* 等待中的连线保留灰色底线，柔和的短段沿线向下移动。 */
+  .git-delivery-progress[data-delivery-state='queued']:not([data-stopping]) .git-delivery-progress-step:not([data-step-state='succeeded'], :last-child)::after {
+    inline-size: 2px;
+    background-image: linear-gradient(to bottom, transparent, color-mix(in srgb, currentColor 45%, transparent), transparent);
+    background-size: 100% 8px;
+    animation: git-delivery-queue-connector-flow 1.2s linear infinite;
+  }
+  /* 待执行圆点同步变化，单步骤交付也能呈现等待状态。 */
+  .git-delivery-progress[data-delivery-state='queued']:not([data-stopping]) .git-delivery-progress-step-dot {
+    animation: git-delivery-queue-dot-breathe 2.4s ease-in-out infinite;
+  }
+}
+/* 每轮移动一个底纹周期，连线在循环处连续。 */
+@keyframes git-delivery-queue-connector-flow {
+  to {
+    background-position-y: 8px;
+  }
+}
+/* 待执行圆点只改变透明度，保持步骤的中性状态色。 */
+@keyframes git-delivery-queue-dot-breathe {
+  50% {
+    opacity: 0.8;
+  }
+}
 @keyframes git-delivery-progress-spin {
   to {
     transform: rotate(360deg);

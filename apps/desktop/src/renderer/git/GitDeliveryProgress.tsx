@@ -193,7 +193,7 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
     return { key, label, current, commandRunId, completed, total: steps.length, state, errors, tooltip };
   });
   return (
-    <span className="git-delivery-progress" data-delivery-state={stopped ? 'stopped' : attention ? 'attention' : run.state}>
+    <span className="git-delivery-progress" data-delivery-state={stopped ? 'stopped' : attention ? 'attention' : run.state} data-stopping={run.stopping || undefined}>
       <span className="git-delivery-progress-heading" {...progressAttributes}>
         <span className="git-delivery-progress-caption" title={[label, detail].filter(Boolean).join(' · ')}>
           <span>{label}</span>
