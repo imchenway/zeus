@@ -2634,6 +2634,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     } catch (error) {
       const failureAt = now().toISOString();
       const currentHead = conversationSubmissions.getById(head.id);
+      // 生命周期已结束失败的切换。队列变更会唤醒下一条消息。
+      if (currentHead?.pausedReason === 'route_switch_failed') {
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId, submissionId: head.id });
+        return;
+      }
       // 并发额度在任何 Provider 写入前拒绝；保留原输入，其他子任务结束后唤醒。
       if (error instanceof Error && 'code' in error && error.code === 'ZEUS_SUBAGENT_CONCURRENCY_LIMIT' && currentHead && !currentHead.providerTurnId) {
         conversationSubmissions.updateStatus(head.id, 'queued', { pausedReason: null, error: { code: error.code, message: error.message }, updatedAt: failureAt });
@@ -2695,16 +2700,30 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (!conversation || conversation.archived || conversation.providerState === 'archived') continue;
       try {
         await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
-        const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' });
-        /** 逐轮读取完整条目以核对原消息身份，命中后停止下载其余历史。 */
-        let matched: (typeof page.data)[number] | undefined;
-        for (const turn of page.data) {
-          turn.items = await readCodexTurnItems(codexAppServerManager, { threadId: segment.nativeSessionId, turnId: turn.id });
-          if (providerTurnClientMessageId(turn) !== submission.clientMessageId) continue;
-          matched = turn;
-          break;
+        /** 只用原候选线程内的消息身份确认接纳。 */
+        let matchedTurnId: string | undefined;
+        let method: 'thread/turns/list' | 'thread/read' = 'thread/turns/list';
+        try {
+          const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' });
+          for (const turn of page.data) {
+            turn.items = await readCodexTurnItems(codexAppServerManager, { threadId: segment.nativeSessionId, turnId: turn.id });
+            if (providerTurnClientMessageId(turn) !== submission.clientMessageId) continue;
+            matchedTurnId = turn.id;
+            break;
+          }
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes('thread not loaded')) throw error;
+          // 候选线程尚未加载时读取其持久历史，避免重新启动轮次或发送消息。
+          method = 'thread/read';
+          const thread = await codexAppServerManager.readThread({ threadId: segment.nativeSessionId, includeTurns: true });
+          if (thread.id !== segment.nativeSessionId || !Array.isArray(thread.turns)) throw error;
+          for (const turn of thread.turns) {
+            if (!isNativeApiRecord(turn) || typeof turn.id !== 'string' || providerTurnClientMessageId(turn) !== submission.clientMessageId) continue;
+            matchedTurnId = turn.id;
+            break;
+          }
         }
-        if (!matched) {
+        if (!matchedTurnId) {
           conversationExecution.recordRecoveryEvent({
             conversationId: operation.conversationId,
             segmentId: segment.id,
@@ -2719,19 +2738,20 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (conversationExecution.getSwitch(operation.id)?.state !== 'outcome_unknown' || !currentConversation || currentConversation.archived || currentConversation.providerState === 'archived') continue;
         const recoveredAt = now().toISOString();
         const persisted = isNativeApiRecord(JSON.parse(submission.inputJson)) ? (JSON.parse(submission.inputJson) as Record<string, unknown>) : {};
-        const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${matched.id}`).digest('hex').slice(0, 24)}`;
+        const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${matchedTurnId}`).digest('hex').slice(0, 24)}`;
         const commandDelivery = commandDeliveries.getByScope('submission', submission.id);
         const unknownOutbox = commandDelivery?.attempts.at(-1)?.outcome === 'outcome_unknown_after_write' ? commandDelivery.attempts.at(-1) : undefined;
         conversationExecution.acceptSwitchDurably(
           {
             operationId: operation.id,
-            providerTurnId: matched.id,
+            providerTurnId: matchedTurnId,
             turnId,
             acceptanceEvidence: {
               source: 'provider_history_reconciliation',
               nativeSessionId: segment.nativeSessionId,
               clientUserMessageId: submission.clientMessageId,
-              nativeTurnListed: true,
+              method,
+              nativeTurnId: matchedTurnId,
             },
             userHistoryContent: {
               text: typeof persisted.text === 'string' ? persisted.text : '',
@@ -2752,11 +2772,11 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                     source: 'provider_history_reconciliation',
                     nativeSessionId: segment.nativeSessionId,
                     clientUserMessageId: submission.clientMessageId,
-                    nativeTurnListed: true,
+                    method,
                   },
                   providerId: 'codex',
                   nativeSessionId: segment.nativeSessionId,
-                  nativeTurnId: matched.id,
+                  nativeTurnId: matchedTurnId,
                   occurredAt: recoveredAt,
                 })
             : undefined,
@@ -2768,14 +2788,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           segmentId: segment.id,
           layer: 'runtime_acknowledged',
           configuration: { recovered: true },
-          evidence: { method: 'thread/turns/list', nativeTurnId: matched.id, clientUserMessageId: submission.clientMessageId },
+          evidence: { method, nativeTurnId: matchedTurnId, clientUserMessageId: submission.clientMessageId },
           observedAt: recoveredAt,
         });
         conversationExecution.recordRecoveryEvent({
           conversationId: operation.conversationId,
           segmentId: segment.id,
           eventKind: 'outcome_unknown_accepted',
-          payload: { operationId: operation.id, nativeTurnId: matched.id, clientUserMessageId: submission.clientMessageId },
+          payload: { operationId: operation.id, nativeTurnId: matchedTurnId, clientUserMessageId: submission.clientMessageId },
           occurredAt: recoveredAt,
         });
         publishNativeConversationEvent('conversation.queue.changed', { conversationId: operation.conversationId, submissionId: submission.id, queueDispatchRequested: false });
@@ -3679,6 +3699,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     zeusConversationPluginRuntime,
     conversationChoiceQueries,
     conversationExecution,
+    commandDeliveries,
     conversationExperts,
     conversationRuntime,
     conversationExecutionCoordinator,

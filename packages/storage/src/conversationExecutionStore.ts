@@ -971,32 +971,24 @@ export class ConversationExecutionRepository {
   }
 
   failBeforeProviderWrite(operationId: string, failure: unknown, updatedAt: string): ConversationSwitchOperationRecord {
-    const operation = this.requireOpenSwitch(operationId);
-    this.db.transaction(() => {
-      this.db.execute(`UPDATE conversation_runtime_segments SET state = 'abandoned', sealed_at = ?, seal_reason = 'preflight_failed', updated_at = ? WHERE id = ? AND state = 'provisional'`, [
-        updatedAt,
-        updatedAt,
-        operation.targetSegmentId,
-      ]);
-      this.db.execute(`UPDATE conversation_switch_operations SET state = 'failed', failure_json = ?, updated_at = ?, resolved_at = ? WHERE id = ?`, [JSON.stringify(failure), updatedAt, updatedAt, operation.id]);
-      this.db.execute(`UPDATE conversation_submissions SET status = 'paused', paused_reason = 'preflight_failed', submission_outcome = 'paused', error_json = ?, updated_at = ? WHERE id = ?`, [
-        JSON.stringify(failure),
-        updatedAt,
-        operation.submissionId,
-      ]);
-      this.pauseQueueBehindHead(operation.conversationId, operation.submissionId, updatedAt);
-    });
-    return this.getSwitch(operation.id)!;
+    return this.failSwitch(operationId, 'preflight_failed', failure, updatedAt);
   }
 
   rejectSwitchBeforeAcceptance(operationId: string, failure: unknown, updatedAt: string): ConversationSwitchOperationRecord {
+    return this.failSwitch(operationId, 'runtime_rejected', failure, updatedAt);
+  }
+
+  /** 首次启动失败仍需恢复队首，已有分段时只结束这次失败的切换及其提交。 */
+  private failSwitch(operationId: string, reason: 'preflight_failed' | 'runtime_rejected', failure: unknown, updatedAt: string): ConversationSwitchOperationRecord {
     const operation = this.requireOpenSwitch(operationId);
+    /** 已有分段可以继续处理后续消息，失败输入保留在会话记录供用户重试。 */
+    const canContinue = operation.sourceSegmentId !== null;
     this.db.transaction(() => {
       this.db.execute(
         `UPDATE conversation_runtime_segments
-            SET state = 'abandoned', sealed_at = ?, seal_reason = 'runtime_rejected', updated_at = ?
+            SET state = 'abandoned', sealed_at = ?, seal_reason = ?, updated_at = ?
           WHERE id = ? AND state = 'provisional'`,
-        [updatedAt, updatedAt, operation.targetSegmentId],
+        [updatedAt, reason, updatedAt, operation.targetSegmentId],
       );
       this.db.execute(
         `UPDATE conversation_switch_operations
@@ -1006,12 +998,12 @@ export class ConversationExecutionRepository {
       );
       this.db.execute(
         `UPDATE conversation_submissions
-            SET status = 'paused', paused_reason = 'runtime_rejected', submission_outcome = 'paused',
-                error_json = ?, updated_at = ?
+            SET status = ?, paused_reason = ?, submission_outcome = 'paused',
+                error_json = ?, resolved_at = ?, updated_at = ?
           WHERE id = ?`,
-        [JSON.stringify(failure), updatedAt, operation.submissionId],
+        [canContinue ? 'failed' : 'paused', canContinue ? 'route_switch_failed' : reason, JSON.stringify(failure), canContinue ? updatedAt : null, updatedAt, operation.submissionId],
       );
-      this.pauseQueueBehindHead(operation.conversationId, operation.submissionId, updatedAt);
+      if (!canContinue) this.pauseQueueBehindHead(operation.conversationId, operation.submissionId, updatedAt);
     });
     return this.getSwitch(operation.id)!;
   }
@@ -1698,10 +1690,16 @@ export class ConversationExecutionRepository {
   }
 
   resumeQueueBlockedByHead(conversationId: string, occurredAt: string): void {
+    // 尚未派发且只因切换占用而暂停的消息，在切换收口后也应回到队列。
     this.db.execute(
       `UPDATE conversation_submissions
-          SET status = 'queued', paused_reason = NULL, submission_outcome = 'queued', updated_at = ?
-        WHERE conversation_id = ? AND status = 'paused' AND paused_reason = 'blocked_by_head' AND provider_turn_id IS NULL`,
+          SET status = 'queued', paused_reason = NULL, error_json = NULL, submission_outcome = 'queued', updated_at = ?
+        WHERE conversation_id = ? AND status = 'paused' AND provider_turn_id IS NULL
+          AND (paused_reason = 'blocked_by_head'
+            OR (paused_reason IN ('preflight_failed', 'recovery_required') AND dispatched_at IS NULL
+              AND json_extract(error_json, '$.code') = 'ZEUS_CONVERSATION_SWITCH_IN_PROGRESS'
+              AND NOT EXISTS (SELECT 1 FROM conversation_switch_operations
+                WHERE conversation_id = conversation_submissions.conversation_id AND state IN ('preflight', 'provisional', 'outcome_unknown'))))`,
       [occurredAt, conversationId],
     );
   }

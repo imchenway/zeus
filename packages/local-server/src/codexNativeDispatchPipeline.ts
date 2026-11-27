@@ -597,24 +597,12 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       assertSubmissionDispatchable(submission.id);
-      if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
-      else
-        options.commandDeliveries.markProviderWriteStarted({
-          outboxId: requireString(commandOutboxId, 'command outbox id'),
-          occurredAt: now(),
-        });
-      providerWriteStarted = true;
-      lease.contentWriteStarted = true;
-      markDispatchRpcStarted(lease, submission.id);
-      /** 第一条 Provider 写入既可能是线程设置，也可能是轮次启动，两者共用真实写出回执。 */
-      const requestWritten = segmentLifecycle ? () => segmentLifecycle.markProviderWriteStarted() : undefined;
       await measureDispatchPhase(conversation.id, submission.id, 'provider_settings', () =>
         options.manager.setThreadCollaborationMode({
           threadId: providerThreadId,
           cwd: context.projectLocalPath,
           collaborationMode,
           traceIdentity: commandTraceIdentity,
-          ...(requestWritten ? { requestWritten } : {}),
         }),
       );
       assertSubmissionDispatchable(submission.id);
@@ -625,7 +613,15 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           clientUserMessageId: submission.clientMessageId,
           input: providerInput,
           ...(additionalContext ? { additionalContext } : {}),
-          ...(requestWritten ? { requestWritten } : {}),
+          beforeRequestWrite: () => {
+            // 线程设置不携带用户消息。只在 turn/start 即将发送时锁定该提交的送达状态。
+            assertSubmissionDispatchable(submission.id);
+            if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
+            else options.commandDeliveries.markProviderWriteStarted({ outboxId: requireString(commandOutboxId, 'command outbox id'), occurredAt: now() });
+            providerWriteStarted = true;
+            lease.contentWriteStarted = true;
+            markDispatchRpcStarted(lease, submission.id);
+          },
           model: context.model,
           ...(wireEffort ? { effort: wireEffort } : {}),
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
@@ -809,6 +805,13 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         });
       }
       if (dispatchStopped(submission.id) && !providerWriteStarted) return accepted(submission, 'interrupted', candidateProviderThreadId ?? conversation.providerThreadId, null);
+      /** 发送前失败的模型切换已经收口，原线程可以继续承接后续提交。 */
+      const failedSwitch = options.submissions.getById(submission.id);
+      if (failedSwitch?.status === 'failed' && failedSwitch.pausedReason === 'route_switch_failed') {
+        runStates.set(conversation.id, inferRunState(requireConversation(conversation.id)));
+        options.broadcast('conversation.queue.changed', { conversationId: conversation.id, submissionId: submission.id });
+        return accepted(failedSwitch, 'recovery_required', conversation.providerThreadId, null);
+      }
       if (providerWriteStarted && !explicitlyRejected) {
         // 写出后的未知结果优先于通用暂停或归档恢复，不能覆盖为可重试失败。
         if (!segmentLifecycle) options.execution.markCurrentSubmissionOutcomeUnknown(conversation.id, submission.id, serializeError(error), now());

@@ -12,6 +12,12 @@ export function selectAutomaticQueueDispatchCandidate<T extends Pick<ZeusConvers
   return submissions.find((submission) => submission.status === 'queued' && !submission.providerTurnId);
 }
 
+/** 切换失败的消息可以单独恢复，但仍须等待真正阻塞队列的提交。 */
+export function canRecoverQueueSubmission(submission: ZeusConversationSubmissionRecord, queue: readonly ZeusConversationSubmissionRecord[]): boolean {
+  const head = queue.find((entry) => entry.pausedReason !== 'route_switch_failed');
+  return head?.id === submission.id || (submission.pausedReason === 'route_switch_failed' && (!head || head.status === 'queued'));
+}
+
 /**
  * Queue 与 request 的纯 Core mutation。调用方负责把这些同步方法包在自己的 durable
  * transaction 中；本类不保存、不广播，也不触发 Provider 派发。
@@ -111,7 +117,7 @@ export class ConversationQueueCoreMutationApplication {
     const deletedAt = this.options.now();
     this.options.execution.cancelOpenSwitchForSubmission({ conversationId: input.conversationId, submissionId: submission.id, reason: 'submission_deleted', occurredAt: deletedAt });
     this.options.submissions.updateStatus(submission.id, 'deleted', { resolvedAt: deletedAt });
-    if (queuedBeforeDelete[0]?.id === submission.id) this.options.execution.resumeQueueBlockedByHead(input.conversationId, deletedAt);
+    if (queuedBeforeDelete.find((entry) => entry.pausedReason !== 'route_switch_failed')?.id === submission.id) this.options.execution.resumeQueueBlockedByHead(input.conversationId, deletedAt);
     this.options.submissions.reorderQueued(
       input.conversationId,
       this.queueEntries(input.conversationId).map((entry) => entry.id),
@@ -122,16 +128,17 @@ export class ConversationQueueCoreMutationApplication {
 
   retry(input: { conversationId: string; submissionId: string }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
-    const queueHead = this.queueEntries(input.conversationId)[0];
     // 多条恢复消息由用户逐条点选；显式选择本身就是越过其他 recovered_unsent 的授权。
     // 其他暂停/失败原因仍必须保持队首闸机，禁止借普通重试绕过真实阻塞。
-    if ((!queueHead || queueHead.id !== submission.id) && submission.pausedReason !== 'recovered_unsent') {
+    if (!canRecoverQueueSubmission(submission, this.queueEntries(input.conversationId)) && submission.pausedReason !== 'recovered_unsent') {
       throw mutationError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能重试暂停的队首提交。');
     }
     if ((submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以重试。');
     }
-    if (!hasUnwrittenSubmissionEvidence(this.options.commandDeliveries, submission)) throw mutationError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '尚未确认这条消息未发送，不能安全重试。');
+    if (!hasUnwrittenSubmissionEvidence(this.options.commandDeliveries, submission, submission.pausedReason === 'route_switch_failed' ? 'turn' : undefined)) {
+      throw mutationError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '尚未确认这条消息未发送，不能安全重试。');
+    }
     if (submission.pausedReason === 'semantic_route_changed' || submission.pausedReason === 'upgrade_interrupted' || !submission.executionSnapshotId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '原执行路由已变化或不可恢复，请使用当前输入框模型创建改路由 replacement。');
     }
@@ -142,8 +149,10 @@ export class ConversationQueueCoreMutationApplication {
 
   reorder(input: { conversationId: string; orderedSubmissionIds: string[] }): unknown {
     const queueEntries = this.queueEntries(input.conversationId);
-    const blockedHead = queueEntries[0];
-    if (blockedHead && blockedHead.status !== 'queued' && input.orderedSubmissionIds[0] !== blockedHead.id) {
+    /** 失败的切换保留原位置，重排时只检查仍可阻塞队列的提交顺序。 */
+    const failedSwitchIds = new Set(queueEntries.filter((entry) => entry.pausedReason === 'route_switch_failed').map((entry) => entry.id));
+    const blockedHead = queueEntries.find((entry) => !failedSwitchIds.has(entry.id));
+    if (blockedHead && blockedHead.status !== 'queued' && input.orderedSubmissionIds.find((id) => !failedSwitchIds.has(id)) !== blockedHead.id) {
       throw mutationError('ZEUS_NATIVE_QUEUE_HEAD_BLOCKS_REORDER', '暂停或失败的队首必须先重试、改路由替换或取消，不能通过重排绕过。');
     }
     const controlIds = queueEntries.filter((submission) => planControlModeForSubmission(submission)).map((submission) => submission.id);

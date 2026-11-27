@@ -289,6 +289,8 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   clientUserMessageId?: string;
   input: Array<Record<string, unknown>>;
   additionalContext?: CodexBootstrapAdditionalContext;
+  /** 在轮次请求通过校验后、写入传输层前持久化发送边界。 */
+  beforeRequestWrite?: () => void;
   /** 仅供适配器确认 JSON-RPC 帧已经成功写入传输层，不进入线协议。 */
   requestWritten?: () => void;
   collaborationMode?: CodexCollaborationMode;
@@ -1134,9 +1136,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     void readyPromise.catch(() => undefined);
   }
 
-  function write(message: unknown, completed?: (error?: Error) => void): void {
+  function write(message: unknown, completed?: (error?: Error) => void, beforeWrite?: () => void): void {
     if (child === null) throw managerError('ZEUS_CODEX_NOT_READY', 'Codex app-server process is unavailable.');
-    child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
+    /** 序列化失败时没有可发送的帧，不能提前记录外发。 */
+    const frame = `${JSON.stringify(message)}\n`;
+    beforeWrite?.();
+    child.stdin.write(frame, (error) => {
       completed?.(error ?? undefined);
     });
   }
@@ -1146,6 +1151,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     method: string,
     params: unknown,
     input: {
+      /** 在已注册的请求写入传输层前记录业务发送边界。 */
+      beforeRequestWrite?: () => void;
       requestWritten?: () => void;
       traceIdentity?: string | null;
       timeoutMs?: number | null;
@@ -1204,17 +1211,21 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       });
       input.signal?.addEventListener('abort', abortRequest, { once: true });
       try {
-        write({ id, method, params }, (error) => {
-          if (!error) {
-            input.requestWritten?.();
-            return;
-          }
-          const pending = pendingRequests.get(key);
-          if (!pending) return;
-          if (pending.timeout) clearTimeout(pending.timeout);
-          pendingRequests.delete(key);
-          pending.reject(error);
-        });
+        write(
+          { id, method, params },
+          (error) => {
+            if (!error) {
+              input.requestWritten?.();
+              return;
+            }
+            const pending = pendingRequests.get(key);
+            if (!pending) return;
+            if (pending.timeout) clearTimeout(pending.timeout);
+            pendingRequests.delete(key);
+            pending.reject(error);
+          },
+          input.beforeRequestWrite,
+        );
       } catch (error) {
         if (timeout) clearTimeout(timeout);
         const pending = pendingRequests.get(key);
@@ -1991,7 +2002,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             approvalsReviewer: input.approvalsReviewer,
             sandboxPolicy,
           }),
-          { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity },
+          { beforeRequestWrite: input.beforeRequestWrite, requestWritten: input.requestWritten, traceIdentity: input.traceIdentity },
         ),
       );
       const turn = parseTurn(response.turn, input.threadId);

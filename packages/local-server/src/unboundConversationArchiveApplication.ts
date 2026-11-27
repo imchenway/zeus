@@ -38,10 +38,10 @@ export function hasUnwrittenConversationEvidence(ports: UnboundConversationArchi
 }
 
 /** 归档和各模型的队列恢复共用写前证据，派发时间不能单独证明是否已发送。 */
-export function hasUnwrittenSubmissionEvidence(deliveries: CommandDeliveryRepository, submission: ZeusConversationSubmissionRecord): boolean {
+export function hasUnwrittenSubmissionEvidence(deliveries: CommandDeliveryRepository, submission: ZeusConversationSubmissionRecord, scope?: 'turn'): boolean {
   if (submission.providerTurnId || submission.targetProviderTurnId || submission.acceptedAt || submission.submissionOutcome === 'outcome_unknown' || submission.pausedReason === 'outcome_unknown') return false;
   /** 派发租约也会写 dispatchedAt，必须用对应提交的真实命令回执区分发送前失败。 */
-  const writeStatus = deliveries.providerWriteStatus(submission.id);
+  const writeStatus = deliveries.providerWriteStatus(submission.id, scope);
   if (writeStatus === 'written_or_unknown' || (submission.dispatchedAt && writeStatus !== 'unwritten')) return false;
   return ['queued', 'paused', 'failed', 'cancelled', 'deleted'].includes(submission.status);
 }

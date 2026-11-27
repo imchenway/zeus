@@ -11,6 +11,8 @@ import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { prepareProjectConversationWorkspace } from './projectConversationWorkspace.js';
 import { localConversationPlaceholderTitle, localConversationTitle } from './nativeConversationTitle.js';
 import { routeFingerprint } from './conversationExecutionCoordinator.js';
+import { canRecoverQueueSubmission } from './conversationQueueCoreMutationApplication.js';
+import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import { restrictToolPermission } from './conversationToolPolicy.js';
 import type { ConversationSubagentSummary } from './codexSubagentQueryApplication.js';
 import { selectEmployeeMemories } from './employeeMemoryContext.js';
@@ -47,6 +49,7 @@ import {
   ArtifactStore,
   type ConversationCollaborationMode,
   ConversationExecutionRepository,
+  type CommandDeliveryRepository,
   ConversationRuntimeRepository,
   type ConversationGoalRepository,
   type ConversationExpertActorSnapshot,
@@ -124,6 +127,8 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   zeusConversationPluginRuntime?: ZeusConversationPluginRuntime;
   conversationChoiceQueries: ConversationChoiceQueryApplication;
   conversationExecution: ConversationExecutionRepository;
+  /** 改路由前核对原轮次请求的送达记录。 */
+  commandDeliveries: CommandDeliveryRepository;
   conversationExperts: ConversationExpertRepository;
   /** 进程、目标和子会话的产品归属。 */
   conversationRuntime: ConversationRuntimeRepository;
@@ -282,6 +287,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     codexNativeEnabled,
     conversationChoiceQueries,
     conversationExecution,
+    commandDeliveries,
     conversationExperts,
     conversationGoals,
     conversationRuntime,
@@ -1791,9 +1797,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const conversation = requireNativeQueueConversation(input.params);
     if (!project) throw Object.assign(nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Project not found'), { statusCode: 404 });
     const original = conversationSubmissions.getById(input.params.submissionId);
-    /** 队首判定必须与仓储给出的可重排队列完全一致，不得再手写一套状态集合。 */
-    const queueHead = conversationSubmissions.listReorderableByConversation(conversation.id)[0];
-    if (!original || original.conversationId !== conversation.id || !queueHead || queueHead.id !== original.id) throw nativeApiError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能改路由替换当前暂停的队首提交。');
+    if (!original || original.conversationId !== conversation.id || !canRecoverQueueSubmission(original, conversationSubmissions.listReorderableByConversation(conversation.id))) {
+      throw nativeApiError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能改路由替换当前暂停的队首提交。');
+    }
     if ((original.status !== 'paused' && original.status !== 'failed') || original.providerTurnId) throw nativeApiError('ZEUS_NATIVE_SUBMISSION_NOT_REROUTABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以改路由。');
     if (original.pausedReason === 'outcome_unknown' || original.submissionOutcome === 'outcome_unknown') throw nativeApiError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '接纳结果未知的提交禁止改路由，必须先完成恢复核对或取消。');
     const requestedModel = typeof input.settings.model === 'string' ? input.settings.model.trim() : '';
@@ -1866,9 +1872,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
       current.updatedAt !== prepared.originalUpdatedAt ||
       current.inputJson !== prepared.originalInputJson ||
       (current.status !== 'paused' && current.status !== 'failed') ||
-      current.providerTurnId
+      current.providerTurnId ||
+      !canRecoverQueueSubmission(current, conversationSubmissions.listReorderableByConversation(conversation.id))
     ) {
       throw Object.assign(nativeApiError('ZEUS_NATIVE_QUEUE_REROUTE_STALE', '队首提交在改路由准备后已经变化，请刷新后重试。'), { statusCode: 409 });
+    }
+    if (current.pausedReason === 'route_switch_failed' && !hasUnwrittenSubmissionEvidence(commandDeliveries, current, 'turn')) {
+      throw nativeApiError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '尚未确认这条消息未发送，不能安全改路由。');
     }
     const replacedAt = now().toISOString();
     const replacement = conversationSubmissions.createReplacement(current.id, {
