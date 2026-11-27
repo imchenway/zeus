@@ -920,7 +920,12 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   useEffect(() => {
     const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
     const loadConversationResources: ConversationTranscriptProps['onLoadConversationResources'] =
-      renderProps.onLoadConversationResources ?? (itemsNeedingInlineResources.length && loadTurnArtifacts ? () => Promise.all([...new Set(itemsNeedingInlineResources.map((item) => item.turnId))].map(loadTurnArtifacts)) : undefined);
+      renderProps.onLoadConversationResources ??
+      (itemsNeedingInlineResources.length && loadTurnArtifacts
+        ? async () => {
+            await Promise.all([...new Set(itemsNeedingInlineResources.map((item) => item.turnId))].map(loadTurnArtifacts));
+          }
+        : undefined);
     const assistantDeliverablesNeedLoading = Boolean(assistantDeliverablesAvailable && resourcePaging && (!resourcePaging.loaded || resourcePaging.hasMore));
     // 资源补齐后解除本次尝试锁。若后续权威快照异常丢失展示资源，可再次自愈；
     // 真正失败且状态未变化时仍保留尝试键，避免无界重试。

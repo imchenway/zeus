@@ -337,7 +337,7 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
 
 /** 末行的删除与换行可以共用行首，区块导航选中后优先显示当前色块。 */
 function rangeAt(ranges: RangeSet<SourceGitRange>, position: number, active: number): { index: number; from: number; to: number } | null {
-  let match = null;
+  let match: ReturnType<typeof rangeAt> = null;
   ranges.between(position, position, (from, to, range) => {
     if (!match || range.index === active) match = { index: range.index, from, to };
   });

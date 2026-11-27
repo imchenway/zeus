@@ -790,14 +790,16 @@ export function toConversationResourceOpenIntent(record: ZeusConversationResourc
     /** 旧记录从已保存的正文引用恢复源路径和图片类型，沿用原归档目录和授权。 */
     const sourceReference = request.sourcePath === null ? stringValue(display.sourceReference) : null;
     const sourcePath = sourceReference ? localMarkdownImagePath(sourceReference) : null;
+    let absolutePath = target.absolutePath;
     if (sourcePath) {
       const sourceExtension = extname(sourcePath).toLocaleLowerCase();
-      target.absolutePath = join(dirname(target.absolutePath), basename(target.absolutePath, unresolvedAssistantImageExtension) + sourceExtension);
+      absolutePath = join(dirname(absolutePath), basename(absolutePath, unresolvedAssistantImageExtension) + sourceExtension);
+      target.absolutePath = absolutePath;
       request.sourcePath = sourcePath;
       request.mimeType = supportedArchivedImageMimeType(sourceExtension);
       display.mimeType = request.mimeType;
     }
-    ensureAssistantImageArchive(target.absolutePath, authority.allowedRoot, request as unknown as AssistantImageArchiveRequest);
+    ensureAssistantImageArchive(absolutePath, authority.allowedRoot, request as unknown as AssistantImageArchiveRequest);
   }
   return {
     id: record.id,

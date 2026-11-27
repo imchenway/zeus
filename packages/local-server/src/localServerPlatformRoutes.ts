@@ -3489,7 +3489,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const projected = conversationSnapshotV2.listModelHistoryPage({ conversationId, afterSequence, assistantOutputOnly: true, entryLimit: 128, byteLimit: 1024 * 1024 }).items;
         if (projected.length === 0) return [];
 
-        const resourcesByTurn = Map.groupBy(conversationResources.listByConversation(conversationId), (resource) => resource.turnId);
+        /** 按轮次索引资源，并保留每轮的原始读取顺序。 */
+        const resourcesByTurn = new Map<string, ReturnType<ConversationResourceRepository['listByConversation']>>();
+        for (const resource of conversationResources.listByConversation(conversationId)) {
+          const resources = resourcesByTurn.get(resource.turnId);
+          if (resources) resources.push(resource);
+          else resourcesByTurn.set(resource.turnId, [resource]);
+        }
         const output = [];
         for (const item of projected) {
           if (item.sequence <= afterSequence || item.role !== 'assistant' || item.reasoningSummary || item.toolPairId) continue;

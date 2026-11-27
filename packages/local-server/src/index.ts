@@ -1964,11 +1964,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       for (const entryId of entryIds) {
         const entry = conversationTranscripts.envelopeForEntry(conversationId, entryId);
         if (!entry) continue;
-        const providerSource = entry.sources.findLast((source) => source.domain === 'provider_item' && source.facet === 'body');
+        /** 从最新的来源开始查找，保留快照中的原始顺序。 */
+        const newestSources = [...entry.sources].reverse();
+        const providerSource = newestSources.find((source) => source.domain === 'provider_item' && source.facet === 'body');
         const provider = providerSource && conversationProviderItems.getByProvider(providerSource.scope, providerSource.sourceId);
         if (provider && (provider.conversationId !== conversationId || provider.itemType !== 'agentMessage' || provider.status !== 'completed')) continue;
         /** 已确认正文包含预览截断前的完整引用，并可恢复没有原生条目的旧答复。 */
-        const historySource = entry.sources.findLast((source) => source.domain === 'model_history' && source.facet === 'body');
+        const historySource = newestSources.find((source) => source.domain === 'model_history' && source.facet === 'body');
         const history = historySource && conversationSnapshotV2.readAssistantResourceSource(conversationId, historySource.sourceId);
         const turnId = provider?.turnId ?? history?.turnId;
         if (!turnId) continue;
