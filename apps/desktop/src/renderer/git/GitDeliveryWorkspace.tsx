@@ -1056,7 +1056,14 @@ export function GitDeliveryActions(props: {
           <section className="task-git-delivery-action-step">
             <div className="task-git-delivery-step-heading">
               <strong>{props.zh ? '推送当前分支' : 'Push current branch'}</strong>
-              <Button variant="secondary" size="compact" aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '推送当前分支' : 'Push current branch'}`} busy={props.busyAction === 'push'} onClick={props.onPush} disabled={busy || props.pushCount === 0}>
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '推送当前分支' : 'Push current branch'}`}
+                busy={props.busyAction === 'push'}
+                onClick={props.onPush}
+                disabled={busy || props.pushCount === 0}
+              >
                 {pushLabel}
                 {props.pushCount > 0 ? ` (${props.pushCount})` : ''}
               </Button>

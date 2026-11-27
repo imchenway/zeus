@@ -755,7 +755,7 @@ export function BranchPicker(props: {
       onSelectRepository={() => undefined}
       referenceSelection={{
         mode: 'pick',
-        selectedSource: () => props.value ? { sourceRef: props.value.ref, sourceKind: props.value.kind } : undefined,
+        selectedSource: () => (props.value ? { sourceRef: props.value.ref, sourceKind: props.value.kind } : undefined),
         onSelect: async (_repositories, ref, kind) => {
           props.onChange(ref, kind);
           return true;
@@ -1810,7 +1810,7 @@ export function PullDialog(props: {
                   onChange={(ref) => setBranch(ref.slice(remote.length + 1))}
                   triggerLabel={selectedBranch || (props.zh ? '选择远程分支' : 'Select a remote branch')}
                   disabled={locked || !remote}
-                  menuStatus={branches.length ? undefined : (props.zh ? '暂无远程分支，请点击刷新' : 'No remote branches. Refresh to fetch them.')}
+                  menuStatus={branches.length ? undefined : props.zh ? '暂无远程分支，请点击刷新' : 'No remote branches. Refresh to fetch them.'}
                 />
                 <Button
                   variant="secondary"
@@ -1903,9 +1903,7 @@ export function MergeBranchDialog(props: {
   const localBranches = props.repository.snapshot.localBranches.filter((branch) => branch !== props.repository.snapshot.branch);
   const remoteBranches = props.repository.snapshot.remoteBranches.filter((branch) => branch !== props.repository.snapshot.branch);
   /** 分支类型和名称共同确定选中引用。 */
-  const [selection, setSelection] = useState<{ ref: string; kind: BranchKind } | undefined>(() =>
-    localBranches[0] ? { ref: localBranches[0], kind: 'local' } : remoteBranches[0] ? { ref: remoteBranches[0], kind: 'remote' } : undefined,
-  );
+  const [selection, setSelection] = useState<{ ref: string; kind: BranchKind } | undefined>(() => (localBranches[0] ? { ref: localBranches[0], kind: 'local' } : remoteBranches[0] ? { ref: remoteBranches[0], kind: 'remote' } : undefined));
   return (
     <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" role="dialog" aria-label={props.zh ? '合并分支' : 'Merge branch'} onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
       <section className="project-git-reference-dialog">

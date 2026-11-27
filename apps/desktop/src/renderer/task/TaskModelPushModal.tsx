@@ -1315,15 +1315,7 @@ export function TaskModelPushModal(props: {
                         ariaDescribedBy="task-model-push-batch-source-description"
                         value={selectedCommonSource}
                         triggerLabel={
-                          selectedCommonSource
-                            ? selectedCommonSource.ref
-                            : hasRepositorySourceSelection
-                              ? zh
-                                ? '逐仓选择不一致'
-                                : 'Repository selections differ'
-                              : zh
-                                ? '批量选择来源分支'
-                                : 'Select a source branch for all repositories'
+                          selectedCommonSource ? selectedCommonSource.ref : hasRepositorySourceSelection ? (zh ? '逐仓选择不一致' : 'Repository selections differ') : zh ? '批量选择来源分支' : 'Select a source branch for all repositories'
                         }
                         localBranches={commonSources.filter((source) => source.kind === 'local').map((source) => source.ref)}
                         remoteBranches={commonSources.filter((source) => source.kind === 'remote').map((source) => source.ref)}
