@@ -131,7 +131,7 @@ import { type TelegramMessageSender, type TelegramPollingService, type TelegramU
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, appendFileSync, closeSync, existsSync, constants as fsConstants, mkdirSync, openSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { BrowserAutomationPort } from './browserAutomation.js';
 import { createCodexConfigImportService } from './codexConfigImportService.js';
@@ -1948,6 +1948,62 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         });
     }, waitMs);
     syncRetentionTimer.unref();
+  }
+
+  /** 按会话内持久正文补登记缺失资源，执行目录优先使用原轮次已接受的上下文。 */
+  async function recoverConversationResources(conversationId: string, entryIds: readonly string[]): Promise<void> {
+    if (readOnlyValidation) return;
+    const conversation = conversations.getRecordById(conversationId);
+    const project = conversation && projects.getById(conversation.projectId);
+    if (!conversation || !project) return;
+    const executionRoot = resolveNativeConversationExecutionRoot(conversation);
+    const needsSave = db.transaction(() => {
+      let attempted = false;
+      for (const entryId of entryIds) {
+        const entry = conversationTranscripts.envelopeForEntry(conversationId, entryId);
+        if (!entry) continue;
+        const providerSource = entry.sources.findLast((source) => source.domain === 'provider_item' && source.facet === 'body');
+        const provider = providerSource && conversationProviderItems.getByProvider(providerSource.scope, providerSource.sourceId);
+        if (provider && (provider.conversationId !== conversationId || provider.itemType !== 'agentMessage' || provider.status !== 'completed')) continue;
+        /** 已确认正文包含预览截断前的完整引用，并可恢复没有原生条目的旧答复。 */
+        const historySource = entry.sources.findLast((source) => source.domain === 'model_history' && source.facet === 'body');
+        const history = historySource && conversationSnapshotV2.readAssistantResourceSource(conversationId, historySource.sourceId);
+        const turnId = provider?.turnId ?? history?.turnId;
+        if (!turnId) continue;
+        const turn = conversationTurns.getById(turnId);
+        if (!turn || turn.conversationId !== conversationId) continue;
+        const text = history?.text ?? provider?.textContent ?? '';
+        if (!text.includes('[')) continue;
+        const submission = turn.clientSubmissionId ? conversationSubmissions.getById(turn.clientSubmissionId) : undefined;
+        const context = submission?.conversationId === conversationId ? parseJsonObject(submission.inputJson).context : null;
+        const storedRoot = isNativeApiRecord(context) && typeof context.projectLocalPath === 'string' && isAbsolute(context.projectLocalPath) ? context.projectLocalPath : null;
+        const projectRoot = storedRoot ?? executionRoot;
+        if (!projectRoot) continue;
+        const item = provider ?? ({ id: entryId, itemType: 'agentMessage', status: 'completed', phase: 'final_answer', payloadJson: '{}' } as const);
+        syncConversationResources(
+          {
+            projectId: project.id,
+            projectRoot,
+            registeredProjectRoot: project.localPath ?? undefined,
+            conversationId,
+            turnId,
+            item,
+            payload: parseJsonObject(item.payloadJson),
+            text,
+            trustedAttachmentRoots: trustedConversationAttachmentRoots,
+            generatedImageRoot,
+            assistantImageArchiveRoot: conversationAttachmentRoot,
+            artifactsDirectory: dataLayout.artifactsDirectory,
+            htmlArtifactsDirectory,
+            now: provider?.updatedAt ?? turn.completedAt ?? turn.updatedAt,
+          },
+          conversationResources,
+        );
+        attempted = true;
+      }
+      return attempted;
+    });
+    if (needsSave) await db.save();
   }
 
   /** 资源落库与扫描位置同批提交，历史库重启后不会从头扫描。 */
@@ -4113,6 +4169,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     conversationQueueCoreMutations,
     conversationRequests,
     conversationResources,
+    recoverConversationResources,
+    conversationTranscripts,
     conversationSnapshotV2,
     conversationSubmissions,
     conversationSyncProtocol,

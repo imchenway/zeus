@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ConversationSnapshotV2Error, type ConversationSnapshotV2ExecutionContext, type ConversationSnapshotV2Repository, conversationSnapshotV2StructureGeneration } from '@zeus/storage';
-import { userFacingErrorCause, type ConversationTranscriptPlacementRequest, type TurnChangeSet } from '@zeus/shared';
+import { conversationResourceRecoveryBatchLimit, userFacingErrorCause, type ConversationTranscriptPlacementRequest, type TurnChangeSet } from '@zeus/shared';
 
 interface ConversationOwnershipRecord {
   id: string;
@@ -12,6 +12,8 @@ interface ConversationSnapshotV2ApiOptions {
   repository: ConversationSnapshotV2Repository;
   projectExists: (projectId: string) => boolean;
   getConversation: (conversationId: string) => ConversationOwnershipRecord | undefined;
+  /** 重新读取已授权的持久正文并通过原归档入口补登记。 */
+  recoverResources?: (conversationId: string, entryIds: readonly string[]) => Promise<void>;
   readExecutionContext?: (conversationId: string) => Promise<ConversationSnapshotV2ExecutionContext>;
   /** 会话首屏仅需要已完成轮次的文件卡片摘要。 */
   readTurnChangeSummary?: (conversationId: string, turnId: string) => TurnChangeSet | null;
@@ -264,6 +266,23 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     markV2Response(reply);
     try {
       return repository.listResourcePage({ ...pageInput(request.params.conversationId, request.query), direction: pageDirection(request.query.direction) });
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
+  /** 重试提交消息身份，补登记后直接返回资源首页。 */
+  server.post('/api/projects/:projectId/conversations/:conversationId/resources/recover', async (request: FastifyRequest<{ Params: ConversationParams; Querystring: PageQuery; Body: { entryIds?: unknown } }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    const entryIds = request.body?.entryIds;
+    if (!Array.isArray(entryIds) || entryIds.length === 0 || entryIds.length > conversationResourceRecoveryBatchLimit || entryIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 512)) {
+      return reply.code(400).send({ error: 'ZEUS_CONVERSATION_RESOURCE_ENTRY_IDS_INVALID', message: '请选择有效的会话消息补登记资源。' });
+    }
+    if (!options.recoverResources) return reply.code(503).send({ error: 'ZEUS_CONVERSATION_RESOURCE_RECOVERY_UNAVAILABLE', message: '资源补登记暂不可用。' });
+    markV2Response(reply);
+    try {
+      await options.recoverResources(request.params.conversationId, [...new Set<string>(entryIds)]);
+      return repository.listResourcePage(pageInput(request.params.conversationId, { ...request.query, cursor: undefined }));
     } catch (error) {
       return sendSnapshotV2Error(reply, error);
     }

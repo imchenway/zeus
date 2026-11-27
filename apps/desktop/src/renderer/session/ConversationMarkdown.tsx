@@ -127,6 +127,8 @@ export interface ConversationMarkdownProps {
   animateArrival?: boolean;
   language: SessionUiLanguage;
   resources?: ConversationResource[];
+  /** 原消息的持久身份，用于补登记尚无资源编号的图片。 */
+  resourceEntryId?: string;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
@@ -157,6 +159,8 @@ export type StructuredMessageToken = {
 };
 
 interface MarkdownRuntimeContextValue {
+  /** 缺失图片的重试目标属于当前正文。 */
+  resourceEntryId?: string;
   language: SessionUiLanguage;
   /** 正文整体是否已经结束生成，用于判断图表代码块是否还会继续增长。 */
   phase: ConversationMarkdownPhase;
@@ -198,15 +202,15 @@ const MarkdownRuntimeContext = createContext<MarkdownRuntimeContextValue | null>
 export const ConversationImageResourcesContext = createContext<{
   /** 资源页未读取或正在恢复时不能声称图片不可用。 */
   state: 'loading' | 'ready' | 'failed';
-  /** 只读取当前会话已授权的资源。 */
-  reload?: () => void | Promise<void>;
+  /** 按持久消息补登记资源后重新读取。 */
+  reload?: (recoverEntryIds?: readonly string[]) => void | Promise<void>;
 } | null>(null);
 
 /** 每张 Markdown 图片分别核对，已有一张图片不能掩盖其余缺失资源。 */
 export function hasMissingMarkdownImages(text: string, resources: ConversationResource[]): boolean {
   for (const match of conversationMarkdownReferences(text).filter((reference) => reference.image)) {
     /** 解析仅用于发现缺失，真正加载仍走已授权资源编号。 */
-    const resource = matchingInlineResource(resources, match.label, match.href);
+    const resource = matchingInlineResource(resources, match.label, match.href, 'image');
     if (!resource || !isImageResource(resource)) return true;
   }
   return false;
@@ -246,12 +250,13 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
       phase: props.phase,
       documentMode: props.documentMode,
       resources: props.resources ?? EMPTY_RESOURCES,
+      resourceEntryId: props.resourceEntryId,
       onOpenResource: props.onOpenResource,
       onLoadResourcePreview: props.onLoadResourcePreview,
       structuredTokens: props.structuredTokens,
       filePreview: props.filePreview,
     }),
-    [props.documentMode, props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens, props.filePreview],
+    [props.documentMode, props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.resourceEntryId, props.structuredTokens, props.filePreview],
   );
 
   useLayoutEffect(() => {
@@ -341,7 +346,7 @@ function ConversationParagraphNode(props: ComponentProps<typeof ParagraphNode>) 
     const link = props.node.children[0];
     if (link?.type === 'link' && link.href) {
       /** 使用和普通内联链接一致的身份匹配。 */
-      const resource = matchingInlineResource(runtime.resources, link.text || link.href, link.href);
+      const resource = matchingInlineResource(runtime.resources, link.text || link.href, link.href, 'link');
       if (resource && isVideoResource(resource)) {
         return <ConversationResourceVideo key={`${resource.id}:${resource.updatedAt}`} resource={resource} language={runtime.language} onOpenResource={runtime.onOpenResource} />;
       }
@@ -361,7 +366,7 @@ function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
   if (!runtime || !href) {
     return <span className="session-markdown-unavailable-resource">{label}</span>;
   }
-  const resource = matchingInlineResource(runtime.resources, label, href);
+  const resource = matchingInlineResource(runtime.resources, label, href, 'link');
   if (resource) {
     return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={runtime.language} onOpenResource={runtime.onOpenResource} />;
   }
@@ -393,7 +398,7 @@ function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
   const src = typeof props.node.src === 'string' ? props.node.src : '';
   const fallbackLabel = runtime?.language === 'zh-CN' ? labels['zh-CN'].image : labels['en-US'].image;
   const label = (typeof props.node.alt === 'string' && props.node.alt.trim()) || (typeof props.node.title === 'string' && props.node.title.trim()) || fallbackLabel;
-  const resource = runtime ? matchingInlineResource(runtime.resources, label, src) : null;
+  const resource = runtime ? matchingInlineResource(runtime.resources, label, src, 'image') : null;
   /** 项目文件图片使用已授权的预览 URL，会话资源仍走原有链路。 */
   const fileImage = !resource ? runtime?.filePreview?.imageUrl(src) : undefined;
   if (fileImage) return <SourcePreviewImage key={fileImage} url={fileImage} label={label} language={runtime?.language ?? 'en-US'} />;
@@ -420,7 +425,7 @@ function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
             unstyled
             type="button"
             onClick={() => {
-              return Promise.resolve(imageResources.reload?.()).catch(() => undefined);
+              return Promise.resolve(imageResources.reload?.(runtime?.resourceEntryId ? [runtime.resourceEntryId] : undefined)).catch(() => undefined);
             }}
           >
             {runtime?.language === 'zh-CN' ? '重新加载' : 'Retry'}
@@ -1131,19 +1136,26 @@ function isMarkstreamNode(value: unknown): value is MarkstreamNode {
 }
 
 /** 正文渲染与缺失资源检测共用匹配规则，打开仍使用登记身份。 */
-export function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
+export function matchingInlineResource(resources: ConversationResource[], label: string, href: string, referenceKind?: 'image' | 'link'): ConversationResource | null {
   /** 完整引用优先于旧记录的相对路径匹配，同名文件可以各自打开。 */
   const reference = normalizeConversationResourceReference(href);
   /** 图片按完整来源匹配，同说明不能替代资源身份。 */
   const exactImage = resources.find((candidate) => candidate.presentation === 'inline' && candidate.kind === 'attachment' && candidate.sourceReference && normalizeConversationResourceReference(candidate.sourceReference) === reference);
-  /** 目录外文件以完整 Markdown 目标登记，避免不同目录出现同名串链。 */
-  const exactExternalFile = resources.find((candidate) => candidate.presentation === 'inline' && candidate.kind === 'file' && candidate.externalReference && normalizeConversationResourceReference(candidate.externalReference) === reference);
+  /** 文件的完整 Markdown 目标优先于相对路径或文件名。 */
+  const exactFile = resources.find((candidate) => {
+    if (candidate.presentation !== 'inline' || candidate.kind !== 'file') return false;
+    const source = candidate.externalReference ?? candidate.sourceReference;
+    return source && normalizeConversationResourceReference(source) === reference;
+  });
+  /** 图片与下载可引用同一原文件，sandbox 下载仍须找到自己的文件授权。 */
+  const sandbox = /^sandbox:/iu.test(reference);
+  const exact = referenceKind === 'link' ? exactFile ?? (sandbox ? undefined : exactImage) : exactImage ?? exactFile;
+  if (sandbox && !exact) return null;
   /** 旧记录若存在同说明图片则拒绝猜测；新记录始终按完整引用匹配。 */
   const legacyImages = resources.filter((candidate) => candidate.kind === 'attachment' && !candidate.sourceReference && candidate.displayName === label);
   const candidates = legacyImages.length > 1 ? resources.filter((candidate) => !legacyImages.includes(candidate)) : resources;
   const resource =
-    exactImage ??
-    exactExternalFile ??
+    exact ??
     candidates.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??
     candidates.find((candidate) => candidate.presentation === 'inline' && inlineResourceMatches(candidate, label, href));
   if (!resource) return null;
@@ -1162,7 +1174,7 @@ function inlineResourceHrefMatches(resource: ConversationResource, href: string)
       return false;
     }
   }
-  if (resource.kind === 'attachment' || resource.externalReference) return false;
+  if (resource.kind === 'attachment' || resource.externalReference || resource.sourceReference) return false;
   const reference = decodeReferencePath(href);
   // 带目录的引用按完整路径匹配，只有裸文件名才允许省略目录。
   return reference === resource.projectRelativePath || reference.endsWith(`/${resource.projectRelativePath}`) || (!reference.includes('/') && reference === resource.projectRelativePath.split('/').at(-1));
@@ -1190,6 +1202,8 @@ function decodeReferencePath(href: string): string {
   } catch {
     // 非法编码保留原值，且仍需匹配权威资源后才能获得打开权限。
   }
+  /** 与服务端在 Windows 返回的项目相对路径使用相同分隔符。 */
+  if (typeof navigator !== 'undefined' && navigator.platform.startsWith('Win')) value = value.replace(/\\/gu, '/');
   // 先解码再去除位置，百分号编码的行号也必须落在同一文件上。
   return value
     .replace(/#L\d+(?:-L?\d+)?$/iu, '')

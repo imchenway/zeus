@@ -320,7 +320,7 @@ export interface SessionControllerClient {
   loadNativeConversationResourcesV2?(
     projectId: string,
     conversationId: string,
-    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; signal?: AbortSignal },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; signal?: AbortSignal; recoverEntryIds?: readonly string[] },
   ): Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2?(projectId: string, conversationId: string, turnId: string): Promise<NativeConversationChangeSetV2Summary>;
   loadNativeConversationChangeFilesV2?(
@@ -493,7 +493,7 @@ export interface SessionController {
   loadNavigationTurn(turnId: string): Promise<void>;
   /** 仅首次读取采用指定方向；已有详情始终沿原游标补齐。 */
   loadTurnProcess(turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup): Promise<void>;
-  loadConversationResources(): Promise<void>;
+  loadConversationResources(recoverEntryIds?: readonly string[]): Promise<void>;
   loadTurnArtifacts(turnId: string): Promise<void>;
   loadV2Content(handle: string): Promise<void>;
   loadV2ToolResult(handle: string, offset?: number): Promise<NativeConversationToolResultPage>;
@@ -3448,7 +3448,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (processError) throw processError;
   }
 
-  async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false): Promise<void> {
+  async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false, recoverEntryIds?: readonly string[]): Promise<void> {
     const current = state.snapshot;
     if (!current?.snapshotV2 || !current.v2Paging) return;
     const generation = connectionToken;
@@ -3511,7 +3511,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               if (cursor) seenCursors.add(cursor);
               if (disposed || generation !== connectionToken) return;
               const page = await options.client.loadNativeConversationResourcesV2!(options.projectId, options.conversationId, {
-                ...(cursor ? { cursor } : {}),
+                ...(cursor ? { cursor } : { recoverEntryIds }),
                 limit: 32,
                 byteLimit: 64 * 1024,
                 signal: request.signal,
@@ -3614,10 +3614,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (failed) throw failed.reason;
   }
 
-  async function loadConversationResourcesV2(): Promise<void> {
+  async function loadConversationResourcesV2(recoverEntryIds?: readonly string[]): Promise<void> {
     // 资源页属于整个会话。传入不存在的轮次身份可复用同一套分页、并发保护和
     // 资源挂接逻辑，同时不会触发任何轮次 change set 读取。
-    await loadTurnArtifactsV2('__conversation_resources__', true);
+    await loadTurnArtifactsV2('__conversation_resources__', true, recoverEntryIds);
   }
 
   /** 网络恢复或重新查看窗口时立即续接读取；不重发任何业务操作。 */

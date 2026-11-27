@@ -76,6 +76,7 @@ import {
   ConversationProviderItemRepository,
   ConversationRepository,
   ConversationResourceRepository,
+  type ConversationTranscriptRepository,
   ConversationServerRequestRepository,
   ConversationTurnRepository,
   ConversationWorktreeRecoveryRepository,
@@ -534,6 +535,10 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
   conversationResources: ConversationResourceRepository;
+  /** 资源与转发共用正文的持久归属。 */
+  conversationTranscripts: ConversationTranscriptRepository;
+  /** 只为当前会话的持久消息重新登记资源。 */
+  recoverConversationResources(conversationId: string, entryIds: readonly string[]): Promise<void>;
   conversationTurns: ConversationTurnRepository;
   conversations: ConversationRepository;
   isNativeApiRecord(value: unknown): value is Record<string, unknown>;
@@ -674,6 +679,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     conversationQueueCoreMutations,
     conversationRequests,
     conversationResources,
+    conversationTranscripts,
+    recoverConversationResources,
     conversationSnapshotV2,
     conversationSubmissions,
     conversationSyncProtocol,
@@ -1681,6 +1688,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    recoverResources: recoverConversationResources,
     /** 首屏沿用变更集的只读摘要视图。 */
     readTurnChangeSummary: (conversationId, turnId) => turnChangeSetService.getByTurn(conversationId, turnId, 'summary'),
     readSubmissionReceipt: (conversationId, submissionId) => {
@@ -3480,7 +3488,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const projected = conversationSnapshotV2.listModelHistoryPage({ conversationId, afterSequence, assistantOutputOnly: true, entryLimit: 128, byteLimit: 1024 * 1024 }).items;
         if (projected.length === 0) return [];
 
-        const resourceRecords = conversationResources.listByConversation(conversationId);
+        const resourcesByTurn = Map.groupBy(conversationResources.listByConversation(conversationId), (resource) => resource.turnId);
         const output = [];
         for (const item of projected) {
           if (item.sequence <= afterSequence || item.role !== 'assistant' || item.reasoningSummary || item.toolPairId) continue;
@@ -3504,9 +3512,19 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           }
           const resources = [];
           let resourceFailures = 0;
-          if (item.providerItemId) {
-            for (const record of resourceRecords) {
-              if (record.itemId !== item.providerItemId || record.turnId !== item.turnId || record.kind === 'website') continue;
+          const turnResources = resourcesByTurn.get(item.turnId);
+          if (turnResources?.length) {
+            /** 转发同时接受规范正文身份与原生条目的存储身份。 */
+            const entryId = item.transcript.placement.entryId;
+            const itemIds = new Set([entryId, item.providerItemId]);
+            const envelope = conversationTranscripts.envelopeForEntry(conversationId, entryId);
+            for (const source of envelope?.sources ?? []) {
+              if (source.domain !== 'provider_item' || source.facet !== 'body') continue;
+              const provider = conversationProviderItems.getByProvider(source.scope, source.sourceId);
+              if (provider?.conversationId === conversationId && provider.turnId === item.turnId) itemIds.add(provider.id);
+            }
+            for (const record of turnResources) {
+              if (!itemIds.has(record.itemId) || record.kind === 'website') continue;
               const resource = toConversationResource(record);
               if (!resource || resource.kind === 'website') {
                 resourceFailures += 1;

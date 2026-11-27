@@ -21,6 +21,8 @@ type FileResourceCandidate = ResourceCandidateBase & {
   kind: 'file';
   absolutePath: string;
   projectRelativePath: string;
+  /** 已授权 sandbox 链接按原写法匹配，打开仍沿用既有文件授权。 */
+  sourceReference?: string;
   location?: ConversationFileLocation;
   mimeType?: string;
   iconKind: ConversationFileIconKind;
@@ -51,6 +53,9 @@ interface AttachmentResourceCandidate extends ResourceCandidateBase {
 
 type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | AttachmentResourceCandidate;
 
+/** 归档只需要正文身份与状态，确认历史可能没有原生线程记录。 */
+type ConversationResourceSourceItem = Pick<ZeusConversationItemRecord, 'id' | 'itemType' | 'status' | 'phase' | 'payloadJson'> & { providerThreadId?: string };
+
 export interface NormalizeConversationResourcesInput {
   projectId: string;
   projectRoot: string;
@@ -58,7 +63,7 @@ export interface NormalizeConversationResourcesInput {
   registeredProjectRoot?: string;
   conversationId: string;
   turnId: string;
-  item: ZeusConversationItemRecord;
+  item: ConversationResourceSourceItem;
   payload: Record<string, unknown>;
   text: string;
   trustedAttachmentRoots: readonly string[];
@@ -93,6 +98,16 @@ const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
 const maximumArchivedAssistantImageBytes = 16 * 1_024 * 1_024;
 const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
+/** 标记必须按本地文件处理的 sandbox 引用。 */
+const sandboxFileScheme = /^sandbox:/iu;
+/** 只接受一条根斜杠或三条斜杠表示的空主机路径。 */
+const sandboxLocalUrlPath = /^\/(?:\/\/)?[^/\\]/u;
+/** 保留 Windows 盘符路径，Markdown 中编码的反斜杠仍是目录分隔符。 */
+const sandboxWindowsDrivePath = /^(?:\/(?:\/\/)?)?([A-Za-z]:(?:[\\/]|%5c).*)$/iu;
+/** 在按本机路径解码后区分协议与 Windows 的绝对盘符路径。 */
+const referenceSchemePrefix = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
+/** 尚未解析出原图路径时使用的归档目标后缀。 */
+const unresolvedAssistantImageExtension = '.image';
 
 /** 两条执行链共用资源识别、授权及落盘，实时事件与重新打开会话读取同一份资源。 */
 export function syncConversationResources(input: NormalizeConversationResourcesInput, resources: ConversationResourceRepository): ConversationResource[] {
@@ -100,8 +115,11 @@ export function syncConversationResources(input: NormalizeConversationResourcesI
   const previous = resources.listByItem(input.item.id);
   /** 归档图片沿用原图身份；普通附件按实际目标匹配，避免同名文件共用资源身份。 */
   const identity = (resource: Pick<ZeusConversationResourceRecord, 'kind' | 'presentation' | 'displayJson' | 'canonicalTargetDigest'>) => {
-    /** 只有原图路径摘要能跨归档位置复用，普通附件的显示名称不参与身份匹配。 */
-    const attachmentRef = resource.kind === 'attachment' ? stringValue(parseJsonRecord(resource.displayJson).attachmentRef) : null;
+    const attachment = resource.kind === 'attachment' ? parseJsonRecord(resource.displayJson) : null;
+    /** 正文图片以完整引用区分同一文件的不同写法，重放也能替换同一条旧记录。 */
+    const sourceReference = attachment?.origin === 'assistant_markdown_image' ? stringValue(attachment.sourceReference) : null;
+    if (sourceReference) return JSON.stringify([resource.presentation, resource.kind, sourceReference]);
+    const attachmentRef = stringValue(attachment?.attachmentRef);
     return `${resource.presentation}:${resource.kind}:${attachmentRef && /^assistant_image_[a-f0-9]{64}$/u.test(attachmentRef) ? attachmentRef : resource.canonicalTargetDigest}`;
   };
   const previousByIdentity = new Map(previous.map((resource) => [identity(resource), resource]));
@@ -286,7 +304,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
 }
 
 /** 只登记 Provider 明确确认的 imageView 路径，并重新核对工作区或附件授权边界。 */
-function normalizeViewedImageResource(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): AttachmentResourceCandidate | null {
+function normalizeViewedImageResource(input: { sourceIndex: number; item: ConversationResourceSourceItem; payload: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): AttachmentResourceCandidate | null {
   if (input.item.itemType !== 'imageView') return null;
   const rawPath = stringValue(input.payload.path ?? input.payload.filePath);
   if (!rawPath) return null;
@@ -323,7 +341,7 @@ function normalizeArchivedAssistantImage(input: {
   label: string;
   href: string;
   conversationId: string;
-  item: ZeusConversationItemRecord;
+  item: ConversationResourceSourceItem;
   archiveRoot?: string;
   projectRoot: string;
   sourceRoots: readonly string[];
@@ -336,7 +354,7 @@ function normalizeArchivedAssistantImage(input: {
   if (!input.generated && classifyAssistantMessage(parseJsonRecord(input.item.payloadJson), input.item.phase) !== 'final') return null;
   /** 相对路径必须按消息执行根解析，不能依赖进程当前目录。 */
   const sourcePath = localMarkdownImagePath(input.href, input.projectRoot);
-  const sourceExtension = sourcePath ? extname(sourcePath).toLocaleLowerCase() : '.image';
+  const sourceExtension = sourcePath ? extname(sourcePath).toLocaleLowerCase() : unresolvedAssistantImageExtension;
   const archiveRoot = resolve(input.archiveRoot);
   const conversationDirectory = join(archiveRoot, 'assistant-markdown-images', createHash('sha256').update(input.conversationId).digest('hex').slice(0, 24));
   const sourceIdentity = createHash('sha256').update(`${input.item.id}\0${input.href}`).digest('hex');
@@ -462,27 +480,39 @@ function archivedAssistantImageCandidate(input: { sourceIndex: number; label: st
   };
 }
 
-/** 本地引用按消息执行根解析；其他协议只登记失败，不转换为本地读取权限。 */
-function localMarkdownImagePath(href: string, projectRoot: string): string | null {
-  let reference = href.trim().replace(/^<|>$/gu, '');
+/** 首次归档可解析相对路径，缺少原执行目录的历史重试只接受本机绝对路径。 */
+function localMarkdownImagePath(href: string, projectRoot?: string): string | null {
+  const reference = href.trim().replace(/^<|>$/gu, '');
   if (!reference || reference.includes('\0')) return null;
-  if (/^file:/iu.test(reference)) {
-    try {
-      const url = new URL(reference);
-      if (url.username || url.password || url.search || url.hash) return null;
-      reference = fileURLToPath(url);
-    } catch {
-      return null;
-    }
-  } else {
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) || reference.includes('\0')) return null;
-    try {
-      reference = decodeURIComponent(reference);
-    } catch {
-      return null;
-    }
+  const url = localMarkdownFileUrl(reference);
+  try {
+    if (url) return url.search || url.hash ? null : resolve(fileURLToPath(url));
+    const path = decodeURIComponent(reference);
+    if (path.includes('\0')) return null;
+    if (isAbsolute(path)) return resolve(path);
+    return projectRoot && !referenceSchemePrefix.test(path) ? resolve(projectRoot, path) : null;
+  } catch {
+    return null;
   }
-  return resolve(projectRoot, reference);
+}
+
+/** 将两种本地文件引用交给系统 URL 解码，sandbox 不允许网络主机。 */
+function localMarkdownFileUrl(reference: string): URL | null {
+  const sandbox = sandboxFileScheme.test(reference);
+  let fileReference = reference;
+  if (sandbox) {
+    const path = reference.replace(sandboxFileScheme, '');
+    const drivePath = process.platform === 'win32' ? sandboxWindowsDrivePath.exec(path)?.[1] : undefined;
+    if (drivePath) fileReference = `file:/${drivePath.replace(/%5c/giu, '/')}`;
+    else if (sandboxLocalUrlPath.test(path)) fileReference = `file:${path}`;
+    else return null;
+  } else if (!/^file:/iu.test(reference)) return null;
+  try {
+    const url = new URL(fileReference);
+    return url.username || url.password || (sandbox && url.host) ? null : url;
+  } catch {
+    return null;
+  }
 }
 
 /** 归档支持既有可预览图片格式，实际字节仍单独核对。 */
@@ -560,9 +590,9 @@ function sanitizeRichPayloadValue(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, sanitizeRichPayloadValue(entry)]));
 }
 
-function normalizeGeneratedImageResources(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate[] {
-  const generatedImageRoot = input.generatedImageRoot;
-  if (input.item.status !== 'completed' || !generatedImageRoot || !input.item.providerThreadId) return [];
+function normalizeGeneratedImageResources(input: { sourceIndex: number; item: ConversationResourceSourceItem; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate[] {
+  const { generatedImageRoot, item: { providerThreadId } } = input;
+  if (input.item.status !== 'completed' || !generatedImageRoot || !providerThreadId) return [];
   const savedPaths: string[] = [];
   if (input.item.itemType === 'imageGeneration' || input.payload.type === 'imageGeneration') {
     const savedPath = stringValue(input.payload.savedPath ?? input.payload.saved_path);
@@ -580,7 +610,7 @@ function normalizeGeneratedImageResources(input: { sourceIndex: number; item: Ze
   }
 
   return [...new Set(savedPaths)].flatMap((savedPath, index) => {
-    const candidate = normalizeGeneratedImagePath({ item: input.item, generatedImageRoot, sourceIndex: input.sourceIndex + index, savedPath });
+    const candidate = normalizeGeneratedImagePath({ providerThreadId, generatedImageRoot, sourceIndex: input.sourceIndex + index, savedPath });
     return candidate ? [candidate] : [];
   });
 }
@@ -590,11 +620,11 @@ function richOutputBlocks(payload: Record<string, unknown>): Record<string, unkn
 }
 
 /** 先按生成会话登记来源；文件是否就绪留给共用归档入口检查和重试。 */
-function normalizeGeneratedImagePath(input: { sourceIndex: number; item: ZeusConversationItemRecord; generatedImageRoot: string; savedPath: string }): AttachmentResourceCandidate | null {
+function normalizeGeneratedImagePath(input: { sourceIndex: number; providerThreadId: string; generatedImageRoot: string; savedPath: string }): AttachmentResourceCandidate | null {
   if (!isAbsolute(input.savedPath)) return null;
 
   const generatedImageRoot = resolve(input.generatedImageRoot);
-  const sessionRoot = resolve(generatedImageRoot, input.item.providerThreadId);
+  const sessionRoot = resolve(generatedImageRoot, input.providerThreadId);
   if (!isInsideRoot(sessionRoot, generatedImageRoot) || sessionRoot === generatedImageRoot) return null;
   /** 路径只属于当前 Provider 会话，缺文件也不能退回其他会话目录。 */
   const absolutePath = resolve(input.savedPath);
@@ -683,12 +713,15 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     const location = normalizeLocation(display.location);
     /** 旧记录沿用项目路径匹配，外部链接保留完整的 Markdown 目标。 */
     const externalReference = stringValue(display.externalReference);
+    /** 历史和实时视图使用相同的原始链接确认文件身份。 */
+    const sourceReference = stringValue(display.sourceReference);
     return {
       ...base,
       kind: 'file',
       projectRelativePath,
       iconKind,
       ...(externalReference ? { externalReference } : {}),
+      ...(sourceReference ? { sourceReference } : {}),
       ...(location ? { location } : {}),
       ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
     } satisfies ConversationFileResource;
@@ -727,8 +760,9 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
   } satisfies ConversationAttachmentResource;
 }
 
+/** 预览和打开都使用已登记的归档请求，重试沿用同一资源。 */
 export function toConversationResourceOpenIntent(record: ZeusConversationResourceRecord): ConversationResourceOpenIntent {
-  /** 预览和打开都重试同一持久归档请求，不重发消息，也不只重读旧的空资源表。 */
+  const display = parseJsonRecord(record.displayJson);
   const authority = parseJsonRecord(record.authorityJson);
   const target = parseJsonRecord(record.targetJson);
   const request = authority.imageArchive;
@@ -744,6 +778,16 @@ export function toConversationResourceOpenIntent(record: ZeusConversationResourc
       (typeof request.mimeType === 'string' || request.mimeType === null)
     ))
       throw Object.assign(new Error('图片归档记录不完整，无法安全读取。'), { code: 'ZEUS_CONVERSATION_IMAGE_ARCHIVE_INVALID' });
+    /** 旧记录从已保存的正文引用恢复源路径和图片类型，沿用原归档目录和授权。 */
+    const sourceReference = request.sourcePath === null ? stringValue(display.sourceReference) : null;
+    const sourcePath = sourceReference ? localMarkdownImagePath(sourceReference) : null;
+    if (sourcePath) {
+      const sourceExtension = extname(sourcePath).toLocaleLowerCase();
+      target.absolutePath = join(dirname(target.absolutePath), basename(target.absolutePath, unresolvedAssistantImageExtension) + sourceExtension);
+      request.sourcePath = sourcePath;
+      request.mimeType = supportedArchivedImageMimeType(sourceExtension);
+      display.mimeType = request.mimeType;
+    }
     ensureAssistantImageArchive(target.absolutePath, authority.allowedRoot, request as unknown as AssistantImageArchiveRequest);
   }
   return {
@@ -754,9 +798,9 @@ export function toConversationResourceOpenIntent(record: ZeusConversationResourc
     itemId: record.itemId,
     kind: record.kind,
     presentation: record.presentation,
-    display: parseJsonRecord(record.displayJson),
-    target: parseJsonRecord(record.targetJson),
-    authority: parseJsonRecord(record.authorityJson),
+    display,
+    target,
+    authority,
   };
 }
 
@@ -858,6 +902,7 @@ function normalizeLinkedResource(input: {
     displayName: input.label || basename(parsedFile.absolutePath),
     absolutePath: parsedFile.absolutePath,
     projectRelativePath: parsedFile.projectRelativePath,
+    ...(sandboxFileScheme.test(input.href) ? { sourceReference: input.href } : {}),
     projectRoot: parsedFile.projectRoot,
     allowedRoot: parsedFile.projectRoot,
     location: parsedFile.location,
@@ -867,7 +912,10 @@ function normalizeLinkedResource(input: {
 
 /** 受管产物沿用真实路径校验。视频只对文件预览入口开放。 */
 function parseManagedArtifactReference(reference: string, artifactsDirectory: string | undefined, allowVideo = false): ReturnType<typeof parseFileReference> {
-  if (!artifactsDirectory || (!isAbsolute(reference) && !/^file:/iu.test(reference))) return null;
+  if (!artifactsDirectory) return null;
+  /** 绝对性以解码后的本机路径为准，包括 Windows 中编码的目录分隔符。 */
+  const path = parseFileReferencePath(reference)?.path;
+  if (!path || !isAbsolute(path)) return null;
   /** 产物链接使用绝对路径，路径与片段由普通文件解析器处理。 */
   const file = parseFileReference(reference, artifactsDirectory);
   return file && (iconKindForPath(file.absolutePath) === 'html' || (allowVideo && filePreviewKind(filePreviewMime(file.absolutePath)) === 'video')) ? file : null;
@@ -1044,9 +1092,9 @@ function parseFileReferencePath(rawReference: string): { path: string; location?
   let reference = rawReference.trim();
   if (!reference || reference.includes('\0')) return null;
   let location: ConversationFileLocation | undefined;
-  if (/^file:/iu.test(reference)) {
+  const url = localMarkdownFileUrl(reference);
+  if (url) {
     try {
-      const url = new URL(reference);
       location = locationFromHash(url.hash);
       url.hash = '';
       url.search = '';
@@ -1057,16 +1105,13 @@ function parseFileReferencePath(rawReference: string): { path: string; location?
   } else {
     location = conversationFileLocationFromReference(reference);
     if (location) reference = reference.replace(/(?:#L|:L)\d+(?:-L?\d+)?$|:\d+(?::\d+)?$/iu, '');
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) && !/^[A-Za-z]:[\\/]/u.test(reference)) {
-      // 未授权的 URL 协议不能重新解释为项目相对路径。
-      return null;
-    }
     try {
       /** file: 引用已由 fileURLToPath 解码，只有普通路径引用需要在此解码。 */
       reference = decodeURIComponent(reference);
     } catch {
       return null;
     }
+    if (referenceSchemePrefix.test(reference) && !isAbsolute(reference)) return null;
   }
   return reference && !reference.includes('\0') ? { path: reference, location } : null;
 }
@@ -1181,6 +1226,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
       projectRelativePath: candidate.projectRelativePath,
       iconKind: candidate.iconKind,
       ...(candidate.externalReference ? { externalReference: candidate.externalReference } : {}),
+      ...(candidate.sourceReference ? { sourceReference: candidate.sourceReference } : {}),
       ...(candidate.location ? { location: candidate.location } : {}),
       ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
     };
@@ -1221,7 +1267,7 @@ function authorityForCandidate(candidate: ResourceCandidate): Record<string, unk
 
 function digestResourceCandidate(candidate: ResourceCandidate): string {
   /** 同一文件的绝对路径写法和 file URL 都需要保留各自的链接身份。 */
-  const reference = candidate.kind === 'file' ? candidate.externalReference : undefined;
+  const reference = candidate.kind === 'file' ? candidate.externalReference ?? candidate.sourceReference : undefined;
   return createHash('sha256')
     .update(JSON.stringify({ kind: candidate.kind, target: targetForCandidate(candidate), ...(reference ? { reference } : {}) }))
     .digest('hex');

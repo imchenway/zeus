@@ -310,7 +310,7 @@ export interface SessionWorkspaceActions {
   onLoadEarlierHistory?: () => void | Promise<void>;
   /** 深历史展开时保留从头或从尾读取的明确意图。 */
   onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup) => void | Promise<void>;
-  onLoadConversationResources?: () => void | Promise<void>;
+  onLoadConversationResources?: (recoverEntryIds?: readonly string[]) => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
@@ -1194,7 +1194,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
     onLoadEarlierHistory: () => settle(Promise.all([input.controller.loadEarlierHistory(), input.controller.loadEarlierSystemMessages()])),
     onLoadTurnProcess: (turnId, startAtBeginning, group) => settle(input.controller.loadTurnProcess(turnId, startAtBeginning, group)),
-    onLoadConversationResources: () => settle(input.controller.loadConversationResources()),
+    onLoadConversationResources: (recoverEntryIds) => settle(input.controller.loadConversationResources(recoverEntryIds)),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
     onLoadV2Content: (handle) => input.controller.loadV2Content(handle),
     onLoadV2ToolResult: (handle, offset) => input.controller.loadV2ToolResult(handle, offset),

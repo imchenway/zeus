@@ -33,7 +33,7 @@ import type {
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
-import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
+import { conversationMarkdownReferences, conversationResourceRecoveryBatchLimit, type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { latestReasoningSummaryText } from './reasoningSummary.js';
@@ -44,7 +44,7 @@ import { newItemMotionDurationMs, useNewItemMotionIds } from '../ui/useNewItemMo
 import { captureTranscriptViewportAnchor, restoreTranscriptViewportAnchor, type TranscriptViewportAnchor, transcriptViewportReadingRowKey, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
-import { ConversationImageResourcesContext, hasMissingMarkdownImages } from './ConversationMarkdown.js';
+import { ConversationImageResourcesContext } from './ConversationMarkdown.js';
 import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import { selectHasActiveProviderTurn, selectPendingExecutionMessage } from './sessionSelectors.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
@@ -106,7 +106,7 @@ export interface ConversationTranscriptProps {
   onLoadEarlierHistory?: () => void | Promise<void>;
   /** 深历史可能没有有界轮次 DTO，展开入口同时传递是否应从头读取。 */
   onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup) => void | Promise<void>;
-  onLoadConversationResources?: () => void | Promise<void>;
+  onLoadConversationResources?: (recoverEntryIds?: readonly string[]) => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
@@ -187,17 +187,12 @@ function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name
 
 /** 正文中的受信链接与图片都需要资源登记，不能等待用户展开处理过程。 */
 function itemNeedsInlineResources(item: NativeSessionItemBuffer): boolean {
-  /** 仅完整的 Markdown 链接触发补载；实际打开仍由已登记资源授权。 */
-  const links = [...transcriptItemText(item).matchAll(/(?<!!)\[([^\]\n]+)\]\(([^)\n]+)\)/gu)];
-  if (
-    links.some((match) => {
-      const href = match[2]!.trim().replace(/^<|>$/gu, '');
-      if (href.startsWith('#')) return false;
-      return !matchingInlineResource(item.resources, match[1]!, href);
-    })
-  )
-    return true;
-  if (hasMissingMarkdownImages(transcriptItemText(item), item.resources)) return true;
+  /** 与服务端共用引用解析，代码示例和页内锚点不触发补载。 */
+  if (conversationMarkdownReferences(transcriptItemText(item)).some(({ label, href, image }) => {
+    if (!image && href.startsWith('#')) return false;
+    const resource = matchingInlineResource(item.resources, label, href, image ? 'image' : 'link');
+    return !resource || (image && !isImageResource(resource));
+  })) return true;
   if (item.optimistic) return false;
   return imageAttachmentDescriptors(item).some(
     (attachment) =>
@@ -878,6 +873,11 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     onRetryQueuedSubmission: useStableOptionalCallback(props.onRetryQueuedSubmission),
   };
   const itemsNeedingInlineResources = useMemo(() => items.filter(itemNeedsInlineResources), [items]);
+  /** 当前显示的完成正文按持久身份补登记，单次只提交有界条目。 */
+  const resourceRecoveryEntryIds = useMemo(
+    () => [...new Set(itemsNeedingInlineResources.flatMap((item) => item.status === 'completed' && item.transcript && isFinalAnswerItem(item) ? [item.transcript.placement.entryId] : []))].slice(0, conversationResourceRecoveryBatchLimit),
+    [itemsNeedingInlineResources],
+  );
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
   /** 仅资源状态变化才通知图片节点，不随正文流式渲染重新创建上下文。 */
   const imageResourceContext = useMemo(
@@ -905,7 +905,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   }, [closedTurnChangeSetIds, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts]);
   useEffect(() => {
     const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
-    const loadConversationResources =
+    const loadConversationResources: ConversationTranscriptProps['onLoadConversationResources'] =
       renderProps.onLoadConversationResources ?? (itemsNeedingInlineResources.length && loadTurnArtifacts ? () => Promise.all([...new Set(itemsNeedingInlineResources.map((item) => item.turnId))].map(loadTurnArtifacts)) : undefined);
     const assistantDeliverablesNeedLoading = Boolean(assistantDeliverablesAvailable && resourcePaging && (!resourcePaging.loaded || resourcePaging.hasMore));
     // 资源补齐后解除本次尝试锁。若后续权威快照异常丢失展示资源，可再次自愈；
@@ -924,8 +924,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     // Markdown 链接、图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
     // 才能取得资源元数据。
     // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
-    void Promise.resolve(loadConversationResources()).catch(() => undefined);
-  }, [assistantDeliverablesAvailable, inlineResourceSignature, itemsNeedingInlineResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, renderProps.onLoadTurnArtifacts, resourcePaging]);
+    void Promise.resolve(loadConversationResources(resourceRecoveryEntryIds)).catch(() => undefined);
+  }, [assistantDeliverablesAvailable, inlineResourceSignature, itemsNeedingInlineResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, renderProps.onLoadTurnArtifacts, resourcePaging, resourceRecoveryEntryIds]);
   /** 浏览器在滚动偏移为零时不锚定，只有顶端前插需要保存阅读点。 */
   const loadEarlierHistory = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
@@ -1696,7 +1696,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
             type="button"
             disabled={resourcePaging.loading}
             onClick={() => {
-              return Promise.resolve(renderProps.onLoadConversationResources?.()).catch(() => undefined);
+              return Promise.resolve(renderProps.onLoadConversationResources?.(resourceRecoveryEntryIds)).catch(() => undefined);
             }}
           >
             {props.language === 'zh-CN' ? '重试' : 'Retry'}
@@ -3191,9 +3191,10 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
     /** 同轮多个正文段落共用资源身份，不合并正文内容。 */
     const refs = inlineImageRefsByTurn.get(row.item.turnId) ?? new Set<string>();
     /** 与 Markdown 图片节点使用同一套受信资源匹配规则。 */
-    for (const match of transcriptItemText(row.item).matchAll(/!\[([^\]]*)\]\(([^)]+)\)/gu)) {
+    for (const match of conversationMarkdownReferences(transcriptItemText(row.item))) {
+      if (!match.image) continue;
       /** 标签与地址共同选择当前真正显示的图片。 */
-      const resource = matchingInlineResource(row.item.resources, match[1]!.trim(), match[2]!);
+      const resource = matchingInlineResource(row.item.resources, match.label, match.href, 'image');
       if (resource?.kind === 'attachment' && isImageResource(resource) && /^assistant_image_[a-f0-9]{64}$/u.test(resource.attachmentRef)) refs.add(resource.attachmentRef);
     }
     inlineImageRefsByTurn.set(row.item.turnId, refs);

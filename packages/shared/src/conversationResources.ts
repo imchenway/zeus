@@ -4,6 +4,9 @@ export type ConversationResourceKind = 'file' | 'website' | 'attachment';
 export type ConversationResourcePresentation = 'inline' | 'card';
 export type ConversationResourceDelivery = 'assistant';
 
+/** 单次重读最多检查的持久消息数，保持补登记有界。 */
+export const conversationResourceRecoveryBatchLimit = 16;
+
 export interface ConversationFileLocation {
   line?: number;
   column?: number;
@@ -49,6 +52,8 @@ interface ConversationResourceBase {
 export interface ConversationFileResource extends ConversationResourceBase {
   kind: 'file';
   projectRelativePath: string;
+  /** 已授权文件在正文中的完整引用，用于精确匹配链接。 */
+  sourceReference?: string;
   /** 工作区外的 Markdown 文件目标，以完整引用匹配并交给系统打开。 */
   externalReference?: string;
   location?: ConversationFileLocation;

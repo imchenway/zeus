@@ -834,13 +834,15 @@ export interface NativeConversationResourceV2Item {
   displayName: string;
   /** 已登记文件的项目相对路径；旧缓存缺失时重新读取资源页。 */
   projectRelativePath?: string | null;
+  /** 目录外文件使用完整引用，并交给系统打开。 */
+  externalReference?: string | null;
   /** 已登记网站的 URL；链接标题不作为目标替代值。 */
   url?: string | null;
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;
   attachmentRef?: string | null;
-  /** 图片按原始引用匹配，不能用相同说明串接其他图片。 */
+  /** 文件和图片按原始引用匹配，同名资源仍各自独立。 */
   sourceReference?: string | null;
   taskPushAttachmentKey?: string | null;
   origin?: string | null;

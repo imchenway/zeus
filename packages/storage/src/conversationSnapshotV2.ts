@@ -601,13 +601,15 @@ export interface ConversationResourcePageItem {
   displayName: string;
   /** 文件匹配使用已登记的项目相对路径，不能把链接标题当成目标。 */
   projectRelativePath: string | null;
+  /** 目录外文件保留原引用及系统打开语义。 */
+  externalReference?: string | null;
   /** 网站匹配使用已登记的 URL，打开仍须提交资源身份。 */
   url: string | null;
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;
   attachmentRef: string | null;
-  /** 原正文引用用于准确挂接图片，不暴露受管归档位置。 */
+  /** 正文引用用于准确挂接文件或图片，不暴露受管归档位置。 */
   sourceReference?: string | null;
   taskPushAttachmentKey: string | null;
   origin: string | null;
@@ -1834,6 +1836,8 @@ export class ConversationSnapshotV2Repository {
       display_name: string | null;
       /** 正文匹配所需的授权路径；不下发本地绝对路径。 */
       project_relative_path: string | null;
+      /** 目录外文件只能由用户交给系统打开。 */
+      external_reference: string | null;
       /** 已登记网站的目标，用于区分同名链接。 */
       url: string | null;
       mime_type: string | null;
@@ -1853,7 +1857,7 @@ export class ConversationSnapshotV2Repository {
       updated_at: string;
     }>(
       `SELECT id, turn_id, item_id, source_index, kind, presentation,
-              (SELECT alias.entry_id
+              COALESCE((SELECT alias.entry_id
                  FROM conversation_transcript_aliases AS alias
                  JOIN conversation_provider_item_states AS source
                    ON source.conversation_id = alias.conversation_id
@@ -1863,9 +1867,14 @@ export class ConversationSnapshotV2Repository {
                   AND source.conversation_id = conversation_resources.conversation_id
                   AND alias.source_domain = 'provider_item'
                 ORDER BY CASE alias.facet WHEN 'body' THEN 0 ELSE 1 END
-                LIMIT 1) AS owner_entry_id,
+                LIMIT 1),
+               (SELECT entry.id FROM conversation_transcript_entries AS entry
+                 WHERE entry.conversation_id = conversation_resources.conversation_id
+                   AND entry.id = conversation_resources.item_id
+                   AND entry.removed_revision IS NULL)) AS owner_entry_id,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.displayName') AS TEXT), 1, 512) ELSE NULL END AS display_name,
               CASE WHEN kind = 'file' AND json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.projectRelativePath') AS TEXT), 1, 4096) ELSE NULL END AS project_relative_path,
+              CASE WHEN kind = 'file' AND json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.externalReference') AS TEXT), 1, 8192) ELSE NULL END AS external_reference,
               CASE WHEN kind = 'website' AND json_valid(target_json) THEN substr(CAST(json_extract(target_json, '$.url') AS TEXT), 1, 8192) ELSE NULL END AS url,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.mimeType') AS TEXT), 1, 256) ELSE NULL END AS mime_type,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.previewKind') AS TEXT), 1, 64) ELSE NULL END AS preview_kind,
@@ -1898,6 +1907,7 @@ export class ConversationSnapshotV2Repository {
       presentation: row.presentation,
       displayName: row.display_name ?? 'Resource',
       projectRelativePath: row.project_relative_path,
+      ...(row.external_reference ? { externalReference: row.external_reference } : {}),
       url: row.url,
       mimeType: row.mime_type,
       previewKind: row.preview_kind,
@@ -2118,6 +2128,18 @@ export class ConversationSnapshotV2Repository {
       [conversationId, turnId, requiredIdentity(input.providerItemId, 'providerItemId')],
     );
     return row ? redactSensitivePreview(row.content).text : null;
+  }
+
+  /** 按已确认的助手正文身份读取补登记来源，涵盖没有保留 Provider 条目的旧消息。 */
+  readAssistantResourceSource(conversationId: string, historyId: string): { turnId: string; text: string } | null {
+    const row = this.db.get<{ turn_id: string; text: string }>(
+      `SELECT turn_id, ${modelHistoryVisibleContentSql} AS text
+         FROM conversation_model_history
+        WHERE conversation_id = ? AND id = ? AND ${modelHistoryDialogueSql} AND role = 'assistant'
+          AND (${modelHistoryAssistantPhaseSql} IS NULL OR ${modelHistoryAssistantPhaseSql} IN ('final_answer', 'finalAnswer'))`,
+      [conversationId, historyId],
+    );
+    return row ? { turnId: row.turn_id, text: row.text } : null;
   }
 
   /** 读取已确认的可见正文，任务推送在生成发送快照前执行脱敏。 */

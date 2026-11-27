@@ -1,9 +1,9 @@
-import type { ConversationFileIconKind, ConversationResource } from '@zeus/shared';
+import { conversationMarkdownReferences, type ConversationFileIconKind, type ConversationResource } from '@zeus/shared';
 import type { NativeConversationSnapshot, NativeConversationResourceV2Item, NativeItemSnapshot, NativeSessionItemBuffer } from './sessionTypes.js';
 
 /** 汇总待补载正文的链接身份与完成状态，旧消息失败不挡住新回复，普通文字增量不重试。 */
 export function inlineResourceRequestSignature(items: readonly { key: string; turnId: string; providerItemId?: string | null; status?: string | null; text: string }[]): string {
-  return JSON.stringify(items.map((item) => [item.turnId, item.providerItemId ?? item.key, item.status ?? '', [...item.text.matchAll(/!?\[([^\]\n]+)\]\(([^)\n]+)\)/gu)].map((match) => match[0])]));
+  return JSON.stringify(items.map((item) => [item.turnId, item.providerItemId ?? item.key, item.status ?? '', conversationMarkdownReferences(item.text)]));
 }
 
 /** 资源元数据到会话项的投影，不持有订阅、重连或发送状态。 */
@@ -109,9 +109,13 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
         return (
           !current ||
           current.delivery !== resource.delivery ||
-          (resource.kind === 'file' && current.kind === 'file' && current.projectRelativePath !== resource.projectRelativePath) ||
+          (resource.kind === 'file' &&
+            current.kind === 'file' &&
+            (current.projectRelativePath !== resource.projectRelativePath || current.sourceReference !== resource.sourceReference || current.externalReference !== resource.externalReference || current.mimeType !== resource.mimeType)) ||
           (resource.kind === 'website' && current.kind === 'website' && current.url !== resource.url) ||
-          (resource.kind === 'attachment' && current.kind === 'attachment' && (current.attachmentRef !== resource.attachmentRef || current.sourceReference !== resource.sourceReference))
+          (resource.kind === 'attachment' &&
+            current.kind === 'attachment' &&
+            (current.attachmentRef !== resource.attachmentRef || current.sourceReference !== resource.sourceReference || current.mimeType !== resource.mimeType))
         );
       });
     if (!resourcesChanged) return [item];
@@ -183,6 +187,8 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
       ...base,
       kind: 'file',
       projectRelativePath: item.projectRelativePath,
+      ...(item.externalReference ? { externalReference: item.externalReference } : {}),
+      ...(item.sourceReference ? { sourceReference: item.sourceReference } : {}),
       iconKind,
       ...(item.mimeType ? { mimeType: item.mimeType } : {}),
     };
