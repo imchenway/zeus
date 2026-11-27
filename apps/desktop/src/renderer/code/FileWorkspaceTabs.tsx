@@ -15,6 +15,7 @@ export function FileWorkspaceTabs<T>({
   tabLabel,
   onSelect,
   renderTab,
+  editorTabs = false,
   zh,
 }: {
   /** 已打开文件，按打开顺序保留原标签身份。 */
@@ -29,6 +30,8 @@ export function FileWorkspaceTabs<T>({
   onSelect: (tab: T) => void | Promise<void>;
   /** 沿用调用方的文件图标、状态和关闭按钮。 */
   renderTab: (tab: T) => ReactNode;
+  /** 源码编辑区也包含分支 Compare，标签组名称覆盖两类内容。 */
+  editorTabs?: boolean;
   /** 标签栏及选择器使用的语言。 */
   zh: boolean;
 }) {
@@ -69,7 +72,7 @@ export function FileWorkspaceTabs<T>({
   /** 按打开顺序在原生菜单列出隐藏标签。 */
   const hiddenTabs = new Set(tabs.slice(headCount).filter((tab) => tabId(tab) !== activeId));
   /** 图标入口的可访问名称与悬浮提示一致。 */
-  const pickerLabel = zh ? '更多已打开文件' : 'More open files';
+  const pickerLabel = editorTabs ? (zh ? '更多编辑器标签' : 'More editor tabs') : zh ? '更多已打开文件' : 'More open files';
 
   /** 方向键按完整标签顺序切换，隐藏标签选中后会立即显示。 */
   function selectAndFocus(tab: T): void {
@@ -83,7 +86,7 @@ export function FileWorkspaceTabs<T>({
       <div
         className="file-workspace-tab-list"
         role="tablist"
-        aria-label={zh ? '已打开文件' : 'Open files'}
+        aria-label={editorTabs ? (zh ? '编辑器标签' : 'Editor tabs') : zh ? '已打开文件' : 'Open files'}
         onKeyDown={(event) => {
           if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab' || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();

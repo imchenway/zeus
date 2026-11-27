@@ -104,6 +104,8 @@ export function BranchSwitcher(props: {
   onSelectAllRepositories?: () => void;
   onExecute?: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
   onOpenDiff?: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
+  /** 工作台分支比较打开双向提交历史。 */
+  onCompareBranch?: (repository: ProjectGitRepositoryWorkbenchItem, branch: string, kind: BranchKind) => void;
   onOpenUpdate?: () => void;
   onOpenCommit?: () => void;
   onOpenPush?: () => void;
@@ -642,6 +644,7 @@ export function BranchSwitcher(props: {
                 onAction={closeMenus}
                 onExecute={props.onExecute}
                 onOpenDiff={props.onOpenDiff}
+                onCompareBranch={props.onCompareBranch}
               />
             ) : null
           ) : props.onExecute && operationRepository ? (
@@ -1112,10 +1115,13 @@ export function NewBranchDialog(props: {
 }) {
   const [repositoryId, setRepositoryId] = useState('');
   const [branchName, setBranchName] = useState('');
+  /** 创建后签出可由用户取消，默认保留原来的工作流。 */
+  const [checkout, setCheckout] = useState(true);
   useEffect(() => {
     if (!props.open) return;
     setRepositoryId(props.selectedRepository?.id ?? props.repositories[0]?.id ?? '');
     setBranchName('');
+    setCheckout(true);
   }, [props.open, props.selectedRepository?.id]);
   if (!props.open) return null;
   const repository = props.repositories.find((candidate) => candidate.id === repositoryId) ?? null;
@@ -1124,7 +1130,7 @@ export function NewBranchDialog(props: {
     <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={props.busy !== null} role="dialog" aria-label={props.zh ? '新建分支' : 'New branch'}>
       <section className="project-git-reference-dialog" data-modal-surface="dialog">
         <header>
-          <strong>{props.zh ? '新建并签出分支' : 'Create and Checkout Branch'}</strong>
+          <strong>{props.zh ? '新建分支' : 'New Branch'}</strong>
           <small>{props.zh ? `起点：${shortRef(baseRef)}` : `Starting point: ${shortRef(baseRef)}`}</small>
         </header>
         <main>
@@ -1142,6 +1148,10 @@ export function NewBranchDialog(props: {
             <span>{props.zh ? '分支名称' : 'Branch name'}</span>
             <input value={branchName} onChange={(event) => setBranchName(event.currentTarget.value)} autoFocus placeholder="feature/example" />
           </label>
+          <label className="project-git-checkbox">
+            <input type="checkbox" checked={checkout} disabled={props.busy !== null} onChange={(event) => setCheckout(event.currentTarget.checked)} />
+            {props.zh ? '签出分支' : 'Checkout branch'}
+          </label>
         </main>
         <footer>
           <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
@@ -1153,11 +1163,11 @@ export function NewBranchDialog(props: {
             disabled={!repository || !branchName.trim() || props.busy !== null}
             onClick={async () => {
               if (!repository) return;
-              const outcome = await props.onExecute(repository, { type: 'create_branch', branchName: branchName.trim(), baseRef }, props.zh ? '新建并签出分支' : 'Create and checkout branch');
+              const outcome = await props.onExecute(repository, { type: 'create_branch', branchName: branchName.trim(), baseRef, checkout }, props.zh ? '新建分支' : 'Create Branch');
               if (outcome) return props.onClose();
             }}
           >
-            {props.zh ? '创建并签出' : 'Create and Checkout'}
+            {props.zh ? '创建' : 'Create'}
           </Button>
         </footer>
       </section>
@@ -1409,8 +1419,14 @@ export function BranchDirectoryTree(props: {
   branchDivergences?: Record<string, { ahead: number; behind: number }>;
   kind: BranchKind;
   zh: boolean;
+  /** 搜索时展开匹配目录，并标记分支名中匹配的部分。 */
+  searchQuery?: string;
+  /** 仅本地分支提供 F2 重命名。 */
+  onRename?: (branch: string) => void;
   onCheckout?: (branch: string) => void;
-  onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void;
+  /** 项目树可以在同一个分支名下显示多个仓库中的实际引用。 */
+  renderBranch?: (branch: string, name: React.ReactNode, depth: number) => React.ReactNode;
+  onContextMenu?: (event: ReactMouseEvent<HTMLButtonElement>, branch: string) => void;
 }) {
   const tree = useMemo(() => buildBranchTree(props.branches), [props.branches.join('\0')]);
   return (
@@ -1422,10 +1438,24 @@ export function BranchDirectoryTree(props: {
   );
 }
 
+/** 按原分支名显示匹配文字，保留大小写。 */
+function branchSearchLabel(name: string, query?: string) {
+  const match = query ? name.toLocaleLowerCase().indexOf(query) : -1;
+  if (!query || match < 0) return name;
+  return (
+    <>
+      {name.slice(0, match)}
+      <mark>{name.slice(match, match + query.length)}</mark>
+      {name.slice(match + query.length)}
+    </>
+  );
+}
+
 export function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0] & { node: BranchTreeNode; depth: number }) {
   if (props.node.children.size > 0) {
     return <BranchTreeFolder {...props} />;
   }
+  if (props.renderBranch) return props.renderBranch(props.node.branch, branchSearchLabel(props.node.name, props.searchQuery), props.depth);
   const divergence = props.branchDivergences?.[props.node.branch];
   const divergenceText = divergence ? [divergence.ahead ? `↑${divergence.ahead}` : '', divergence.behind ? `↓${divergence.behind}` : ''].filter(Boolean).join(' ') : '';
   const divergenceLabel = divergence
@@ -1440,14 +1470,20 @@ export function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0]
       className={props.node.branch === (props.selected ?? props.current) ? 'is-current' : ''}
       data-checked-out={props.node.branch === props.current || undefined}
       aria-current={props.selected === props.node.branch ? 'true' : undefined}
+      aria-keyshortcuts={props.onRename ? 'F2' : undefined}
       style={{ paddingLeft: `${props.depth * 20 + 25}px` }}
       onClick={() => props.onSelect?.(props.node.branch)}
       onDoubleClick={() => props.onCheckout?.(props.node.branch)}
-      onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}
+      onContextMenu={(event) => props.onContextMenu?.(event, props.node.branch)}
+      onKeyDown={(event) => {
+        if (event.key !== 'F2' || !props.onRename) return;
+        event.preventDefault();
+        props.onRename(props.node.branch);
+      }}
       data-icon-tooltip={props.onCheckout ? (props.zh ? `双击切换到分支“${props.node.branch}”` : `Double-click to check out '${props.node.branch}'`) : undefined}
     >
       {props.hideBranchIcons ? null : <GitBranch aria-hidden="true" />}
-      <span>{props.node.name}</span>
+      <span>{branchSearchLabel(props.node.name, props.searchQuery)}</span>
       {props.node.branch === props.current ? (
         <small className="git-checked-out-mark" data-icon-tooltip={props.zh ? '当前检出分支' : 'Checked out branch'}>
           ✓
@@ -1464,12 +1500,25 @@ export function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0]
 
 export function BranchTreeFolder(props: Parameters<typeof BranchTreeEntry>[0]) {
   const [open, setOpen] = useState(() => (props.node.branch ? props.node.branch === props.current || props.current.startsWith(`${props.node.branch}/`) : true));
+  /** 搜索展开由查询驱动，保留用户在普通浏览中的开合状态。 */
+  const [searchOverride, setSearchOverride] = useState<{ query: string; open: boolean } | null>(null);
+  const expanded = props.searchQuery ? (searchOverride?.query === props.searchQuery ? searchOverride.open : true) : open;
   return (
-    <details className="project-git-branch-folder" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="project-git-branch-folder"
+      open={expanded}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        if (nextOpen === expanded) return;
+        if (props.searchQuery) setSearchOverride({ query: props.searchQuery, open: nextOpen });
+        else setOpen(nextOpen);
+      }}
+    >
       <summary style={{ paddingLeft: `${props.depth * 20 + 5}px` }}>
         <CaretRight aria-hidden="true" />
-        <span>{props.node.name}</span>
+        <span>{branchSearchLabel(props.node.name, props.searchQuery)}</span>
       </summary>
+      {props.renderBranch?.(props.node.branch, branchSearchLabel(props.node.name, props.searchQuery), props.depth + 1)}
       {Array.from(props.node.children.values()).map((child) => (
         <BranchTreeEntry key={child.branch || child.name} {...props} node={child} depth={props.depth + 1} />
       ))}
@@ -1506,6 +1555,8 @@ export function BranchContextMenu(props: {
   onClose: () => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
+  /** 在工作台打开所选分支的两组独有提交。 */
+  onCompareBranch?: (repository: ProjectGitRepositoryWorkbenchItem, branch: string, kind: BranchKind) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const closeMenus = props.onAction ?? props.onClose;
@@ -1524,7 +1575,8 @@ export function BranchContextMenu(props: {
   };
   const compare = (mode: 'current' | 'working-tree') => () => {
     closeMenus();
-    props.onOpenDiff(props.repository, '', { comparisonRef: props.branch, comparisonMode: mode });
+    if (mode === 'current' && props.onCompareBranch) return props.onCompareBranch(props.repository, props.branch, props.kind);
+    props.onOpenDiff(props.repository, '', { comparisonRef: `refs/${props.kind === 'local' ? 'heads' : 'remotes'}/${props.branch}`, comparisonMode: mode });
   };
   const remoteLeaf = remoteBranchLeaf(props.branch);
   const checkoutAndRebase = async () => {
@@ -1901,11 +1953,15 @@ export function PullDialog(props: {
   );
 }
 
-/** 当前检出分支的默认远端与同名目标，供拉取和推送入口共用。 */
-export function defaultPushTarget(repository: ProjectGitRepositoryWorkbenchItem): { remote: string; targetBranch: string } {
-  const upstream = repository.snapshot.upstream;
-  const remote = repository.snapshot.remotes.find((name) => upstream?.startsWith(`${name}/`)) ?? repository.snapshot.remotes.find((name) => name === 'origin') ?? repository.snapshot.remotes[0] ?? '';
-  return { remote, targetBranch: upstream?.startsWith(`${remote}/`) ? upstream.slice(remote.length + 1) : repository.snapshot.branch };
+/** 使用所选分支本身的上游；未设置时以默认远端的同名分支为目标。 */
+export function defaultPushTarget(repository: ProjectGitRepositoryWorkbenchItem, branch = repository.snapshot.branch): { remote: string; targetBranch: string } {
+  const upstream = repository.snapshot.branchUpstreams?.[branch] ?? (branch === repository.snapshot.branch ? repository.snapshot.upstream : null);
+  const remote =
+    [...repository.snapshot.remotes].sort((left, right) => right.length - left.length).find((name) => upstream?.startsWith(`${name}/`)) ??
+    repository.snapshot.remotes.find((name) => name === 'origin') ??
+    repository.snapshot.remotes[0] ??
+    '';
+  return { remote, targetBranch: upstream?.startsWith(`${remote}/`) ? upstream.slice(remote.length + 1) : branch };
 }
 
 /** 合并前明确展示来源与目标，命令执行沿用统一的冲突处理。 */

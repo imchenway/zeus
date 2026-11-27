@@ -2156,7 +2156,21 @@ function setupIpc(): void {
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.offset !== 'number' || (candidate.ref !== undefined && typeof candidate.ref !== 'string'))
       throw new TypeError('历史请求参数无效。');
-    return requireProjectGitWorkbench(event, false, candidate.projectId).loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined);
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined, candidate.filters);
+  });
+  /** Log 的路径树、提交详情辅助数据和 Shelf 使用同一项目读权限。 */
+  ipcMain.handle('zeus:project-git:load-log-info', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('Invalid Git Log request.');
+    const { projectId, repositoryId, query } = input as Record<string, unknown>;
+    if (typeof projectId !== 'string' || typeof repositoryId !== 'string') throw new TypeError('Select a project repository.');
+    return requireProjectGitWorkbench(event, false, projectId).loadLogInfo(projectId, repositoryId, query);
+  });
+  /** 双向比较沿用历史读权限，并由仓库服务校验分支与筛选范围。 */
+  ipcMain.handle('zeus:project-git:load-branch-comparison', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('Invalid branch comparison request.');
+    const { projectId, repositoryId, query } = input as Record<string, unknown>;
+    if (typeof projectId !== 'string' || typeof repositoryId !== 'string') throw new TypeError('Select a project repository to compare.');
+    return requireProjectGitWorkbench(event, false, projectId).loadBranchComparison(projectId, repositoryId, query);
   });
   /** 操作历史属于只读入口，仍要求可信主框架和项目身份。 */
   ipcMain.handle('zeus:project-git:load-operations', (event, input: unknown) => {
@@ -2182,10 +2196,17 @@ function setupIpc(): void {
       throw new TypeError('推送预览参数无效。');
     /** 每个输入字段显式检查，不能直接信任类型断言。 */
     const selection = candidate.selection as Record<string, unknown>;
-    if (typeof selection.sourceBranch !== 'string' || typeof selection.remote !== 'string' || typeof selection.targetBranch !== 'string' || (selection.offset !== undefined && typeof selection.offset !== 'number'))
+    if (
+      typeof selection.sourceBranch !== 'string' ||
+      typeof selection.remote !== 'string' ||
+      typeof selection.targetBranch !== 'string' ||
+      (selection.offset !== undefined && typeof selection.offset !== 'number') ||
+      (selection.sourceRevision !== undefined && (typeof selection.sourceRevision !== 'string' || !/^[a-f0-9]{40,64}$/u.test(selection.sourceRevision)))
+    )
       throw new TypeError('推送预览参数无效。');
     return requireProjectGitWorkbench(event, false, candidate.projectId).loadPushPreview(candidate.projectId, candidate.repositoryId, {
       sourceBranch: selection.sourceBranch,
+      sourceRevision: selection.sourceRevision as string | undefined,
       remote: selection.remote,
       targetBranch: selection.targetBranch,
       offset: selection.offset as number | undefined,
@@ -2247,28 +2268,31 @@ function setupIpc(): void {
               (action.type === 'update' && action.strategy === 'reset') ||
               action.type === 'drop_stash' ||
               action.type === 'delete_branch' ||
-              action.type === 'abort_integration';
+              action.type === 'abort_integration' ||
+              action.type === 'skip_integration';
             if (dangerous) {
               const owner = BrowserWindow.fromWebContents(event.sender);
               if (!owner || owner.isDestroyed()) throw new Error('操作窗口已关闭。');
               const effect =
                 action.type === 'subtree'
-                  ? `子树 ${action.operation}：${action.path} ↔ ${action.remote}/${action.branch}。添加和拉取会创建本地提交，推送会修改远端分支。`
+                  ? `Subtree ${action.operation}: ${action.path} ↔ ${action.remote}/${action.branch}. Add and pull create local commits. Push updates the remote branch.`
                   : action.type === 'push'
-                    ? '强制推送可能改写远端提交历史。'
+                    ? 'Force Push may rewrite remote history.'
                     : action.type === 'update'
-                      ? '重置会移动当前分支；未保护的本地修改会丢失。'
+                      ? 'Reset moves the current branch and discards unprotected local changes.'
                       : action.type === 'drop_stash'
-                        ? `删除贮藏 ${action.stashRef} 后无法直接恢复。`
+                        ? `Permanently drop ${action.stashRef}.`
                         : action.type === 'delete_branch'
-                          ? `将删除本地分支 ${action.branchName}。`
-                          : '终止当前合并或变基，并撤销此次冲突解决过程中的修改。';
+                          ? `Delete local branch '${action.branchName}'.`
+                          : action.type === 'skip_integration'
+                            ? `Skip the current ${action.kind} commit and discard its conflict resolution changes.`
+                            : `Abort the current ${action.kind} and discard its conflict resolution changes.`;
               const confirmation = await dialog.showMessageBox(owner, {
                 type: 'warning',
-                title: '确认 Git 操作',
+                title: 'Confirm Git Operation',
                 message: effect,
-                detail: `仓库：${repository.localPath}\n当前分支：${repository.branch}`,
-                buttons: ['取消', '确认执行'],
+                detail: `Repository: ${repository.localPath}\nCurrent branch: ${repository.branch}`,
+                buttons: ['Cancel', 'Confirm'],
                 defaultId: 0,
                 cancelId: 0,
                 noLink: true,

@@ -56,7 +56,8 @@ export function ProjectGitDiffWindow(props: {
   /** 独立窗口沿用应用外观，系统模式由主题样式实时跟随。 */
   appearance: 'light' | 'dark' | 'system';
 }) {
-  const zh = props.language === 'zh-CN';
+  /** 项目 Git 工作区发起的差异窗口与 Git 菜单共用英文界面。 */
+  const zh = props.source.kind !== 'project-git' && props.language === 'zh-CN';
   /** 初始设置用于首帧，后续变化沿用既有窗口通知机制。 */
   const [appearance, setAppearance] = useState(props.appearance);
   useEffect(() => window.zeus?.onProjectGitDiffAppearance?.(setAppearance), []);
@@ -260,7 +261,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
   return (
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
-        <FileTypeIcon path={file.newPath || file.oldPath} kind={file.isSubmodule ? 'submodule' : undefined} />
+        <FileTypeIcon path={file.newPath || file.oldPath} kind={original?.isSubmodule || props.items?.some((item) => Boolean(item.submodule)) ? 'submodule' : undefined} />
         <strong tabIndex={0} data-file-path={file.newPath || file.oldPath} data-icon-tooltip={props.title ?? (file.newPath || file.oldPath)} data-file-status={props.fileStatus ?? file.changeType}>
           {props.title ?? (file.newPath || file.oldPath)}
         </strong>

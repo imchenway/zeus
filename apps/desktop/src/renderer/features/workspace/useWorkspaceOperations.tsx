@@ -1470,7 +1470,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   }
 
   /** 源码仍整页导航；Git 只打开侧栏，跨项目时沿用离开保护。 */
-  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source', sourceTarget: FilePreviewSourceWorkspace | null = null): void {
+  function openProjectSection(
+    project: ProjectRecord,
+    section: ProjectWorkspaceSection,
+    codeMode: ProjectCodeWorkspaceMode = 'source',
+    sourceTarget: FilePreviewSourceWorkspace | null = null,
+    /** 从底部 Git 打开编辑器时保留面板，在导航获准后再交接标签请求。 */
+    options?: { keepGitOpen?: boolean; onNavigated?(): void },
+  ): void {
     if (section === 'code' && codeMode === 'git') {
       if (project.id === temporaryWorkspaceId) return;
       /** 同项目保留底层页面；跨项目更新身份前保护原草稿。 */
@@ -1496,12 +1503,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         setTaskGitReviewState(null);
         setTaskGitMergeTaskId(null);
       }
-      if (section === 'code') setProjectGitOpen(false);
+      if (section === 'code' && !options?.keepGitOpen) setProjectGitOpen(false);
       setProjectCommandsProjectId(null);
       // 项目设置直接进入数字员工，不再自动打开旧项目配置抽屉。
       setProjectPanel(undefined);
       if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? `#project-code-${codeMode}` : `#project-${section}`);
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      options?.onNavigated?.();
     };
     if (
       project.id === activeProjectId &&

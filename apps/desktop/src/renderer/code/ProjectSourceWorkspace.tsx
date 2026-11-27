@@ -47,6 +47,8 @@ import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/di
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
+import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCommit';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import type { ConversationFileLocation, ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
@@ -55,6 +57,8 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
+import type { GitBranchComparisonTarget, GitSourceEditorTarget } from '../git/gitWorkbenchTypes.js';
+import { GitLogPathTree, readGitLogInfo } from '../git/GitLogControls.js';
 import { Form } from '../ui/Form.js';
 
 const ProjectSourceEditor = lazy(() => import('./ProjectSourceEditor.js').then((module) => ({ default: module.ProjectSourceEditor })));
@@ -73,6 +77,60 @@ const sourceViewModes = [
 const sourceEventRefreshDelayMs = 100;
 /** 当前显示的工作树已被移除时，目录面板使用同一份空快照。 */
 const emptyDirectories: Record<string, ProjectSourceDirectorySnapshot> = {};
+
+/** 同一标题用于 Git 标签、工具提示和面板的可访问名称。 */
+function gitEditorTitle(target: GitSourceEditorTarget): string {
+  return 'revision' in target ? 'Revision ' + target.revision.slice(0, 8) : `Compare: ${target.branch} and HEAD`;
+}
+
+/** Git 标签与文件共用鼠标中键关闭和方向键切换。 */
+function SourceGitEditorTab(props: { target: GitSourceEditorTarget; active: boolean; onSelect(): void; onClose(): void }) {
+  const title = gitEditorTitle(props.target);
+  return (
+    <div
+      className="zeus-workspace-tab-shell"
+      data-active={props.active || undefined}
+      onAuxClick={(event) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        props.onClose();
+      }}
+    >
+      <Button
+        unstyled
+        type="button"
+        role="tab"
+        className="zeus-workspace-tab"
+        data-busy-behavior="background"
+        aria-selected={props.active}
+        tabIndex={props.active ? 0 : -1}
+        data-icon-tooltip={title + ' · ' + props.target.repositoryName}
+        onClick={props.onSelect}
+      >
+        {'revision' in props.target ? <GitCommit size={14} aria-hidden="true" /> : <GitDiff size={14} aria-hidden="true" />}
+        <span>{title}</span>
+      </Button>
+      <Button unstyled type="button" className="zeus-workspace-tab-close" aria-label={'Close ' + title} data-icon-tooltip={'Close ' + title} onClick={props.onClose}>
+        <X size={14} aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+/** 隐藏标签继续挂载，对比滚动和两侧选择在切换时保留。 */
+function SourceBranchComparisonPanel(props: { target: GitBranchComparisonTarget; active: boolean; onHost?: ProjectSourceWorkspaceProps['onBranchComparisonHost'] }) {
+  const { target, onHost } = props;
+  const attach = useCallback((host: HTMLDivElement | null) => onHost?.(target, host), [onHost, target]);
+  return <div ref={attach} className="project-source-comparison-panel" hidden={!props.active} role="tabpanel" aria-label={gitEditorTitle(target)} />;
+}
+
+/** 每个历史标签分别记住 Git 路径、搜索和文件选择。 */
+interface SourceRevisionView {
+  paths?: string[];
+  path?: string;
+  query?: string;
+  error?: string;
+}
 
 type AppLanguage = 'zh-CN' | 'en-US';
 
@@ -104,6 +162,8 @@ export interface ProjectSourceWorkspaceHandle {
   discardAll(): void;
   /** 搜索命中可传入一基行列，普通目录打开仍只传路径。 */
   openFile(relativePath: string, line?: number, column?: number): Promise<void>;
+  /** 在当前文件编辑区打开分支对比或固定版本目录。 */
+  openGitEditor(target: GitSourceEditorTarget): void;
   /** 在当前工作树显示并聚焦项目相对目录。 */
   revealDirectory(relativePath: string): void;
 }
@@ -115,6 +175,8 @@ export interface ProjectSourceWorkspaceProps {
   workspaceSelector?: ReactNode;
   /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
   gitSnapshot?: ProjectGitWorkbenchSnapshot | null;
+  /** 选中和隐藏的对比标签共用文件编辑区，关闭才解除内容挂载。 */
+  onBranchComparisonHost?(target: GitBranchComparisonTarget, host: HTMLDivElement | null): void;
   project: { id: string; name: string; localPath: string };
   language: AppLanguage;
   preference?: ProjectCodeWorkspacePreference;
@@ -158,6 +220,34 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
+  /** 文件草稿与对比标签各自保存，选择对比时记住上一个文件。 */
+  const [comparisonTabs, setComparisonTabs] = useState<GitSourceEditorTarget[]>([]);
+  const [activeComparisonId, setActiveComparisonId] = useState<string | null>(null);
+  /** 编辑器切换保留历史选择，工作树草稿继续由原有文件标签管理。 */
+  const [revisionViews, setRevisionViews] = useState<Record<string, SourceRevisionView>>({});
+  const activeGitEditor = comparisonTabs.find((target) => target.id === activeComparisonId);
+  const activeRevision = activeGitEditor && 'revision' in activeGitEditor ? activeGitEditor : undefined;
+  const revisionView = activeRevision ? revisionViews[activeRevision.id] : undefined;
+  useEffect(() => {
+    if (!activeRevision || revisionView?.paths || revisionView?.error) return;
+    let active = true;
+    void readGitLogInfo(activeRevision.projectId, activeRevision.repositoryId, { kind: 'tree', ref: activeRevision.revision })
+      .then(({ paths }) => {
+        if (active) setRevisionViews((current) => ({ ...current, [activeRevision.id]: { ...current[activeRevision.id], paths: paths ?? [] } }));
+      })
+      .catch((reason: unknown) => {
+        if (active) setRevisionViews((current) => ({ ...current, [activeRevision.id]: { ...current[activeRevision.id], error: reason instanceof Error ? reason.message : String(reason) } }));
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeRevision, revisionView?.paths, revisionView?.error]);
+  const editorTabFocus = useRef(false);
+  const editorTabs = useMemo(
+    () => [...tabs.map((file) => ({ kind: 'file' as const, id: 'file:' + file.document.relativePath, file })), ...comparisonTabs.map((target) => ({ kind: 'git' as const, id: target.id, target }))],
+    [tabs, comparisonTabs],
+  );
+  const activeEditorId = activeComparisonId ?? (activePath ? 'file:' + activePath : null);
   /** 已点击的新文件立即进入等待态，正文读取期间仍可继续切换。 */
   const [openingPath, setOpeningPath] = useState<string | null>(null);
   /** 只有最近一次打开请求可以修改标签和审阅焦点。 */
@@ -171,6 +261,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   /** 当前源码的查找入口也支持从效果预览切回编辑器。 */
   const [findRequest, setFindRequest] = useState(0);
   const workspaceRef = useRef<HTMLElement>(null);
+  /** 对比刚打开或关闭后，把焦点交给文件编辑区当前显示的标签。 */
+  useLayoutEffect(() => {
+    if (!editorTabFocus.current) return;
+    const workspace = workspaceRef.current;
+    const tab = workspace?.querySelector<HTMLButtonElement>('.project-source-tabs [role=tab][aria-selected=true]');
+    (tab ?? workspace)?.focus({ preventScroll: true });
+    editorTabFocus.current = false;
+  }, [activeEditorId, editorTabs]);
   /** 文件状态跟随同一个 Git 工作台；项目切换时忽略其他项目的快照。 */
   const gitFileStatuses = useMemo(() => projectGitFileStatuses(props.gitSnapshot, props.project.id), [props.gitSnapshot, props.project.id]);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
@@ -313,6 +411,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       setDirectoryToReveal(null);
       setSelectedDirectory(null);
       if (pendingFileOpen.current?.path === relativePath && line === undefined) return;
+      setActiveComparisonId(null);
       /** 保留每次定位的对象身份，重复查找同一位置也能重新定位。 */
       const revealLocation = line === undefined ? undefined : { line, column };
       // 搜索与 Git 的行定位必须显示源码，不能把位置藏在效果预览后。
@@ -424,7 +523,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     setTabs((current) => current.map((tab) => ({ ...tab, draft: tab.document.content, dirty: false, externalChange: false })));
   }, []);
 
-  useImperativeHandle(ref, () => ({ hasDirtyFiles: () => dirtyRef.current, saveAll, discardAll, openFile, revealDirectory }), [discardAll, openFile, revealDirectory, saveAll]);
+  /** 同一 Git 对象复用标签，历史浏览打开当前项目目录抽屉。 */
+  const openGitEditor = useCallback((target: GitSourceEditorTarget) => {
+    pendingFileOpen.current = null;
+    setOpeningPath(null);
+    setTreeDrawerOpen('revision' in target);
+    editorTabFocus.current = true;
+    setComparisonTabs((current) => (current.some((tab) => tab.id === target.id) ? current.map((tab) => (tab.id === target.id ? target : tab)) : [...current, target]));
+    setActiveComparisonId(target.id);
+  }, []);
+
+  useImperativeHandle(ref, () => ({ hasDirtyFiles: () => dirtyRef.current, saveAll, discardAll, openFile, openGitEditor, revealDirectory }), [discardAll, openFile, openGitEditor, revealDirectory, saveAll]);
 
   useEffect(() => props.onDirtyChange?.(dirty), [dirty, props.onDirtyChange]);
 
@@ -674,6 +783,36 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     removeTab(path);
   }
 
+  /** 关闭对比后选相邻对比，最后一个关闭后返回原文件。 */
+  function closeComparison(id: string): void {
+    const index = comparisonTabs.findIndex((target) => target.id === id);
+    const remaining = comparisonTabs.filter((target) => target.id !== id);
+    editorTabFocus.current = true;
+    setComparisonTabs(remaining);
+    if (revisionViews[id])
+      setRevisionViews((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+    if (activeComparisonId !== id) return;
+    const next = remaining[Math.min(index, remaining.length - 1)];
+    if (next) selectGitEditor(next);
+    else setActiveComparisonId(null);
+  }
+
+  /** 左侧 Project 树和右侧历史文件共用当前标签的版本与路径。 */
+  function updateRevisionView(change: Partial<SourceRevisionView>): void {
+    if (!activeRevision) return;
+    setRevisionViews((current) => ({ ...current, [activeRevision.id]: { ...current[activeRevision.id], ...change } }));
+  }
+
+  /** 通过点击或键盘回到历史标签时重新显示 Project 树。 */
+  function selectGitEditor(target: GitSourceEditorTarget): void {
+    setActiveComparisonId(target.id);
+    if ('revision' in target) setTreeDrawerOpen(true);
+  }
+
   /** 先计算相邻标签，再分别更新状态，避免在状态更新函数内触发另一份状态更新。 */
   function removeTab(path: string): void {
     pendingRestorePaths.current.delete(path);
@@ -796,6 +935,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           hasBom: sourceTab.document.hasBom,
         });
         setTabs((current) => [...current, { document, draft: document.content, dirty: false, saving: false, externalChange: false, cursorLine: 1, cursorColumn: 1 }]);
+        setActiveComparisonId(null);
         setActivePath(document.relativePath);
         await loadDirectory(operationParent);
       } else if (operation.kind === 'rename' || operation.kind === 'move') {
@@ -945,7 +1085,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   return (
     <section
       ref={workspaceRef}
-      onKeyDown={(event) => fileFindShortcut(event, activeTab?.document.editable && viewMode === 'preview' ? openSourceFind : undefined)}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (!activeComparisonId) fileFindShortcut(event, activeTab?.document.editable && viewMode === 'preview' ? openSourceFind : undefined);
+      }}
       data-file-root={props.project.localPath}
       className="project-source-workspace"
       style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties}
@@ -991,73 +1134,109 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             closeTreeDrawer();
           }}
         >
-          <div className="project-source-module">
-            <div className="project-source-module-header">
-              <span className="project-source-worktree-slot">{props.workspaceSelector ?? <span title={props.project.localPath}>{props.project.name}</span>}</span>
+          {activeRevision ? (
+            <div className="project-source-module">
+              <div className="project-source-module-header">
+                <span className="project-source-worktree-slot" title={activeRevision.revision}>
+                  {activeRevision.repositoryName} · {gitEditorTitle(activeRevision)}
+                </span>
+              </div>
+              <div className="project-source-search-row">
+                <label className="project-source-search">
+                  <MagnifyingGlass aria-hidden="true" />
+                  <input type="search" value={revisionView?.query ?? ''} onChange={(event) => updateRevisionView({ query: event.currentTarget.value })} aria-label="Search revision files" placeholder="Search revision files" />
+                </label>
+              </div>
+              <div className="project-source-tree-scroll project-source-revision-tree" aria-label="Repository at Revision" aria-busy={!revisionView?.paths && !revisionView?.error}>
+                {revisionView?.error ? (
+                  <div role="alert">
+                    {revisionView.error}
+                    <Button size="compact" onClick={() => updateRevisionView({ error: undefined })}>
+                      Retry
+                    </Button>
+                  </div>
+                ) : revisionView?.paths ? (
+                  revisionView.paths.length ? (
+                    <GitLogPathTree paths={revisionView.paths} search={revisionView.query?.trim().toLocaleLowerCase()} selected={revisionView.path ? [revisionView.path] : []} onOpen={(path) => updateRevisionView({ path })} />
+                  ) : (
+                    <p className="project-source-empty">No files at this revision</p>
+                  )
+                ) : (
+                  <p className="project-source-empty" role="status">
+                    Loading repository at revision...
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="project-source-search-row">
-              <label className="project-source-search">
-                <MagnifyingGlass aria-hidden="true" />
-                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} aria-label={zh ? '搜索文件名' : 'Search file names'} placeholder={zh ? '搜索文件名' : 'Search file names'} />
-              </label>
-              {/* 新建入口与搜索同行，默认位置继续使用当前文件的父目录。 */}
-              <span className="project-source-module-actions" role="group" aria-label={zh ? '新建文件或目录' : 'Create files or folders'}>
-                <Button
-                  unstyled
-                  type="button"
-                  data-icon-tooltip={zh ? '新建文件' : 'New file'}
-                  aria-label={zh ? '新建文件' : 'New file'}
-                  onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' })}
-                >
-                  <FilePlus size={16} aria-hidden="true" />
-                </Button>
-                <Button
-                  unstyled
-                  type="button"
-                  data-icon-tooltip={zh ? '新建目录' : 'New folder'}
-                  aria-label={zh ? '新建目录' : 'New folder'}
-                  onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' })}
-                >
-                  <FolderPlus size={16} aria-hidden="true" />
-                </Button>
-              </span>
+          ) : (
+            <div className="project-source-module">
+              <div className="project-source-module-header">
+                <span className="project-source-worktree-slot">{props.workspaceSelector ?? <span title={props.project.localPath}>{props.project.name}</span>}</span>
+              </div>
+              <div className="project-source-search-row">
+                <label className="project-source-search">
+                  <MagnifyingGlass aria-hidden="true" />
+                  <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} aria-label={zh ? '搜索文件名' : 'Search file names'} placeholder={zh ? '搜索文件名' : 'Search file names'} />
+                </label>
+                {/* 新建入口与搜索同行，默认位置继续使用当前文件的父目录。 */}
+                <span className="project-source-module-actions" role="group" aria-label={zh ? '新建文件或目录' : 'Create files or folders'}>
+                  <Button
+                    unstyled
+                    type="button"
+                    data-icon-tooltip={zh ? '新建文件' : 'New file'}
+                    aria-label={zh ? '新建文件' : 'New file'}
+                    onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' })}
+                  >
+                    <FilePlus size={16} aria-hidden="true" />
+                  </Button>
+                  <Button
+                    unstyled
+                    type="button"
+                    data-icon-tooltip={zh ? '新建目录' : 'New folder'}
+                    aria-label={zh ? '新建目录' : 'New folder'}
+                    onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' })}
+                  >
+                    <FolderPlus size={16} aria-hidden="true" />
+                  </Button>
+                </span>
+              </div>
+              <div ref={treeScrollRef} className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
+                {searchQuery.trim() ? (
+                  <SearchResults
+                    entries={searchResults}
+                    activePath={openingPath ?? activePath}
+                    gitFileStatuses={gitFileStatuses}
+                    truncated={searchTruncated}
+                    busyPath={busyPath}
+                    onOpen={(path) => openFile(path)}
+                    onContextMenu={openFileContextMenu}
+                    onShortcut={handleFileShortcut}
+                    zh={zh}
+                  />
+                ) : loadingTree ? (
+                  <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
+                ) : (
+                  <TreeRows
+                    {...treeHandlers}
+                    directoryPath=""
+                    depth={0}
+                    directories={directories}
+                    expandedDirectories={expandedDirectories}
+                    loadingDirectories={loadingDirectories}
+                    selectedPath={selectedDirectory?.path ?? openingPath ?? activePath}
+                    gitFileStatuses={gitFileStatuses}
+                    busyPath={busyPath}
+                    onOpen={openFile}
+                    zh={zh}
+                  />
+                )}
+              </div>
             </div>
-            <div ref={treeScrollRef} className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
-              {searchQuery.trim() ? (
-                <SearchResults
-                  entries={searchResults}
-                  activePath={openingPath ?? activePath}
-                  gitFileStatuses={gitFileStatuses}
-                  truncated={searchTruncated}
-                  busyPath={busyPath}
-                  onOpen={(path) => openFile(path)}
-                  onContextMenu={openFileContextMenu}
-                  onShortcut={handleFileShortcut}
-                  zh={zh}
-                />
-              ) : loadingTree ? (
-                <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
-              ) : (
-                <TreeRows
-                  {...treeHandlers}
-                  directoryPath=""
-                  depth={0}
-                  directories={directories}
-                  expandedDirectories={expandedDirectories}
-                  loadingDirectories={loadingDirectories}
-                  selectedPath={selectedDirectory?.path ?? openingPath ?? activePath}
-                  gitFileStatuses={gitFileStatuses}
-                  busyPath={busyPath}
-                  onOpen={openFile}
-                  zh={zh}
-                />
-              )}
-            </div>
-          </div>
+          )}
         </aside>
         <div ref={treeResizeTrackRef} className="project-source-tree-resizer-track" aria-hidden="true" />
 
-        <main className="project-source-editor-pane">
+        <main className="project-source-editor-pane" data-comparison-active={Boolean(activeComparisonId) || undefined}>
           <div className="project-source-editor-header">
             <div className="project-source-tabs file-workspace-tab-strip">
               <Button
@@ -1073,62 +1252,85 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 <FolderOpen aria-hidden="true" />
               </Button>
               <FileWorkspaceTabs
-                tabs={tabs}
-                activeId={activePath}
-                tabId={(tab) => tab.document.relativePath}
-                tabLabel={(tab) => tab.document.relativePath}
+                tabs={editorTabs}
+                activeId={activeEditorId}
+                tabId={(editor) => editor.id}
+                tabLabel={(editor) => (editor.kind === 'file' ? editor.file.document.relativePath : gitEditorTitle(editor.target) + ' · ' + editor.target.repositoryName)}
+                editorTabs={comparisonTabs.length > 0}
                 zh={zh}
-                onSelect={(tab) => openFile(tab.document.relativePath)}
-                renderTab={(tab) => (
-                  <div
-                    key={tab.document.relativePath}
-                    className="zeus-workspace-tab-shell"
-                    data-active={tab.document.relativePath === activePath || undefined}
-                    onAuxClick={(event) => {
-                      if (event.button !== 1) return;
-                      event.preventDefault();
-                      closeTab(tab.document.relativePath);
-                    }}
-                  >
-                    <Button
-                      unstyled
-                      type="button"
-                      role="tab"
-                      data-icon-tooltip={tab.document.name}
-                      data-file-path={tab.document.relativePath}
-                      aria-selected={tab.document.relativePath === activePath}
-                      tabIndex={tab.document.relativePath === activePath ? 0 : -1}
-                      className="zeus-workspace-tab"
-                      data-busy-behavior="background"
-                      onClick={() => openFile(tab.document.relativePath)}
+                onSelect={(editor) => {
+                  if (editor.kind === 'file') return openFile(editor.file.document.relativePath);
+                  selectGitEditor(editor.target);
+                }}
+                renderTab={(editor) => {
+                  if (editor.kind === 'git')
+                    return <SourceGitEditorTab key={editor.id} target={editor.target} active={editor.id === activeEditorId} onSelect={() => selectGitEditor(editor.target)} onClose={() => closeComparison(editor.id)} />;
+                  const tab = editor.file;
+                  const selected = editor.id === activeEditorId;
+                  return (
+                    <div
+                      key={editor.id}
+                      className="zeus-workspace-tab-shell"
+                      data-active={selected || undefined}
+                      onAuxClick={(event) => {
+                        if (event.button !== 1) return;
+                        event.preventDefault();
+                        closeTab(tab.document.relativePath);
+                      }}
                     >
-                      <FileTypeIcon path={tab.document.relativePath} size={14} />
-                      <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
-                      {tab.dirty ? (
-                        <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
-                      ) : tab.externalChange ? (
-                        <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
-                          !
-                        </i>
-                      ) : null}
-                    </Button>
-                    <Button
-                      unstyled
-                      type="button"
-                      className="zeus-workspace-tab-close"
-                      data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                      aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                      disabled={tab.saving}
-                      onClick={() => closeTab(tab.document.relativePath)}
-                    >
-                      <X size={14} aria-hidden="true" />
-                    </Button>
-                  </div>
-                )}
+                      <Button
+                        unstyled
+                        type="button"
+                        role="tab"
+                        data-icon-tooltip={tab.document.name}
+                        data-file-path={tab.document.relativePath}
+                        aria-selected={selected}
+                        tabIndex={selected ? 0 : -1}
+                        className="zeus-workspace-tab"
+                        data-busy-behavior="background"
+                        onClick={() => openFile(tab.document.relativePath)}
+                      >
+                        <FileTypeIcon path={tab.document.relativePath} size={14} />
+                        <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
+                        {tab.dirty ? (
+                          <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
+                        ) : tab.externalChange ? (
+                          <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
+                            !
+                          </i>
+                        ) : null}
+                      </Button>
+                      <Button
+                        unstyled
+                        type="button"
+                        className="zeus-workspace-tab-close"
+                        data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                        aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                        disabled={tab.saving}
+                        onClick={() => closeTab(tab.document.relativePath)}
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </Button>
+                    </div>
+                  );
+                }}
               />
             </div>
           </div>
-          {openingDocument ? (
+          {comparisonTabs.map((target) => ('revision' in target ? null : <SourceBranchComparisonPanel key={target.id} target={target} active={target.id === activeComparisonId} onHost={props.onBranchComparisonHost} />))}
+          {activeRevision ? (
+            <section className="project-source-revision-panel" role="tabpanel" aria-label={gitEditorTitle(activeRevision)}>
+              {revisionView?.path ? (
+                <>
+                  <FilePathBreadcrumbs compact path={revisionView.path} zh={false} onRevealDirectory={() => setTreeDrawerOpen(true)} />
+                  <FilePreview zh={false} request={{ kind: 'project-git', projectId: activeRevision.projectId, repositoryId: activeRevision.repositoryId, snapshotRef: activeRevision.revision, path: revisionView.path }} />
+                </>
+              ) : (
+                <p className="project-source-editor-empty">Select a file in the Project tree</p>
+              )}
+            </section>
+          ) : null}
+          {activeComparisonId ? null : openingDocument ? (
             <>
               <div className="project-source-editor-track-placeholder" aria-hidden="true" />
               <section className="project-source-editor-empty" role="status">
@@ -1227,50 +1429,52 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               </section>
             </>
           )}
-          <footer className="project-source-statusbar">
-            {!openingDocument && activeTab?.externalChange ? (
-              <div className="project-source-status-actions">
-                <strong role="status">{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong>
-                <Button size="compact" type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
-                  {zh ? '另存为' : 'Save as'}
-                </Button>
-                <Button size="compact" type="button" onClick={reloadActiveTab}>
-                  {zh ? '重新加载' : 'Reload'}
-                </Button>
-              </div>
-            ) : null}
-            {openingDocument ? null : activeTab ? (
-              !activeTab.document.editable ? (
-                <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
+          {activeComparisonId ? null : (
+            <footer className="project-source-statusbar">
+              {!openingDocument && activeTab?.externalChange ? (
+                <div className="project-source-status-actions">
+                  <strong role="status">{zh ? '磁盘内容已变化' : 'Disk content changed'}</strong>
+                  <Button size="compact" type="button" onClick={() => beginOperation({ kind: 'save-as', tabPath: activeTab.document.relativePath })}>
+                    {zh ? '另存为' : 'Save as'}
+                  </Button>
+                  <Button size="compact" type="button" onClick={reloadActiveTab}>
+                    {zh ? '重新加载' : 'Reload'}
+                  </Button>
+                </div>
+              ) : null}
+              {openingDocument ? null : activeTab ? (
+                !activeTab.document.editable ? (
+                  <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
+                ) : (
+                  <>
+                    <select
+                      aria-label={zh ? '源码高亮语言' : 'Source syntax language'}
+                      value={activeTab.document.language}
+                      onChange={(event) => {
+                        /** 仅调整当前标签的高亮，不产生正文改动或保存操作。 */
+                        const language = event.currentTarget.value;
+                        setTabs((current) => current.map((tab) => (tab.document.relativePath === activePath ? { ...tab, document: { ...tab.document, language } } : tab)));
+                      }}
+                    >
+                      <option value="text">{zh ? '纯文本' : 'Plain text'}</option>
+                      {sourceLanguageOptions.map((language) => (
+                        <option key={language} value={language}>
+                          {language}
+                        </option>
+                      ))}
+                    </select>
+                    <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
+                    <span>{activeTab.document.eol.toUpperCase()}</span>
+                    <span>
+                      Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
+                    </span>
+                  </>
+                )
               ) : (
-                <>
-                  <select
-                    aria-label={zh ? '源码高亮语言' : 'Source syntax language'}
-                    value={activeTab.document.language}
-                    onChange={(event) => {
-                      /** 仅调整当前标签的高亮，不产生正文改动或保存操作。 */
-                      const language = event.currentTarget.value;
-                      setTabs((current) => current.map((tab) => (tab.document.relativePath === activePath ? { ...tab, document: { ...tab.document, language } } : tab)));
-                    }}
-                  >
-                    <option value="text">{zh ? '纯文本' : 'Plain text'}</option>
-                    {sourceLanguageOptions.map((language) => (
-                      <option key={language} value={language}>
-                        {language}
-                      </option>
-                    ))}
-                  </select>
-                  <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
-                  <span>{activeTab.document.eol.toUpperCase()}</span>
-                  <span>
-                    Ln {activeTab.cursorLine}, Col {activeTab.cursorColumn}
-                  </span>
-                </>
-              )
-            ) : (
-              <span>{zh ? '未打开文件' : 'No file open'}</span>
-            )}
-          </footer>
+                <span>{zh ? '未打开文件' : 'No file open'}</span>
+              )}
+            </footer>
+          )}
         </main>
       </div>
 

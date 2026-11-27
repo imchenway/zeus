@@ -320,7 +320,7 @@ export function DeliveryRepositoryFileTree(props: {
                         {!props.committedOnly ? (
                           <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
                         ) : null}
-                        <DeliveryEntryIcon />
+                        <FileTypeIcon path={group.localPath ?? group.workspace.repositoryRelativePath ?? '.'} kind="directory" />
                         <span>
                           <strong>{repositoryLabel(group.workspace, props.zh)}</strong>
                           <small>

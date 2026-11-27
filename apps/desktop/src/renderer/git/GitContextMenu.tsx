@@ -1,5 +1,6 @@
-import { MenuSurface } from '../ui/MenuSurface.js';
-import { useRef, useState, type ReactNode } from 'react';
+import { MenuSurface, type MenuSubmenuAnchor } from '../ui/MenuSurface.js';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
+import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
@@ -13,36 +14,70 @@ export interface GitMenuItem {
   danger?: boolean;
   /** 快捷键提示只显示调用方实际支持的组合。 */
   shortcut?: string;
+  /** 在一组 Git 动作前插入标准菜单分隔线。 */
+  separatorBefore?: boolean;
+  /** 提交引用菜单复用同一套分支操作。 */
+  children?: GitMenuItem[];
   run: () => void | Promise<void>;
 }
-export function GitContextMenu(props: { x: number; y: number; title: string; items: GitMenuItem[]; anchor?: HTMLElement; onClose: () => void; onError: (error: unknown) => void }) {
+export function GitContextMenu(props: { x: number; y: number; title: string; items: GitMenuItem[]; anchor?: HTMLElement; submenuAnchor?: MenuSubmenuAnchor; onClose: () => void; onAction?: () => void; onError: (error: unknown) => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [submenu, setSubmenu] = useState<{ anchor: MenuSubmenuAnchor; item: GitMenuItem }>();
 
   return createPortal(
-    <MenuSurface onClose={props.onClose} ref={ref} className="zeus-context-menu project-git-context-menu" role="menu" aria-label={props.title} style={{ left: props.x, top: props.y }} onContextMenu={(event) => event.preventDefault()}>
+    <MenuSurface
+      onClose={props.onClose}
+      ref={ref}
+      submenuAnchor={props.submenuAnchor}
+      className="zeus-context-menu project-git-context-menu"
+      role="menu"
+      aria-label={props.title}
+      style={{ left: props.x, top: props.y }}
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key !== 'F2') return;
+        const rename = ref.current?.querySelector<HTMLButtonElement>('[aria-keyshortcuts="F2"]:not(:disabled)');
+        if (!rename) return;
+        event.preventDefault();
+        rename.click();
+      }}
+    >
       <strong>{props.title}</strong>
       {props.items.map((item, index) => (
-        <Button
-          unstyled
-          key={index}
-          type="button"
-          role="menuitem"
-          disabled={item.disabled}
-          data-danger={item.danger || undefined}
-          onClick={() => {
-            props.onClose();
-            try {
-              return Promise.resolve(item.run()).catch(props.onError);
-            } catch (error) {
-              props.onError(error);
-            }
-          }}
-        >
-          {item.icon}
-          <span>{item.label}</span>
-          {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
-        </Button>
+        <Fragment key={index}>
+          {item.separatorBefore ? <hr role="separator" /> : null}
+          <Button
+            unstyled
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            aria-keyshortcuts={item.shortcut === 'F2' ? 'F2' : undefined}
+            aria-haspopup={item.children ? 'menu' : undefined}
+            aria-expanded={item.children ? item === submenu?.item : undefined}
+            data-danger={item.danger || undefined}
+            onClick={(event) => {
+              if (item.children && ref.current) {
+                setSubmenu(submenu?.item === item ? undefined : { anchor: { row: event.currentTarget, parent: ref.current }, item });
+                return;
+              }
+              (props.onAction ?? props.onClose)();
+              try {
+                return Promise.resolve(item.run()).catch(props.onError);
+              } catch (error) {
+                props.onError(error);
+              }
+            }}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+            {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
+            {item.children ? <CaretRight aria-hidden="true" /> : null}
+          </Button>
+        </Fragment>
       ))}
+      {submenu?.item.children ? (
+        <GitContextMenu x={0} y={0} title={submenu.item.label} items={submenu.item.children} submenuAnchor={submenu.anchor} onClose={() => setSubmenu(undefined)} onAction={props.onAction ?? props.onClose} onError={props.onError} />
+      ) : null}
     </MenuSurface>,
     props.anchor?.closest('[data-zeus-primitive=modal]') ?? document.querySelector('.macos-ai-app') ?? document.body,
   );
@@ -53,13 +88,23 @@ export interface GitMenuConfirmation {
   description: string;
   field?: string;
   initialValue?: string;
+  /** 固定 Git 目标由下拉列表选取，不接受任意输入。 */
+  choices?: Array<{ value: string; label: string }>;
   messageField?: string;
+  /** 编辑提交之前保留原有多行说明。 */
+  initialMessage?: string;
+  /** 历史操作只提交勾选的工作树文件。 */
+  files?: Array<{ path: string; checked: boolean }>;
   danger?: boolean;
-  run: (value: string, message?: string) => Promise<boolean>;
+  /** 确认按钮可显示实际 Git 动作。 */
+  actionLabel?: string;
+  run: (value: string, message?: string, paths?: string[]) => Promise<boolean>;
 }
 export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boolean; onClose: () => void }) {
-  const [text, setText] = useState(props.value.initialValue ?? '');
-  const [message, setMessage] = useState('');
+  const [text, setText] = useState(props.value.initialValue ?? props.value.choices?.[0]?.value ?? '');
+  const [message, setMessage] = useState(props.value.initialMessage ?? '');
+  /** 初始勾选沿用暂存区，用户可以加入其他工作树文件。 */
+  const [paths, setPaths] = useState(() => props.value.files?.filter((file) => file.checked).map((file) => file.path) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
@@ -73,7 +118,17 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
         {props.value.field ? (
           <label>
             {props.value.field}
-            <input autoFocus value={text} disabled={busy} onChange={(event) => setText(event.currentTarget.value)} />
+            {props.value.choices ? (
+              <select autoFocus value={text} disabled={busy} onChange={(event) => setText(event.currentTarget.value)}>
+                {props.value.choices.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input autoFocus value={text} disabled={busy} onChange={(event) => setText(event.currentTarget.value)} />
+            )}
           </label>
         ) : null}
         {props.value.messageField ? (
@@ -81,6 +136,17 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
             {props.value.messageField}
             <textarea value={message} disabled={busy} onChange={(event) => setMessage(event.currentTarget.value)} />
           </label>
+        ) : null}
+        {props.value.files ? (
+          <fieldset className="git-history-file-selection">
+            <legend>Changes</legend>
+            {props.value.files.map(({ path }) => (
+              <label key={path} className="project-git-checkbox" title={path}>
+                <input type="checkbox" checked={paths.includes(path)} disabled={busy} onChange={(event) => setPaths(event.currentTarget.checked ? [...paths, path] : paths.filter((item) => item !== path))} />
+                <span>{path}</span>
+              </label>
+            ))}
+          </fieldset>
         ) : null}
         {error ? (
           <p role="alert">
@@ -94,14 +160,14 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
           <Button
             variant={props.value.danger ? 'danger' : 'primary'}
             busy={busy}
-            disabled={busy || Boolean(props.value.field && !text.trim())}
+            disabled={busy || Boolean(props.value.field && !text.trim()) || Boolean(props.value.files && (!paths.length || (props.value.messageField && !message.trim())))}
             onClick={async () => {
               if (submitting.current) return;
               submitting.current = true;
               setBusy(true);
               setError('');
               try {
-                if (await props.value.run(text.trim(), message.trim())) props.onClose();
+                if (await props.value.run(text.trim(), message.trim(), paths)) props.onClose();
                 else setError(props.zh ? '操作未完成，请处理错误后重试。' : 'The operation did not complete. Resolve the error and retry.');
               } catch (reason) {
                 setError(reason instanceof Error ? reason.message : String(reason));
@@ -111,7 +177,7 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
               }
             }}
           >
-            {props.zh ? '确认' : 'Confirm'}
+            {props.value.actionLabel ?? (props.zh ? '确认' : 'Confirm')}
           </Button>
         </footer>
       </section>

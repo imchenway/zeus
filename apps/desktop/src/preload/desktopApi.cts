@@ -309,6 +309,10 @@ export function createDesktopApi(transport: DesktopTransport) {
     loadProjectGitBranches: (projectId: string, includeReferences: boolean) => transport.invoke('zeus:project-git:load-branches', projectId, includeReferences),
     /** 读取项目 Git 历史记录。 */
     loadProjectGitHistory: (input: unknown) => transport.invoke('zeus:project-git:load-history', input),
+    /** 读取 Git Log 选择器和提交辅助信息。 */
+    loadProjectGitLogInfo: (input: unknown) => transport.invoke('zeus:project-git:load-log-info', input),
+    /** 读取与 HEAD 双向比较的提交历史。 */
+    loadProjectGitBranchComparison: (input: unknown) => transport.invoke('zeus:project-git:load-branch-comparison', input),
     /** 分页读取桌面工作台已落盘的操作记录，不触发 Git 执行。 */
     loadProjectGitOperations: (input: unknown) => transport.invoke('zeus:project-git:load-operations', input),
     /** 读取指定 Git 提交的内容。 */

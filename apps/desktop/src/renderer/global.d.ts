@@ -188,7 +188,17 @@ declare global {
       loadProjectGitBranches: (projectId: string, includeReferences: boolean) => Promise<import('@zeus/git-core').ProjectGitBranchSelection>;
       /** 只读获取当前项目的耐久 Git 操作历史页。 */
       loadProjectGitOperations: (input: { projectId: string; cursor?: string }) => Promise<import('./apiClient.js').ProjectGitOperationPage>;
-      loadProjectGitHistory: (input: { projectId: string; repositoryId: string; offset: number; ref?: string }) => Promise<{ commits: import('./apiClient.js').ProjectGitRepositorySnapshot['recentCommits']; hasMore: boolean }>;
+      loadProjectGitHistory: (input: {
+        projectId: string;
+        repositoryId: string;
+        offset: number;
+        ref?: string;
+        filters?: import('@zeus/git-core').ProjectGitComparisonPageQuery;
+      }) => Promise<{ commits: import('./apiClient.js').ProjectGitRepositorySnapshot['recentCommits']; hasMore: boolean }>;
+      /** Git Log 的只读仓库选择器与检查器。 */
+      loadProjectGitLogInfo: (input: { projectId: string; repositoryId: string; query: import('@zeus/git-core').ProjectGitLogRead }) => Promise<import('@zeus/git-core').ProjectGitLogInfo>;
+      /** 分支比较携带两端固定的提交身份和独立的提交页。 */
+      loadProjectGitBranchComparison: (input: { projectId: string; repositoryId: string; query: import('@zeus/git-core').ProjectGitBranchComparisonQuery }) => Promise<import('@zeus/git-core').ProjectGitBranchComparison>;
       loadProjectGitCommit: (input: { projectId: string; repositoryId: string; commitHash: string }) => Promise<import('./apiClient.js').ProjectGitCommitDetail>;
       /** 按指定远端目标读取待推送范围。 */
       loadProjectGitPushPreview: (input: { projectId: string; repositoryId: string; selection: import('./apiClient.js').ProjectGitPushPreviewInput }) => Promise<import('./apiClient.js').ProjectGitPushPreview>;

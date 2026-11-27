@@ -1582,7 +1582,7 @@ body:has(.macos-ai-app.zeus-shell) {
   flex: 1;
   min-height: 0;
 }
-.macos-ai-app.zeus-shell .project-git-browser-content .project-git-inspector {
+.macos-ai-app.zeus-shell :is(.project-git-browser-content, .git-comparison-editor) .project-git-inspector {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, var(--git-details, 55%)) 6px minmax(0, 1fr);
@@ -1666,7 +1666,7 @@ body:has(.macos-ai-app.zeus-shell) {
   grid-column: 3;
   min-height: 0;
 }
-.macos-ai-app.zeus-shell .project-git-browser-content .project-git-inspector {
+.macos-ai-app.zeus-shell :is(.project-git-browser-content, .git-comparison-editor) .project-git-inspector {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, var(--git-details, 55%)) 6px minmax(0, 1fr);
   overflow: hidden;

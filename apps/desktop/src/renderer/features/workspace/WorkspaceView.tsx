@@ -4,6 +4,7 @@ import { WorkspaceSearch } from '../../code/WorkspaceSearch.js';
 import { HugeiconsIcon } from '../../ui/HugeiconsIcon.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
+import type { GitBranchComparisonEditor, GitBranchComparisonTarget, GitSourceEditorTarget } from '../../git/gitWorkbenchTypes.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { toolPages } from '../../tooling/index.js';
 import { compareConversationWorkStartedDesc, faultReportContext, temporaryWorkspaceId, type CommandRun } from '@zeus/shared';
@@ -541,6 +542,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   };
   /** 编辑器懒加载完成后才消费全局源码搜索，避免首次打开丢失文件定位。 */
   const [sourceReady, setSourceReady] = useState(false);
+  /** 源码页懒加载时保留已获准的 Compare 请求和已挂载的标签内容节点。 */
+  const [pendingGitEditor, setPendingGitEditor] = useState<{ projectId: string; target: GitSourceEditorTarget } | null>(null);
+  const [comparisonEditors, setComparisonEditors] = useState<GitBranchComparisonEditor[]>([]);
+  const attachComparisonEditor = useCallback((target: GitBranchComparisonTarget, host: HTMLDivElement | null) => {
+    setComparisonEditors((current) => {
+      const remaining = current.filter((editor) => editor.target.id !== target.id);
+      return host ? [...remaining, { target, host }] : remaining.length === current.length ? current : remaining;
+    });
+  }, []);
   /** 离开保护与文件定位始终引用当前唯一的源码编辑器。 */
   const setSourceRef = useCallback(
     (workspace: ProjectSourceWorkspaceHandle | null) => {
@@ -554,6 +564,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setPendingGlobalSource(null);
     void projectSourceWorkspaceRef.current.openFile(pendingGlobalSource.relativePath, pendingGlobalSource.line, pendingGlobalSource.column);
   }, [sourceReady, activeProjectId, activeProjectSection, pendingGlobalSource, projectSourceWorkspaceRef]);
+  useEffect(() => {
+    if (!pendingGitEditor) return;
+    if (pendingGitEditor.projectId !== activeProjectId) {
+      setPendingGitEditor(null);
+      return;
+    }
+    const workspace = projectSourceWorkspaceRef.current;
+    if (!sourceReady || activeProjectSection !== 'code' || !workspace) return;
+    setPendingGitEditor(null);
+    workspace.openGitEditor(pendingGitEditor.target);
+  }, [sourceReady, pendingGitEditor, activeProjectId, activeProjectSection, projectSourceWorkspaceRef]);
   /** 文件预览编辑统一导航到现有源码页，切换工作树仍经过未保存保护。 */
   useEffect(
     () =>
@@ -770,6 +791,18 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   }, []);
   /** 源码继续占用主页面；Git 打开不影响此页面的挂载状态。 */
   const sourceVisible = (activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'code';
+  /** Git 菜单直接选中现有编辑区，其他项目页面先经过原导航保护。 */
+  function openGitEditor(target: GitSourceEditorTarget): void {
+    if (selectedProject?.id !== target.projectId) return;
+    const workspace = sourceVisible ? projectSourceWorkspaceRef.current : null;
+    if (workspace) {
+      workspace.openGitEditor(target);
+      return;
+    }
+    const request = { projectId: selectedProject.id, target };
+    if (sourceVisible) setPendingGitEditor(request);
+    else openProjectSection(selectedProject, 'code', 'source', null, { keepGitOpen: true, onNavigated: () => setPendingGitEditor(request) });
+  }
   /** 源码目录沿用 Git 工作台的文件状态快照。 */
   const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 项目终端独立于命令弹窗，项目变化后不会自动开启新 shell。 */
@@ -1198,6 +1231,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           gitClient={props.nativeConversationClient}
           language={appShellSettings.appLanguage}
           onSnapshot={setProjectCodeGitSnapshot}
+          comparisonEditors={comparisonEditors}
+          onOpenGitEditor={openGitEditor}
           onOpenGit={() => {
             if (selectedProject) openProjectSection(selectedProject, 'code', 'git');
           }}
@@ -1228,6 +1263,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         />
                       }
                       gitSnapshot={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : projectCodeGitSnapshot}
+                      onBranchComparisonHost={attachComparisonEditor}
                       onPreferenceChange={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : (preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                       onDirtyChange={setSourceWorkspaceDirty}
                       onOpenExternal={(relativePath, line) => props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: activeSourceTarget?.project.localPath ?? selectedProject.localPath })}

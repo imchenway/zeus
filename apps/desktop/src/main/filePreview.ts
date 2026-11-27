@@ -689,7 +689,8 @@ export function registerFilePreview(services: {
         if (!item || !['project-git', 'task-git'].includes(item.kind)) throw new Error('文件不属于代码交付范围。');
         if (
           input.action !== 'source' &&
-          ((item.kind === 'task-git' && item.scope !== 'working') || (item.kind === 'project-git' && (item.commitHash || item.comparisonRef || item.comparisonMode || (item.stage && item.stage !== 'combined'))))
+          ((item.kind === 'task-git' && item.scope !== 'working') ||
+            (item.kind === 'project-git' && (item.snapshotRef !== undefined || item.revisions || item.commitHash || item.comparisonRef || item.comparisonMode || (item.stage && item.stage !== 'combined'))))
         )
           throw new Error('已提交成果不能执行工作区操作。');
         /** 仓库或任务身份由既有预览解析器授权，历史重命名也返回当前编辑目标。 */
@@ -731,8 +732,8 @@ export function registerFilePreview(services: {
           for (const target of targets) await workspace.trashEntry('delivery', target.path, () => command.markWriteStarted());
         } else if (input.action === 'stage' || input.action === 'rollback') {
           await executeProjectGitAction(root, { type: input.action, paths: targets.map((target) => target.path) }, undefined, undefined, async (text) => {
-            await command.recordExecutionCommand(text);
             await command.markWriteStarted();
+            await command.recordExecutionCommand(text);
           });
         }
         return { completed: true };

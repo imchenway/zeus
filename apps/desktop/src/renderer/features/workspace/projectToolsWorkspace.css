@@ -43,6 +43,20 @@
   outline: none;
 }
 
+/* 文件编辑区在上，Git Log 在下，各自使用自己的滚动容器。 */
+.project-tools-layout[data-source-git-docked='true'] {
+  flex-direction: column;
+}
+.project-tools-layout[data-source-git-docked='true'] > .project-main-content {
+  flex: 1 1 0;
+}
+.project-tools-layout[data-source-git-docked='true'] > .project-tools-panel {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  max-height: 75%;
+}
+
 /* 标题同时明确项目和工具，操作按钮遵循现有主题与键盘焦点样式。 */
 .project-tools-header {
   display: flex;

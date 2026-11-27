@@ -1,6 +1,6 @@
 /** Git blame 公共契约由 Git Core 统一定义，渲染层只消费只读数据。 */
 export type { GitBlameLine, GitFileBlame } from '@zeus/git-core';
-import type { GitFileStatusCategory } from '@zeus/git-core';
+import type { GitFileStatusCategory, ProjectGitHistoryAction } from '@zeus/git-core';
 
 export interface GitDiffSummary {
   isRepository: boolean;
@@ -64,6 +64,10 @@ export interface GitCommitSummary {
   author: string;
   authoredAt: string;
   parentHashes: string[];
+  /** 提交时间、作者邮箱及完整引用由 Git 历史提供。 */
+  committedAt?: string;
+  authorEmail?: string;
+  refs?: string[];
 }
 
 export interface GitFileStatusSummary {
@@ -110,7 +114,9 @@ export interface ProjectGitRepositorySnapshot {
   headTags: string[];
   headSha: string;
   upstream: string | null;
-  integrationState?: 'merge' | 'rebase' | null;
+  integrationState?: ProjectGitIntegrationKind | null;
+  /** 停在 Edit 时可 amend 的完整提交 ID。 */
+  rebaseEditHead?: string;
   ahead: number;
   behind: number;
   clean: boolean;
@@ -162,6 +168,9 @@ export interface ProjectGitWorkbenchSnapshot {
   repositories: ProjectGitRepositoryWorkbenchItem[];
 }
 
+/** 需要用户在 Git 工作区继续的 Git 操作。 */
+export type ProjectGitIntegrationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
 export type ProjectGitAction =
   | { type: 'discard'; paths: string[] }
   /** 恢复所选文件的暂存与工作区版本。 */
@@ -180,9 +189,13 @@ export type ProjectGitAction =
   | { type: 'push'; remote?: string; sourceBranch?: string; targetBranch?: string; setUpstream?: boolean; forceWithLease?: boolean; pushTags?: boolean; pushAllTags?: boolean }
   | { type: 'pull'; remote?: string; targetBranch?: string; strategy: 'rebase' | 'merge'; commitMerge?: boolean; includeMergeLog?: boolean; noFastForward?: boolean }
   | { type: 'update'; strategy: 'merge' | 'rebase' | 'reset'; smart?: boolean }
+  /** 将所选本地分支同步到其上游。 */
+  | { type: 'update_branch'; branchName: string; strategy: 'merge' | 'rebase' }
   | { type: 'checkout'; branchName: string; smart?: boolean }
+  /** 两步使用同一仓库操作，变基目标由用户操作时的 HEAD 固定。 */
+  | { type: 'checkout_rebase'; branchName: string; baseRef?: string; expectedBranch: string; expectedHeadSha: string }
   | { type: 'checkout_revision'; revision: string; smart?: boolean }
-  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean }
+  | { type: 'create_branch'; branchName: string; baseRef?: string; trackRemote?: boolean; smart?: boolean; checkout?: boolean }
   | { type: 'delete_branch'; branchName: string }
   | { type: 'revert'; revision: string }
   | { type: 'cherry_pick'; revision: string }
@@ -196,11 +209,17 @@ export type ProjectGitAction =
       /** 用户确认时的目标完整提交 SHA。 */
       expectedHeadSha: string;
     }
-  | { type: 'rebase'; branchName: string }
+  /** 通过分支右键发起时校验用户确认的当前分支与 HEAD。 */
+  | { type: 'rebase'; branchName: string; expectedBranch?: string; expectedHeadSha?: string }
   | { type: 'stash'; message?: string; includeUntracked?: boolean; keepIndex?: boolean }
   | { type: 'apply_stash'; stashRef: string; pop?: boolean }
   | { type: 'drop_stash'; stashRef: string }
-  | { type: 'continue_integration' | 'abort_integration'; kind: 'merge' | 'rebase' };
+  | ProjectGitHistoryAction
+  /** Shelf 动作保存和使用独立的 Git 引用。 */
+  | { type: 'shelve'; message: string; paths?: string[] }
+  | { type: 'unshelve'; shelfRef: string; revision: string; paths?: string[]; remove?: boolean }
+  | { type: 'delete_shelf'; shelfRef: string; revision: string }
+  | { type: 'continue_integration' | 'abort_integration' | 'skip_integration'; kind: ProjectGitIntegrationKind };
 
 export interface ProjectGitActionResponse {
   projectId: string;
@@ -208,12 +227,14 @@ export interface ProjectGitActionResponse {
   repositoryName: string;
   result: {
     action: ProjectGitAction['type'];
-    outcome: 'completed' | 'conflict';
+    outcome: 'completed' | 'conflict' | 'blocked';
     branch: string;
     headSha: string;
     conflictFiles: string[];
     stdout: string;
     stderr: string;
+    /** Git 在仓库锁内记录的更新两端。 */
+    updateRange?: { before: string; after: string };
   };
   snapshot: ProjectGitRepositorySnapshot;
 }
@@ -227,6 +248,8 @@ export interface ProjectGitCommitDetail {
   parentHashes: string[];
   files: Array<{ path: string; additions: number; deletions: number }>;
   diff: GitDiffSummary;
+  /** 含有该提交的本地与远端跟踪分支。 */
+  containingBranches?: string[];
 }
 
 export type HighRiskGitOperation = 'commit' | 'stash' | 'apply_stash' | 'rollback' | 'branch' | 'switch_branch' | 'pull' | 'push';

@@ -5,6 +5,7 @@ import { ArrowsOutSimpleIcon } from '@phosphor-icons/react/dist/csr/ArrowsOutSim
 import { MinusIcon } from '@phosphor-icons/react/dist/csr/Minus';
 import type { ProjectRecord } from '../../apiClient.js';
 import type { ProjectGitWorkbenchProps } from '../../git/ProjectGitWorkbench.js';
+import type { GitBranchComparisonEditor, GitSourceEditorTarget } from '../../git/gitWorkbenchTypes.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import { ProjectToolContext } from './projectToolContext.js';
@@ -36,6 +37,9 @@ interface ProjectToolsWorkspaceProps {
   onSnapshot(snapshot: ProjectGitWorkbenchSnapshot | null): void;
   /** 分支操作需要显示 Git 时只打开底栏。 */
   onOpenGit(): void;
+  /** Compare 打开编辑器标签，原 Git 实例提供标签内容。 */
+  comparisonEditors: readonly GitBranchComparisonEditor[];
+  onOpenGitEditor(target: GitSourceEditorTarget): void;
   /** 终端与 Git 共用底部覆盖区域，避免原生网页遮挡面板。 */
   terminalOpen: boolean;
   /** 项目终端通过门户挂载到页面覆盖层。 */
@@ -46,7 +50,7 @@ interface ProjectToolsWorkspaceProps {
   onClose(): void;
 }
 
-/** Git 和终端覆盖在主页面底部，展开和调高都不改变主页面尺寸。 */
+/** 源码编辑器与普通 Git 底栏上下分区，会话等页面继续使用覆盖层。 */
 export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
   /** 底部覆盖层以当前工作区为定位和调高边界。 */
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -91,7 +95,14 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
   }
   return (
     <ProjectToolContext.Provider value={context}>
-      <div ref={layoutRef} className="project-tools-layout" data-tool-open={open} data-tool-full-width={fullWidth} data-tool-covered={open || props.terminalOpen}>
+      <div
+        ref={layoutRef}
+        className="project-tools-layout"
+        data-tool-open={open}
+        data-tool-full-width={fullWidth}
+        data-tool-covered={open || props.terminalOpen}
+        data-source-git-docked={(props.sourceVisible && open && !fullWidth) || undefined}
+      >
         <section ref={props.mainRef} className="project-main-content">
           {props.children}
         </section>
@@ -106,13 +117,15 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
           inert={!open}
           tabIndex={-1}
           onKeyDown={(event) => {
-            if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
+            if (!event.currentTarget.contains(event.target as Node) || event.key !== 'Escape' || event.defaultPrevented || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
             event.preventDefault();
             event.stopPropagation();
             closePanel();
           }}
         >
-          {open && !fullWidth ? <GitPaneSeparator name="project-git-height" axis="y" target=".project-tools-layout" label={zh ? '调整 Git 高度' : 'Resize Git height'} initial={55} min={20} max={95} reverse /> : null}
+          {open && !fullWidth ? (
+            <GitPaneSeparator name="project-git-height" axis="y" target=".project-tools-layout" label={zh ? '调整 Git 高度' : 'Resize Git height'} initial={55} min={20} max={props.sourceVisible ? 75 : 95} reverse />
+          ) : null}
           <header className="project-tools-header">
             <strong>{props.project?.name} · Git</strong>
             <Button
@@ -129,7 +142,16 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
               <MinusIcon aria-hidden="true" />
             </Button>
           </header>
-          {props.project ? <ProjectGitPanel key={props.project.id} {...props} /> : null}
+          {props.project ? (
+            <ProjectGitPanel
+              key={props.project.id}
+              {...props}
+              onOpenGitEditor={(target) => {
+                setExpanded(false);
+                props.onOpenGitEditor(target);
+              }}
+            />
+          ) : null}
         </aside>
         <div className="project-terminal-overlay-host" ref={props.terminalHostRef} />
       </div>
@@ -162,7 +184,16 @@ function ProjectGitPanel(props: ProjectToolsWorkspaceProps) {
     <div className="project-tool-content">
       <Suspense fallback={null}>
         {props.gitClient ? (
-          <ProjectGitWorkbench project={props.project} client={props.gitClient} language={props.language} updateRequest={updateRequest} onSnapshot={props.onSnapshot} onOpenPanel={props.onOpenGit} />
+          <ProjectGitWorkbench
+            project={props.project}
+            client={props.gitClient}
+            language={props.language}
+            updateRequest={updateRequest}
+            onSnapshot={props.onSnapshot}
+            onOpenPanel={props.onOpenGit}
+            comparisonEditors={props.comparisonEditors}
+            onOpenGitEditor={props.onOpenGitEditor}
+          />
         ) : (
           <p role="status">{props.language === 'zh-CN' ? 'Git 服务尚未连接。' : 'The Git service is not connected.'}</p>
         )}

@@ -307,6 +307,69 @@
   background: var(--zeus-code-editor-bg);
 }
 
+/* Compare 占用编辑器正文，文件标签栏始终处在同一位置。 */
+.project-source-editor-pane[data-comparison-active='true'] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.project-source-comparison-panel:not([hidden]) {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 历史文件和普通文件共用编辑区，历史目录使用原抽屉宽度。 */
+.project-source-revision-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.project-source-revision-panel > :first-child {
+  padding-inline: 8px;
+}
+
+.project-source-revision-panel > :last-child {
+  min-width: 0;
+  min-height: 0;
+}
+
+.project-source-revision-tree details details,
+.project-source-revision-tree details > button {
+  margin-inline-start: 12px;
+}
+
+.project-source-revision-tree summary,
+.project-source-revision-tree .git-log-path-file {
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 7px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.project-source-revision-tree summary > svg {
+  vertical-align: middle;
+}
+
+.project-source-revision-tree .git-log-path-file {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.project-source-revision-tree .git-log-path-file[aria-pressed='true'] {
+  background: var(--zeus-source-list-selected);
+}
+
+.project-source-revision-tree .git-log-path-file span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 标签和工具按钮共用一行，更多文件通过标签选择器切换。 */
 .project-source-editor-header {
   display: flex;
@@ -516,7 +579,9 @@
     box-shadow: 14px 0 38px rgb(0 0 0 / 22%);
     visibility: hidden;
     transform: translateX(-105%);
-    transition: transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out), visibility 0s linear var(--zeus-motion-duration-layer-enter);
+    transition:
+      transform var(--zeus-motion-duration-layer-enter) var(--zeus-motion-ease-out),
+      visibility 0s linear var(--zeus-motion-duration-layer-enter);
   }
   .project-source-workspace[data-tree-open='true'] .project-source-tree {
     visibility: visible;

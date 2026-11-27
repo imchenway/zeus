@@ -76,6 +76,12 @@
   margin-bottom: 6px;
   border-bottom: 1px solid var(--zeus-product-line);
 }
+.git-command-toolbar > .git-toolbar-identity {
+  max-width: 250px;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+}
 .macos-ai-app.zeus-shell .git-toolbar-identity .project-git-branch-trigger {
   background: transparent;
   border: 0;
@@ -367,11 +373,150 @@
   color: var(--zeus-product-text);
   font-weight: 650;
 }
+
+/* 分支搜索独立于 checkout，下滚分支树时仍可直接输入。 */
+.git-branch-tree-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 5px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-muted);
+}
+.project-git-navigator > .git-branch-tree-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 8px 6px;
+}
+.git-branch-tree-search:focus-within {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: -1px;
+}
+.git-branch-tree-search > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.git-branch-tree-search > input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--zeus-product-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.git-branch-head-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-inline: 12px;
+  text-align: left;
+}
+.git-branch-head-row[aria-current='true'] {
+  background: var(--zeus-source-list-selected);
+}
+.project-git-branch-directory-tree mark {
+  background: var(--zeus-source-list-selected);
+  color: var(--zeus-product-text);
+  border-radius: 2px;
+  font-weight: 650;
+}
+.git-branch-no-matches {
+  margin: 8px 12px;
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+}
+
+/* 对比在编辑区按自己的宽度适配，上下两侧各自滚动。 */
+.git-comparison-editor {
+  container: git-comparison / inline-size;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* Compare 的两组 Log 各自保留可调宽度和文件详情。 */
+.git-branch-comparison-layout {
+  display: grid;
+  grid-template-rows: minmax(122px, calc(var(--git-comparison-panes, 50%) - 3px)) 6px minmax(122px, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.git-branch-comparison-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.macos-ai-app.zeus-shell .git-branch-comparison-pane > .project-git-log-layout {
+  grid-template-columns: minmax(0, var(--git-history-columns, 65%)) 6px minmax(155px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.macos-ai-app.zeus-shell .git-branch-comparison-pane .project-git-inspector {
+  display: grid;
+}
+
+.git-comparison-detail-error {
+  overflow: auto;
+  padding: 8px;
+}
+
+.git-branch-comparison-caption {
+  display: flex;
+  align-items: center;
+  padding: 5px 9px;
+  background: var(--zeus-source-list-hover);
+  color: var(--zeus-product-text);
+  font-size: 12px;
+}
+
+.git-branch-comparison-caption > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 狭窄时将各自的详情放在对应 Log 下方，两个方向仍可独立滚动。 */
+@container git-comparison (max-width: 800px) {
+  .git-branch-comparison-layout {
+    grid-template-rows: minmax(245px, calc(var(--git-comparison-panes, 50%) - 3px)) 6px minmax(245px, 1fr);
+  }
+
+  .macos-ai-app.zeus-shell .git-branch-comparison-pane > .project-git-log-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 3fr) minmax(110px, 2fr);
+  }
+
+  .macos-ai-app.zeus-shell .git-branch-comparison-pane .git-separator-history-columns {
+    display: none;
+  }
+
+  .macos-ai-app.zeus-shell .git-branch-comparison-pane .project-git-log-layout > .project-git-inspector {
+    grid-column: 1;
+    grid-row: 2;
+    border-top: 1px solid var(--zeus-product-line);
+  }
+}
 .git-checked-out-mark {
   margin-left: auto;
 }
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-list-header,
-.macos-ai-app.zeus-shell .project-git-workbench .project-git-commit-row {
+.macos-ai-app.zeus-shell :is(.project-git-workbench, .git-comparison-editor) .project-git-commit-row {
   grid-template-columns: minmax(160px, 1fr) 72px minmax(90px, 16%) 96px;
   gap: 10px;
   padding: 0 10px 0 118px;
@@ -388,7 +533,7 @@
   position: absolute;
   left: 12px;
 }
-.macos-ai-app.zeus-shell .project-git-workbench .project-git-commit-row {
+.macos-ai-app.zeus-shell :is(.project-git-workbench, .git-comparison-editor) .project-git-commit-row {
   height: var(--git-history-row-height);
   min-height: var(--git-history-row-height);
   max-height: var(--git-history-row-height);
@@ -396,14 +541,14 @@
   line-height: 1.3;
   flex-shrink: 0;
 }
-.macos-ai-app.zeus-shell .project-git-workbench .project-git-commit-subject {
+.macos-ai-app.zeus-shell :is(.project-git-workbench, .git-comparison-editor) .project-git-commit-subject {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.macos-ai-app.zeus-shell .project-git-workbench .project-git-commit-subject > strong {
+.macos-ai-app.zeus-shell :is(.project-git-workbench, .git-comparison-editor) .project-git-commit-subject > strong {
   font-size: 12px;
   font-weight: 450;
   overflow: hidden;
@@ -504,4 +649,453 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+
+/* Git 视图的标签保留独立状态，长分支名不会挤掉关闭和新建操作。 */
+.git-workbench-tabs,
+.git-workbench-tabs > [role='tablist'],
+.git-workbench-tab-group {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.git-workbench-tabs {
+  gap: 2px;
+  min-height: 32px;
+  padding-inline: 8px;
+  border-bottom: 1px solid var(--zeus-product-line);
+  flex: none;
+}
+.git-workbench-tabs > [role='tablist'] {
+  flex: 0 1 auto;
+  overflow: auto hidden;
+}
+.git-workbench-tab-group,
+.git-workbench-tabs [role='tab'] {
+  flex: none;
+}
+.git-workbench-tabs [role='tab'] {
+  position: relative;
+  padding: 4px 9px;
+  color: var(--zeus-product-muted);
+  text-wrap: nowrap;
+  font-size: 12px;
+}
+.git-workbench-tabs [aria-selected='true'] {
+  color: var(--zeus-product-text);
+  box-shadow: inset 0 -2px 0 var(--zeus-product-accent);
+}
+.git-workbench-tabs button:not([role='tab']) {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  color: var(--zeus-product-muted);
+}
+.git-workbench-tabs button svg,
+.git-log-toolbar button svg,
+.git-log-file-actions button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.git-workbench-tabs button:hover,
+.git-log-toolbar button:hover:not(:disabled),
+.git-log-file-actions button:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover);
+}
+.macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-layout[data-single-pane='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.project-git-browser-layout[data-single-pane='true'] > :is(.project-git-navigator, .git-separator-navigation) {
+  display: none;
+}
+
+/* Log 工具栏允许在小宽度递进换行，所有操作仍可用键盘访问。 */
+.git-log-toolbar,
+.git-log-toolbar-actions,
+.git-log-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.git-log-toolbar {
+  flex-wrap: wrap;
+  flex: none;
+  padding: 4px 7px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-log-toolbar > .git-branch-tree-search {
+  flex: 1 1 140px;
+  max-width: 265px;
+}
+.git-log-toolbar-actions {
+  margin-inline-start: auto;
+}
+.git-log-menu-anchor {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+}
+:is(.git-log-toolbar, .git-log-file-actions, .git-workbench-tabs .git-log-menu-anchor) button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  border-radius: 4px;
+}
+.git-log-toolbar button:not([data-variant]),
+.git-log-file-actions button {
+  padding-inline: 6px;
+  white-space: nowrap;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+.git-log-toolbar button[aria-pressed='true'] {
+  background: var(--zeus-source-list-selected);
+  color: var(--zeus-product-text);
+}
+.git-log-toolbar-menu {
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: auto;
+}
+.git-log-root-color {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  color: white;
+  font-size: 9px;
+  font-style: normal;
+  vertical-align: middle;
+}
+.git-log-toolbar-menu strong {
+  color: var(--zeus-product-muted);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.project-git-commit-row[data-current-branch]:not(.is-current) {
+  background: var(--zeus-product-accent-soft);
+}
+.project-git-commit-row[data-own-commit] .project-git-commit-subject > strong {
+  font-weight: 650;
+}
+.project-git-commit-row:is([data-merge-commit], [data-not-cherry-picked]) .project-git-commit-subject > strong {
+  color: var(--zeus-product-muted);
+}
+.git-log-fold {
+  color: var(--zeus-product-muted);
+  text-align: left;
+}
+
+/* 选择器、重置、交互式变基和历史版本窗口采用现有 Git 弹窗布局。 */
+.git-log-filter-dialog,
+.git-history-action-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+.git-history-action-dialog.is-revision {
+  width: min(940px, calc(100vw - 32px));
+}
+.git-log-filter-dialog > header,
+.git-history-action-dialog > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-log-picker-list {
+  max-height: min(45vh, 360px);
+  overflow: auto;
+}
+.git-log-picker-list > :is(label, button),
+.git-log-picker-list details > :is(label, button) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 25px;
+}
+.git-log-picker-list details > summary > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.git-log-picker-list details {
+  margin-inline-start: 12px;
+}
+.git-log-picker-list small {
+  color: var(--zeus-product-muted);
+}
+.git-rebase-plan {
+  max-height: min(55vh, 440px);
+  overflow: auto;
+}
+.git-rebase-plan > div {
+  display: grid;
+  grid-template-columns: 85px 65px minmax(60px, 1fr) 23px 23px;
+  align-items: center;
+  min-height: 30px;
+  gap: 5px;
+}
+.git-rebase-plan > div > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-rebase-plan > div > textarea {
+  grid-column: 1 / -1;
+  width: 100%;
+  resize: vertical;
+}
+.git-rebase-merge-notice {
+  color: var(--zeus-product-muted);
+  margin: 0 0 8px;
+}
+.git-revision-browser {
+  display: grid;
+  grid-template-columns: minmax(150px, 29%) minmax(0, 1fr);
+  min-height: 220px;
+  max-height: 60vh;
+  gap: 8px;
+}
+.git-revision-browser > :is(aside, div) {
+  min-width: 0;
+  overflow: auto;
+}
+.git-revision-browser > aside details {
+  margin-inline-start: 12px;
+}
+.git-revision-browser > aside button {
+  display: block;
+}
+.git-revision-browser .file-preview {
+  min-width: 0;
+  max-height: 60vh;
+}
+@media (max-width: 520px) {
+  .git-revision-browser {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(80px, 1fr) minmax(120px, 2fr);
+  }
+  .git-rebase-plan > div {
+    grid-template-columns: 76px 54px minmax(0, 1fr) 23px 23px;
+  }
+}
+
+/* 提交文件工具和详情共享原检查器，没有详情时让文件区域占用完整高度。 */
+.macos-ai-app.zeus-shell :is(.project-git-browser-content, .git-comparison-editor) .git-log-inspector[data-show-details='false'] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.git-log-file-actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-wrap: wrap;
+  padding: 3px 5px;
+  background: var(--zeus-product-panel);
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-log-file-actions > i {
+  flex: 1;
+}
+.git-log-inspector-tree details > summary,
+.git-workbench-tab-body summary {
+  padding-block: 4px;
+  list-style-position: inside;
+  cursor: pointer;
+}
+.git-log-inspector-tree > details > summary {
+  padding-inline: 6px;
+}
+.git-log-inspector-tree :is(summary, button) > small {
+  color: var(--zeus-product-muted);
+  margin-inline-start: 5px;
+}
+
+/* 项目根和相对仓库目录沿用提交文件树的层级与文字截断。 */
+.git-log-project-root {
+  margin-inline-start: 12px;
+}
+
+.git-log-project-root > summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-log-project-root > summary > svg,
+.git-log-commit-refs > svg {
+  margin-inline-end: 4px;
+  vertical-align: middle;
+}
+
+.git-log-show-branches {
+  margin-inline-start: 6px;
+  color: var(--zeus-product-accent);
+}
+
+/* 更新结果中的文件与两端预览同屏显示。 */
+.git-update-layout {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, var(--git-update-files, 38%)) 6px minmax(0, 1fr);
+}
+
+.git-update-preview {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+@container project-tool (max-width: 740px) {
+  .git-update-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(84px, 1fr) minmax(110px, 2fr);
+  }
+
+  .git-update-layout > .git-separator-update-files {
+    display: none;
+  }
+}
+
+/* Local Changes、Shelf 和 Update Info 共用同一个可滚动区域。 */
+.git-workbench-tab-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.git-workbench-tab-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 5px 8px;
+}
+.git-workbench-tab-body details > details {
+  margin-inline-start: 12px;
+}
+.git-workbench-tab-body.git-workbench-tab-surface {
+  display: block;
+}
+.git-tab-file-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 7px;
+  gap: 7px;
+  font-size: 12px;
+  text-align: left;
+}
+.git-tab-file-row[aria-pressed='true'] {
+  background: var(--zeus-source-list-selected);
+}
+.git-tab-file-row > :is(svg, small) {
+  flex: none;
+}
+.git-tab-file-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Shelf 和本地更改使用独立勾选，不占用文件的打开动作。 */
+.git-tab-checkable-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-tab-checkable-file > button {
+  flex: 1;
+}
+
+:is(.project-git-menu-action-dialog, .project-git-reference-dialog) .project-git-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:is(.project-git-menu-action-dialog, .project-git-reference-dialog) .project-git-checkbox > input {
+  width: auto;
+  min-height: 0;
+}
+
+/* 大量待提交文件在对话框内滚动，保留底部提交操作。 */
+.git-history-file-selection {
+  min-width: 0;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.git-history-file-selection span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Console 按实际记录顺序展示命令、标准输出和错误输出。 */
+.git-console-layout {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.git-console-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-inline-end: 1px solid var(--zeus-product-line);
+}
+.git-console-actions button {
+  display: grid;
+  place-items: center;
+  min-height: 26px;
+  min-width: 26px;
+  border-radius: 5px;
+  color: var(--zeus-product-muted);
+}
+.git-console-actions button[aria-pressed='true'] {
+  background: var(--zeus-source-list-selected);
+}
+.git-console-output {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 9px;
+}
+.git-console-output pre {
+  margin: 0;
+  font: 12px/1.55 var(--zeus-font-family-mono, monospace);
+  white-space: pre;
+}
+.git-console-output[data-wrap='true'] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.git-console-command {
+  color: var(--zeus-product-accent);
+}
+.git-console-stderr {
+  color: var(--zeus-error-text, #aa3434);
+}
+.git-console-output small {
+  display: block;
+  color: var(--zeus-product-muted);
+  margin-block: 0 3px;
+}
+@container project-tool (max-width: 740px) {
+  .git-log-toolbar > .git-branch-tree-search {
+    max-width: none;
+  }
+  .git-log-toolbar-actions {
+    margin-inline-start: 0;
+  }
 }

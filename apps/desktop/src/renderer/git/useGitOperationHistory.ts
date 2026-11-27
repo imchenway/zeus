@@ -50,8 +50,11 @@ export function useGitOperationHistory(client: Pick<DashboardClient, 'loadProjec
       const token = Symbol('git-operation-history');
       request.current = token;
       requestMode.current = mode;
-      current.current = { ...previous, loading: true, error: null };
-      setState(current.current);
+      /** 已有记录时后台刷新不打断阅读，翻页和首屏才显示加载状态。 */
+      if (mode === 'older' || previous.total === null) {
+        current.current = { ...previous, loading: true, error: null };
+        setState(current.current);
+      }
       try {
         /** ponytail: 刷新重读已加载区间；历史阅读量显著增大后再考虑增量变更游标。 */
         const previousTail = previous.items.at(-1);

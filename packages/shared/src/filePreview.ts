@@ -60,7 +60,20 @@ export type FilePreviewTextEncoding = (typeof filePreviewTextEncodings)[number];
 export type FilePreviewRequest = (
   | { kind: 'source'; projectId: string; path: string }
   | { kind: 'task-git'; taskId: string; workspaceId: string; path: string; scope: 'working' | 'committed' }
-  | { kind: 'project-git'; projectId: string; repositoryId: string; path: string; stage?: 'combined' | 'staged' | 'unstaged'; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }
+  | {
+      kind: 'project-git';
+      projectId: string;
+      repositoryId: string;
+      path: string;
+      stage?: 'combined' | 'staged' | 'unstaged';
+      commitHash?: string;
+      comparisonRef?: string;
+      comparisonMode?: 'current' | 'working-tree';
+      /** 查看固定提交中的单个文件，不授予工作区编辑权限。 */
+      snapshotRef?: string;
+      /** Update Info 比较 Git 返回的两个完整提交 ID。 */
+      revisions?: [string, string];
+    }
   | { kind: 'resource'; projectId: string; conversationId: string; resourceId: string; comparison?: 'head' }
   | { kind: 'turn'; projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string }
   | { kind: 'attachment'; localPath?: string; uploadRef?: string }

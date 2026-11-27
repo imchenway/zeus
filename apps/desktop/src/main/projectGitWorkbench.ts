@@ -12,7 +12,9 @@ import {
   getProjectGitPushPreview,
   type ProjectGitPushPreviewInput,
   getGitFilePreviewSources,
+  getProjectGitBranchComparison,
   getProjectGitHistory,
+  getProjectGitLogInfo,
   getProjectGitComparisonDiff,
   getProjectGitBranchSnapshot,
   getProjectGitRepositorySnapshot,
@@ -21,6 +23,11 @@ import {
   type GitDiffSummary,
   type ProjectGitAction,
   type ProjectGitActionResult,
+  type ProjectGitCommandObserver,
+  type ProjectGitBranchComparisonQuery,
+  type ProjectGitComparisonPageQuery,
+  type ProjectGitHistoryAction,
+  type ProjectGitLogRead,
   type ProjectGitBranchSelection,
   type ProjectGitCommitDetail,
   type ProjectGitRepositorySnapshot,
@@ -54,7 +61,8 @@ export interface ProjectGitActionResponse {
   projectId: string;
   repositoryId: string;
   repositoryName: string;
-  result: ProjectGitActionResult;
+  /** Native Checkout can report a confirmed refusal without losing the recorded command. */
+  result: Omit<ProjectGitActionResult, 'outcome'> & { outcome: ProjectGitActionResult['outcome'] | 'blocked' };
   snapshot: ProjectGitRepositorySnapshot;
 }
 
@@ -109,9 +117,30 @@ export class ProjectGitWorkbenchService {
     };
   }
 
-  async loadHistory(projectId: string, repositoryId: string, offset: number, ref?: string) {
+  async loadHistory(projectId: string, repositoryId: string, offset: number, ref?: string, filters?: unknown) {
     const resolved = await this.resolveRepository(projectId, repositoryId);
-    return getProjectGitHistory(resolved.repository.localPath, offset, ref);
+    return getProjectGitHistory(resolved.repository.localPath, offset, ref, filters === undefined ? undefined : parseGitHistoryFilters(filters));
+  }
+
+  /** Log 工具只读取项目内仓库，刷新和筛选不写工作区。 */
+  async loadLogInfo(projectId: string, repositoryId: string, value: unknown) {
+    if (
+      !isRecord(value) ||
+      typeof value.kind !== 'string' ||
+      !['authors', 'identity', 'tree', 'history_paths', 'message', 'patch', 'rebase', 'shelf', 'update', 'resolve', 'cherry', 'children'].includes(value.kind) ||
+      ['ref', 'before'].some((key) => value[key] !== undefined && !validText(value[key])) ||
+      (value.offset !== undefined && typeof value.offset !== 'number')
+    )
+      throw projectGitError('ZEUS_GIT_LOG_REQUEST', 'Invalid Git Log request.');
+    const resolved = await this.resolveRepository(projectId, repositoryId);
+    return getProjectGitLogInfo(resolved.repository.localPath, value as unknown as ProjectGitLogRead);
+  }
+
+  /** 双向历史只读取项目内已发现仓库，查询条件不作为 Git 参数直接透传。 */
+  async loadBranchComparison(projectId: string, repositoryId: string, value: unknown) {
+    const query = parseBranchComparisonQuery(value);
+    const resolved = await this.resolveRepository(projectId, repositoryId);
+    return getProjectGitBranchComparison(resolved.repository.localPath, query);
   }
 
   /** 仅查询当前可信项目发现的仓库，Renderer 不能直接提交账本作用域或路径。 */
@@ -150,8 +179,11 @@ export class ProjectGitWorkbenchService {
 
   /** 桌面仓库身份由自身发现服务校验，不与宿主数据库的登记 ID 混用。 */
   async loadFilePreview(input: Extract<FilePreviewRequest, { kind: 'project-git' }>): Promise<FilePreviewIntent> {
-    for (const value of Object.values(input)) {
-      if (value !== undefined && (typeof value !== 'string' || value.length > 4096 || value.includes('\0'))) throw new Error('Git 预览参数无效。');
+    for (const [key, value] of Object.entries(input)) {
+      if (key !== 'revisions' && value !== undefined && !validText(value)) throw new Error('Git 预览参数无效。');
+    }
+    if (input.revisions !== undefined && (!Array.isArray(input.revisions) || input.revisions.length !== 2 || input.revisions.some((value) => typeof value !== 'string' || !/^[a-f0-9]{40,64}$/u.test(value)))) {
+      throw new Error('Select two Git commits to preview.');
     }
     if (input.stage && !['combined', 'staged', 'unstaged'].includes(input.stage)) throw new Error('Git 预览范围无效。');
     if (input.comparisonMode && !['current', 'working-tree'].includes(input.comparisonMode)) throw new Error('Git 比较范围无效。');
@@ -166,7 +198,7 @@ export class ProjectGitWorkbenchService {
     value: unknown,
     beforeWrite: (repository: DiscoveredGitRepository, action: ProjectGitAction) => Promise<void>,
     signal?: AbortSignal,
-    onCommand?: (command: string) => Promise<void>,
+    onCommand?: ProjectGitCommandObserver,
   ): Promise<ProjectGitActionResponse> {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     const action = parseProjectGitAction(value);
@@ -179,13 +211,38 @@ export class ProjectGitWorkbenchService {
         await beforeWrite(resolved.repository, action);
         signal?.throwIfAborted();
         // 桌面、Core 和模型子进程继承同一系统认证入口，不为每次操作创建临时提示程序。
-        const result = await executeProjectGitAction(repositoryPath, action, signal, undefined, onCommand);
+        /** 只有 Git 明确保护性拒绝且 HEAD 与当前分支仍一致时，才返回可继续的 Checkout。 */
+        const checkout = action.type === 'checkout' || action.type === 'checkout_revision' || (action.type === 'create_branch' && action.checkout !== false);
+        const result = await executeProjectGitAction(repositoryPath, action, signal, undefined, onCommand).catch((error: unknown) => {
+          if (!checkout || signal?.aborted || !isRecord(error) || error.code !== 'ZEUS_GIT_CHECKOUT_BLOCKED') throw error;
+          return { error };
+        });
+        const snapshot = await getProjectGitRepositorySnapshot(repositoryPath);
+        if ('error' in result) {
+          const before = resolved.repository.context;
+          if (snapshot.headSha !== before.headSha || snapshot.branch !== before.branch || snapshot.detached !== before.detached || snapshot.conflictFiles.length) throw result.error;
+          return {
+            projectId: resolved.project.id,
+            repositoryId: resolved.id,
+            repositoryName: resolved.repository.name,
+            snapshot,
+            result: {
+              action: action.type,
+              outcome: 'blocked',
+              branch: snapshot.branch,
+              headSha: snapshot.headSha,
+              conflictFiles: [],
+              stdout: '',
+              stderr: typeof result.error.details === 'string' ? redactGitOutput(result.error.details) : '',
+            },
+          };
+        }
         return {
           projectId: resolved.project.id,
           repositoryId: resolved.id,
           repositoryName: resolved.repository.name,
           result,
-          snapshot: await getProjectGitRepositorySnapshot(repositoryPath),
+          snapshot,
         };
       });
     } catch (error: unknown) {
@@ -265,8 +322,17 @@ function projectOperationRecord(projectId: string, repositoryId: string, reposit
   /** 未保存动作名称时保留空值，由界面明确说明。 */
   const action = typeof result?.action === 'string' && result.action.trim() ? result.action : null;
   /** 只有结构化结果明确给出成功或冲突，才展示确定的操作结果。 */
+  const paused = result?.outcome === 'completed' && response && isRecord(response.snapshot) && response.snapshot.integrationState === 'rebase' && ['history_edit', 'continue_integration', 'rebase', 'checkout_rebase'].includes(action ?? '');
   const status: ProjectGitOperationRecord['status'] =
-    outcome.state === 'accepted' ? 'running' : outcome.state === 'receipted' ? (result?.outcome === 'completed' || result?.outcome === 'conflict' ? result.outcome : 'recorded') : outcome.state;
+    outcome.state === 'accepted'
+      ? 'running'
+      : outcome.state === 'receipted'
+        ? paused
+          ? 'paused'
+          : result?.outcome === 'completed' || result?.outcome === 'conflict' || result?.outcome === 'blocked'
+            ? result.outcome
+            : 'recorded'
+        : outcome.state;
   /** 错误摘要已经由账本脱敏；成功输出仍经过 Git 统一脱敏入口。 */
   const output = redactGitOutput(
     result ? [result.stdout, result.stderr, ...(Array.isArray(result.conflictFiles) ? result.conflictFiles : [])].filter((part): part is string => typeof part === 'string' && Boolean(part)).join('\n') : (outcome.failure?.message ?? ''),
@@ -274,8 +340,9 @@ function projectOperationRecord(projectId: string, repositoryId: string, reposit
   /** 信息缺失和展示截断均可见，不用空输出掩盖。 */
   const limitations: ProjectGitOperationRecord['limitations'] = [];
   if (!action) limitations.push('action_unavailable');
-  if (outcome.state === 'receipted' && (!result || (typeof result.stdout !== 'string' && typeof result.stderr !== 'string'))) limitations.push('output_not_saved');
-  if (output.length > operationOutputLimit) limitations.push('output_truncated');
+  const commandDetails = outcome.commandLog?.details;
+  if (!commandDetails && outcome.state === 'receipted' && (!result || (typeof result.stdout !== 'string' && typeof result.stderr !== 'string'))) limitations.push('output_not_saved');
+  if (commandDetails?.some((entry) => entry?.truncated) || (!commandDetails && output.length > operationOutputLimit)) limitations.push('output_truncated');
   if (!outcome.commandLog) limitations.push('commands_not_saved');
   if (outcome.commandLog?.truncated) limitations.push('commands_truncated');
   return {
@@ -284,13 +351,47 @@ function projectOperationRecord(projectId: string, repositoryId: string, reposit
     repositoryName,
     action,
     startedAt: outcome.acceptedAt,
+    updatedAt: outcome.updatedAt,
     durationMs: status === 'running' ? null : Math.max(0, Date.parse(outcome.updatedAt) - Date.parse(outcome.acceptedAt)),
     status,
     // ponytail: 列表输出上限 64 Ki 字符；需要阅读超长全文时再增加独立详情读取，避免分页传输完整快照。
     output: output.slice(0, operationOutputLimit),
+    stdout: typeof result?.stdout === 'string' ? redactGitOutput(result.stdout).slice(0, operationOutputLimit) : undefined,
+    stderr: typeof result?.stderr === 'string' ? redactGitOutput(result.stderr).slice(0, operationOutputLimit) : undefined,
     commands: outcome.commandLog?.commands.map(redactGitOutput) ?? null,
+    commandDetails,
     limitations,
   };
+}
+
+/** 比较范围和过滤器由桌面入口校验，日期只接受日历选择值。 */
+function parseBranchComparisonQuery(value: unknown): ProjectGitBranchComparisonQuery {
+  if (!isRecord(value) || !validText(value.branchRef) || !validText(value.headRef) || (!value.branch && !value.head)) {
+    throw projectGitError('ZEUS_GIT_COMPARE_INVALID', 'Select a branch and HEAD to compare.');
+  }
+  return { branchRef: value.branchRef, headRef: value.headRef, branch: value.branch === undefined ? undefined : parseGitHistoryFilters(value.branch), head: value.head === undefined ? undefined : parseGitHistoryFilters(value.head) };
+}
+
+/** 普通 Log 与分支比较使用同一套结构化过滤条件。 */
+function parseGitHistoryFilters(page: unknown): ProjectGitComparisonPageQuery {
+  if (
+    !isRecord(page) ||
+    (page.offset !== undefined && typeof page.offset !== 'number') ||
+    ['text', 'author'].some((key) => page[key] !== undefined && !validText(page[key])) ||
+    (page.paths !== undefined && (Array.isArray(page.paths) ? !page.paths.every(validText) : !validText(page.paths))) ||
+    ['regex', 'matchCase', 'me', 'firstParent', 'noMerges', 'follow'].some((key) => page[key] !== undefined && typeof page[key] !== 'boolean') ||
+    (page.authors !== undefined && (!Array.isArray(page.authors) || page.authors.length > 100 || page.authors.some((email) => !validText(email)))) ||
+    (page.sort !== undefined && page.sort !== 'date' && page.sort !== 'topo') ||
+    ['since', 'until'].some((key) => page[key] !== undefined && (typeof page[key] !== 'string' || page[key].length > 35 || !Number.isFinite(Date.parse(page[key]))))
+  ) {
+    throw projectGitError('ZEUS_GIT_COMPARE_FILTER_INVALID', 'Invalid Git Log filters.');
+  }
+  return page as ProjectGitComparisonPageQuery;
+}
+
+/** 限制查询字段的传输大小，并拒绝无法传给 Git 的空字节。 */
+function validText(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 4096 && !value.includes('\0');
 }
 
 /** 解析桌面动作白名单，并保留用户确认的目标快照供共享 Git 层核验。 */
@@ -303,14 +404,44 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     return candidate;
   };
   switch (value.type) {
+    case 'history_edit': {
+      const operation = value.operation;
+      if (
+        typeof operation !== 'string' ||
+        !['reset', 'undo', 'message', 'fixup', 'squash', 'drop', 'interactive', 'push', 'revert_file', 'amend_rebase'].includes(operation) ||
+        ['revision', 'expectedBranch', 'expectedHeadSha', 'mode', 'message', 'remote', 'targetBranch', 'path'].some((key) => value[key] !== undefined && !validText(value[key])) ||
+        (value.paths !== undefined && (!Array.isArray(value.paths) || !value.paths.length || !value.paths.every(validText))) ||
+        (value.plan !== undefined &&
+          (!Array.isArray(value.plan) ||
+            value.plan.some(
+              (entry) =>
+                !isRecord(entry) ||
+                typeof entry.revision !== 'string' ||
+                !/^[a-f0-9]{40,64}$/u.test(entry.revision) ||
+                typeof entry.action !== 'string' ||
+                !['pick', 'edit', 'reword', 'squash', 'fixup', 'drop'].includes(entry.action) ||
+                (entry.action === 'reword' && !validText(entry.message)),
+            )))
+      ) {
+        throw projectGitError('ZEUS_GIT_HISTORY_ACTION_INVALID', 'Invalid Git history action.');
+      }
+      return value as unknown as ProjectGitHistoryAction;
+    }
+    case 'shelve':
+      return { type: 'shelve', message: stringValue('message') ?? '', paths: value.paths === undefined ? undefined : paths() };
+    case 'unshelve':
+      return { type: 'unshelve', shelfRef: stringValue('shelfRef') ?? '', revision: stringValue('revision') ?? '', paths: value.paths === undefined ? undefined : paths(), remove: value.remove === true };
+    case 'delete_shelf':
+      return { type: value.type, shelfRef: stringValue('shelfRef') ?? '', revision: stringValue('revision') ?? '' };
     case 'subtree':
       if (value.operation !== 'add' && value.operation !== 'pull' && value.operation !== 'push') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '不支持的子树操作。');
       return { type: 'subtree', operation: value.operation, path: typeof value.path === 'string' ? value.path : '', remote: stringValue('remote') ?? '', branch: stringValue('branch') ?? '' };
     case 'submodule_update':
       return { type: 'submodule_update', path: typeof value.path === 'string' ? value.path : '' };
     case 'continue_integration':
+    case 'skip_integration':
     case 'abort_integration':
-      if (value.kind !== 'merge' && value.kind !== 'rebase') throw projectGitError('ZEUS_GIT_ACTION_INVALID', '恢复动作必须指定合并或变基。');
+      if (value.kind !== 'merge' && value.kind !== 'rebase' && value.kind !== 'cherry-pick' && value.kind !== 'revert') throw projectGitError('ZEUS_GIT_ACTION_INVALID', 'Select a valid Git operation.');
       return { type: value.type, kind: value.kind };
     case 'fetch':
       return { type: 'fetch', remote: stringValue('remote') };
@@ -371,12 +502,17 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
       if (value.strategy !== 'merge' && value.strategy !== 'rebase' && value.strategy !== 'reset') throw projectGitError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', '更新策略必须是 merge、rebase 或 reset。');
       return { type: 'update', strategy: value.strategy, smart: value.smart === true };
     }
+    case 'update_branch':
+      if (value.strategy !== 'merge' && value.strategy !== 'rebase') throw projectGitError('ZEUS_GIT_UPDATE_STRATEGY_INVALID', 'Select Merge or Rebase.');
+      return { type: 'update_branch', branchName: stringValue('branchName') ?? '', strategy: value.strategy };
     case 'checkout':
       return { type: 'checkout', branchName: stringValue('branchName') ?? '', smart: value.smart === true };
+    case 'checkout_rebase':
+      return { type: 'checkout_rebase', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), expectedBranch: stringValue('expectedBranch') ?? '', expectedHeadSha: stringValue('expectedHeadSha') ?? '' };
     case 'checkout_revision':
       return { type: 'checkout_revision', revision: stringValue('revision') ?? '', smart: value.smart === true };
     case 'create_branch':
-      return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true, smart: value.smart === true };
+      return { type: 'create_branch', branchName: stringValue('branchName') ?? '', baseRef: stringValue('baseRef'), trackRemote: value.trackRemote === true, smart: value.smart === true, checkout: value.checkout !== false };
     case 'delete_branch':
       return { type: 'delete_branch', branchName: stringValue('branchName') ?? '' };
     case 'revert':
@@ -386,7 +522,7 @@ function parseProjectGitAction(value: unknown): ProjectGitAction {
     case 'merge':
       return { type: 'merge', branchName: stringValue('branchName') ?? '', expectedBranch: stringValue('expectedBranch') ?? '', expectedHeadSha: stringValue('expectedHeadSha') ?? '' };
     case 'rebase':
-      return { type: 'rebase', branchName: stringValue('branchName') ?? '' };
+      return { type: 'rebase', branchName: stringValue('branchName') ?? '', expectedBranch: stringValue('expectedBranch'), expectedHeadSha: stringValue('expectedHeadSha') };
     case 'stash':
       return { type: 'stash', message: stringValue('message'), includeUntracked: value.includeUntracked === true, keepIndex: value.keepIndex === true };
     case 'apply_stash':

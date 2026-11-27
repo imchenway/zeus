@@ -60,16 +60,12 @@ function entryKey(entry: PushSelection): string {
 
 /** 查询身份包含完整目标，防止切换目标后复用另一范围的提交。 */
 function previewKey(entry: PushSelection, revision: string): string {
-  return JSON.stringify([entry.repositoryId, entry.sourceBranch, entry.remote, entry.targetBranch.trim(), revision]);
+  return JSON.stringify([entry.repositoryId, entry.sourceBranch, entry.sourceRevision, entry.remote, entry.targetBranch.trim(), revision]);
 }
 
 /** 创建分支行时优先使用该分支的上游，缺省保持同名目标。 */
 function createEntry(repository: ProjectGitRepositoryWorkbenchItem, sourceBranch: string, checked: boolean): PushEntry {
-  /** 每个分支独立解析上游，不借用当前检出分支的目标。 */
-  const upstream = repository.snapshot.branchUpstreams?.[sourceBranch];
-  /** 最长前缀优先，兼容远端名称本身包含斜杠的配置。 */
-  const remote = [...repository.snapshot.remotes].sort((left, right) => right.length - left.length).find((name) => upstream?.startsWith(`${name}/`)) ?? defaultPushTarget(repository).remote;
-  return { repositoryId: repository.id, sourceBranch, remote, targetBranch: upstream?.startsWith(`${remote}/`) ? upstream.slice(remote.length + 1) : sourceBranch, setUpstream: true, checked };
+  return { repositoryId: repository.id, sourceBranch, ...defaultPushTarget(repository, sourceBranch), setUpstream: true, checked };
 }
 
 /** 推送确认以仓库和提交为中心，文件树只负责审阅，不改变推送范围。 */
@@ -116,9 +112,7 @@ export function PushDialog(props: PushDialogProps) {
   const active = entries.find((entry) => entryKey(entry) === activeKey) ?? entries[0];
   /** 预览请求只包含展开项和当前查看项。 */
   const queryEntries = JSON.stringify(
-    entries
-      .filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey))
-      .map(({ repositoryId, remote, sourceBranch, targetBranch, setUpstream }) => ({ repositoryId, remote, sourceBranch, targetBranch, setUpstream })),
+    entries.filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey)).map(({ checked: _checked, ...entry }) => entry),
   );
   /** 结果页与提交期间都锁定范围。 */
   const locked = submitting || props.busy !== null;
@@ -216,7 +210,7 @@ export function PushDialog(props: PushDialogProps) {
     setOperationError(null);
     try {
       await props.onPush(
-        entries.filter((entry) => entry.checked).map(({ repositoryId, remote, sourceBranch, targetBranch, setUpstream }) => ({ repositoryId, remote, sourceBranch, targetBranch: targetBranch.trim(), setUpstream })),
+        entries.filter((entry) => entry.checked).map(({ checked: _checked, ...entry }) => ({ ...entry, targetBranch: entry.targetBranch.trim() })),
         forceWithLease,
         pushTags,
       );

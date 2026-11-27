@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'no
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { canonicalCommandInputJson, type CommandEnvelope, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { openRegularFileNoFollow, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
+import type { ProjectGitConsoleStart, ProjectGitConsoleOutput, ProjectGitOperationRecord } from '@zeus/git-core';
 
 export interface MainCommandRequest<TBody = unknown> {
   envelope: unknown;
@@ -47,7 +48,7 @@ export interface MainCommandOutcome {
   acceptedAt: string;
   updatedAt: string;
   /** 实际命令调用在启动前逐条落盘，失败或重启也不丢失已记录内容。 */
-  commandLog?: { commands: string[]; truncated: boolean };
+  commandLog?: { commands: string[]; truncated: boolean; details?: ProjectGitOperationRecord['commandDetails'] };
   writeMarker?: {
     externalOperationId: string;
     startedAt: string;
@@ -73,7 +74,7 @@ export interface MainCommandExecutionContext {
   /** 必须紧邻并早于第一个本地或外部写出；此调用已 fsync 后才返回。 */
   markWriteStarted(): Promise<void>;
   /** 调用方先脱敏，再记录即将启动的具体命令；不得用于触发命令重放。 */
-  recordExecutionCommand(command: string): Promise<void>;
+  recordExecutionCommand(command: string, start?: ProjectGitConsoleStart): Promise<void | ((output: ProjectGitConsoleOutput[], truncated: boolean) => Promise<void>)>;
 }
 
 export interface MainCommandLedgerOptions {
@@ -93,6 +94,8 @@ const historyPageSize = 50;
 
 /** 命令记录保持有界，超过上限时明确标注，不阻断原 Git 操作。 */
 const maximumCommandLogCharacters = 64 * 1024;
+/** 每个操作保留的已脱敏输出字符数。 */
+const maximumConsoleOutputCharacters = 64 * 1024;
 
 const maximumInlineReceiptBytes = 64 * 1024;
 const maximumArtifactReceiptBytes = 64 * 1024 * 1024;
@@ -285,26 +288,54 @@ export class MainCommandLedger {
     let markerInFlight: Promise<void> | undefined;
     /** 同一操作的命令记录顺序写入，避免并行子调用覆盖彼此。 */
     let commandRecording = Promise.resolve();
+    /** 增量绑定到同一操作及命令位置，更新后才对读取方可见。 */
+    const recordLog = (update: (log: NonNullable<MainCommandOutcome['commandLog']>) => MainCommandOutcome['commandLog']) => {
+      commandRecording = commandRecording.then(async () => {
+        if (!writeStarted) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', '执行命令尚未进入执行阶段。');
+        const commandLog = update(outcome.commandLog ?? { commands: [], truncated: false });
+        if (!commandLog || commandLog === outcome.commandLog) return;
+        const next = { ...outcome, commandLog };
+        await writeAtomicJson(outcomePath, next);
+        outcome = next;
+      });
+      return commandRecording;
+    };
     const externalOperationId = `main:${envelope.commandType}:${envelope.commandId}`;
     const context: MainCommandExecutionContext = {
       envelope,
       requestSha256,
       externalOperationId,
       /** 只有已通过写出门禁的调用才能追加命令，终态仍由原执行流程决定。 */
-      recordExecutionCommand: (command) => {
-        commandRecording = commandRecording.then(async () => {
-          if (!writeStarted || typeof command !== 'string' || !command.trim() || command.includes('\0')) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', '执行命令记录无效或尚未进入执行阶段。');
-          if (outcome.commandLog?.truncated) return;
-          /** ponytail: 每次只重写最多 64 Ki 字符的命令记录；高频长操作出现后再用独立追加文件。 */
-          const commands = outcome.commandLog?.commands ?? [];
-          /** 换行也计入上限，保证大量短命令仍然有界。 */
+      recordExecutionCommand: async (command, start) => {
+        if (typeof command !== 'string' || !command.trim() || command.includes('\0')) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', '执行命令记录无效。');
+        let index = -1;
+        await recordLog((log) => {
+          if (log.truncated) return undefined;
+          const commands = log.commands;
           const remaining = maximumCommandLogCharacters - commands.reduce((length, item) => length + item.length + 1, 0);
-          /** 记录截断与状态分开保存，不能把截断误认为执行失败。 */
-          const next: MainCommandOutcome = { ...outcome, commandLog: { commands: remaining > 1 ? [...commands, command.slice(0, remaining - 1)] : commands, truncated: command.length + 1 > remaining } };
-          await writeAtomicJson(outcomePath, next);
-          outcome = next;
+          if (remaining <= 1) return { ...log, truncated: true };
+          index = commands.length;
+          return {
+            commands: [...commands, command.slice(0, remaining - 1)],
+            truncated: command.length + 1 > remaining,
+            ...(start || log.details ? { details: [...(log.details ?? commands.map(() => null)), start ?? null] } : {}),
+          };
         });
-        return commandRecording;
+        if (!start || index < 0) return;
+        return (output, truncated) =>
+          recordLog((log) => {
+            const details = [...log.details!];
+            let remaining = maximumConsoleOutputCharacters - details.reduce((size, item) => size + (item?.output?.reduce((sum, part) => sum + part.text.length, 0) ?? 0), 0);
+            const retained: ProjectGitConsoleOutput[] = [];
+            for (const part of output) {
+              if (remaining > 0) retained.push({ ...part, text: part.text.slice(0, remaining) });
+              if (part.text.length > remaining) truncated = true;
+              remaining = Math.max(0, remaining - part.text.length);
+            }
+            const previous = details[index];
+            details[index] = { ...start, output: [...(previous?.output ?? []), ...retained], truncated: truncated || Boolean(previous?.truncated) };
+            return { ...log, details };
+          });
       },
       markWriteStarted: async () => {
         if (writeStarted) return;
@@ -644,7 +675,7 @@ function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path
   const failure = record.failure === undefined ? undefined : parseStoredFailure(record.failure, path);
   const state = record.state as MainCommandOutcomeState;
   /** 旧账本没有该字段；已有字段必须完整通过结构及大小校验。 */
-  const commandLog = record.commandLog === undefined ? undefined : exactRecord(record.commandLog, ['commands', 'truncated'], [], 'commandLog', path);
+  const commandLog = record.commandLog === undefined ? undefined : exactRecord(record.commandLog, ['commands', 'truncated'], ['details'], 'commandLog', path);
   if (
     commandLog &&
     (!Array.isArray(commandLog.commands) ||
@@ -668,11 +699,52 @@ function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path
     state,
     acceptedAt,
     updatedAt,
-    ...(commandLog ? { commandLog: { commands: commandLog.commands as string[], truncated: commandLog.truncated as boolean } } : {}),
+    ...(commandLog
+      ? {
+          commandLog: {
+            commands: commandLog.commands as string[],
+            truncated: commandLog.truncated as boolean,
+            ...(commandLog.details === undefined ? {} : { details: parseGitConsoleDetails(commandLog.details, (commandLog.commands as string[]).length, path) }),
+          },
+        }
+      : {}),
     ...(writeMarker ? { writeMarker } : {}),
     ...(result ? { result } : {}),
     ...(failure ? { failure } : {}),
   };
+}
+
+/** 旧命令记录可缺少详情；新详情必须与命令位置对应，并在输出预算内。 */
+function parseGitConsoleDetails(value: unknown, count: number, path: string): NonNullable<ProjectGitOperationRecord['commandDetails']> {
+  if (!Array.isArray(value) || value.length !== count) throw receiptCorrupt('Git Console records do not match their commands.', path);
+  let size = 0;
+  return value.map((item: unknown) => {
+    if (item === null) return null;
+    const entry = exactRecord(item, ['cwd', 'startedAt'], ['output', 'truncated'], 'Git Console command', path);
+    if (
+      typeof entry.cwd !== 'string' ||
+      !entry.cwd ||
+      entry.cwd.includes('\0') ||
+      !validConsoleTime(entry.startedAt) ||
+      (entry.truncated !== undefined && typeof entry.truncated !== 'boolean') ||
+      (entry.output !== undefined && !Array.isArray(entry.output))
+    ) {
+      throw receiptCorrupt('Invalid Git Console command.', path);
+    }
+    const output = entry.output?.map((item: unknown) => {
+      const part = exactRecord(item, ['at', 'stream', 'text'], [], 'Git Console output', path);
+      if (!validConsoleTime(part.at) || (part.stream !== 'stdout' && part.stream !== 'stderr') || typeof part.text !== 'string' || !part.text || part.text.includes('\0')) throw receiptCorrupt('Invalid Git Console output.', path);
+      size += part.text.length;
+      if (size > maximumConsoleOutputCharacters) throw receiptCorrupt('Git Console output exceeds its record budget.', path);
+      return { at: part.at, stream: part.stream, text: part.text } satisfies ProjectGitConsoleOutput;
+    });
+    return { cwd: entry.cwd, startedAt: entry.startedAt, output, truncated: entry.truncated };
+  });
+}
+
+/** 时间戳用毫秒记录，可含小数以保留同毫秒内的输出顺序。 */
+function validConsoleTime(value: unknown): value is number {
+  return typeof value === 'number' && value > 0 && value <= 8.64e15;
 }
 
 function parseWriteMarker(value: unknown, commandType: string, commandId: string, acceptedAt: string, updatedAt: string, path: string): NonNullable<MainCommandOutcome['writeMarker']> {

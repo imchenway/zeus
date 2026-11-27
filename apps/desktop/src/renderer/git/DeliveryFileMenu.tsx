@@ -131,7 +131,13 @@ export function useDeliveryFileMenu(props: {
         danger: true,
         run: () => confirm('rollback', tracked),
       },
-      { icon: <FileCode aria-hidden="true" />, label: props.zh ? '跳转到源码' : 'Jump to Source', shortcut: `${primary}↓`, disabled: props.committedOnly || disabled || !single || single.status === 'deleted', run: () => run('source', id, files) },
+      {
+        icon: <FileCode aria-hidden="true" />,
+        label: props.zh ? '跳转到源码' : 'Jump to Source',
+        shortcut: `${primary}↓`,
+        disabled: props.committedOnly || disabled || !single || single.status === 'deleted',
+        run: () => run('source', id, files),
+      },
     ];
   }
   /** 键盘菜单使用当前节点的屏幕边界；不拦截编辑器内快捷键。 */
@@ -187,7 +193,7 @@ export function useDeliveryFileMenu(props: {
         {menu ? <GitContextMenu {...menu} onClose={() => setMenu(null)} onError={setError} /> : null}
         {confirmation ? <GitMenuActionDialog value={confirmation} zh={props.zh} onClose={() => setConfirmation(null)} /> : null}
         {move ? (
-          <MoveToChangelist
+          <GitChangelistDialog
             zh={props.zh}
             names={lists.names}
             onClose={() => setMove(null)}
@@ -202,48 +208,79 @@ export function useDeliveryFileMenu(props: {
   };
 }
 
-/** 既有列表直接选择；新名称只在明确选择新建后输入。 */
-function MoveToChangelist(props: { zh: boolean; names: string[]; onClose(): void; onMove(name: string): void }) {
+/** 文件移动与 Undo Commit 共用既有列表、新建名称和异步提交状态。 */
+export function GitChangelistDialog(props: {
+  zh: boolean;
+  names: string[];
+  title?: string;
+  description?: string;
+  suggestedName?: string;
+  actionLabel?: string;
+  optionLabel?: string;
+  onClose(): void;
+  onMove(name: string, checked: boolean): void | Promise<void>;
+}) {
   /** 默认列表与新建选项使用独立身份，允许用户列表拥有任意名称。 */
-  const [choice, setChoice] = useState('default');
+  const [choice, setChoice] = useState(() => (props.suggestedName ? 'new' : 'default'));
   /** 名称仅在选择新建时提交。 */
-  const [name, setName] = useState('');
+  const [name, setName] = useState(props.suggestedName?.slice(0, 120) ?? '');
+  /** 用户决定是否移除已应用的 Shelf 文件。 */
+  const [checked, setChecked] = useState(false);
   const [error, setError] = useState<unknown>();
+  const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const title = props.title ?? (props.zh ? '移动到变更列表' : 'Move to Changelist');
   return (
-    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} role="dialog" aria-label={props.zh ? '移动到变更列表' : 'Move to Changelist'}>
+    <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" onDismiss={props.onClose} dismissDisabled={busy} role="dialog" aria-label={title}>
       <section className="project-git-menu-action-dialog" data-modal-surface="dialog">
         <header>
-          <strong>{props.zh ? '移动到变更列表' : 'Move to Changelist'}</strong>
+          <strong>{title}</strong>
+          {props.description ? <p>{props.description}</p> : null}
         </header>
         <ZeusSelect
           size="compact"
           ariaLabel={props.zh ? '变更列表' : 'Changelist'}
           value={choice}
+          disabled={busy}
           onChange={setChoice}
           options={[{ value: 'default', label: props.zh ? '默认变更列表' : 'Default Changelist' }, ...props.names.map((label) => ({ value: `name:${label}`, label })), { value: 'new', label: props.zh ? '新建变更列表…' : 'New Changelist…' }]}
         />
         {choice === 'new' ? (
           <label>
             {props.zh ? '名称' : 'Name'}
-            <input autoFocus value={name} maxLength={120} onChange={(event) => setName(event.target.value)} />
+            <input autoFocus value={name} maxLength={120} disabled={busy} onChange={(event) => setName(event.target.value)} />
+          </label>
+        ) : null}
+        {props.optionLabel ? (
+          <label className="project-git-checkbox">
+            <input type="checkbox" checked={checked} disabled={busy} onChange={(event) => setChecked(event.currentTarget.checked)} />
+            {props.optionLabel}
           </label>
         ) : null}
         {error ? <VisibleApplicationError error={error} /> : null}
         <footer>
-          <Button variant="secondary" onClick={props.onClose}>
+          <Button variant="secondary" disabled={busy} onClick={props.onClose}>
             {props.zh ? '取消' : 'Cancel'}
           </Button>
           <Button
-            disabled={choice === 'new' && !name.trim()}
-            onClick={() => {
+            busy={busy}
+            disabled={busy || (choice === 'new' && !name.trim())}
+            onClick={async () => {
+              if (submitting.current) return;
+              submitting.current = true;
+              setBusy(true);
+              setError(undefined);
               try {
-                props.onMove(choice === 'default' ? '' : choice === 'new' ? name.trim() : choice.slice(5));
+                await props.onMove(choice === 'default' ? '' : choice === 'new' ? name.trim() : choice.slice(5), checked);
               } catch (reason) {
                 setError(reason);
+              } finally {
+                submitting.current = false;
+                setBusy(false);
               }
             }}
           >
-            {props.zh ? '移动' : 'Move'}
+            {props.actionLabel ?? (props.zh ? '移动' : 'Move')}
           </Button>
         </footer>
       </section>
