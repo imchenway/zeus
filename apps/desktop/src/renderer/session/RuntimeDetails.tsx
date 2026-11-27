@@ -264,7 +264,13 @@ function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: Session
 }
 
 /** 运行标识与环境字段共用复制反馈。 */
-export function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: string }) {
+export function RuntimeCopyButton(props: {
+  text: string;
+  label: string;
+  copiedLabel: string;
+  /** 调用方可提供与所在面板风格一致的复制图标。 */
+  icon?: ReactNode;
+}) {
   /** 复制完成后短暂保留成功反馈。 */
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -283,7 +289,7 @@ export function RuntimeCopyButton(props: { text: string; label: string; copiedLa
       data-copied={copied || undefined}
       onClick={async () => setCopied(await copyText(props.text))}
     >
-      {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
+      {copied ? <Check aria-hidden="true" weight="bold" /> : (props.icon ?? <Copy aria-hidden="true" weight="regular" />)}
     </Button>
   );
 }

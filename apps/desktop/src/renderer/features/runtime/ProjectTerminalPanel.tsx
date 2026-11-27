@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { isInteractiveShellSession } from '@zeus/shared';
 import type { AiRuntimeSession, DashboardClient, ProjectRecord } from '../../apiClient.js';
-import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { HugeiconsIcon } from '../../ui/HugeiconsIcon.js';
 import '../../commandCenter.css';
 import { createPortal } from 'react-dom';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
@@ -275,7 +275,7 @@ export function ProjectTerminalPanel(props: {
         disabled={loading || busy}
         aria-expanded={open}
       >
-        <TerminalWindowIcon aria-hidden="true" />
+        <HugeiconsIcon name="terminal" />
       </Button>
       {opened && props.dockHost
         ? createPortal(

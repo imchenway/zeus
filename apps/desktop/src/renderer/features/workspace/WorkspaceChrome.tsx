@@ -2,19 +2,15 @@ import { MotionPresence } from '../../ui/MotionPresence.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { temporaryWorkspaceId, normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
+import { HugeiconsIcon } from '../../ui/HugeiconsIcon.js';
 import { FileTypeIcon } from '../../code/FileTypeIcon.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type ReactNode, type UIEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlarmIcon } from '@phosphor-icons/react/dist/csr/Alarm';
-import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
-import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
-import { FoldersIcon } from '@phosphor-icons/react/dist/csr/Folders';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
-import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
@@ -83,17 +79,6 @@ function readLegacySidebarConversationFilters(): SidebarConversationFilters | un
   } catch {
     return undefined;
   }
-}
-
-/** 数字团队的三个导航入口共用前后相伴的机器人轮廓。 */
-function DigitalTeamIcon() {
-  return (
-    <svg className="project-workspace-mode-line-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <path d="M8 7V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2M13 2v2M7 6v3" />
-      <rect x="2" y="9" width="10" height="9" rx="2" />
-      <path d="M11 7h.01M15 7h.01M5 12.5h.01M9 12.5h.01M5 15.5h4M14 10.5h1.5" />
-    </svg>
-  );
 }
 
 /** 首次工作面聚焦选择工作目录。 */
@@ -556,7 +541,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('automations')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+            <HugeiconsIcon name="automation" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '自动化' : 'Automations'}</span>
         </Button>
@@ -570,7 +555,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('skills')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+            <HugeiconsIcon name="extensions" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
         </Button>
@@ -585,7 +570,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('digital-employees')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <UserCircleIcon size={18} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+            <HugeiconsIcon name="employee" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '数字员工' : 'Digital employees'}</span>
         </Button>
@@ -599,7 +584,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('digital-teams')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <DigitalTeamIcon />
+            <HugeiconsIcon name="users" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '数字团队' : 'Digital teams'}</span>
         </Button>
@@ -902,10 +887,7 @@ export function SidebarNav(props: {
           {props.headerSearch ? null : brandRow}
           <Button unstyled type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
             <span className="project-quick-action-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" focusable="false">
-                <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
-                <path d="m11.4 4.4 4.2 4.2" />
-              </svg>
+              <HugeiconsIcon name="edit" />
             </span>
             <span className="project-quick-action-label">{copy.newChat}</span>
           </Button>
@@ -917,7 +899,7 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('automations')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+              <HugeiconsIcon name="automation" />
             </span>
             <span className="project-quick-action-label">{props.appLanguage === 'zh-CN' ? '自动化' : 'Automations'}</span>
           </Button>
@@ -929,7 +911,7 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('skills')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+              <HugeiconsIcon name="extensions" />
             </span>
             <span className="project-quick-action-label">{copy.skills}</span>
           </Button>
@@ -942,7 +924,7 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('digital-employees')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+              <HugeiconsIcon name="employee" />
             </span>
             <span className="project-quick-action-label">{zh ? '数字员工' : 'Digital employees'}</span>
           </Button>
@@ -954,7 +936,7 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('digital-teams')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <DigitalTeamIcon />
+              <HugeiconsIcon name="users" />
             </span>
             <span className="project-quick-action-label">{zh ? '数字团队' : 'Digital teams'}</span>
           </Button>
@@ -964,10 +946,7 @@ export function SidebarNav(props: {
           {showConversationNavigation ? (
             <Button unstyled type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={props.createProjectBusy}>
               <span className="project-quick-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 20 20" focusable="false">
-                  <path d="M4.2 14.9 4.8 11 12.6 3.2a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8L9 15.2l-3.9.6Z" />
-                  <path d="m11.4 4.4 4.2 4.2" />
-                </svg>
+                <HugeiconsIcon name="edit" />
               </span>
               <span className="project-quick-action-label">{copy.newChat}</span>
             </Button>
@@ -988,7 +967,7 @@ export function SidebarNav(props: {
             onClick={() => setProjectsExpanded((value) => !value)}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <FoldersIcon weight="regular" data-icon-source="phosphor" />
+              <HugeiconsIcon name="folders" />
             </span>
             <span className="project-quick-action-label">{copy.projects}</span>
           </Button>
@@ -1218,7 +1197,7 @@ export function SidebarNav(props: {
                     level="root"
                     surface="fill"
                     expanded={showConversationNavigation ? expanded : undefined}
-                    icon={<FolderIcon className="native-folder-icon zeus-avatar-token" weight="regular" aria-hidden="true" />}
+                    icon={<HugeiconsIcon name="folder" className="native-folder-icon zeus-avatar-token" />}
                     label={<strong>{projectLabel}</strong>}
                     buttonProps={{
                       type: 'button',
@@ -1279,13 +1258,13 @@ export function SidebarNav(props: {
           <nav className="project-global-tools" aria-label={copy.quickActionsLabel}>
             <Button unstyled type="button" className={props.activeNavTarget === 'automations' ? 'active' : ''} aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined} onClick={() => props.onNavigate('automations')}>
               <span aria-hidden="true">
-                <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+                <HugeiconsIcon name="automation" />
               </span>
               {zh ? '自动化' : 'Automations'}
             </Button>
             <Button unstyled type="button" className={props.activeNavTarget === 'skills' ? 'active' : ''} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
               <span aria-hidden="true">
-                <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+                <HugeiconsIcon name="extensions" />
               </span>
               {copy.skills}
             </Button>
@@ -1298,7 +1277,7 @@ export function SidebarNav(props: {
               onClick={() => props.onNavigate('digital-employees')}
             >
               <span aria-hidden="true">
-                <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
+                <HugeiconsIcon name="employee" />
               </span>
               {zh ? '数字员工' : 'Digital employees'}
             </Button>
@@ -1310,7 +1289,7 @@ export function SidebarNav(props: {
               onClick={() => props.onNavigate('digital-teams')}
             >
               <span aria-hidden="true">
-                <DigitalTeamIcon />
+                <HugeiconsIcon name="users" />
               </span>
               {zh ? '数字团队' : 'Digital teams'}
             </Button>

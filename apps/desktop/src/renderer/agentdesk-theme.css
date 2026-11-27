@@ -2957,14 +2957,6 @@ body:has(.macos-ai-app.zeus-shell) {
   inline-size: 19px;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-icon > .project-workspace-mode-line-icon {
-  fill: none;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.45;
-}
-
 /* 仅图标活动栏隐藏文字；上游横向工具栏保留图标与文字。 */
 .macos-ai-app.zeus-shell .project-workspace-mode-rail .project-workspace-mode-label {
   block-size: 1px;

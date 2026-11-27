@@ -171,8 +171,8 @@ export class GitEnvironmentSummaryService {
     let workspace: ZeusTaskWorkspaceRecord | undefined;
     /** 任务和独立会话都按各仓持久记录提供来源。 */
     let sourceBranches: NonNullable<GitEnvironmentSummary['sourceBranches']> = [];
-    /** 按仓库保留实际工作分支，供状态卡确定是否存在共同分支。 */
-    let workingBranches: NonNullable<GitEnvironmentStatus['workingBranches']>;
+    /** 普通仓库复用发现时的 HEAD；任务仓库以工作区身份关联到可读取的工作树。 */
+    let workingBranches: Array<{ repositoryRelativePath: string; branch: string | null; workspaceId?: string }>;
     /** 已完成仓库仍属于整次交付范围。 */
     let repositoryCount = 0;
     /** 目录只来源于项目、工作区或独立会话的持久记录。 */
@@ -189,7 +189,7 @@ export class GitEnvironmentSummaryService {
       if (!selected.length) throw new Error('任务工作区关联已失效，请在代码交付页检查。');
       repositoryCount = selected.length;
       sourceBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: item.sourceBranch || null }));
-      workingBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: item.branchName || null }));
+      workingBranches = selected.map((item) => ({ repositoryRelativePath: item.repositoryRelativePath, branch: null, workspaceId: item.id }));
       sources = selected.flatMap((item) => {
         // 正常完成或回收的仓库没有待交付工作树，不应把空 review 当作读取失败。
         if (['merged', 'reclaimed', 'discarded'].includes(item.state)) return [];
@@ -242,14 +242,22 @@ export class GitEnvironmentSummaryService {
   /** 环境卡片只读取分支与是否有更改，不建立目录监听或生成差异统计。 */
   private async readStatus(projectId: string, scope: GitEnvironmentScope): Promise<GitEnvironmentStatus> {
     const { sources, summary: status, workingBranches } = await this.resolveScope(projectId, scope);
-    /** 多仓库不展示首仓分支；单仓分支与各仓干净状态互不等待。 */
-    const branchSource = sources.find((source) => source.path === status.cwd) ?? (!scope.taskId && status.repositoryCount === 1 ? sources[0] : undefined);
-    /** 同一批读取仍保留各仓路径排除规则与失败语义。 */
-    const [branch, cleanStates] = await Promise.all([
-      branchSource && !status.branch ? readGit('git', ['branch', '--show-current'], { cwd: branchSource.path, timeout: 15_000 }).then((result) => result.stdout.trim() || null) : status.branch,
+    /** 只从已校验并仍存在的工作树读取，已回收的工作区没有当前分支。 */
+    const worktreePaths = new Map(sources.map((source) => [source.id, source.path]));
+    /** 独立工作树读取实际签出的分支，Git 更改状态仍沿用原路径排除规则。 */
+    const [currentBranches, cleanStates] = await Promise.all([
+      Promise.all(
+        workingBranches.map(async ({ repositoryRelativePath, branch, workspaceId }) => {
+          /** 普通仓库的分支已在仓库发现时读取，无需重复查询。 */
+          const cwd = workspaceId ? worktreePaths.get(workspaceId) : undefined;
+          /** Git 在分离 HEAD 时返回空字符串。 */
+          const currentBranch = cwd ? (await readGit('git', ['branch', '--show-current'], { cwd, timeout: 15_000 })).stdout.trim() || null : branch;
+          return { repositoryRelativePath, branch: currentBranch };
+        }),
+      ),
       Promise.all(sources.map((source) => getGitWorktreeClean(source.path, source.ignoredPaths, source.nestedPaths))),
     ]);
-    return { ...status, branch, workingBranches, dirty: cleanStates.some((clean) => !clean) };
+    return { ...status, branch: status.repositoryCount === 1 ? (currentBranches[0]?.branch ?? null) : null, workingBranches: currentBranches, dirty: cleanStates.some((clean) => !clean) };
   }
 
   /** 只向连接发送变化后的摘要；短时写入合并，持续写入最多等待一秒。 */

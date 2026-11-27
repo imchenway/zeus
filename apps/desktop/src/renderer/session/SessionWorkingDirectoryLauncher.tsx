@@ -1,15 +1,12 @@
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
-import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
+import type { ConversationResourceOpenTarget } from '@zeus/shared';
 import { useEffect, useState } from 'react';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { isMacOSPlatform } from '../platform.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { useAsyncAction } from '../ui/useAsyncAction.js';
-
-/** 只保存用户用于打开工作目录的应用身份。 */
-const preferredApplicationKey = 'zeus.working-directory.open-target';
 
 /** 工作目录始终可以交给本机文件管理器，无需等候编辑器检测。 */
 function systemFileManager(): ConversationResourceOpenTarget {
@@ -30,15 +27,19 @@ function applicationIcon(target: ConversationResourceOpenTarget) {
 
 /** 主按钮打开当前工作目录，下拉选择用于此次及后续打开的应用。 */
 export function SessionWorkingDirectoryLauncher(props: { projectId: string; conversationId: string; cwd: string; visible: boolean; zh: boolean }) {
-  /** 目录和会话切换时重新读取本机偏好，应用退出后偏好仍可复用。 */
-  const [preferred, setPreferred] = useState(() => {
+  /** 同一个项目的会话和工作树复用该项目上次使用的应用。 */
+  const preferredApplicationKey = `zeus.working-directory.open-target:${encodeURIComponent(props.projectId)}`;
+  /** 先恢复应用名和原生图标，等待本机应用列表时也能显示上次选择。 */
+  const [preferred, setPreferred] = useState<ConversationResourceOpenTarget | null>(() => {
     try {
-      return window.localStorage.getItem(preferredApplicationKey);
+      /** 缺失或损坏的本机记录交给默认应用处理。 */
+      const application = JSON.parse(window.localStorage.getItem(preferredApplicationKey) ?? 'null') as ConversationResourceOpenTarget | null;
+      return typeof application?.id === 'string' && typeof application.label === 'string' ? application : null;
     } catch {
       return null;
     }
   });
-  /** 空列表表示仍可通过系统文件管理器打开。 */
+  /** 空列表时可使用本机记录或系统文件管理器。 */
   const [applications, setApplications] = useState<ConversationResourceOpenTarget[]>([]);
   /** 探测失败只影响编辑器选项。 */
   const [discoveryError, setDiscoveryError] = useState<unknown>(null);
@@ -65,26 +66,25 @@ export function SessionWorkingDirectoryLauncher(props: { projectId: string; conv
     };
   }, [props.visible]);
 
-  /** 从下拉成功打开后更新偏好，临时兜底打开保留原偏好。 */
-  const { pending, execute: openDirectory } = useAsyncAction(async (target: ConversationOpenTarget, remember: boolean) => {
+  /** 主按钮和下拉都在成功打开后更新项目记录。 */
+  const { pending, execute: openDirectory } = useAsyncAction(async (application: ConversationResourceOpenTarget) => {
     setOpenError(null);
     try {
-      await window.zeus!.openWorkingDirectory({ projectId: props.projectId, conversationId: props.conversationId, cwd: props.cwd, target });
+      await window.zeus!.openWorkingDirectory({ projectId: props.projectId, conversationId: props.conversationId, cwd: props.cwd, target: application.id });
     } catch (error) {
       setOpenError(error);
       return;
     }
-    if (!remember) return;
-    setPreferred(target);
+    setPreferred(application);
     try {
-      window.localStorage.setItem(preferredApplicationKey, target);
+      window.localStorage.setItem(preferredApplicationKey, JSON.stringify(application));
     } catch {
       // 本机存储不可写时，本次面板仍可使用所选应用。
     }
   });
 
-  /** 首选应用未安装时采用宿主返回的第一个可用应用。 */
-  const selected = applications.find((application) => application.id === preferred) ?? applications[0] ?? systemFileManager();
+  /** 用最新列表确认应用可用性，列表尚未取得时沿用本项目的记录。 */
+  const selected = applications.find((application) => application.id === preferred?.id) ?? (applications.length === 0 ? preferred : applications[0]) ?? systemFileManager();
   /** 主按钮的可见文字和读屏名称指向同一个应用。 */
   const selectedLabel = applicationLabel(selected, props.zh);
   const openLabel = props.zh ? `在 ${selectedLabel} 中打开` : `Open in ${selectedLabel}`;
@@ -105,7 +105,7 @@ export function SessionWorkingDirectoryLauncher(props: { projectId: string; conv
           aria-disabled={pending || undefined}
           aria-label={props.zh ? `在 ${selectedLabel} 中打开工作目录` : `Open working directory in ${selectedLabel}`}
           data-icon-tooltip={openLabel}
-          onClick={() => openDirectory(selected.id, false)}
+          onClick={() => openDirectory(selected)}
         >
           <span className="session-working-directory-app-icon">{applicationIcon(selected)}</span>
           <span className="session-quick-actions-copy">
@@ -130,7 +130,11 @@ export function SessionWorkingDirectoryLauncher(props: { projectId: string; conv
               label: applicationLabel(application, props.zh),
               icon: applicationIcon(application),
             }))}
-            onChange={(target) => openDirectory(target, true)}
+            onChange={(target) => {
+              /** 应用列表同时提供打开目标和下次显示所需的名称与图标。 */
+              const application = applications.find((option) => option.id === target);
+              if (application) openDirectory(application);
+            }}
           />
         ) : null}
       </div>

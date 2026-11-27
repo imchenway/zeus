@@ -1,28 +1,14 @@
 import { RuntimeCopyButton } from './RuntimeDetails.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
+import { HugeiconsIcon, type HugeiconsIconName } from '../ui/HugeiconsIcon.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
-import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
-import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
-import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
-import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
-import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
-import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
-import { MinusCircleIcon as MinusCircle } from '@phosphor-icons/react/dist/csr/MinusCircle';
-import { PencilSimpleLineIcon as PencilSimpleLine } from '@phosphor-icons/react/dist/csr/PencilSimpleLine';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { UsersThreeIcon as UsersThree } from '@phosphor-icons/react/dist/csr/UsersThree';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
@@ -37,6 +23,7 @@ import { platformShortcutLabel } from '../platform.js';
 import { conversationGitDeliveryTarget } from '../git/conversationGitDeliveryTarget.js';
 import { GitDeliveryProgress } from '../git/GitDeliveryProgress.js';
 import { GitDeliveryRunActions } from '../git/GitDeliveryRunActions.js';
+import { subscribeProjectGitChanged } from '../git/projectGitWorkbenchState.js';
 import { useGitDeliveryRuns } from '../git/useGitDeliveryRuns.js';
 import { Button } from '../ui/Button.js';
 
@@ -96,9 +83,9 @@ const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 const environmentStatusCache = new WeakMap<DashboardClient, Map<string, GitEnvironmentStatus>>();
 
 /** 分支引用一致时提供单键复制，存在差异时按仓库展示。 */
-function SessionBranchCard(props: { kind: 'source' | 'target'; zh: boolean; branches?: GitEnvironmentStatus['sourceBranches']; branch: string | null; emptyLabel: string }) {
-  /** 会话环境以创建工作树时的分支为来源，以工作分支为目标。 */
-  const label = props.kind === 'source' ? (props.zh ? '来源分支' : 'Source branch') : props.zh ? '目标分支' : 'Target branch';
+function SessionBranchCard(props: { kind: 'source' | 'current'; zh: boolean; branches?: GitEnvironmentStatus['sourceBranches']; branch: string | null; emptyLabel: string }) {
+  /** 来源是工作树创建时的引用，当前分支是实际签出的引用。 */
+  const label = props.kind === 'source' ? (props.zh ? '来源分支' : 'Source branch') : props.zh ? '当前分支' : 'Current branch';
   /** 同名判断以首仓真实分支为起点。 */
   const firstBranch = props.branches?.[0]?.branch;
   /** 多仓只有分支全部已知且一致时才复制单个名称。 */
@@ -107,12 +94,12 @@ function SessionBranchCard(props: { kind: 'source' | 'target'; zh: boolean; bran
   const value = copyableBranch ?? (props.branches?.some((entry) => entry.branch) ? props.branches.map((entry) => `${entry.branch ?? (props.zh ? '未记录' : 'Not recorded')} (${entry.repositoryRelativePath})`).join(' · ') : props.emptyLabel);
   return (
     <div className="session-quick-actions-row is-static session-quick-actions-branch">
-      <GitBranch aria-hidden="true" weight="regular" />
+      <HugeiconsIcon name={props.kind === 'source' ? 'sourceBranch' : 'branch'} />
       <span className="session-quick-actions-copy">
         <small>{label}</small>
         <strong title={value}>{value}</strong>
       </span>
-      {copyableBranch ? <RuntimeCopyButton text={copyableBranch} label={props.zh ? `复制${label}` : `Copy ${label.toLowerCase()}`} copiedLabel={props.zh ? `${label}已复制` : `${label} copied`} /> : null}
+      {copyableBranch ? <RuntimeCopyButton text={copyableBranch} label={props.zh ? `复制${label}` : `Copy ${label.toLowerCase()}`} copiedLabel={props.zh ? `${label}已复制` : `${label} copied`} icon={<HugeiconsIcon name="copy" />} /> : null}
     </div>
   );
 }
@@ -170,14 +157,14 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       : zh
         ? '工作目录不可用'
         : 'Working directory unavailable';
-  /** 有摘要入口时，确定仓库范围后再使用单仓分支。 */
-  const workingBranch = summary?.repositoryCount === 1 ? summary.branch : !gitClient ? (executionContext?.branch ?? props.conversation.workspace?.branchName ?? null) : null;
+  /** 读取失败时不展示缓存中的旧分支；无 Git 客户端时仅使用执行上下文已读取的分支。 */
+  const currentBranch = workspaceState === 'error' ? null : summary?.repositoryCount === 1 ? summary.branch : !gitClient ? (executionContext?.branch ?? null) : null;
   /** 独立工作树提前预留来源卡，直接使用目录时只有已记录的来源才显示。 */
   const showSourceBranch = useTaskWorkspaces || props.conversation.workspaceMode === 'worktree' || Boolean(summary?.sourceBranch || summary?.sourceBranches?.length);
   /** 分支读取和补齐期间保留卡片位置。 */
   const branchLoading = Boolean(gitClient && (workspaceState === 'idle' || workspaceState === 'loading'));
-  /** 没有工作分支时显示实际的 Git 状态。 */
-  const missingWorkingBranch =
+  /** 没有当前分支时显示实际的 Git 状态。 */
+  const missingCurrentBranch =
     workspaceState === 'error'
       ? zh
         ? 'Git 状态读取失败'
@@ -199,20 +186,18 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   /** 只区分是否有未提交更改，不读取或显示文件数及差异行数。 */
   const dirty = summary?.dirty ?? false;
   /** 交付行用图形和语义色区分 Git 状态，完整含义供悬停和读屏读取。 */
-  const deliveryStatus =
+  const deliveryStatus: { icon: HugeiconsIconName; state: string; label: string } =
     openingDelivery?.conversationId === props.conversation.id
-      ? { icon: CircleNotch, state: 'loading', label: zh ? '正在打开代码交付…' : 'Opening code delivery…' }
+      ? { icon: 'loading', state: 'loading', label: zh ? '正在打开代码交付…' : 'Opening code delivery…' }
       : !summary && (workspaceState === 'idle' || workspaceState === 'loading')
-        ? { icon: CircleNotch, state: 'loading', label: zh ? '正在读取 Git 状态…' : 'Loading Git status…' }
+        ? { icon: 'loading', state: 'loading', label: zh ? '正在读取 Git 状态…' : 'Loading Git status…' }
         : workspaceState === 'error'
-          ? { icon: WarningCircle, state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
+          ? { icon: 'error', state: 'error', label: zh ? 'Git 状态读取失败' : 'Failed to load Git status' }
           : dirty
-            ? { icon: PencilSimpleLine, state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
+            ? { icon: 'edit', state: 'dirty', label: zh ? '有未提交更改' : 'Uncommitted changes' }
             : summary?.repositoryCount
-              ? { icon: CheckCircle, state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
-              : { icon: MinusCircle, state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
-  /** 保持状态图标的组件身份，加载时复用会话已有的旋转及减弱动画规则。 */
-  const DeliveryStatusIcon = deliveryStatus.icon;
+              ? { icon: 'clean', state: 'clean', label: zh ? '工作区干净' : 'Working tree clean' }
+              : { icon: 'unavailable', state: 'unavailable', label: zh ? '非 Git 目录' : 'Not a Git repository' };
   /** 进入页面不依赖预读成功；加载和目录错误由交付页呈现并提供重试。 */
   const canOpenDelivery = Boolean(conversationGitClient || (useTaskWorkspaces && props.onOpenGitDelivery));
   const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
@@ -294,7 +279,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setWorkspaceError(null);
   }, [gitClient, summaryKey]);
 
-  /** 打开卡片、轮次切换、交付完成和窗口恢复焦点时按需读取，关闭后取消请求。 */
+  /** 打开卡片、轮次切换、Git 操作完成或窗口恢复焦点后按需读取。 */
   useEffect(() => {
     if (!cardVisible || !gitClient) return;
     /** 后续读取取消旧请求，旧范围和旧结果不能覆盖当前状态。 */
@@ -333,11 +318,14 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     const unsubscribeDelivery = window.zeus?.onTaskGitDeliveryChanged?.((changedTaskId) => {
       if (changedTaskId === taskId) refreshStatus();
     });
+    /** 项目内签出分支后复用已有的操作完成通知。 */
+    const unsubscribeGitChanged = subscribeProjectGitChanged(props.conversation.projectId, refreshStatus);
     refreshStatus();
     window.addEventListener('focus', refreshStatus);
     return () => {
       controller?.abort();
       unsubscribeDelivery?.();
+      unsubscribeGitChanged();
       window.removeEventListener('focus', refreshStatus);
     };
   }, [cardVisible, gitClient, summaryKey, props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, props.state.activeTurnId, useTaskWorkspaces, directWorkspace, taskId]);
@@ -481,7 +469,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           data-icon-tooltip={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           onClick={() => setOpen((current) => !current)}
         >
-          <Desktop aria-hidden="true" weight="regular" />
+          <HugeiconsIcon name="computer" />
         </Button>
       )}
 
@@ -512,11 +500,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
                 <div className="session-quick-actions-list">
                   <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
-                    {cwd ? <FileTypeIcon path={cwd} kind="directory" size={17} /> : <Folder aria-hidden="true" weight="regular" />}
+                    <HugeiconsIcon name="folder" />
                     <span className="session-quick-actions-copy">
                       <strong>{workingDirectoryLabel}</strong>
                     </span>
-                    {cwd ? <RuntimeCopyButton text={cwd} label={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} /> : null}
+                    {cwd ? <RuntimeCopyButton text={cwd} label={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} icon={<HugeiconsIcon name="copy" />} /> : null}
                   </div>
                   {cwd && window.zeus?.openWorkingDirectory ? (
                     <SessionWorkingDirectoryLauncher
@@ -538,16 +526,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       emptyLabel={branchLoading ? (zh ? '正在读取分支…' : 'Loading branch…') : zh ? '未记录' : 'Not recorded'}
                     />
                   ) : null}
-                  <SessionBranchCard kind="target" zh={zh} branches={summary?.workingBranches} branch={workingBranch} emptyLabel={missingWorkingBranch} />
+                  <SessionBranchCard kind="current" zh={zh} branches={workspaceState === 'error' ? undefined : summary?.workingBranches} branch={currentBranch} emptyLabel={missingCurrentBranch} />
 
                   {subagentCount > 0 && props.onOpenSubagents ? (
                     <Button unstyled type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
-                      <UsersThree aria-hidden="true" weight="regular" />
+                      <HugeiconsIcon name="users" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '智能体' : 'Agents'}</strong>
                         <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
                       </span>
-                      <ArrowSquareOut aria-hidden="true" weight="regular" />
+                      <HugeiconsIcon name="external" />
                     </Button>
                   ) : null}
 
@@ -560,7 +548,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       aria-pressed={props.sideQuestionOpen ?? false}
                       onClick={(event) => toggleTool(event.currentTarget, props.onToggleSideQuestion)}
                     >
-                      <ChatCircle aria-hidden="true" weight="regular" />
+                      <HugeiconsIcon name="chat" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '侧边栏会话' : 'Sidebar conversation'}</strong>
                       </span>
@@ -577,7 +565,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     data-icon-tooltip={platformShortcutLabel('⌘⇧B')}
                     onClick={(event) => toggleTool(event.currentTarget, props.onToggleBrowser)}
                   >
-                    <GlobeSimple aria-hidden="true" weight="regular" />
+                    <HugeiconsIcon name="browser" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '浏览器' : 'Browser'}</strong>
                     </span>
@@ -594,7 +582,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       data-icon-tooltip="Ctrl+`"
                       onClick={(event) => toggleTool(event.currentTarget, props.onToggleTerminal)}
                     >
-                      <TerminalWindow aria-hidden="true" weight="regular" />
+                      <HugeiconsIcon name="terminal" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '会话终端' : 'Conversation terminal'}</strong>
                       </span>
@@ -602,11 +590,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   ) : null}
 
                   <Button unstyled type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} data-icon-tooltip={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
-                    <FileCode aria-hidden="true" weight="regular" />
+                    <HugeiconsIcon name="review" />
                     <span className="session-quick-actions-copy">
                       <strong>{zh ? '代码审查' : 'Code review'}</strong>
                     </span>
-                    <ArrowSquareOut aria-hidden="true" weight="regular" />
+                    <HugeiconsIcon name="external" />
                   </Button>
 
                   <div className="session-quick-actions-delivery">
@@ -621,20 +609,22 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       onPointerEnter={preloadDelivery}
                       onFocus={preloadDelivery}
                     >
-                      <GithubLogo aria-hidden="true" weight="regular" />
+                      <HugeiconsIcon name="delivery" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
                         {deliveryProgressError ? <small role="status">{zh ? '交付进度读取失败' : 'Delivery progress unavailable'}</small> : null}
                       </span>
                       {deliveryRun ? null : (
                         <IconTooltip label={deliveryStatus.label}>
-                          <DeliveryStatusIcon
+                          <HugeiconsIcon
+                            name={deliveryStatus.icon}
                             role="img"
+                            aria-hidden={false}
                             aria-label={deliveryStatus.label}
                             className={`session-quick-actions-delivery-status${deliveryStatus.state === 'loading' ? ' session-conversation-state-spinner' : ''}`}
                             data-state={deliveryStatus.state}
-                            size={17}
-                            weight="regular"
+                            width={17}
+                            height={17}
                           />
                         </IconTooltip>
                       )}

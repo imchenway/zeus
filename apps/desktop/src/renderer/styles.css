@@ -12239,10 +12239,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border-radius: 0;
   color: var(--zeus-project-row-muted);
   display: block;
-  fill: currentColor;
   inline-size: 17px;
   min-block-size: 0;
-  stroke: none;
 }
 
 /* 2026-06-27 macOS hidden-titlebar compact top inset final cover：顶部快捷入口必须落在红黄绿窗口按钮下方，但不能再为红绿灯保留大块死空间。 */

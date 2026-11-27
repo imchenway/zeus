@@ -97,23 +97,31 @@ export function subscribeProjectGitRefresh(projectId: string, refresh: (force?: 
       }
     }, 250);
   };
-  const changed = (event: Event) => {
-    if ((event as CustomEvent<string>).detail === projectId) schedule(true);
-  };
+  /** 界面内的 Git 操作完成后沿用既有的合并刷新。 */
+  const unsubscribeChange = subscribeProjectGitChanged(projectId, () => schedule(true));
   const unsubscribe = window.zeus?.onProjectSourceEvent?.((event) => {
     if (event.projectId === projectId) schedule(true);
   });
   const wake = () => schedule();
   window.addEventListener('focus', wake);
   document.addEventListener('visibilitychange', wake);
-  window.addEventListener('zeus:git-workbench-changed', changed);
   return () => {
     clearTimeout(timer);
     unsubscribe?.();
+    unsubscribeChange();
     window.removeEventListener('focus', wake);
     document.removeEventListener('visibilitychange', wake);
-    window.removeEventListener('zeus:git-workbench-changed', changed);
   };
+}
+
+/** 仅订阅指定项目的 Git 操作通知，供按需读取的界面刷新。 */
+export function subscribeProjectGitChanged(projectId: string, refresh: () => void): () => void {
+  /** 同一窗口中的其他项目不会触发当前项目的状态读取。 */
+  const changed = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === projectId) refresh();
+  };
+  window.addEventListener('zeus:git-workbench-changed', changed);
+  return () => window.removeEventListener('zeus:git-workbench-changed', changed);
 }
 
 export function notifyProjectGitChanged(projectId: string): void {

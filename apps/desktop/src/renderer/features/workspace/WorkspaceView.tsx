@@ -1,7 +1,7 @@
 import { ProjectSourceWorktreeSelect } from '../../code/ProjectSourceWorktreeSelect.js';
 import { ProjectTerminalPanel } from '../runtime/ProjectTerminalPanel.js';
 import { WorkspaceSearch } from '../../code/WorkspaceSearch.js';
-import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import { HugeiconsIcon } from '../../ui/HugeiconsIcon.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
@@ -28,8 +28,6 @@ import { BrowserIcon } from '@phosphor-icons/react/dist/csr/Browser';
 import { GlobeIcon } from '@phosphor-icons/react/dist/csr/Globe';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
-import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { CodeSimpleIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
 import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
@@ -805,7 +803,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             data-project-tool="tasks"
             aria-current={(activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'tasks' ? 'page' : undefined}
           >
-            <ListChecksIcon aria-hidden="true" />
+            <HugeiconsIcon name="tasks" />
           </Button>
           <Button
             unstyled
@@ -819,7 +817,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-expanded={projectGitOpen}
             aria-controls="project-tool-panel"
           >
-            <GitBranchIcon aria-hidden="true" />
+            <HugeiconsIcon name="branch" />
           </Button>
           <Button
             unstyled
@@ -832,7 +830,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             data-project-tool="source"
             aria-current={sourceVisible ? 'page' : undefined}
           >
-            <CodeSimpleIcon aria-hidden="true" />
+            <HugeiconsIcon name="source" />
           </Button>
           <Button
             unstyled
@@ -847,7 +845,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             aria-haspopup="dialog"
             aria-expanded={projectCommandsProjectId === selectedProject.id}
           >
-            <TerminalIcon aria-hidden="true" />
+            <HugeiconsIcon name="commands" />
           </Button>
           {props.commandClient ? (
             <ProjectTerminalPanel
@@ -864,7 +862,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             />
           ) : (
             <Button unstyled type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
-              <TerminalWindowIcon aria-hidden="true" />
+              <HugeiconsIcon name="terminal" />
             </Button>
           )}
         </>
@@ -897,7 +895,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-haspopup="dialog"
       aria-expanded={searchOpen}
     >
-      <MagnifyingGlass aria-hidden="true" />
+      <HugeiconsIcon name="search" />
     </Button>
   );
 
