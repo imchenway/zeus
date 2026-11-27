@@ -310,21 +310,6 @@
 .git-branch-kind[data-kind='remote'] {
   background: var(--zeus-source-list-selected);
 }
-.macos-ai-app .project-git-branch-context-menu {
-  width: max-content;
-  min-width: min(260px, calc(100vw - 16px));
-  max-width: min(400px, calc(100vw - 16px));
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  border-radius: 8px;
-  box-shadow: 0 8px 26px rgb(0 0 0 / 16%);
-  padding: 5px;
-}
-.macos-ai-app .project-git-branch-context-menu button {
-  min-height: 28px;
-  border-radius: 4px;
-  font-size: 12px;
-}
 .git-reference-menu-heading {
   display: flex;
   align-items: center;

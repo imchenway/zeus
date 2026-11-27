@@ -208,7 +208,7 @@
 }
 
 /* 选择器内部列表复用外层表面，避免重复绘制阴影和圆角。 */
-.macos-ai-app.zeus-shell :where(.zeus-select-popover, .zeus-select-menu, .project-more-popover, .zeus-quiet-more-menu, [role='listbox']:not(.zeus-select-listbox)) {
+.macos-ai-app.zeus-shell :where(.zeus-select-popover, .zeus-select-menu, [role='listbox']:not(.zeus-select-listbox)) {
   background: var(--agentdesk-surface-strong);
   border-color: var(--agentdesk-border-strong);
   box-shadow: var(--agentdesk-shadow);
@@ -280,7 +280,7 @@
   border-radius: var(--agentdesk-radius-surface);
 }
 
-.macos-ai-app.zeus-shell :where(.zeus-select-popover, .zeus-select-menu, .project-more-popover, .zeus-quiet-more-menu, .project-git-branch-popover, [role='listbox']:not(.zeus-select-listbox)) {
+.macos-ai-app.zeus-shell :where(.zeus-select-popover, .zeus-select-menu, .project-git-branch-popover, [role='listbox']:not(.zeus-select-listbox)) {
   border-radius: var(--agentdesk-radius-card);
 }
 
@@ -2124,21 +2124,9 @@ body:has(.macos-ai-app.zeus-shell) {
   outline-offset: -1px;
 }
 
+/* Git 操作菜单覆盖工作台侧栏与浮动工具栏。 */
 .project-git-context-menu {
-  position: fixed;
   z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  width: max-content;
-  min-width: 210px;
-  max-width: min(360px, calc(100vw - 16px));
-  max-height: calc(100vh - 16px);
-  overflow: auto;
-  padding: 5px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 8px;
-  background: var(--zeus-product-panel, white);
-  box-shadow: 0 8px 30px #0003;
 }
 .project-git-context-menu > strong {
   padding: 7px 9px;
@@ -2149,37 +2137,6 @@ body:has(.macos-ai-app.zeus-shell) {
   white-space: nowrap;
   border-bottom: 0;
   margin-bottom: 4px;
-}
-.project-git-context-menu > button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  border: 0;
-  border-radius: 4px;
-  padding: 7px 9px;
-  text-align: left;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  box-shadow: none;
-}
-.project-git-context-menu > button > kbd {
-  flex: none;
-  color: var(--zeus-product-muted);
-  font: inherit;
-}
-.project-git-context-menu > button:hover:not(:disabled):not([aria-disabled='true']),
-.project-git-context-menu > button:focus-visible {
-  background: var(--zeus-interaction-hover);
-  outline: none;
-}
-.project-git-context-menu > button:disabled {
-  opacity: 0.4;
-}
-.project-git-context-menu > button[data-danger] {
-  color: var(--zeus-control-danger-text);
 }
 .project-git-menu-action-dialog {
   width: min(480px, calc(100vw - 40px));

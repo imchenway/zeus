@@ -1,6 +1,14 @@
 import { isMacOSPlatform } from '../platform.js';
 import { notifyProjectGitChanged } from './projectGitWorkbenchState.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
+import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import type { FilePreviewRequest, GitDeliveryFileActionInput } from '@zeus/shared';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuConfirmation, type GitMenuItem } from './GitContextMenu.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -103,25 +111,27 @@ export function useDeliveryFileMenu(props: {
     const alt = isMacOSPlatform() ? '⌥' : 'Alt+';
     const shift = isMacOSPlatform() ? '⇧' : 'Shift+';
     return [
-      { label: props.zh ? '查看差异' : 'Show Diff', shortcut: `${primary}D`, disabled: disabled || !single, run: () => props.onSelectFile(id, single!.path) },
-      { label: props.zh ? '在新窗口查看差异' : 'Show Diff in a New Window', disabled: disabled || !single, run: () => props.onOpenFile(id, single!.path) },
-      { label: props.zh ? '刷新' : 'Refresh', shortcut: 'F5', disabled: props.disabled, run: () => run('refresh', id, []) },
-      { label: props.zh ? '加入版本控制' : 'Add to VCS', shortcut: `${alt}${primary}A`, disabled: disabled || !props.working || !untracked.length, run: () => run('stage', id, untracked) },
+      { icon: <GitDiff aria-hidden="true" />, label: props.zh ? '查看差异' : 'Show Diff', shortcut: `${primary}D`, disabled: disabled || !single, run: () => props.onSelectFile(id, single!.path) },
+      { icon: <ArrowSquareOut aria-hidden="true" />, label: props.zh ? '在新窗口查看差异' : 'Show Diff in a New Window', disabled: disabled || !single, run: () => props.onOpenFile(id, single!.path) },
+      { icon: <ArrowClockwise aria-hidden="true" />, label: props.zh ? '刷新' : 'Refresh', shortcut: 'F5', disabled: props.disabled, run: () => run('refresh', id, []) },
+      { icon: <Plus aria-hidden="true" />, label: props.zh ? '加入版本控制' : 'Add to VCS', shortcut: `${alt}${primary}A`, disabled: disabled || !props.working || !untracked.length, run: () => run('stage', id, untracked) },
       {
+        icon: <ArrowRight aria-hidden="true" />,
         label: props.zh ? '移动到变更列表…' : 'Move to Changelist…',
         shortcut: `${shift}${primary}M`,
         disabled: disabled || !props.working || !tracked.length || !group.localPath,
         run: () => setMove({ root: group.localPath!, paths: tracked.map((file) => file.path) }),
       },
-      { label: props.zh ? '删除…' : 'Delete…', disabled: disabled || !props.working || !existing.length, danger: true, run: () => confirm('trash', existing) },
+      { icon: <Trash aria-hidden="true" />, label: props.zh ? '删除…' : 'Delete…', disabled: disabled || !props.working || !existing.length, danger: true, run: () => confirm('trash', existing) },
       {
+        icon: <ArrowCounterClockwise aria-hidden="true" />,
         label: props.zh ? '回滚…' : 'Rollback…',
         shortcut: `${alt}${primary}Z`,
         disabled: disabled || !props.working || !tracked.length || files.some((file) => file.status === 'conflict'),
         danger: true,
         run: () => confirm('rollback', tracked),
       },
-      { label: props.zh ? '跳转到源码' : 'Jump to Source', shortcut: `${primary}↓`, disabled: props.committedOnly || disabled || !single || single.status === 'deleted', run: () => run('source', id, files) },
+      { icon: <FileCode aria-hidden="true" />, label: props.zh ? '跳转到源码' : 'Jump to Source', shortcut: `${primary}↓`, disabled: props.committedOnly || disabled || !single || single.status === 'deleted', run: () => run('source', id, files) },
     ];
   }
   /** 键盘菜单使用当前节点的屏幕边界；不拦截编辑器内快捷键。 */

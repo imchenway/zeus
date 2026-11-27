@@ -3,8 +3,11 @@ import { PushDialog } from './GitPushDialog.js';
 import { DotsThreeIcon as DotsThree } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { isMacOSPlatform } from '../platform.js';
 import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCommit';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerge';
+import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import {
   projectGitWorkbenchCacheEntry,
@@ -50,9 +53,13 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/Caret
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitCommitDetail, ProjectGitOperationRecord, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
@@ -68,6 +75,23 @@ interface GitContextTarget {
   repositoryId: string;
   ref: string;
 }
+
+/** 按 Git 动作选图标，避免依赖中英文菜单文案。 */
+const gitContextActionIcons: Partial<Record<ProjectGitAction['type'], ReactNode>> = {
+  apply_stash: <Archive aria-hidden="true" />,
+  checkout: <GitBranch aria-hidden="true" />,
+  checkout_revision: <GitCommit aria-hidden="true" />,
+  cherry_pick: <ArrowRight aria-hidden="true" />,
+  delete_branch: <Trash aria-hidden="true" />,
+  delete_tag: <Trash aria-hidden="true" />,
+  drop_stash: <Trash aria-hidden="true" />,
+  fetch: <ArrowDown aria-hidden="true" />,
+  merge: <GitMerge aria-hidden="true" />,
+  push_tag: <ArrowUp aria-hidden="true" />,
+  rebase: <ArrowsClockwise aria-hidden="true" />,
+  revert: <ArrowCounterClockwise aria-hidden="true" />,
+  update: <ArrowDown aria-hidden="true" />,
+};
 
 export interface ProjectGitWorkbenchProps {
   /** 嵌入工作区提供额外工具入口。 */
@@ -447,6 +471,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     const action = (title: string, value: ProjectGitAction, confirmation?: string, danger = false, disabled = false) =>
       items.push({
         label: title,
+        icon: gitContextActionIcons[value.type],
         disabled: busy !== null || disabled,
         danger,
         run: () => {
@@ -454,9 +479,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           else return execute(repository, value, title).then(() => {});
         },
       });
-    const form = (title: string, field: string, build: (text: string) => ProjectGitAction, initialValue = '') =>
+    /** 分支表单菜单同时描述动作和需要填写的字段。 */
+    const form = (title: string, field: string, build: (text: string) => ProjectGitAction, initialValue = '', icon: ReactNode = <GitBranch aria-hidden="true" />) =>
       items.push({
         label: title,
+        icon,
         disabled: busy !== null,
         run: () => setMenuConfirmation({ title, description: `${repository.name} · ${target.ref}`, field, initialValue, run: async (text) => (await execute(repository, build(text), title)) === 'completed' }),
       });
@@ -474,8 +501,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           target.ref.slice(remote.length + 1),
         );
       }
-      items.push({ label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: target.ref, comparisonMode: 'current' }) });
-      items.push({ label: label('与工作区比较', 'Compare with working tree'), run: () => openDiffWindow(repository, '', { comparisonRef: target.ref, comparisonMode: 'working-tree' }) });
+      items.push({ icon: <GitDiff aria-hidden="true" />, label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: target.ref, comparisonMode: 'current' }) });
+      items.push({ icon: <GitDiff aria-hidden="true" />, label: label('与工作区比较', 'Compare with working tree'), run: () => openDiffWindow(repository, '', { comparisonRef: target.ref, comparisonMode: 'working-tree' }) });
       newBranch(target.ref);
       action(
         label(`将“${target.ref}”合并到“${repository.snapshot.branch}”…`, `Merge '${target.ref}' into '${repository.snapshot.branch}'…`),
@@ -495,7 +522,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         current || repository.snapshot.detached,
       );
       if (target.kind === 'local') {
-        form(label('重命名分支…', 'Rename branch…'), label('新名称', 'New name'), (newName) => ({ type: 'rename_branch', branchName: target.ref, newName }), target.ref);
+        form(label('重命名分支…', 'Rename branch…'), label('新名称', 'New name'), (newName) => ({ type: 'rename_branch', branchName: target.ref, newName }), target.ref, <PencilSimple aria-hidden="true" />);
         action(
           label('删除本地分支…', 'Delete local branch…'),
           { type: 'delete_branch', branchName: target.ref },
@@ -504,17 +531,18 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           current,
         );
       }
-      items.push({ label: label('复制分支名', 'Copy branch name'), run: () => copy(target.ref) });
+      items.push({ icon: <Copy aria-hidden="true" />, label: label('复制分支名', 'Copy branch name'), run: () => copy(target.ref) });
     } else if (target.kind === 'commit' || target.kind === 'tag') {
       const revision = target.kind === 'tag' ? `refs/tags/${target.ref}` : target.ref;
       items.push({
+        icon: <GitCommit aria-hidden="true" />,
         label: label('查看提交详情', 'View commit details'),
         run: () => {
           setTab('log');
           selectCommit(repository, revision);
         },
       });
-      items.push({ label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: revision, comparisonMode: 'current' }) });
+      items.push({ icon: <GitDiff aria-hidden="true" />, label: label('与当前分支比较', 'Compare with current branch'), run: () => openDiffWindow(repository, '', { comparisonRef: revision, comparisonMode: 'current' }) });
       action(
         label('反向提交…', 'Revert commit…'),
         { type: 'revert', revision },
@@ -535,6 +563,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       );
       newBranch(revision);
       items.push({
+        icon: <Plus aria-hidden="true" />,
         label: label('创建附注标签…', 'Create annotated tag…'),
         disabled: busy !== null,
         run: () =>
@@ -555,16 +584,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           );
       }
       if (target.kind === 'tag') action(label('删除本地标签…', 'Delete local tag…'), { type: 'delete_tag', tagName: target.ref }, label('仅删除本地标签，不删除远程标签。', 'Delete the local tag only.'), true);
-      items.push({ label: target.kind === 'tag' ? label('复制标签名', 'Copy tag name') : label('复制提交哈希', 'Copy commit hash'), run: () => copy(target.ref) });
+      items.push({ icon: <Copy aria-hidden="true" />, label: target.kind === 'tag' ? label('复制标签名', 'Copy tag name') : label('复制提交哈希', 'Copy commit hash'), run: () => copy(target.ref) });
       const commit = repository.snapshot.recentCommits.find((item) => item.hash === target.ref);
-      if (commit) items.push({ label: label('复制提交说明', 'Copy commit message'), run: () => copy(commit.subject) });
+      if (commit) items.push({ icon: <Copy aria-hidden="true" />, label: label('复制提交说明', 'Copy commit message'), run: () => copy(commit.subject) });
     } else if (target.kind === 'stash') {
       action(label('应用贮藏', 'Apply stash'), { type: 'apply_stash', stashRef: target.ref });
       action(label('应用并移除贮藏…', 'Pop stash…'), { type: 'apply_stash', stashRef: target.ref, pop: true }, label('应用成功后删除该贮藏；发生冲突时保留。', 'Remove the stash after successful application; keep it on conflicts.'));
       action(label('删除贮藏…', 'Drop stash…'), { type: 'drop_stash', stashRef: target.ref }, label('将永久删除该贮藏，无法撤销。', 'Permanently delete this stash. This cannot be undone.'), true);
-      items.push({ label: label('复制贮藏引用', 'Copy stash reference'), run: () => copy(target.ref) });
+      items.push({ icon: <Copy aria-hidden="true" />, label: label('复制贮藏引用', 'Copy stash reference'), run: () => copy(target.ref) });
     } else {
       items.push({
+        icon: <GitDiff aria-hidden="true" />,
         label: label('代码交付', 'Code delivery'),
         run: () => {
           setSelectedRepositoryId(repository.id);
@@ -572,6 +602,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         },
       });
       items.push({
+        icon: <GitCommit aria-hidden="true" />,
         label: label('查看历史', 'View history'),
         run: () => {
           setSelectedRepositoryId(repository.id);
@@ -594,6 +625,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         !repository.snapshot.remotes.length || repository.snapshot.detached,
       );
       items.push({
+        icon: <ArrowUp aria-hidden="true" />,
         label: label('推送…', 'Push…'),
         disabled: busy !== null,
         run: () => {
@@ -602,6 +634,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         },
       });
       items.push({
+        icon: <Archive aria-hidden="true" />,
         label: label('贮藏当前修改…', 'Stash changes…'),
         disabled: busy !== null || repository.snapshot.clean || repository.snapshot.conflictFiles.length > 0,
         run: () => {
@@ -609,7 +642,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           setStashRepositoryId(repository.id);
         },
       });
-      items.push({ label: label('复制仓库名称', 'Copy repository name'), run: () => copy(repository.name) });
+      items.push({ icon: <Copy aria-hidden="true" />, label: label('复制仓库名称', 'Copy repository name'), run: () => copy(repository.name) });
     }
     setContextMenu({ x: event.clientX, y: event.clientY, title: target.ref || repository.name, items });
   }
@@ -1440,7 +1473,7 @@ function GitLogSurface(props: {
               <MotionPresence>
                 {commitMenu && props.selectedRepository
                   ? createPortal(
-                      <MenuSurface className="project-git-context-menu" aria-label={props.zh ? '提交操作' : 'Commit actions'} style={{ left: commitMenu.x, top: commitMenu.y }} onClose={() => setCommitMenu(null)}>
+                      <MenuSurface className="zeus-context-menu project-git-context-menu" aria-label={props.zh ? '提交操作' : 'Commit actions'} style={{ left: commitMenu.x, top: commitMenu.y }} onClose={() => setCommitMenu(null)}>
                         <Button
                           unstyled
                           type="button"
@@ -1456,7 +1489,8 @@ function GitLogSurface(props: {
                             );
                           }}
                         >
-                          {props.zh ? '拣选到当前分支' : 'Cherry-pick to current branch'}
+                          <ArrowRight aria-hidden="true" />
+                          <span>{props.zh ? '拣选到当前分支' : 'Cherry-pick to current branch'}</span>
                         </Button>
                         <Button
                           unstyled
@@ -1475,7 +1509,8 @@ function GitLogSurface(props: {
                             );
                           }}
                         >
-                          {props.zh ? '撤销此提交' : 'Revert this commit'}
+                          <ArrowCounterClockwise aria-hidden="true" />
+                          <span>{props.zh ? '撤销此提交' : 'Revert this commit'}</span>
                         </Button>
                       </MenuSurface>,
                       document.querySelector('.macos-ai-app') ?? document.body,

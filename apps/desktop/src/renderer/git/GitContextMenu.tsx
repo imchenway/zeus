@@ -1,5 +1,5 @@
 import { MenuSurface } from '../ui/MenuSurface.js';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
@@ -7,6 +7,8 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface GitMenuItem {
   label: string;
+  /** 动作图标和文字共用同一行。 */
+  icon?: ReactNode;
   disabled?: boolean;
   danger?: boolean;
   /** 快捷键提示只显示调用方实际支持的组合。 */
@@ -17,7 +19,7 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
   const ref = useRef<HTMLDivElement>(null);
 
   return createPortal(
-    <MenuSurface onClose={props.onClose} ref={ref} className="project-git-context-menu" role="menu" aria-label={props.title} style={{ left: props.x, top: props.y }} onContextMenu={(event) => event.preventDefault()}>
+    <MenuSurface onClose={props.onClose} ref={ref} className="zeus-context-menu project-git-context-menu" role="menu" aria-label={props.title} style={{ left: props.x, top: props.y }} onContextMenu={(event) => event.preventDefault()}>
       <strong>{props.title}</strong>
       {props.items.map((item, index) => (
         <Button
@@ -36,6 +38,7 @@ export function GitContextMenu(props: { x: number; y: number; title: string; ite
             }
           }}
         >
+          {item.icon}
           <span>{item.label}</span>
           {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
         </Button>

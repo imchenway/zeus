@@ -4639,17 +4639,8 @@ a {
   padding: 8px 10px;
 }
 
+/* 分支操作菜单浮在引用列表上方。 */
 .project-git-branch-context-menu {
-  background: var(--zeus-popover-bg, var(--zeus-solid-surface-bg));
-  border: 1px solid var(--zeus-popover-line, var(--zeus-product-line));
-  border-radius: 12px;
-  box-shadow: 0 18px 48px oklch(18% 0.01 255 / 0.24);
-  display: flex;
-  flex-direction: column;
-  max-width: min(560px, calc(100vw - 24px));
-  min-width: min(520px, calc(100vw - 24px));
-  padding: 6px;
-  position: fixed;
   z-index: 130;
 }
 .project-git-branch-delete-dialog {
@@ -4676,32 +4667,6 @@ a {
   justify-content: flex-end;
   padding: 8px 20px 18px;
 }
-.project-git-branch-context-menu button {
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  min-height: 31px;
-  overflow: hidden;
-  padding: 4px 10px;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.project-git-branch-context-menu button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-interaction-hover);
-}
-.project-git-branch-context-menu button:disabled {
-  color: var(--zeus-product-muted);
-}
-.project-git-branch-context-menu hr {
-  border: 0;
-  border-top: 1px solid var(--zeus-product-line);
-  margin: 5px 3px;
-}
-
 .project-git-changes-layout {
   grid-template-areas:
     'tree diff'
@@ -9344,7 +9309,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 /* 2026-06-18 普通产品面板厚阴影清理最终覆盖：页面、抽屉、弹出层和崩溃兜底不再使用大面积投影，层级由边框、遮罩和分隔线表达。 */
-.macos-ai-app :where(.workspace-drawer, .project-more-popover, .native-settings-pane, .git-review-workbench),
+.macos-ai-app :where(.workspace-drawer, .native-settings-pane, .git-review-workbench),
 .renderer-crash-surface {
   box-shadow: none;
 }
@@ -10855,49 +10820,13 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
     transform: none;
     will-change: auto;
   }
-
-  .macos-ai-app .project-more-popover {
-    animation: none;
-    transform: none;
-    will-change: auto;
-  }
 }
 
-/* 2026-06-18 项目更多按钮最终覆盖：项目行“···”使用显式按钮 + menu popover，不再依赖 details/summary 系统 chrome。 */
+/* 项目菜单覆盖侧栏，重命名和删除对话框显示在菜单上层。 */
 .macos-ai-app .project-more-popover {
-  background: var(--zeus-popover-bg);
-  border: 1px solid var(--zeus-popover-line);
-  border-radius: var(--zeus-popover-radius);
-  display: grid;
-  gap: 2px;
-  min-inline-size: 160px;
-  padding: 5px;
-  position: fixed;
   pointer-events: auto;
   transform-origin: top left;
-  will-change: opacity, translate;
   z-index: 80;
-}
-
-.macos-ai-app .project-more-popover button {
-  inline-size: 100%;
-  justify-content: flex-start;
-  min-block-size: 26px;
-  padding-inline: 8px;
-  text-align: left;
-}
-
-.macos-ai-app .project-more-popover button:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .project-more-popover button:focus-visible {
-  background: var(--zeus-popover-item-hover-bg);
-  border-color: transparent;
-  color: var(--zeus-product-text);
-}
-
-.macos-ai-app .project-more-popover .danger-action {
-  background: var(--zeus-control-danger-bg);
-  border-color: transparent;
-  color: var(--zeus-control-danger-text);
 }
 
 /* 2026-06-20 全局设置单工作区分段导航最终覆盖：底部设置进入全局设置页后不再出现内层左栏，分类只作为顶部紧凑 tab。 */
@@ -11735,7 +11664,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   background: var(--zeus-native-row-hover);
 }
 
-/* 2026-06-21 Zeus Component Spec 全量语义类最终覆盖：把 SourceList、MessageTranscript、QuietMoreMenu、AvatarToken 从散落业务类收敛为可复用组件语义，后续页面替换不得再只依赖局部 class。 */
+/* 来源列表、消息记录和头像复用共享布局。 */
 .macos-ai-app .zeus-source-list {
   background: var(--zeus-source-list-bg);
   min-inline-size: 0;
@@ -11745,11 +11674,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   color: var(--zeus-message-text);
   max-inline-size: 100%;
   min-inline-size: 0;
-}
-
-.macos-ai-app .zeus-quiet-more-menu {
-  background: var(--zeus-popover-bg);
-  box-shadow: var(--zeus-popover-shadow);
 }
 
 .macos-ai-app .zeus-avatar-token {
@@ -12132,16 +12056,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   outline: 0;
 }
 
-.macos-ai-app .project-more-popover button {
-  inline-size: 100%;
-  justify-content: flex-start;
-  min-block-size: 28px;
-  overflow: hidden;
-  text-align: start;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (max-width: 860px) {
   .macos-ai-app
     :where(
@@ -12329,18 +12243,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   inline-size: 17px;
   min-block-size: 0;
   stroke: none;
-}
-
-.macos-ai-app .project-more-popover {
-  min-inline-size: 128px;
-  padding: 4px;
-}
-
-.macos-ai-app .project-more-popover button {
-  font-size: 12px;
-  font-weight: 560;
-  min-block-size: 24px;
-  padding-inline: 7px;
 }
 
 /* 2026-06-27 macOS hidden-titlebar compact top inset final cover：顶部快捷入口必须落在红黄绿窗口按钮下方，但不能再为红绿灯保留大块死空间。 */
@@ -20340,73 +20242,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: inline-flex;
   flex-shrink: 0;
 }
-/* 项目与会话右键菜单共用紧凑行、字体、圆角浮层和中性悬停态。 */
-.macos-ai-app :is(.project-more-popover, .conversation-context-menu) {
-  background: var(--zeus-popover-bg, var(--zeus-product-panel));
-  border: 1px solid var(--zeus-popover-line, var(--zeus-product-line-soft));
-  border-radius: 12px;
-  box-sizing: border-box;
-  box-shadow: 0 18px 44px oklch(28% 0.008 255 / 0.16);
-  gap: 1px;
-  inline-size: 208px;
-  max-inline-size: calc(100vw - 16px);
-  min-inline-size: min(208px, calc(100vw - 16px));
-  max-block-size: calc(100vh - 16px);
-  overflow: auto;
-  padding: 6px;
-  position: fixed;
-}
-
-.macos-ai-app :is(.project-more-popover, .conversation-context-menu) button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--zeus-product-text);
-  display: grid;
-  font-size: 13px;
-  font-weight: 450;
-  gap: 10px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  line-height: 18px;
-  min-block-size: 32px;
-  padding: 0 8px;
-}
-
-.macos-ai-app :is(.project-more-popover, .conversation-context-menu) button:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app :is(.project-more-popover, .conversation-context-menu) button:focus-visible {
-  background: var(--zeus-popover-item-hover-bg, var(--zeus-source-list-hover));
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--zeus-product-text);
-  outline: 0;
-}
-
-/* 会话菜单的快捷键与子菜单箭头占同一尾列，不挤占图标和文字。 */
-.macos-ai-app .conversation-context-menu button {
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-}
-
-.macos-ai-app .project-more-popover .project-more-menu-icon {
-  align-items: center;
-  block-size: 18px;
-  color: currentcolor;
-  display: inline-flex;
-  inline-size: 18px;
-  justify-content: center;
-}
-
-.macos-ai-app .project-more-popover .project-more-menu-icon svg {
-  block-size: 18px;
-  display: block;
-  inline-size: 18px;
-}
-
-.macos-ai-app .project-more-popover .project-menu-remove-action {
-  background: transparent;
-  color: var(--zeus-product-text);
-}
-
 .macos-ai-app .project-more-popover .project-menu-confirm-remove-action {
   background: var(--zeus-control-danger-bg);
   color: var(--zeus-control-danger-text);

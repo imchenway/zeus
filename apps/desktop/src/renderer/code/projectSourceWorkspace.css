@@ -418,39 +418,9 @@
   opacity: 0.65;
 }
 
+/* 源码树右键菜单浮在编辑器和文件区之上。 */
 .project-source-context-menu {
-  position: fixed;
   z-index: 1200;
-  display: flex;
-  width: min(260px, calc(100vw - 24px));
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px;
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
-  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
-}
-.project-source-context-menu button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 5px;
-  color: var(--zeus-control-text);
-  background: transparent;
-  text-align: left;
-  font: inherit;
-  font-size: 12px;
-}
-.project-source-context-menu button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-interaction-hover);
-}
-.project-source-context-menu button.danger {
-  color: var(--zeus-control-danger-text);
 }
 
 .project-source-modal-root {
@@ -592,11 +562,6 @@
 }
 
 /* 快捷键与操作名称并排显示，保留清晰的文件操作范围。 */
-.project-source-context-menu kbd {
-  color: var(--zeus-control-muted-text);
-  font: inherit;
-  white-space: nowrap;
-}
 
 /* 高亮语言可手动兜底，状态栏选择不改变文件的编码或内容。 */
 .project-source-statusbar select {

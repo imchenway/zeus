@@ -152,33 +152,104 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 }
 
-/* 文件复制菜单沿用应用色板，使用顶层浮层避免被文件树和独立弹窗裁切。 */
-.zeus-file-copy-menu {
+/* 自绘右键菜单共用主题色、紧凑行和窗口边缘留白。 */
+:where(.zeus-context-menu) {
+  z-index: 80;
+}
+
+.zeus-context-menu {
   position: fixed;
   inset: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  inline-size: max-content;
+  min-inline-size: min(144px, calc(100vw - 16px));
+  max-inline-size: min(400px, calc(100vw - 16px));
+  max-block-size: calc(100vh - 16px);
+  overflow: auto;
+  overscroll-behavior: contain;
   margin: 0;
-  padding: 4px;
-  min-width: 150px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 7px;
-  background: var(--zeus-product-panel);
-  color: var(--zeus-product-text);
-  box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+  padding: 5px;
+  border: 1px solid var(--zeus-popover-line, var(--zeus-product-line, ButtonBorder));
+  border-radius: var(--zeus-popover-radius, 10px);
+  background: var(--zeus-popover-bg, var(--zeus-product-panel, Canvas));
+  color: var(--zeus-product-text, CanvasText);
+  box-shadow: 0 3px 9px rgb(0 0 0 / 6%), 0 12px 28px rgb(0 0 0 / 13%);
 }
-.zeus-file-copy-menu button {
-  display: block;
-  width: 100%;
-  padding: 6px 10px;
+
+.zeus-context-menu > button {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-inline-size: 0;
+  min-block-size: 28px;
+  padding: 4px 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
   text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
 }
-.zeus-file-copy-menu button:is(:hover, :focus-visible) {
-  background: var(--zeus-interaction-hover);
-  outline: 2px solid var(--zeus-product-line);
+
+.zeus-context-menu > button > svg {
+  flex: none;
+  inline-size: 16px;
+  block-size: 16px;
+  color: var(--zeus-product-muted, currentColor);
+}
+
+.zeus-context-menu > button > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.zeus-context-menu > button > kbd {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--zeus-product-muted, currentColor);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.zeus-context-menu > button:is(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  background: var(--zeus-popover-item-hover-bg, var(--zeus-interaction-hover, color-mix(in srgb, currentColor 7%, transparent)));
+}
+
+.zeus-context-menu > button:focus-visible {
+  outline: 2px solid var(--zeus-product-accent, Highlight);
+  outline-offset: -2px;
+}
+
+.zeus-context-menu > button:is(:disabled, [aria-disabled='true']) {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.zeus-context-menu > button[data-danger] {
+  color: var(--zeus-control-danger-text);
+}
+
+.zeus-context-menu > button[data-danger] > svg {
+  color: currentColor;
+}
+
+.zeus-context-menu > hr {
+  flex: none;
+  margin: 3px 6px;
+  border: 0;
+  border-block-start: 1px solid var(--zeus-product-line, ButtonBorder);
 }
 
 @keyframes zeus-panel-focus-enter {
@@ -413,7 +484,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: none !important;
 }
 /* 密集菜单有独立滚动，靠近窗口底边时仍能访问最后一个选项。 */
-.macos-ai-app [data-zeus-primitive='menu'] {
+.macos-ai-app [data-zeus-primitive='menu']:not(:where(.zeus-context-menu)) {
   max-inline-size: calc(100vw - 16px);
   max-block-size: calc(100vh - 16px);
   overflow-y: auto;

@@ -13,13 +13,18 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import type { ProjectGitAction, ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
 import type { ProjectGitBranchRepository } from '@zeus/git-core';
 import type { BusyState, BranchKind, ExecutionOutcome, ProjectGitUpdateStrategy } from './gitWorkbenchTypes.js';
+import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
+import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerge';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { StackIcon as Stack } from '@phosphor-icons/react/dist/csr/Stack';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { Form } from '../ui/Form.js';
 
 interface BranchTreeNode {
@@ -992,7 +997,7 @@ export function RevisionContextMenu(props: {
       ref={menuRef}
       id={props.id}
       submenuAnchor={props.submenuAnchor}
-      className="project-git-branch-context-menu"
+      className="zeus-context-menu project-git-branch-context-menu"
       role="menu"
       aria-label={props.zh ? `引用操作：${props.revision}` : `Reference actions: ${props.revision}`}
       style={{ left: props.x, top: props.y }}
@@ -1011,10 +1016,12 @@ export function RevisionContextMenu(props: {
           return props.onExecute(props.repository, { type: 'checkout_revision', revision: props.revision }, props.zh ? `签出“${props.revision}”` : `Checkout '${props.revision}'`);
         }}
       >
-        {props.zh ? '签出（进入游离提交状态）' : 'Checkout (detached HEAD)'}
+        <ArrowRight aria-hidden="true" />
+        <span>{props.zh ? '签出（进入游离提交状态）' : 'Checkout (detached HEAD)'}</span>
       </Button>
       <Button unstyled type="button" role="menuitem" disabled={props.busy !== null} onClick={() => props.onNewBranch(props.revision)}>
-        {props.zh ? `从“${props.revision}”新建分支…` : `New Branch from '${props.revision}'…`}
+        <GitBranch aria-hidden="true" />
+        <span>{props.zh ? `从“${props.revision}”新建分支…` : `New Branch from '${props.revision}'…`}</span>
       </Button>
     </MenuSurface>
   );
@@ -1583,7 +1590,7 @@ export function BranchContextMenu(props: {
       ref={menuRef}
       id={props.id}
       submenuAnchor={props.submenuAnchor}
-      className="project-git-branch-context-menu"
+      className="zeus-context-menu project-git-branch-context-menu"
       role="menu"
       aria-label={props.zh ? `分支操作：${props.branch}` : `Reference actions: ${props.branch}`}
       style={{ left: props.x, top: props.y }}
@@ -1607,12 +1614,14 @@ export function BranchContextMenu(props: {
             return props.onExecute(props.repository, { type: 'checkout', branchName: props.branch }, props.zh ? '签出分支' : 'Checkout branch');
           }}
         >
-          {props.zh ? '签出' : 'Checkout'}
+          <ArrowRight aria-hidden="true" />
+          <span>{props.zh ? '签出' : 'Checkout'}</span>
         </Button>
       ) : null}
       {props.kind === 'remote' && !props.repository.snapshot.detached ? (
         <Button unstyled type="button" role="menuitem" disabled={props.busy !== null} onClick={() => setRemoteCheckout('checkout')}>
-          {props.zh ? `从“${props.branch}”新建分支…` : `New Branch from '${props.branch}'…`}
+          <GitBranch aria-hidden="true" />
+          <span>{props.zh ? `从“${props.branch}”新建分支…` : `New Branch from '${props.branch}'…`}</span>
         </Button>
       ) : null}
       {props.branch !== current && !props.repository.snapshot.detached ? (
@@ -1630,21 +1639,25 @@ export function BranchContextMenu(props: {
             return checkoutAndRebase();
           }}
         >
-          {props.zh ? `签出并变基到“${currentLabel}”` : `Checkout and Rebase onto '${currentLabel}'`}
+          <ArrowsClockwise aria-hidden="true" />
+          <span>{props.zh ? `签出并变基到“${currentLabel}”` : `Checkout and Rebase onto '${currentLabel}'`}</span>
         </Button>
       ) : null}
       <hr />
       <Button unstyled type="button" role="menuitem" onClick={compare('current')}>
-        {props.zh ? `与“${currentLabel}”比较` : `Compare with '${currentLabel}'`}
+        <GitDiff aria-hidden="true" />
+        <span>{props.zh ? `与“${currentLabel}”比较` : `Compare with '${currentLabel}'`}</span>
       </Button>
       <Button unstyled type="button" role="menuitem" onClick={compare('working-tree')}>
-        {props.zh ? '显示与工作区的差异' : 'Show Diff with Working Tree'}
+        <GitDiff aria-hidden="true" />
+        <span>{props.zh ? '显示与工作区的差异' : 'Show Diff with Working Tree'}</span>
       </Button>
       {props.branch !== current && !props.repository.snapshot.detached ? (
         <>
           <hr />
           <Button unstyled type="button" role="menuitem" disabled={props.busy !== null} onClick={run({ type: 'rebase', branchName: props.branch }, props.zh ? '变基当前分支' : 'Rebase current branch')}>
-            {props.zh ? `将“${current}”变基到“${props.branch}”` : `Rebase '${current}' onto '${props.branch}'`}
+            <ArrowsClockwise aria-hidden="true" />
+            <span>{props.zh ? `将“${current}”变基到“${props.branch}”` : `Rebase '${current}' onto '${props.branch}'`}</span>
           </Button>
           <Button
             unstyled
@@ -1653,7 +1666,8 @@ export function BranchContextMenu(props: {
             disabled={props.busy !== null}
             onClick={run(createProjectGitMergeAction(props.repository, props.branch), props.zh ? `将“${props.branch}”合并到“${current}”` : `Merge '${props.branch}' into '${current}'`)}
           >
-            {props.zh ? `将“${props.branch}”合入“${current}”` : `Merge '${props.branch}' into '${current}'`}
+            <GitMerge aria-hidden="true" />
+            <span>{props.zh ? `将“${props.branch}”合入“${current}”` : `Merge '${props.branch}' into '${current}'`}</span>
           </Button>
         </>
       ) : null}
@@ -1667,7 +1681,8 @@ export function BranchContextMenu(props: {
             disabled={props.busy !== null}
             onClick={run({ type: 'pull', remote: props.branch.split('/')[0], targetBranch: remoteLeaf, strategy: 'rebase' }, props.zh ? '拉取并变基' : 'Pull with rebase')}
           >
-            {props.zh ? `拉取到“${current}”（变基）` : `Pull into '${current}' Using Rebase`}
+            <ArrowDown aria-hidden="true" />
+            <span>{props.zh ? `拉取到“${current}”（变基）` : `Pull into '${current}' Using Rebase`}</span>
           </Button>
           <Button
             unstyled
@@ -1676,15 +1691,17 @@ export function BranchContextMenu(props: {
             disabled={props.busy !== null}
             onClick={run({ type: 'pull', remote: props.branch.split('/')[0], targetBranch: remoteLeaf, strategy: 'merge' }, props.zh ? '拉取并合并' : 'Pull with merge')}
           >
-            {props.zh ? `拉取到“${current}”（合并）` : `Pull into '${current}' Using Merge`}
+            <ArrowDown aria-hidden="true" />
+            <span>{props.zh ? `拉取到“${current}”（合并）` : `Pull into '${current}' Using Merge`}</span>
           </Button>
         </>
       ) : null}
       {props.kind === 'local' && props.branch !== current ? (
         <>
           <hr />
-          <Button unstyled type="button" role="menuitem" disabled={props.busy !== null} onClick={() => setConfirmDelete(true)}>
-            {props.zh ? '删除…' : 'Delete…'}
+          <Button unstyled type="button" role="menuitem" data-danger disabled={props.busy !== null} onClick={() => setConfirmDelete(true)}>
+            <Trash aria-hidden="true" />
+            <span>{props.zh ? '删除…' : 'Delete…'}</span>
           </Button>
         </>
       ) : null}

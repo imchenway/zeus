@@ -13152,44 +13152,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   flex: 0 0 auto;
 }
 
-/* 会话右键菜单的通用外观与项目菜单共用，这里只定义会话图标与快捷键尾列。 */
+/* 会话菜单在列表与重命名对话框之间显示。 */
 .conversation-context-menu {
-  display: grid;
-  max-inline-size: calc(100vw - 16px);
-  overflow: hidden;
   z-index: 100;
-}
-
-.conversation-context-menu button {
-  appearance: none;
-  cursor: pointer;
-  text-align: start;
-}
-
-.conversation-context-menu button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.conversation-context-menu button svg {
-  block-size: 18px;
-  color: var(--zeus-product-muted);
-  inline-size: 18px;
-}
-
-.conversation-context-menu button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-context-menu button kbd {
-  color: var(--zeus-product-muted);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 400;
-  justify-self: end;
-  padding: 0;
 }
 
 /* 重命名对话框 */

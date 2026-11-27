@@ -778,15 +778,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         ? createPortal(
             <MenuSurface
               aria-label={extensionsLabel}
-              className="conversation-context-menu zeus-quiet-more-menu"
+              className="zeus-context-menu conversation-context-menu"
               style={{ left: extensionsAnchor.left, top: extensionsAnchor.top }}
               toggleAnchor={extensionsAnchor.button}
               onClose={() => setExtensionsAnchor(null)}
             >
               <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('extensions')}>
+                <PuzzlePiece aria-hidden="true" />
                 <span>{chinese ? '管理扩展程序' : 'Manage extensions'}</span>
               </Button>
               <Button unstyled type="button" role="menuitem" onClick={() => openNativePage('store')}>
+                <GlobeSimple aria-hidden="true" />
                 <span>{chinese ? '访问 Chrome 网上应用店' : 'Visit Chrome Web Store'}</span>
               </Button>
             </MenuSurface>,

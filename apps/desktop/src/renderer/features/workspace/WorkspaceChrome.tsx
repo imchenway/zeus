@@ -18,6 +18,7 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
 import { PushPinSlashIcon as PushPinSlash } from '@phosphor-icons/react/dist/csr/PushPinSlash';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
@@ -1098,7 +1099,7 @@ export function SidebarNav(props: {
                   <MenuSurface
                     onClose={() => closeProjectContextMenu()}
                     id={`project-more-menu-${project.id}`}
-                    className="project-more-popover zeus-quiet-more-menu"
+                    className="zeus-context-menu project-more-popover"
                     aria-label={`${project.name} ${copy.moreProjectActionsPrefix}`}
                     style={{ left: menuPosition.left, top: menuPosition.top }}
                   >
@@ -1113,9 +1114,7 @@ export function SidebarNav(props: {
                           return props.onOpenProjectSection(project, 'tasks');
                         }}
                       >
-                        <span className="project-more-menu-icon" aria-hidden="true">
-                          <WorkspaceTasksIcon weight="regular" />
-                        </span>
+                        <WorkspaceTasksIcon weight="regular" aria-hidden="true" />
                         <span>{copy.openProjectTasks}</span>
                       </Button>
                     ) : null}
@@ -1128,9 +1127,7 @@ export function SidebarNav(props: {
                         closeProjectContextMenu();
                       }}
                     >
-                      <span className="project-more-menu-icon" aria-hidden="true">
-                        {pinned ? <PushPinSlash weight="regular" /> : <PushPin weight="regular" />}
-                      </span>
+                      {pinned ? <PushPinSlash weight="regular" aria-hidden="true" /> : <PushPin weight="regular" aria-hidden="true" />}
                       <span>{pinned ? copy.unpinProject : copy.pinProject}</span>
                     </Button>
                     <Button
@@ -1142,21 +1139,16 @@ export function SidebarNav(props: {
                         return props.onRevealProjectInFinder(project.localPath).catch(() => undefined);
                       }}
                     >
-                      <span className="project-more-menu-icon" aria-hidden="true">
-                        <FolderOpen weight="regular" />
-                      </span>
+                      <FolderOpen weight="regular" aria-hidden="true" />
                       <span>{copy.revealProjectInFinder}</span>
                     </Button>
                     <Button unstyled type="button" role="menuitem" onClick={() => openProjectRenameDialog(project)}>
-                      <span className="project-more-menu-icon" aria-hidden="true">
-                        <PencilSimple weight="regular" />
-                      </span>
+                      <PencilSimple weight="regular" aria-hidden="true" />
                       <span>{copy.renameProject}</span>
                     </Button>
-                    <Button unstyled type="button" role="menuitem" className="project-menu-remove-action" onClick={() => props.onPrepareProjectDelete(project.id)}>
-                      <span className="project-more-menu-icon" aria-hidden="true">
-                        <X weight="regular" />
-                      </span>
+                    <hr />
+                    <Button unstyled type="button" role="menuitem" onClick={() => props.onPrepareProjectDelete(project.id)}>
+                      <Trash aria-hidden="true" />
                       <span>{copy.deleteProject}</span>
                     </Button>
                     {props.pendingProjectDeleteId === project.id ? (
@@ -1164,15 +1156,14 @@ export function SidebarNav(props: {
                         unstyled
                         type="button"
                         role="menuitem"
-                        className="danger-action project-menu-confirm-remove-action"
+                        className="project-menu-confirm-remove-action"
+                        data-danger
                         onClick={() => {
                           props.onConfirmProjectDelete(project.id);
                           closeProjectContextMenu();
                         }}
                       >
-                        <span className="project-more-menu-icon" aria-hidden="true">
-                          <X weight="bold" />
-                        </span>
+                        <Trash aria-hidden="true" />
                         <span>{copy.confirmDeleteProject}</span>
                       </Button>
                     ) : null}

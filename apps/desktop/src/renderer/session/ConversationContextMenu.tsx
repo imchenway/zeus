@@ -152,7 +152,7 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
   return (
     <>
       {createPortal(
-        <MenuSurface onClose={onClose} style={{ left: position.x, top: position.y }} className="conversation-context-menu zeus-quiet-more-menu">
+        <MenuSurface onClose={onClose} style={{ left: position.x, top: position.y }} className="zeus-context-menu conversation-context-menu" aria-label={language === 'zh-CN' ? '会话操作' : 'Conversation actions'}>
           {/* 重命名 */}
           {onRename ? (
             <Button unstyled type="button" role="menuitem" onClick={handleRename}>

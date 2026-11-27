@@ -1,6 +1,7 @@
 import { formatZeusDateTime } from '@zeus/shared';
 import { useEffect, useMemo, useState, useSyncExternalStore, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { Prec } from '@codemirror/state';
 import { EditorView, GutterMarker, gutter } from '@codemirror/view';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
@@ -102,7 +103,7 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
   const menu = point
     ? createPortal(
         <MenuSurface
-          className="project-git-context-menu code-reading-menu"
+          className="zeus-context-menu project-git-context-menu"
           style={{ left: point.x, top: point.y }}
           aria-label={zh ? '代码阅读选项' : 'Code reading options'}
           onClose={() => setPoint(null)}
@@ -121,8 +122,8 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
                 setPoint(null);
               }}
             >
-              <span aria-hidden="true">{options[key] ? '✓' : '\u00a0'}</span>
-              {key === 'wrap' ? (zh ? '软换行' : 'Soft wrap') : zh ? '提交人' : 'Commit author'}
+              <Check aria-hidden="true" style={{ visibility: options[key] ? undefined : 'hidden' }} />
+              <span>{key === 'wrap' ? (zh ? '软换行' : 'Soft wrap') : zh ? '提交人' : 'Commit author'}</span>
             </Button>
           ))}
         </MenuSurface>,

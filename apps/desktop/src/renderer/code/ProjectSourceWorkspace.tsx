@@ -32,6 +32,11 @@ import {
 } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { LinkSimpleIcon as LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { FileTreeRow } from './FileTreeRow.js';
 import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import { projectSourceTree } from './projectSourceTreeCache.js';
@@ -1291,8 +1296,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             {contextMenu ? (
               <MenuSurface
                 onClose={() => setContextMenu(null)}
-                className="project-source-context-menu"
+                className="zeus-context-menu project-source-context-menu"
                 role="menu"
+                aria-label={zh ? '文件操作' : 'File actions'}
                 style={{ left: contextMenu.x, top: contextMenu.y }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => handleFileShortcut(contextMenu.entry, event)}
@@ -1300,28 +1306,36 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 {contextMenu.entry.kind === 'directory' ? (
                   <>
                     <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+N`} onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
+                      <FilePlus aria-hidden="true" />
                       <span>{zh ? '新建文件' : 'New file'}</span>
                       <kbd>{fileShortcutLabels.createFile}</kbd>
                     </Button>
                     <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+N`} onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
+                      <FolderPlus aria-hidden="true" />
                       <span>{zh ? '新建目录' : 'New folder'}</span>
                       <kbd>{fileShortcutLabels.createDirectory}</kbd>
                     </Button>
+                    <hr />
                   </>
                 ) : null}
                 <Button unstyled role="menuitem" type="button" onClick={() => copySourceEntry(contextMenu.entry, false)}>
+                  <Copy aria-hidden="true" />
                   <span>{zh ? '复制文件名' : 'Copy file name'}</span>
                   <kbd>{macShortcuts ? '⌘C' : 'Ctrl+C'}</kbd>
                 </Button>
                 <Button unstyled role="menuitem" type="button" onClick={() => copySourceEntry(contextMenu.entry, true)}>
+                  <LinkSimple aria-hidden="true" />
                   <span>{zh ? '复制路径' : 'Copy path'}</span>
                   <kbd>{macShortcuts ? '⌘⇧C' : 'Ctrl+Shift+C'}</kbd>
                 </Button>
+                <hr />
                 <Button unstyled role="menuitem" type="button" aria-keyshortcuts="F2" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
+                  <PencilSimple aria-hidden="true" />
                   <span>{zh ? '重命名' : 'Rename'}</span>
                   <kbd>{fileShortcutLabels.rename}</kbd>
                 </Button>
                 <Button unstyled role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+M`} onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
+                  <ArrowRight aria-hidden="true" />
                   <span>{zh ? '移动…' : 'Move…'}</span>
                   <kbd>{fileShortcutLabels.move}</kbd>
                 </Button>
@@ -1337,10 +1351,13 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     return pending;
                   }}
                 >
+                  <FolderOpen aria-hidden="true" />
                   <span>{zh ? '在 Finder 中显示' : 'Reveal in Finder'}</span>
                   <kbd>{fileShortcutLabels.reveal}</kbd>
                 </Button>
-                <Button unstyled role="menuitem" type="button" aria-keyshortcuts={macShortcuts ? 'Meta+Backspace' : 'Delete'} className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+                <hr />
+                <Button unstyled role="menuitem" type="button" aria-keyshortcuts={macShortcuts ? 'Meta+Backspace' : 'Delete'} data-danger onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+                  <Trash aria-hidden="true" />
                   <span>{zh ? '移入废纸篓…' : 'Move to Trash…'}</span>
                   <kbd>{fileShortcutLabels.delete}</kbd>
                 </Button>

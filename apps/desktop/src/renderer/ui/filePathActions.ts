@@ -1,5 +1,7 @@
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { LinkSimpleIcon as LinkSimple } from '@phosphor-icons/react/dist/csr/LinkSimple';
 import { MenuSurface } from './MenuSurface.js';
 import { copyText } from './clipboard.js';
 import { reportApplicationError } from './ApplicationErrorDialog.js';
@@ -82,6 +84,9 @@ export function installFilePathActions(document: Document): () => void {
     /** 未知本机目录的历史资源明确标为相对路径，不伪造绝对路径。 */
     const path = file.dataset.filePath ? filePath(file) : undefined;
     const absolute = path && /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(path);
+    /** 仅在文件带路径时展示相应复制项。 */
+    const items = [{ Icon: Copy, label: zh ? '复制文件名' : 'Copy file name', text: fileName(file) }];
+    if (path) items.push({ Icon: LinkSimple, label: absolute ? (zh ? '复制路径' : 'Copy path') : zh ? '复制相对路径' : 'Copy relative path', text: path });
     menu = document.createElement('div');
     menu.className = 'zeus-file-copy-layer';
     menu.setAttribute('popover', 'manual');
@@ -91,10 +96,11 @@ export function installFilePathActions(document: Document): () => void {
     menuRoot = createRoot(menu);
     menuRoot.render(
       createElement(MenuSurface, {
-        className: 'zeus-file-copy-menu',
+        className: 'zeus-context-menu',
+        'aria-label': zh ? '文件操作' : 'File actions',
         style: { left: event.clientX, top: event.clientY },
         onClose: () => close(),
-        children: [[zh ? '复制文件名' : 'Copy file name', fileName(file)], ...(path ? [[absolute ? (zh ? '复制路径' : 'Copy path') : zh ? '复制相对路径' : 'Copy relative path', path]] : [])].map(([label, text]) =>
+        children: items.map(({ Icon, label, text }) =>
           createElement(
             'button',
             {
@@ -103,10 +109,11 @@ export function installFilePathActions(document: Document): () => void {
               role: 'menuitem',
               onClick: () => {
                 close();
-                void write(text!);
+                void write(text);
               },
             },
-            label,
+            createElement(Icon, { 'aria-hidden': true }),
+            createElement('span', null, label),
           ),
         ),
       }),

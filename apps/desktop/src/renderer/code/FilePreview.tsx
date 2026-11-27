@@ -2,7 +2,7 @@ import { PdfPreview } from './PdfPreview.js';
 import { FileSelectionQuestionContext } from '../session/sideQuestionContext.js';
 import { useWindowDocument } from '../ui/windowDocument.js';
 import { createPortal } from 'react-dom';
-import { createContext, useContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createContext, useContext, Fragment, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ReadingStateScope, useReadingScroll, useReadingState } from '../ui/readingState.js';
 import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -10,6 +10,7 @@ import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-ic
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { ArrowsInSimpleIcon as ArrowsInSimple } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
 import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
+import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
@@ -598,6 +599,9 @@ function FilePreviewBody(props: {
   );
 }
 
+/** 图片菜单的线图标区分复制、保存和本地文件操作。 */
+const imagePreviewMenuIcons = { copy: Copy, export: DownloadSimple, open: ArrowSquareOut, reveal: FolderOpen };
+
 /** 可复用的透明背景图片视图，支持原尺寸与放大检查小图标。 */
 export function PreviewImage(props: {
   url: string;
@@ -739,14 +743,22 @@ export function PreviewImage(props: {
       </div>
       {menu
         ? createPortal(
-            <MenuSurface className="zeus-file-copy-menu" aria-label={props.zh ? '图片操作' : 'Image actions'} style={{ left: menu.x, top: menu.y }} onClose={() => setMenu(null)} onContextMenu={(event) => event.preventDefault()}>
-              {actions.map((value) => (
-                <Button unstyled key={value} type="button" role="menuitem" onClick={() => action(value)}>
-                  {labels[value]}
-                </Button>
-              ))}
+            <MenuSurface className="zeus-context-menu" aria-label={props.zh ? '图片操作' : 'Image actions'} style={{ left: menu.x, top: menu.y }} onClose={() => setMenu(null)} onContextMenu={(event) => event.preventDefault()}>
+              {actions.map((value) => {
+                /** 图标与当前图片动作对应，按钮名称来自文字。 */
+                const Icon = imagePreviewMenuIcons[value];
+                return (
+                  <Fragment key={value}>
+                    {value === 'open' ? <hr /> : null}
+                    <Button unstyled type="button" role="menuitem" onClick={() => action(value)}>
+                      <Icon aria-hidden="true" />
+                      <span>{labels[value]}</span>
+                    </Button>
+                  </Fragment>
+                );
+              })}
             </MenuSurface>,
-            imageRef.current?.closest('[data-zeus-primitive="modal"]') ?? ownerDocument.body,
+            imageRef.current?.closest('[data-zeus-primitive="modal"], .macos-ai-app') ?? ownerDocument.body,
           )
         : null}
     </div>
