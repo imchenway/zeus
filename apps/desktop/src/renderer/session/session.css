@@ -534,7 +534,7 @@
   overflow: hidden;
 }
 
-.session-codex-parity-v1 .session-quick-actions-source-visual img {
+.session-codex-parity-v1 .session-quick-actions-source-visual img:not(.file-type-icon) {
   block-size: 100%;
   inline-size: 100%;
   object-fit: contain;
@@ -1578,7 +1578,7 @@
   text-align: center;
 }
 
-.session-codex-parity-v1 .session-markdown-image-placeholder > svg {
+.session-codex-parity-v1 .session-markdown-image-placeholder > :is(svg, .file-type-icon) {
   block-size: 22px;
   flex: 0 0 auto;
   inline-size: 22px;
@@ -8576,7 +8576,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 /* 文件图标与首行文字垂直居中，长文件名仍按行内文本换行。 */
-.session-codex-parity-v1 .session-inline-resource-shell[data-resource-kind='file'] > button.session-inline-resource > :is(svg, .session-inline-file-icon) {
+.session-codex-parity-v1 .session-inline-resource-shell[data-resource-kind='file'] > button.session-inline-resource > .file-type-icon {
   display: inline-block;
   vertical-align: middle;
 }
@@ -8635,6 +8635,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-inline-resource[data-error='true'] {
   color: var(--session-danger);
+}
+
+.session-codex-parity-v1 .session-inline-resource > .file-type-icon {
+  align-self: center;
 }
 
 .session-codex-parity-v1 .session-inline-resource > svg {
@@ -8777,7 +8781,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   text-align: center;
 }
 
-.session-codex-parity-v1 .session-resource-image-placeholder > svg {
+.session-codex-parity-v1 .session-resource-image-placeholder > :is(svg, .file-type-icon) {
   block-size: 22px;
   flex: 0 0 auto;
   inline-size: 22px;
@@ -8823,7 +8827,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 36px;
 }
 
-.session-codex-parity-v1 .session-resource-card[data-web-page] .session-resource-card-icon svg {
+.session-codex-parity-v1 .session-resource-card[data-web-page] .session-resource-card-icon > :is(svg, .file-type-icon) {
   block-size: 22px;
   inline-size: 22px;
 }
@@ -8882,7 +8886,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 32px;
 }
 
-.session-codex-parity-v1 .session-resource-card-icon svg {
+.session-codex-parity-v1 .session-resource-card-icon > :is(svg, .file-type-icon) {
   block-size: 25px;
   inline-size: 25px;
 }
@@ -9245,11 +9249,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 摘要图标保持中性，文件名与其他列表共用 Git 状态颜色。 */
-.session-codex-parity-v1 .session-turn-change-card .session-turn-change-files svg.file-type-icon {
-  color: var(--session-text-muted);
 }
 
 .session-codex-parity-v1 .session-turn-change-file-counts {
@@ -9918,11 +9917,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .browser-downloads-panel li {
   border-block-start: 1px solid var(--session-line-soft);
   padding-block: 6px;
-}
-
-.session-codex-parity-v1 .browser-download-file-icon {
-  color: var(--session-text-muted);
-  flex: 0 0 16px;
 }
 
 .session-codex-parity-v1 .browser-download-file {

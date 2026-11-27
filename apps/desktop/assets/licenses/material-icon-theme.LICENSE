@@ -1,4 +1,4 @@
-Material Icon Theme v5.40.0 file icons and associations
+Material Icon Theme v5.40.0 file and folder icons and associations
 https://github.com/material-extensions/vscode-material-icon-theme/releases/tag/v5.40.0
 Upstream source commit: 045291ff033062a25441dd297fd51546326866f2
 The release manifest supplies the default mappings. Other upstream icon packs supply additional associations where the defaults have no entry.

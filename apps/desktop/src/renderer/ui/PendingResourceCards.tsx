@@ -1,19 +1,5 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
-import { FileArchiveIcon as FileArchive } from '@phosphor-icons/react/dist/csr/FileArchive';
-import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileCssIcon as FileCss } from '@phosphor-icons/react/dist/csr/FileCss';
-import { FileDocIcon as FileDoc } from '@phosphor-icons/react/dist/csr/FileDoc';
-import { FileHtmlIcon as FileHtml } from '@phosphor-icons/react/dist/csr/FileHtml';
-import { FileJsIcon as FileJs } from '@phosphor-icons/react/dist/csr/FileJs';
-import { FileMdIcon as FileMd } from '@phosphor-icons/react/dist/csr/FileMd';
-import { FilePdfIcon as FilePdf } from '@phosphor-icons/react/dist/csr/FilePdf';
-import { FilePptIcon as FilePpt } from '@phosphor-icons/react/dist/csr/FilePpt';
-import { FileSqlIcon as FileSql } from '@phosphor-icons/react/dist/csr/FileSql';
-import { FileTextIcon as FileText } from '@phosphor-icons/react/dist/csr/FileText';
-import { FileTsIcon as FileTs } from '@phosphor-icons/react/dist/csr/FileTs';
-import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { ResourceLoading } from './ResourceLoading.js';
 import { pendingResourceDisplayName } from './pendingResourcePolicy.js';
@@ -78,7 +64,6 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   previewLoaderRef.current = props.onLoadPreview;
   const previewUrl = props.resource.previewUrl ?? loadedPreviewUrl;
   const previewLoaderAvailable = Boolean(props.onLoadPreview);
-  const extension = pendingResourceExtension(props.resource.name);
   /** 引用语义优先于扩展名显示，用户能直接区分实时来源和固定副本。 */
   const typeLabel = props.resource.reference ? (props.language === 'zh-CN' ? '源文件引用' : 'Live reference') : pendingResourceTypeLabel(props.resource, props.language);
   /** 外部读取与内部读取共用失败状态，失败不能一直显示加载动画。 */
@@ -128,7 +113,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       ) : previewLoading ? null : props.resource.kind === 'image' ? (
         <span className="pending-resource-image-unavailable">{props.language === 'zh-CN' ? '预览不可用' : 'No preview'}</span>
       ) : (
-        <PendingResourceIcon resource={props.resource} extension={extension} />
+        <FileTypeIcon path={props.resource.kind === 'pasted_text' ? 'pasted.txt' : props.resource.name} kind={props.resource.kind === 'directory' ? 'directory' : undefined} size={22} />
       )}
       {previewLoading ? <ResourceLoading label={loadingLabel} /> : null}
     </span>
@@ -185,25 +170,6 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       ) : null}
     </li>
   );
-}
-
-function PendingResourceIcon(props: { resource: PendingResourceCardItem; extension: string }): ReactNode {
-  const iconProps = { size: 22, weight: 'regular' as const, 'aria-hidden': true };
-  if (props.resource.kind === 'directory') return <Folder {...iconProps} />;
-  if (props.resource.kind === 'pasted_text') return <FileText {...iconProps} />;
-  if (['zip', 'gz', 'tgz', 'rar', '7z', 'tar'].includes(props.extension)) return <FileArchive {...iconProps} />;
-  if (['xls', 'xlsx', 'numbers', 'csv'].includes(props.extension)) return <FileXls {...iconProps} />;
-  if (['doc', 'docx', 'pages', 'rtf'].includes(props.extension)) return <FileDoc {...iconProps} />;
-  if (['ppt', 'pptx', 'key'].includes(props.extension)) return <FilePpt {...iconProps} />;
-  if (props.extension === 'pdf') return <FilePdf {...iconProps} />;
-  if (props.extension === 'md' || props.extension === 'mdx') return <FileMd {...iconProps} />;
-  if (props.extension === 'html' || props.extension === 'htm') return <FileHtml {...iconProps} />;
-  if (props.extension === 'css' || props.extension === 'scss' || props.extension === 'less') return <FileCss {...iconProps} />;
-  if (props.extension === 'js' || props.extension === 'jsx' || props.extension === 'mjs') return <FileJs {...iconProps} />;
-  if (props.extension === 'ts' || props.extension === 'tsx') return <FileTs {...iconProps} />;
-  if (props.extension === 'sql') return <FileSql {...iconProps} />;
-  if (['json', 'yaml', 'yml', 'toml', 'xml', 'sh', 'py', 'java', 'go', 'rs'].includes(props.extension)) return <FileCode {...iconProps} />;
-  return <File {...iconProps} />;
 }
 
 function pendingResourceExtension(name: string): string {

@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { browserOsUpstream } from '../browseros/upstream.mjs';
-import { webUiOverlayInputs } from '../browseros/webui-overlay.mjs';
+import { downloadIconOverlayInputs, webUiOverlayInputs } from '../browseros/webui-overlay.mjs';
 
 /** 覆盖包由同一工作区内的构建命令产生。 */
 const overlayRoot = resolve(import.meta.dirname, '../dist/browseros-webui');
@@ -21,8 +21,10 @@ const revision = execFileSync('git', ['-C', sourceRoot, 'rev-parse', 'HEAD'], { 
 if (revision !== browserOsUpstream.chromiumRevision) throw new Error('Chromium HEAD 与固定基线不一致。');
 /** 原生覆盖包拥有的新增目录。 */
 const nativePrefix = 'chrome/browser/ui/webui/zeus/';
-/** 只允许替换预登记的四个构建文件。 */
-const existingPaths = new Set(webUiOverlayInputs.map((input) => input.path));
+/** 旧覆盖包的收据可以只有此前登记的接入点。 */
+const originalPaths = new Set(webUiOverlayInputs.map((input) => input.path));
+/** 当前覆盖包还登记固定修订的原生下载页源文件。 */
+const existingPaths = new Set([...originalPaths, ...downloadIconOverlayInputs.map((input) => input.path)]);
 
 /** 内容身份用于阻止覆盖用户或其他任务的修改。 */
 function digest(bytes) {
@@ -56,7 +58,7 @@ async function readOptional(path) {
 }
 
 /** 清单只允许同一上游、固定接入点及本包自有原生文件。 */
-function validateManifest(manifest) {
+function validateManifest(manifest, requiredPaths = existingPaths) {
   if (manifest.artifactKind !== 'browseros-webui-source-overlay' || JSON.stringify(manifest.upstream) !== JSON.stringify(browserOsUpstream) || !Array.isArray(manifest.files)) throw new Error('覆盖包身份或固定上游不一致。');
   /** 重复路径会使覆盖顺序产生歧义，必须拒绝。 */
   const seen = new Set();
@@ -66,7 +68,7 @@ function validateManifest(manifest) {
     if (existingPaths.has(file.path) ? !/^[a-f0-9]{64}$/u.test(file.beforeSha256) : file.beforeSha256 !== null) throw new Error('覆盖包的原始文件身份无效。');
     seen.add(file.path);
   }
-  if ([...existingPaths].some((path) => !seen.has(path))) throw new Error('覆盖包缺少必要的构建接入点。');
+  if ([...requiredPaths].some((path) => !seen.has(path))) throw new Error('覆盖包缺少必要的构建接入点。');
 }
 
 /** 对同一 checkout 的写入串行进行；中断遗留的锁不自动删除。 */
@@ -82,7 +84,7 @@ try {
   validateManifest(manifest);
   /** 没有收据时只允许初次接入或同内容的中断恢复。 */
   const prior = priorBytes ? JSON.parse(priorBytes) : null;
-  if (prior) validateManifest(prior);
+  if (prior) validateManifest(prior, originalPaths);
   /** 前次自有文件与当前候选必须按路径一一比较。 */
   const previous = new Map(prior?.files.map((file) => [file.path, file]) ?? []);
   /** 所有写入先预检，防止遇到后面的冲突时已覆盖前面的文件。 */

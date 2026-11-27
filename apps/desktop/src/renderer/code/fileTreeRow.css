@@ -96,15 +96,6 @@
   display: none;
 }
 
-.file-tree-row > .file-tree-row-folder-open,
-:is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-folder-closed {
-  display: none;
-}
-
-:is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-folder-open {
-  display: block;
-}
-
 :is(details[open] > .file-tree-row, .file-tree-row[aria-expanded='true']) > .file-tree-row-disclosure svg {
   transform: rotate(90deg);
 }

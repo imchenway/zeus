@@ -192,7 +192,7 @@ export function ProjectGitDiffWindow(props: {
               <div>
                 {props.source.path && !diff.fileDiffs.some((file) => file.newPath === props.source.path || file.oldPath === props.source.path) ? (
                   <Button unstyled type="button" data-file-path={props.source.path} className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
-                    <FileTypeIcon name={props.source.path} />
+                    <FileTypeIcon path={props.source.path} />
                     <span data-file-status={fileStatuses[props.source.path]}>{props.source.path}</span>
                   </Button>
                 ) : null}
@@ -200,7 +200,7 @@ export function ProjectGitDiffWindow(props: {
                   const path = file.newPath || file.oldPath;
                   return (
                     <Button unstyled key={`${file.oldPath}:${file.newPath}`} type="button" data-file-path={path} className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
-                      <FileTypeIcon name={path} kind={file.isSubmodule ? 'submodule' : undefined} />
+                      <FileTypeIcon path={path} kind={file.isSubmodule ? 'submodule' : undefined} />
                       <span data-icon-tooltip={path} data-file-status={fileStatuses[path] ?? file.changeType}>
                         {path}
                       </span>
@@ -260,7 +260,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
   return (
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
-        <FileTypeIcon name={file.newPath || file.oldPath} />
+        <FileTypeIcon path={file.newPath || file.oldPath} kind={file.isSubmodule ? 'submodule' : undefined} />
         <strong tabIndex={0} data-file-path={file.newPath || file.oldPath} data-icon-tooltip={props.title ?? (file.newPath || file.oldPath)} data-file-status={props.fileStatus ?? file.changeType}>
           {props.title ?? (file.newPath || file.oldPath)}
         </strong>

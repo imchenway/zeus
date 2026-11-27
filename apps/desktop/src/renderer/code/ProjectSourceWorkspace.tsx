@@ -42,7 +42,6 @@ import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import { projectSourceTree } from './projectSourceTreeCache.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
@@ -1103,7 +1102,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                       data-busy-behavior="background"
                       onClick={() => openFile(tab.document.relativePath)}
                     >
-                      <FileTypeIcon name={tab.document.name} />
+                      <FileTypeIcon path={tab.document.relativePath} size={14} />
                       <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
                       {tab.dirty ? (
                         <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
@@ -1613,7 +1612,7 @@ function SearchResults(props: {
           data-icon-tooltip={entry.name}
           onKeyDown={(event) => props.onShortcut(entry, event)}
         >
-          {entry.kind === 'directory' ? <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
+          <FileTypeIcon path={entry.relativePath} kind={entry.kind === 'directory' ? 'directory' : undefined} />
           <span>
             <strong data-file-status={props.gitFileStatuses[entry.relativePath]}>{entry.name}</strong>
             <small>{entry.relativePath}</small>

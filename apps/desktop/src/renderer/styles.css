@@ -16334,20 +16334,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   outline-offset: -2px;
 }
 
-/* 平面目录图标和源码类型标记保持相同尺寸，采用 IDE 常见的类型颜色。 */
-.macos-ai-app .task-git-delivery-entry-icon {
-  display: inline-grid;
-  place-items: center;
-  flex-shrink: 0;
-  inline-size: 16px;
-  block-size: 16px;
-  color: var(--zeus-product-muted);
-}
-
-.macos-ai-app .task-git-delivery-repository > summary .task-git-delivery-entry-icon {
-  color: #638ad8;
-}
-
 .macos-ai-app .task-git-delivery-file-tree input {
   flex-shrink: 0;
 }
@@ -18131,7 +18117,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   overflow: hidden;
 }
 
-.macos-ai-app .pending-resource-visual img {
+.macos-ai-app .pending-resource-visual img:not(.file-type-icon) {
   display: block;
   inline-size: 100%;
   block-size: 100%;

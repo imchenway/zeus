@@ -6,8 +6,6 @@
   --zeus-file-added: #23733b;
   /* 未跟踪文件使用参考图中的红色。 */
   --zeus-file-untracked: #c52d4b;
-  /* 脚本类型色独立于 Git 未跟踪状态。 */
-  --zeus-file-script: #95612f;
   /* 已删除文件降低强调，并保留删除线。 */
   --zeus-file-deleted: #707680;
   /* 冲突单独使用红色。 */
@@ -21,8 +19,6 @@ html[data-zeus-theme='dark'] .macos-ai-app {
   --zeus-file-added: #8acb91;
   /* 深色背景上的未跟踪状态。 */
   --zeus-file-untracked: #f58aa0;
-  /* 深色背景上的脚本类型色。 */
-  --zeus-file-script: #d6ac79;
   /* 深色背景上的删除状态。 */
   --zeus-file-deleted: #a4aab4;
   /* 深色背景上的冲突状态。 */
@@ -37,8 +33,6 @@ html[data-zeus-theme='dark'] .macos-ai-app {
     --zeus-file-added: #8acb91;
     /* 跟随系统的未跟踪状态。 */
     --zeus-file-untracked: #f58aa0;
-    /* 深色背景上的脚本类型色。 */
-    --zeus-file-script: #d6ac79;
     /* 跟随系统的删除状态。 */
     --zeus-file-deleted: #a4aab4;
     /* 跟随系统的冲突状态。 */
@@ -70,32 +64,15 @@ html[data-zeus-theme='dark'] .macos-ai-app {
 .macos-ai-app [data-file-status='ignored'] {
   color: var(--zeus-control-muted-text);
 }
-/* 文件类型使用同一套 Phosphor 轮廓，以文字色和类型色区分用途。 */
-.macos-ai-app svg.file-type-icon {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  color: var(--zeus-control-muted-text);
+/* 类型标识使用素材原色，固定图标宽度让窄窗口优先截断文件名。 */
+.file-type-icon {
+  flex: 0 0 auto;
+  object-fit: contain;
   pointer-events: none;
 }
-.macos-ai-app
-  svg.file-type-icon:is([data-file-kind='code'], [data-file-kind='java'], [data-file-kind='typescript'], [data-file-kind='c'], [data-file-kind='cpp'], [data-file-kind='python'], [data-file-kind='markdown'], [data-file-kind='sql']) {
-  color: var(--zeus-file-modified);
-}
-/* 常用脚本、标记和配置文件保留类型辨识，不再绘制文字徽标或色块。 */
-.macos-ai-app svg.file-type-icon:is([data-file-kind='javascript'], [data-file-kind='jsx'], [data-file-kind='json']) {
-  color: var(--zeus-file-script);
-}
-.macos-ai-app svg.file-type-icon:is([data-file-kind='html'], [data-file-kind='vue']) {
-  color: var(--zeus-file-added);
-}
-.macos-ai-app svg.file-type-icon[data-file-kind='image'],
-.macos-ai-app svg.file-type-icon[data-file-kind='audio'],
-.macos-ai-app svg.file-type-icon[data-file-kind='video'] {
-  color: var(--zeus-file-added);
-}
-.macos-ai-app svg.file-type-icon[data-file-kind='pdf'] {
-  color: var(--zeus-file-conflict);
+/* 原生 summary 和受控树行通过当前展开状态切换同一个图标。 */
+:is(details[open] > summary, [aria-expanded='true']) > .file-type-icon[data-file-kind='directory'] {
+  content: var(--file-type-open-icon);
 }
 /* 图标按钮共用紧凑命中区；悬浮和键盘焦点提供明确反馈。 */
 .macos-ai-app :is(.file-preview-icon-button, .project-source-module-actions > button, .source-git-icon, .project-git-diff-mode > button) {

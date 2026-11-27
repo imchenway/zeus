@@ -21,6 +21,24 @@ await build({
   logLevel: 'warn',
   build: { outDir: stagingRoot, emptyOutDir: true },
 });
+/** 下载页只加载一个独立模块，模块直接复用 Zeus 文件类型匹配。 */
+const downloadIconModulePath = 'file-type-icons/download-icons.js';
+await build({
+  configFile: false,
+  root: desktopRoot,
+  publicDir: false,
+  logLevel: 'warn',
+  build: {
+    outDir: join(stagingRoot, 'file-type-icons'),
+    emptyOutDir: false,
+    lib: {
+      entry: join(desktopRoot, 'browseros/download-icon-lookup.ts'),
+      formats: ['es'],
+      fileName: () => downloadIconModulePath.split('/').at(-1),
+    },
+    rolldownOptions: { output: { codeSplitting: false } },
+  },
+});
 /** 既有 HTML 的模块入口必须唯一，避免错误地省略或重复执行脚本。 */
 const rendererHtml = await readFile(join(stagingRoot, 'index.html'), 'utf8');
 /** Vite 生成的入口标签；资源路径只允许当前产物中的相对脚本。 */
@@ -89,6 +107,8 @@ for (const path of paths) {
 }
 /** 路径哈希用于生成稳定的 C++ 标识，不受目录遍历顺序影响。 */
 const resourceId = (path) => `IDR_ZEUS_${createHash('sha256').update(path).digest('hex').slice(0, 24).toUpperCase()}`;
+/** 将选定的同源资源映射到同一个 GRIT 资源包。 */
+const resourceEntries = (resourcePaths) => resourcePaths.map((path) => `  {${JSON.stringify(path)}, ${resourceId(path)}, std::nullopt},`).join('\n');
 /** GRIT 可直接消费的资源描述，原生目标仍需显式声明资源 ID 分配。 */
 const grd = `<?xml version="1.0" encoding="UTF-8"?>
 <grit latest_public_release="0" current_release="1">
@@ -105,8 +125,20 @@ ${paths.map((path) => `      <include name="${resourceId(path)}" file="${xmlAttr
 `;
 await writeFile(join(stagingRoot, 'zeus_resources.grd'), grd);
 /** 原生 WebUIDataSource 可使用的路径映射；不包含任何业务凭据。 */
-const mapping = `// 现有 Zeus 界面在 Chromium WebUI 内的静态资源映射。\n#pragma once\n#include "chrome/grit/zeus_resources.h"\n#include "ui/base/webui/resource_path.h"\n\n// 路径只来自本次完整构建产物。\ninline constexpr webui::ResourcePath kZeusResources[] = {\n${paths.map((path) => `  {${JSON.stringify(path)}, ${resourceId(path)}, std::nullopt},`).join('\n')}\n};\n\n// 默认页面与当前 React 构建入口保持一致。\ninline constexpr int kZeusDefaultResource = ${resourceId('index.html')};\n`;
+const mapping = `// 现有 Zeus 界面在 Chromium WebUI 内的静态资源映射。\n#pragma once\n#include "chrome/grit/zeus_resources.h"\n#include "ui/base/webui/resource_path.h"\n\n// 路径只来自本次完整构建产物。\ninline constexpr webui::ResourcePath kZeusResources[] = {\n${resourceEntries(paths)}\n};\n\n// 默认页面与当前 React 构建入口保持一致。\ninline constexpr int kZeusDefaultResource = ${resourceId('index.html')};\n`;
 await writeFile(join(stagingRoot, 'zeus_resources_map.h'), mapping);
+/** 读取匹配器使用的同一份数据，选出下载页会返回的资源。 */
+const materialFileIcons = JSON.parse(await readFile(join(desktopRoot, 'src/renderer/code/materialFileIcons.json'), 'utf8'));
+/** 文件类型引用的 SVG 名称去重，目录类型素材仅供 Zeus 界面使用。 */
+const fileIcons = new Set([materialFileIcons.file, ...Object.values(materialFileIcons.fileNames), ...Object.values(materialFileIcons.fileExtensions), ...Object.values(materialFileIcons.languageIds)]);
+/** 下载页同源映射只包含普通文件素材和匹配模块。 */
+const downloadIconPaths = [downloadIconModulePath, ...[...fileIcons].map((name) => `file-type-icons/${name}.svg`)].sort();
+/** 缺失资源时在生成覆盖包之前停止，避免下载页收到无效 ID。 */
+const missingIconPath = downloadIconPaths.find((path) => !paths.includes(path));
+if (missingIconPath) throw new Error(`下载页 Material 图标资源未打包：${missingIconPath}`);
+/** 将下载页资源集合独立于 Zeus 主页面和桌面桥接脚本。 */
+const downloadIconMapping = `// Chromium 原生下载页的 Material 文件图标资源。\n#pragma once\n#include "chrome/grit/zeus_resources.h"\n#include "ui/base/webui/resource_path.h"\n\n// 只包含共享匹配模块及它返回的 SVG 资源。\ninline constexpr webui::ResourcePath kZeusDownloadIconResources[] = {\n${resourceEntries(downloadIconPaths)}\n};\n`;
+await writeFile(join(stagingRoot, 'zeus_download_icon_resources.h'), downloadIconMapping);
 /** 从真实通道表生成 C++ 白名单，不在原生实现中手抄第二份列表。 */
 const channelHeader = `// 桌面通道来自共用 API 与启动报告器。\n#pragma once\n#include <string_view>\n\nnamespace zeus {\n${Object.entries(desktopContract.channels)
   .map(
@@ -149,7 +181,7 @@ await writeFile(join(stagingRoot, 'zeus_csp.h'), cspHeader);
 await writeFile(join(stagingRoot, 'zeus_resource_files.gni'), `# 本次界面构建的资源输入，文件变化会触发 GRIT 重新编译。\nzeus_resource_files = [\n${paths.map((path) => `  ${JSON.stringify(`resources/${path}`)},`).join('\n')}\n]\n`);
 /** 原生元数据与可见资源分别校验，C++ 头不作为网页资源暴露。 */
 const nativeFiles = [];
-for (const path of ['zeus_resources.grd', 'zeus_resources_map.h', 'zeus_desktop_contract.h', 'zeus_csp.h', 'zeus_resource_files.gni']) {
+for (const path of ['zeus_resources.grd', 'zeus_resources_map.h', 'zeus_download_icon_resources.h', 'zeus_desktop_contract.h', 'zeus_csp.h', 'zeus_resource_files.gni']) {
   /** 原生构建输入的实际字节及摘要。 */
   const bytes = await readFile(join(stagingRoot, path));
   nativeFiles.push({ path, byteLength: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });

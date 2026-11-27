@@ -1151,12 +1151,6 @@
   min-width: 0;
 }
 
-.command-run-context > svg {
-  flex: 0 0 auto;
-  height: 16px;
-  width: 16px;
-}
-
 .command-run-context > span {
   flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

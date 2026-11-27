@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowRightIcon } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
-import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import type { DashboardClient, GitDiffSummary, GitFileDiff, ProjectGitPushPreview, ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
@@ -559,7 +558,7 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
           <li key={name}>
             <details open>
               <summary>
-                <FolderIcon aria-hidden="true" />
+                <FileTypeIcon path={props.prefix + name} kind="directory" />
                 <span>{name.slice(0, -1)}</span>
                 <small>{children.length}</small>
               </summary>
@@ -586,7 +585,7 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
                 }
               }}
             >
-              <FileTypeIcon name={name} />
+              <FileTypeIcon path={children[0]!.path} kind={children[0]!.file.isSubmodule ? 'submodule' : undefined} />
               <span data-file-status={children[0]!.file.changeType}>{name}</span>
             </Button>
           </li>

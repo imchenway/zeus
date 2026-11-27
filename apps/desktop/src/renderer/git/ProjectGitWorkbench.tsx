@@ -54,7 +54,6 @@ import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/Car
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
@@ -1111,7 +1110,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 </summary>
                 {(selectedRepository.subtreePaths ?? []).map((path) => (
                   <Button unstyled key={path} type="button" onClick={() => openDelivery(selectedRepository.id, path)}>
-                    <Folder aria-hidden="true" />
+                    <FileTypeIcon path={path} kind="directory" />
                     <span>{path}</span>
                   </Button>
                 ))}
@@ -1573,7 +1572,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       <details className="project-git-commit-file-folder" open>
         <summary data-file-path={props.node.path} style={{ paddingLeft: `${props.depth * 12 + 5}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder weight="regular" aria-hidden="true" />
+          <FileTypeIcon path={props.node.path} kind="directory" size={13} />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (
@@ -1593,7 +1592,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       onClick={() => props.onSelect(props.node.path)}
       onDoubleClick={() => props.onOpen(props.node.path)}
     >
-      <FileTypeIcon name={props.node.path} />
+      <FileTypeIcon path={props.node.path} />
       <span data-icon-tooltip={props.node.name} data-file-status={props.node.stats.changeType}>
         {props.node.name}
       </span>
@@ -1762,7 +1761,7 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
       <details key={node.path} className="git-repository-directory" open>
         <summary>
           <CaretRight aria-hidden="true" />
-          <Folder aria-hidden="true" />
+          <FileTypeIcon path={node.path} kind="directory" />
           <span>{node.name}</span>
         </summary>
         <div className="git-repository-directory-children">

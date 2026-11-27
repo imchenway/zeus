@@ -10,10 +10,8 @@ import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/C
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
-import { fileIconForKind, fileIconKindForName } from '../code/FileTypeIcon.js';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
@@ -514,7 +512,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
                 <div className="session-quick-actions-list">
                   <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
-                    <Folder aria-hidden="true" weight="regular" />
+                    {cwd ? <FileTypeIcon path={cwd} kind="directory" size={17} /> : <Folder aria-hidden="true" weight="regular" />}
                     <span className="session-quick-actions-copy">
                       <strong>{workingDirectoryLabel}</strong>
                     </span>
@@ -770,17 +768,12 @@ function SessionQuickActionSourceVisual(props: { source: SourceRow; onLoadResour
   );
 }
 
+/** 来源列表使用登记资源或原始附件的文件名。 */
 function SourceFallbackIcon(props: { source: SourceRow }) {
   if (props.source.resource) return <ResourceIcon resource={props.source.resource} />;
-  if (props.source.attachment && isPendingImageAttachment(props.source.attachment)) return <FileImage weight="regular" />;
-  if (props.source.attachment?.kind === 'directory') return <Folder weight="regular" />;
-  if (props.source.attachment?.kind === 'pasted_text') return <FileCode weight="regular" />;
-  if (props.source.attachment) {
-    /** 普通附件沿原文件名选择共享图标，不改变图片和目录的预览路径。 */
-    const Icon = fileIconForKind(fileIconKindForName(props.source.attachment.name));
-    return <Icon weight="regular" />;
-  }
-  return <File weight="regular" />;
+  /** 未持久化的来源只有原始附件信息。 */
+  const attachment = props.source.attachment;
+  return <FileTypeIcon path={attachment?.kind === 'pasted_text' ? 'pasted.txt' : (attachment?.name ?? '')} kind={attachment?.kind === 'directory' ? 'directory' : undefined} />;
 }
 
 function isImageSource(source: SourceRow): boolean {

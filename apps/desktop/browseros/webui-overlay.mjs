@@ -47,3 +47,27 @@ export const webUiOverlayInputs = [
     additions: [['    "includes": [2680],\n  },', '\n  # Zeus 的静态 GRD 提供实际资源数量。\n  "chrome/browser/ui/webui/zeus/resources/zeus_resources.grd": {\n    "includes": [2690],\n  },']],
   },
 ];
+
+/** 下载页补丁以固定 Chromium 原文为基线，BrowserOS 在该修订上未修改这些文件。 */
+export const downloadIconOverlayInputs = [
+  {
+    /** 将普通文件和 Chromium 状态图标分开处理。 */
+    path: 'chrome/browser/resources/downloads/item.ts',
+    baseSha256: 'a3d12a2ec3af4be881c8c2d8d785e9790b1c1b625fa0c30dd0afce4abba41b8d',
+  },
+  {
+    /** 复用下载页现有的图标加载和缓存。 */
+    path: 'chrome/browser/resources/downloads/icon_loader.ts',
+    baseSha256: 'e9b82a601b45591332d9735d552fce2ce4a4857f6c37a7e562bec4a83fc86962',
+  },
+  {
+    /** 让下载页只依赖共享 Material 静态资源目标。 */
+    path: 'chrome/browser/ui/webui/downloads/BUILD.gn',
+    baseSha256: 'c7a2765e43ddcf2a509c62a4fe223b6b418b28e16704645683b12f7d2186a7d3',
+  },
+  {
+    /** 在下载页自己的来源下注册匹配模块和图像。 */
+    path: 'chrome/browser/ui/webui/downloads/downloads_ui.cc',
+    baseSha256: '4f46cef4ae728e03df3f3924e869ee7ed76b8e88180148b2fd3fecacf35856d9',
+  },
+];

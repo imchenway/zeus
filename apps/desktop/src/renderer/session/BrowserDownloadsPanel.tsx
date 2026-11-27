@@ -1,10 +1,10 @@
-import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { useLayoutEffect, useRef } from 'react';
 import type { ZeusBrowserCommand, ZeusBrowserDownload } from '@zeus/shared';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { Button } from '../ui/Button.js';
 
 /** 下载列表的状态和操作文案随桌面语言显示。 */
@@ -91,7 +91,7 @@ export function BrowserDownloadsPanel({
             const ActionIcon = operation === 'pause' ? Pause : operation === 'resume' ? Play : FolderOpen;
             return (
               <li key={download.id}>
-                <DownloadSimple className="browser-download-file-icon" aria-hidden="true" />
+                <FileTypeIcon path={download.fileName} />
                 <div className="browser-download-file">
                   <strong title={download.fileName}>{download.fileName}</strong>
                   <small>

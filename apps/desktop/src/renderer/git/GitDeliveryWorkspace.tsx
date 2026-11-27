@@ -17,7 +17,6 @@ import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { GearSixIcon } from '@phosphor-icons/react/dist/csr/GearSix';
 import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { QuestionIcon } from '@phosphor-icons/react/dist/csr/Question';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
@@ -531,7 +530,7 @@ const DeliveryDirectoryEntries = memo(function DirectoryEntries(props: DeliveryD
               <details open className="task-git-delivery-directory">
                 <summary data-file-path={path} data-icon-tooltip={name.slice(0, -1)} onContextMenu={(event) => props.onContextMenu(event, files)} onKeyDown={(event) => props.onKeyDown(event, files)}>
                   {checkbox}
-                  <DeliveryEntryIcon />
+                  <FileTypeIcon path={path} kind="directory" />
                   <span>{name.slice(0, -1)}</span>
                   <small>{files.length}</small>
                 </summary>
@@ -555,7 +554,7 @@ const DeliveryDirectoryEntries = memo(function DirectoryEntries(props: DeliveryD
                   onDoubleClick={() => props.onOpen(path)}
                   disabled={props.disabled}
                 >
-                  <DeliveryEntryIcon path={path} submodule={files[0].isSubmodule} />
+                  <FileTypeIcon path={path} kind={files[0].isSubmodule ? 'submodule' : undefined} />
                   <span data-file-status={files[0].status}>{name}</span>
                   {files[0].isSubmodule ? <small>{props.zh ? '子模块' : 'Submodule'}</small> : null}
                   {files[0].additions || files[0].deletions ? <small>{`+${files[0].additions} −${files[0].deletions}`}</small> : null}
@@ -568,15 +567,6 @@ const DeliveryDirectoryEntries = memo(function DirectoryEntries(props: DeliveryD
     </ol>
   );
 });
-
-/** 交付树复用源码及会话的文件图标，目录使用同一 Phosphor 文件夹轮廓。 */
-function DeliveryEntryIcon(props: { path?: string; submodule?: boolean }) {
-  return props.path ? (
-    <FileTypeIcon name={props.path} kind={props.submodule ? 'submodule' : undefined} className="task-git-delivery-entry-icon" />
-  ) : (
-    <FolderIcon className="task-git-delivery-entry-icon" size={16} weight="regular" aria-hidden="true" />
-  );
-}
 
 /** 操作区和冲突页标题栏只显示摘要，复用原生浮层查看逐仓详情。 */
 export function DeliveryFeedbackNotice(props: {

@@ -237,11 +237,6 @@
   font: inherit;
   text-align: start;
 }
-.git-push-file-tree svg {
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
-}
 .git-push-file-tree :is(button, summary) > span {
   min-width: 0;
   overflow-wrap: anywhere;

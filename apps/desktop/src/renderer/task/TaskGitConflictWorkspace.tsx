@@ -205,7 +205,7 @@ export function TaskGitConflictWorkspace(props: {
         </header>
         {props.integration.conflictFiles.map((path) => (
           <Button unstyled key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
-            <FileTypeIcon name={path} />
+            <FileTypeIcon path={path} />
             <span data-file-status="conflict">{path}</span>
             <small>{path === props.conflictPath ? (currentFileResolved ? (props.zh ? '已处理' : 'Processed') : props.zh ? `${unresolvedCount} 个冲突` : `${unresolvedCount} conflicts`) : props.zh ? '待处理' : 'Pending'}</small>
           </Button>

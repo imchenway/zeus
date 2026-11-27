@@ -1,6 +1,4 @@
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
-import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import type { ProjectSourceEntryKind } from '@zeus/shared';
 import type { ReactNode } from 'react';
 import { Button, type ButtonProps } from '../ui/Button.js';
@@ -38,14 +36,7 @@ export function FileTreeRow({ name, path, depth, kind, fileStatus, trailing, but
       <span className="file-tree-row-disclosure" aria-hidden="true">
         {directory ? <CaretRight size={12} /> : null}
       </span>
-      {directory ? (
-        <>
-          <Folder className="file-tree-row-folder-closed" weight="regular" aria-hidden="true" />
-          <FolderOpen className="file-tree-row-folder-open" weight="regular" aria-hidden="true" />
-        </>
-      ) : (
-        <FileTypeIcon name={name} />
-      )}
+      <FileTypeIcon path={path ?? name} kind={directory ? 'directory' : undefined} />
       <span data-file-status={fileStatus}>{name}</span>
       {kind === 'symlink' ? <small>↗</small> : null}
       {trailing}

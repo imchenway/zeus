@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { browserOsUpstream } from '../browseros/upstream.mjs';
-import { webUiOverlayInputs } from '../browseros/webui-overlay.mjs';
+import { downloadIconOverlayInputs, webUiOverlayInputs } from '../browseros/webui-overlay.mjs';
 
 /** 所有输入从脚本所在项目定位，支持 Windows 和 macOS 路径。 */
 const desktopRoot = resolve(import.meta.dirname, '..');
@@ -94,25 +94,36 @@ try {
   const files = [];
   // Git apply 仅在独立临时仓库中执行，避免向 Zeus 当前工作树应用补丁。
   execFileSync('git', ['-c', 'init.templateDir=', 'init', '--quiet', stagingRoot]);
-  for (const input of webUiOverlayInputs) {
-    /** Chromium 原文和 BrowserOS 补丁均经过固定摘要约束。 */
+  for (const input of [...webUiOverlayInputs, ...downloadIconOverlayInputs]) {
+    /** Chromium 原文总是核对固定摘要。 */
     const base = await readChromiumBase(input);
-    /** 补丁读取严格受限于当前上游的固定目录。 */
-    const patch = await readRegular(upstreamRoot, `packages/browseros/chromium_patches/${input.path}`);
-    if (digest(patch) !== input.patchSha256) throw new Error(`BrowserOS 补丁摘要不符：${input.path}`);
     await mkdir(dirname(join(stagingRoot, input.path)), { recursive: true });
     await writeFile(join(stagingRoot, input.path), base);
-    execFileSync('git', ['-C', stagingRoot, 'apply', '--whitespace=nowarn', '-'], { input: patch });
+    if (input.patchSha256) {
+      /** 登记了 BrowserOS 补丁的文件先还原该上游的修改。 */
+      const patch = await readRegular(upstreamRoot, `packages/browseros/chromium_patches/${input.path}`);
+      if (digest(patch) !== input.patchSha256) throw new Error(`BrowserOS 补丁摘要不符：${input.path}`);
+      execFileSync('git', ['-C', stagingRoot, 'apply', '--whitespace=nowarn', '-'], { input: patch });
+    }
     /** 应用 Zeus 之前必须保留 BrowserOS 已有修改。 */
     const before = await readFile(join(stagingRoot, input.path));
     /** 只插入已核对的唯一锚点，不用模糊匹配或全局替换。 */
     let source = before.toString('utf8');
-    for (const [anchor, addition] of input.additions) {
+    for (const [anchor, addition] of input.additions ?? []) {
       if (source.split(anchor).length !== 2) throw new Error(`构建接线锚点不唯一：${input.path}`);
       source = source.replace(anchor, `${anchor}${addition}`);
     }
     await writeFile(join(stagingRoot, input.path), source);
-    files.push({ path: input.path, beforeSha256: digest(before), sha256: digest(source), byteLength: Buffer.byteLength(source) });
+    files.push({ path: input.path, beforeSha256: digest(before) });
+  }
+  /** 下载页补丁与 BrowserOS 的接入点都在同一隔离目录内生成。 */
+  const downloadIconPatch = await readRegular(desktopRoot, 'browseros/chromium-download-icons.patch');
+  execFileSync('git', ['-C', stagingRoot, 'apply', '--whitespace=nowarn', '-'], { input: downloadIconPatch });
+  for (const file of files) {
+    /** 覆盖清单以补丁应用后的实际字节为准。 */
+    const bytes = await readRegular(stagingRoot, file.path);
+    file.sha256 = digest(bytes);
+    file.byteLength = bytes.length;
   }
   /** 统一写入并登记新原生文件和静态资源，拒绝重复目的路径。 */
   async function addFile(path, bytes) {

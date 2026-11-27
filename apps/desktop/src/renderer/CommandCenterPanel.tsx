@@ -9,7 +9,6 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
-import { FolderSimpleIcon as FolderSimple } from '@phosphor-icons/react/dist/csr/FolderSimple';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -20,6 +19,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { formatZeusDateTime, commandNeedsHighRiskConfirmation, commandShells, type CommandShell, type CommandRiskFlags } from '@zeus/shared';
 import { ZeusSelect } from './ZeusSelect.js';
 import { projectTerminalOutput } from '@zeus/shared';
+import { FileTypeIcon } from './code/FileTypeIcon.js';
 import {
   isLikelyLocalServerConnectionError,
   ZeusApiError,
@@ -1636,7 +1636,7 @@ function CommandRunModal(props: {
             </p>
           ) : null}
           <div className="command-run-context">
-            <FolderSimple aria-hidden="true" />
+            <FileTypeIcon path={props.project.localPath} kind="directory" />
             <span data-icon-tooltip={props.project.localPath} aria-label={`${zh ? '项目目录' : 'Project directory'} ${props.project.localPath}`}>
               {props.project.localPath}
             </span>

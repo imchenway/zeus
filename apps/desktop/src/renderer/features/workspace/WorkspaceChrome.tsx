@@ -2,6 +2,7 @@ import { MotionPresence } from '../../ui/MotionPresence.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { temporaryWorkspaceId, normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
+import { FileTypeIcon } from '../../code/FileTypeIcon.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type ReactNode, type UIEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -179,7 +180,7 @@ export function ProjectCreateDialog(props: {
               {...controlBusyProps(props.directoryBusy)}
             >
               <span className="project-create-folder-picker-icon" aria-hidden="true">
-                {props.form.localPath ? <FolderOpen weight="regular" /> : <FolderPlus weight="regular" />}
+                {props.form.localPath ? <FileTypeIcon path={props.form.localPath} kind="directory" size={22} /> : <FolderPlus weight="regular" />}
               </span>
               <span className="project-create-folder-picker-copy">
                 <strong>{props.form.localPath ? defaultProjectNameFromLocalPath(props.form.localPath) : props.copy.createChooseFolder}</strong>

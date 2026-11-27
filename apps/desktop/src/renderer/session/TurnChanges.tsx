@@ -151,7 +151,7 @@ export function TurnChangeCard(props: {
                   onClick={() => props.onReview?.(changeSet, file.id)}
                   disabled={!props.onReview}
                 >
-                  <FileTypeIcon name={file.newPath ?? file.oldPath ?? ''} />
+                  <FileTypeIcon path={file.newPath ?? file.oldPath ?? ''} />
                   <span className="session-turn-change-path" data-icon-tooltip={displayPath(file)} data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>
                     {displayPath(file)}
                   </span>

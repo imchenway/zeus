@@ -8,15 +8,13 @@ import { type CSSProperties, type KeyboardEvent, type ReactNode, useContext, use
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
-import { fileIconForKind } from '../code/FileTypeIcon.js';
-import { materialFileIconUrl } from '../code/materialFileIcon.js';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
 import { filePreviewKind, filePreviewMime, userFacingErrorCause } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
@@ -212,7 +210,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
       >
         {failed ? (
           <span className="session-resource-image-placeholder" role="status">
-            <FileImage aria-hidden="true" weight="regular" />
+            <FileTypeIcon path={props.attachment.name} />
             <span>{props.compact ? (props.language === 'zh-CN' ? '打开' : 'Open') : props.language === 'zh-CN' ? '缩略图不可用，点击查看文件与可用操作' : 'Thumbnail unavailable. Open file preview and actions.'}</span>
           </span>
         ) : previewUrl ? (
@@ -318,7 +316,7 @@ export function ConversationInlineResource(
         data-error={Boolean(error) || undefined}
         onClick={() => open()}
       >
-        <ResourceIcon resource={props.resource} inline />
+        <ResourceIcon resource={props.resource} size={14} />
         {props.resource.kind === 'file' ? '\u00a0' : null}
         <span>{label}</span>
         {location ? (
@@ -537,7 +535,7 @@ function ConversationImagePreview(
         </>
       ) : error || unavailable ? (
         <span className={props.placeholderClassName} role="status">
-          <FileImage aria-hidden="true" weight="regular" />
+          <ResourceIcon resource={props.resource} />
           <span>{props.compact ? compactStatus : status}</span>
           {error && !props.compact ? <span>{previewTooLarge ? (props.language === 'zh-CN' ? '点击打开' : 'Click to open') : props.language === 'zh-CN' ? '点击重试' : 'Click to retry'}</span> : null}
         </span>
@@ -976,20 +974,14 @@ function isWebPageResource(resource: ConversationResource): boolean {
   return resource.kind === 'website' ? !resource.url.startsWith('mailto:') : resource.kind === 'file' && resource.iconKind === 'html';
 }
 
-/** 根据展示位置选择文件图标，网页继续使用站点标识。 */
-export function ResourceIcon(props: { resource: ConversationResource; inline?: boolean }) {
-  if (props.inline && props.resource.kind === 'file') {
-    return <img className="session-inline-file-icon" src={materialFileIconUrl(props.resource.projectRelativePath)} alt="" width={14} height={14} draggable={false} />;
-  }
-  if (props.resource.kind === 'file' && props.resource.presentation === 'card' && props.resource.iconKind === 'html') {
-    return <GlobeSimple aria-hidden="true" weight="regular" />;
-  }
+/** 文件和附件共用类型图标，网址显示站点标识。 */
+export function ResourceIcon(props: { resource: ConversationResource; size?: number }) {
   if (props.resource.kind === 'website') {
     return props.resource.domain.toLocaleLowerCase().replace(/^www\./u, '') === 'github.com' ? <GithubLogo aria-hidden="true" weight="regular" /> : <GlobeSimple aria-hidden="true" weight="regular" />;
   }
-  /** 资源卡和附件使用对应的 Phosphor 图标。 */
-  const Icon = fileIconForKind(props.resource.iconKind);
-  return <Icon aria-hidden="true" weight="regular" />;
+  /** 引用使用登记的真实路径，附件使用原文件名。 */
+  const path = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.displayName;
+  return <FileTypeIcon path={path} size={props.size} />;
 }
 
 /** 行号保留英文表达，实际打开仍使用原始位置字段。 */

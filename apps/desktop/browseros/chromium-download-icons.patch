@@ -1,0 +1,94 @@
+diff --git a/chrome/browser/resources/downloads/item.ts b/chrome/browser/resources/downloads/item.ts
+--- a/chrome/browser/resources/downloads/item.ts
++++ b/chrome/browser/resources/downloads/item.ts
+@@ -1076,8 +1076,10 @@
+     }
+ 
+     const path = this.data.filePath;
++    // A nonempty glyph can carry a scan or warning even in NORMAL display.
++    const useMaterialIcon = this.computeIcon_() === '';
+     IconLoaderImpl.getInstance()
+-        .loadIcon(this.$.fileIcon, path)
++        .loadIcon(this.$.fileIcon, path, useMaterialIcon)
+         .then(success => {
+           if (!!this.data && path === this.data.filePath &&
+               this.data.state !== State.kAsyncScanning) {
+diff --git a/chrome/browser/resources/downloads/icon_loader.ts b/chrome/browser/resources/downloads/icon_loader.ts
+--- a/chrome/browser/resources/downloads/icon_loader.ts
++++ b/chrome/browser/resources/downloads/icon_loader.ts
+@@ -5,8 +5,18 @@
+ import {getFileIconUrl} from 'chrome://resources/js/icon.js';
+ import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
+ 
++/** The packaged Zeus file matcher is served by this downloads page. */
++const materialModuleUrl =
++    new URL('/file-type-icons/download-icons.js', document.baseURI).href;
++
++/** Resolve the shared matcher once before rows start loading images. */
++const materialIcons: {materialFileIconName(path: string): string}|undefined =
++    await import(materialModuleUrl).catch(() => undefined);
++
+ export interface IconLoader {
+-  loadIcon(imageEl: HTMLImageElement, filePath: string): Promise<boolean>;
++  loadIcon(
++      imageEl: HTMLImageElement, filePath: string,
++      useMaterialIcon?: boolean): Promise<boolean>;
+ }
+ 
+ export class IconLoaderImpl implements IconLoader {
+@@ -22,8 +32,14 @@
+   /**
+    * @return Whether or not the icon loaded successfully.
+    */
+-  loadIcon(imageEl: HTMLImageElement, filePath: string): Promise<boolean> {
+-    const url = getFileIconUrl(filePath);
++  loadIcon(
++      imageEl: HTMLImageElement, filePath: string,
++      useMaterialIcon = false): Promise<boolean> {
++    // Resolve to an absolute URL because load events are keyed by imageEl.src.
++    const url = useMaterialIcon && materialIcons && filePath ?
++        new URL(`${materialIcons.materialFileIconName(filePath)}.svg`,
++                materialModuleUrl).href :
++        getFileIconUrl(filePath);
+ 
+     if (!this.iconResolvers_.has(url)) {
+       this.iconResolvers_.set(url, new PromiseResolver());
+diff --git a/chrome/browser/ui/webui/downloads/downloads_ui.cc b/chrome/browser/ui/webui/downloads/downloads_ui.cc
+--- a/chrome/browser/ui/webui/downloads/downloads_ui.cc
++++ b/chrome/browser/ui/webui/downloads/downloads_ui.cc
+@@ -27,6 +27,7 @@
+ #include "chrome/browser/ui/webui/managed_ui_handler.h"
+ #include "chrome/browser/ui/webui/metrics_handler.h"
+ #include "chrome/browser/ui/webui/theme_source.h"
++#include "chrome/browser/ui/webui/zeus/resources/zeus_download_icon_resources.h"
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/chrome_switches.h"
+ #include "chrome/common/url_constants.h"
+@@ -66,6 +67,8 @@
+       profile, chrome::kChromeUIDownloadsHost);
+   webui::SetupWebUIDataSource(source, kDownloadsResources,
+                               IDR_DOWNLOADS_DOWNLOADS_HTML);
++  // Serve the shared file icon assets from the downloads origin.
++  source->AddResourcePaths(kZeusDownloadIconResources);
+ 
+   bool requests_ap_verdicts =
+       safe_browsing::AdvancedProtectionStatusManagerFactory::GetForProfile(
+diff --git a/chrome/browser/ui/webui/downloads/BUILD.gn b/chrome/browser/ui/webui/downloads/BUILD.gn
+--- a/chrome/browser/ui/webui/downloads/BUILD.gn
++++ b/chrome/browser/ui/webui/downloads/BUILD.gn
+@@ -21,6 +21,7 @@
+     "downloads_dom_handler.cc",
+     "downloads_list_tracker.cc",
+     "downloads_ui.cc",
++    "//chrome/browser/ui/webui/zeus/resources/zeus_download_icon_resources.h",
+   ]
+   public = [
+     "downloads_dom_handler.h",
+@@ -41,6 +42,7 @@
+     "//chrome/browser/ui/webui:managed_ui_handler",
+     "//chrome/browser/ui/webui:metrics_handler",
+     "//chrome/browser/ui/webui:theme_source",
++    "//chrome/browser/ui/webui/zeus:resources",
+   ]
+ 
+   if (!is_chromeos) {

@@ -3,7 +3,6 @@ import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
@@ -354,7 +353,7 @@ function SourceWorkspaceView(props: {
                 aria-label={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
                 onClick={() => props.onSelectTab?.(preview)}
               >
-                {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
+                <FileTypeIcon path={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} size={14} />
                 <span data-file-status={preview.review?.status}>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
               </Button>
               <Button
@@ -607,7 +606,7 @@ export function FilePreviewWorkspace(props: {
         <div className="session-source-tabs file-workspace-tab-list" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
           <div className="zeus-workspace-tab-shell" data-active="true">
             <Button unstyled type="button" role="tab" aria-selected="true" className="zeus-workspace-tab" ref={titleRef} data-icon-tooltip={name} data-file-name={name} data-file-path={path}>
-              <FileTypeIcon name={name} />
+              <FileTypeIcon path={path ?? name} size={14} />
               <span data-file-status={item?.review?.status}>{name}</span>
             </Button>
             <Button unstyled type="button" className="zeus-workspace-tab-close" aria-label={`${zh ? '关闭' : 'Close'} ${name}`} data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${name}`} onClick={props.onClose}>

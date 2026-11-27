@@ -392,7 +392,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                           aria-label={`${file.path} · ${fileStatusLabel(file.category, zh)}`}
                           onClick={() => setSelectedFile(file.path)}
                         >
-                          <FileTypeIcon name={file.path} />
+                          <FileTypeIcon path={file.path} />
                           <span data-file-status={file.category}>{file.path}</span>
                         </Button>
                       </label>
