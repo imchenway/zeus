@@ -254,6 +254,40 @@
   line-height: 1.85;
 }
 
+/* 长正文和代码在备注本身换行或滚动，窄抽屉不被内容撑开。 */
+.task-note-section,
+.task-note-section .session-markdown {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-note-section .task-note-input {
+  box-shadow: none;
+  font-size: 14px;
+}
+
+.task-note-section .task-note-input:is(:focus-within, [data-resource-dragging='true']) {
+  border-color: var(--zeus-product-accent);
+  box-shadow: none;
+}
+
+.task-note-input .structured-composer-editor .cm-content {
+  min-block-size: 6rem;
+}
+
+/* 附件动作留在输入侧，保存和取消可随窄窗口折行。 */
+.task-note-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.task-note-actions .task-note-attachment-button {
+  margin-inline-end: auto;
+}
+
 /* 关系区显示实际关系，新增入口沿用共用选择器与任务创建流程。 */
 .macos-ai-app .task-detail-relations {
   display: grid;

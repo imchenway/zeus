@@ -355,7 +355,8 @@ declare global {
           kind?: 'image' | 'file' | 'pasted_text';
         }>,
       ) => Promise<TaskInputResourceBridge[]>;
-      readTaskClipboardResources: () => Promise<{ resources: TaskInputResourceBridge[]; text: string }>;
+      /** 备注保留剪贴板的长文本原文。 */
+      readTaskClipboardResources: (keepLongText?: boolean) => Promise<{ resources: TaskInputResourceBridge[]; text: string }>;
       readTaskClipboardAttachments: () => Promise<Array<{ name: string; type: string; data: ArrayBuffer }>>;
       readTaskClipboardImage: () => Promise<{ name: string; type: 'image/png'; data: ArrayBuffer } | null>;
       writeClipboardText: (text: string) => Promise<{ written: boolean }>;

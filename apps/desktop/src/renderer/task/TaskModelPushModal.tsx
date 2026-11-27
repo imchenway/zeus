@@ -9,6 +9,7 @@ import {
   type TaskPushConversationHistory,
   type TaskPushContextOption,
   type TaskPushMessageLayout,
+  type TaskPushNoteOption,
   type TaskPushParentContextOption,
   type TaskPushPromptAttachment,
   type TaskPushPromptParentContext,
@@ -18,6 +19,7 @@ import {
 } from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
 import { ConversationComposerAttachments } from '../session/ConversationComposerAttachments.js';
+import { ConversationMarkdown } from '../session/ConversationMarkdown.js';
 import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 import type {
   CodexConversationCapabilities,
@@ -69,6 +71,8 @@ export interface TaskModelPushForm {
   directConcurrencyConfirmed: boolean;
   repositorySelections: Record<string, { sourceRef: string; branchName: string; includeLocalChanges: boolean }>;
   currentConversationIds: string[];
+  /** 当前窗口的备注发送选择，不作为项目偏好保存。 */
+  includeNote?: boolean;
   parentContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   relatedContextSelections: Record<string, { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }>;
   supplementalInfo: string;
@@ -183,6 +187,7 @@ export function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapabil
   return `${branchLabel} · ${repositoryLabel}${unavailableLabel}`;
 }
 
+/** 推送确认与待创建会话共用首发内容，备注参数由本次选择提供。 */
 export function buildTaskModelPushLayout(
   task: Pick<TaskRecord, 'id' | 'taskCode' | 'title' | 'taskType' | 'description' | 'defectCurrentState' | 'defectExpectedOutcome' | 'defectReproductionSteps' | 'optimizationCurrentState' | 'optimizationExpectedOutcome' | 'tags'>,
   supplementalInfo: string,
@@ -191,6 +196,7 @@ export function buildTaskModelPushLayout(
   parentContexts: TaskPushPromptParentContext[] = [],
   relatedContexts: TaskPushPromptRelatedContext[] = [],
   supplementalAttachments: TaskPushSupplementalAttachment[] = [],
+  note?: TaskPushNoteOption,
 ): TaskPushMessageLayout {
   return buildTaskPushLayout({
     taskId: task.id,
@@ -204,7 +210,8 @@ export function buildTaskModelPushLayout(
     optimizationCurrentState: task.optimizationCurrentState,
     optimizationExpectedOutcome: task.optimizationExpectedOutcome,
     tags: task.tags,
-    attachments: currentAttachments,
+    note: note?.text,
+    attachments: note ? [...currentAttachments, ...note.attachments] : currentAttachments,
     conversationHistory: currentConversationHistory,
     supplementalInfo,
     supplementalAttachments,
@@ -348,7 +355,7 @@ function TaskPushCurrentConversationPicker(props: { options: TaskPushContextConv
 
 function taskPushAttachmentFieldLabel(field: TaskPushPromptAttachment['field'], zh: boolean): string {
   const labels = zh
-    ? { description: '需求描述', defectCurrentState: '现状', defectExpectedOutcome: '预期', defectReproductionSteps: '复现步骤', optimizationCurrentState: '现状', optimizationExpectedOutcome: '预期', tags: '标签' }
+    ? { description: '需求描述', defectCurrentState: '现状', defectExpectedOutcome: '预期', defectReproductionSteps: '复现步骤', optimizationCurrentState: '现状', optimizationExpectedOutcome: '预期', tags: '标签', note: '备注' }
     : {
         description: 'Description',
         defectCurrentState: 'Current state',
@@ -357,6 +364,7 @@ function taskPushAttachmentFieldLabel(field: TaskPushPromptAttachment['field'], 
         optimizationCurrentState: 'Current state',
         optimizationExpectedOutcome: 'Expected outcome',
         tags: 'Tags',
+        note: 'Notes',
       };
   return labels[field];
 }
@@ -497,9 +505,17 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
           </header>
           {block.fields.map((field) => (
             <section key={field.field} className="task-push-layout-field">
-              <strong>{field.label}：</strong>
+              <strong>{field.field === 'note' && props.language === 'en-US' ? 'Notes:' : `${field.label}：`}</strong>
               {field.attachmentKeys.map(renderAttachment)}
-              {field.text ? <p>{field.text}</p> : null}
+              {field.text ? (
+                field.field === 'note' ? (
+                  <div className="session-codex-parity-v1">
+                    <ConversationMarkdown text={field.text} streamId={`${block.taskId}-push-note`} language={props.language} phase="final" documentMode showDocumentOutline={false} renderImmediately />
+                  </div>
+                ) : (
+                  <p>{field.text}</p>
+                )
+              ) : null}
             </section>
           ))}
           {block.conversationHistory?.length || block.conversationPaths.length > 0 ? (
@@ -622,6 +638,7 @@ export function resolveTaskModelPushInitialForm(
       }),
     ),
     currentConversationIds: [],
+    includeNote: false,
     parentContextSelections: {},
     relatedContextSelections: {},
     supplementalInfo: '',
@@ -817,6 +834,9 @@ export function TaskModelPushModal(props: {
   const parentContextOptions = props.capabilities?.parentContextOptions ?? [];
   const relatedContextOptions = props.capabilities?.relatedContextOptions ?? [];
   const currentAttachments = props.capabilities?.currentAttachmentOptions ?? [];
+  const currentNote = props.capabilities?.currentNote;
+  const selectedNote = props.form.includeNote ? currentNote : undefined;
+  const unavailableNoteAttachment = selectedNote?.attachments.find((attachment) => !attachment.available);
   const currentConversationOptions = props.capabilities?.currentConversationOptions ?? [];
   const selectedCurrentConversationHistory = selectedTaskPushConversationHistory(currentConversationOptions, props.form.currentConversationIds);
   const selectedParentContexts = selectedTaskPushParentContexts(parentContextOptions, props.form.parentContextSelections);
@@ -829,6 +849,7 @@ export function TaskModelPushModal(props: {
     selectedParentContexts,
     selectedRelatedContexts,
     taskPushSupplementalLayoutAttachments(props.form.supplementalAttachments),
+    selectedNote,
   );
 
   /** 切换模型时恢复该模型在当前项目中确认过的选项。 */
@@ -1083,6 +1104,28 @@ export function TaskModelPushModal(props: {
                 placeholder={zh ? '仅影响本次推送，不会修改任务本身。' : 'Applies only to this push and does not modify the task.'}
               />
             </section>
+
+            {currentNote ? (
+              <div>
+                <label className="task-model-push-parent task-model-push-note">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selectedNote)}
+                    disabled={busy || props.status === 'loading'}
+                    onChange={(event) => {
+                      const includeNote = event.currentTarget.checked;
+                      props.onChange((current) => ({ ...current, includeNote }));
+                    }}
+                  />
+                  <strong>{zh ? '随任务发送备注' : 'Send notes with the task'}</strong>
+                </label>
+                {unavailableNoteAttachment ? (
+                  <p className="task-model-push-warning" role="status">
+                    {zh ? `备注附件「${unavailableNoteAttachment.name}」不可用。` : `The note attachment “${unavailableNoteAttachment.name}” is unavailable.`}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <TaskPushCurrentConversationPicker
               options={currentConversationOptions}
@@ -1498,6 +1541,7 @@ export function TaskModelPushModal(props: {
                 busy ||
                 !props.capabilities ||
                 props.status === 'loading' ||
+                (!modelSetupRequired && Boolean(unavailableNoteAttachment)) ||
                 (!modelSetupRequired && (!props.form.model || !selectedModel)) ||
                 (!modelSetupRequired && !contextCapacitySelectionAllowed(props.form.contextCapacityTokens, selectedModel?.contextCapacity)) ||
                 (!modelSetupRequired &&

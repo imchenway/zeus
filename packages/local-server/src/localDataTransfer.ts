@@ -1,4 +1,4 @@
-import { normalizeTaskDeadline, taskDeadlineTimes, type TaskDeadline } from '@zeus/shared';
+import { isTaskNote, normalizeTaskDeadline, taskDeadlineTimes, type TaskDeadline } from '@zeus/shared';
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { type CommandDefinition, isTaskAttachmentField, type TaskAttachmentField, validateCommandDefinitionInput } from '@zeus/shared';
@@ -48,6 +48,8 @@ export interface PortableProjectRecord {
 export interface PortableTaskRecord {
   /** 可移植的截止日期、时区和提醒配置。 */
   deadline?: TaskDeadline | null;
+  /** 任务备注原文，旧备份可以省略。 */
+  note?: string;
   id: string;
   projectId: string;
   title: string;
@@ -108,6 +110,7 @@ export function exportLocalBusinessData(db: ZeusDatabase, exportedAt: string): L
                 title,
                 task_type,
                 description,
+                note,
                 defect_current_state,
                 defect_expected_outcome,
                 defect_reproduction_steps,
@@ -235,15 +238,16 @@ export function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExp
     const deadlineTimes = deadline ? taskDeadlineTimes(deadline) : null;
     const taskType = isTaskType(task.taskType) ? task.taskType : 'requirement';
     db.execute(
-      `INSERT OR REPLACE INTO tasks (id, project_id, title, task_type, description, defect_current_state, defect_expected_outcome, defect_reproduction_steps,
+      `INSERT OR REPLACE INTO tasks (id, project_id, title, task_type, description, note, defect_current_state, defect_expected_outcome, defect_reproduction_steps,
         optimization_current_state, optimization_expected_outcome, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at, deadline_json, deadline_at, reminder_at, reminder_revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, 1)`,
       [
         task.id,
         task.projectId,
         task.title,
         taskType,
         task.description,
+        task.note ?? '',
         task.defectCurrentState ?? '',
         task.defectExpectedOutcome ?? '',
         task.defectReproductionSteps ?? '',
@@ -392,6 +396,8 @@ export interface PortableProjectDbRow {
 export interface PortableTaskDbRow {
   /** 存储层截止配置。 */
   deadline_json?: string | null;
+  /** 存储层保留的备注 Markdown。 */
+  note?: string;
   id: string;
   project_id: string;
   title: string;
@@ -458,6 +464,7 @@ export function mapPortableTaskRow(row: PortableTaskDbRow): PortableTaskRecord {
     title: row.title,
     taskType: isTaskType(row.task_type) ? row.task_type : 'requirement',
     description: row.description,
+    ...(row.note ? { note: row.note } : {}),
     defectCurrentState: row.defect_current_state,
     defectExpectedOutcome: row.defect_expected_outcome,
     defectReproductionSteps: row.defect_reproduction_steps,
@@ -531,6 +538,7 @@ export function isPortableTaskRecord(value: unknown): value is PortableTaskRecor
     typeof record.projectId === 'string' &&
     typeof record.title === 'string' &&
     typeof record.description === 'string' &&
+    (record.note === undefined || isTaskNote(record.note)) &&
     typeof record.status === 'string' &&
     Array.isArray(record.tags) &&
     typeof record.createdFrom === 'string' &&

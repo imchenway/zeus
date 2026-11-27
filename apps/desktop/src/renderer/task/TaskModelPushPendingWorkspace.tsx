@@ -98,7 +98,15 @@ export function createTaskModelPushPendingState(
       },
     ];
   });
-  const attachments = [...currentAttachments, ...input.form.supplementalAttachments];
+  /** 备注附件按确认布局中的稳定标识读取，任务列表摘要无需携带本机文件路径。 */
+  const noteKeys = new Set(
+    input.layout.blocks
+      .find((block) => block.contextKind === 'current')
+      ?.attachments.filter((attachment) => attachment.field === 'note')
+      .map((attachment) => attachment.key),
+  );
+  const noteAttachments = (input.capabilities.attachmentPreviewSources ?? []).filter((attachment) => attachment.taskPushAttachmentKey && noteKeys.has(attachment.taskPushAttachmentKey));
+  const attachments = [...currentAttachments, ...noteAttachments, ...input.form.supplementalAttachments];
   /** 首发使用新请求身份，重新确认沿用界面身份以保留输入状态。 */
   const navigationId = recovery?.navigationId ?? `task-push:${input.request.idempotencyKey}`;
   const capabilities = conversationCapabilities(input.capabilities);

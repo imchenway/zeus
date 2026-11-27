@@ -111,7 +111,8 @@ export type WorkspacePageProps = {
   onChooseConversationResources?: () => Promise<NativeConversationAttachment[]>;
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeTaskResources?: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
-  onReadTaskClipboardResources?: () => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
+  /** 备注读取原生剪贴板时可保留长文本正文。 */
+  onReadTaskClipboardResources?: (keepLongText?: boolean) => Promise<{ resources: TaskCreateAttachmentCandidate[]; text: string }>;
   onParseThirdPartyTaskLink?: (url: string, onMetadata?: (result: ThirdPartyTaskExtract) => void) => Promise<ThirdPartyTaskExtract>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;

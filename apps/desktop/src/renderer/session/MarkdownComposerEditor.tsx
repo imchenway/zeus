@@ -60,7 +60,8 @@ interface MarkdownComposerEditorProps {
   listboxId?: string;
   activeDescendant?: string;
   onChange(value: string, caret: number, restoredTokens?: StructuredToken[]): void;
-  onSelect(caret: number): void;
+  /** 结构化引用菜单可跟踪光标，纯 Markdown 输入不需要选区回调。 */
+  onSelect?(caret: number): void;
   onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement | HTMLDivElement>;
   onCompositionStart(): void;
@@ -116,7 +117,7 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
               /** 只有明确润色及其撤销、重做携带标签恢复效果。 */
               const replacement = update.transactions.flatMap((transaction) => transaction.effects).find((effect) => effect.is(composerTokenReplacement));
               latest.current.onChange(update.state.doc.toString(), update.state.selection.main.head, replacement?.is(composerTokenReplacement) ? replacement.value.after : undefined);
-            } else if (update.selectionSet) latest.current.onSelect(update.state.selection.main.head);
+            } else if (update.selectionSet) latest.current.onSelect?.(update.state.selection.main.head);
           }),
         ],
       }),

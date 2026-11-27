@@ -2035,6 +2035,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
         onManagementStatusChange={(taskId, status, expectedUpdatedAt) => updateTaskManagementStatus(taskId, status, { expectedUpdatedAt })}
         onAuthorizeFiles={props.onAuthorizeTaskFiles}
+        onChooseAttachments={props.onChooseTaskAttachments}
         onMaterializeResources={props.onMaterializeTaskResources}
         onReadClipboardResources={props.onReadTaskClipboardResources}
         onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}

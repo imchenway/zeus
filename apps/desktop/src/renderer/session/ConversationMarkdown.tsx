@@ -142,6 +142,8 @@ export interface ConversationMarkdownProps {
   renderImmediately?: boolean;
   /** 文件阅读使用读取上限和屏外延迟绘制，不套用会话的正文、代码与节点截断。 */
   documentMode?: boolean;
+  /** 备注等内嵌正文可沿用文档渲染而不占用大纲控件。 */
+  showDocumentOutline?: boolean;
   /** 输入框可替换表格交互，单元格解析、安全链接和内联格式仍沿用正文渲染。 */
   customComponentsId?: string;
   /** 源码页提供自己的已授权相对资源解析，不伪造会话资源身份。 */
@@ -309,7 +311,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
         data-truncated={bounded.truncated || undefined}
         data-document-mode={props.documentMode || undefined}
       >
-        {props.documentMode ? <MarkdownDocumentOutline key={props.streamId} root={rootRef} language={props.language} /> : null}
+        {props.documentMode && props.showDocumentOutline !== false ? <MarkdownDocumentOutline key={props.streamId} root={rootRef} language={props.language} /> : null}
         <MarkdownRender
           content={bounded.text}
           final={props.phase === 'final'}

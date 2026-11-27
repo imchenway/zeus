@@ -244,13 +244,15 @@ function TaskPushMessageContent(
             const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingAttachmentsByKey.has(key));
             return (
               <section key={field.field} className="session-task-push-field">
-                <strong>{field.label}：</strong>
+                <strong>{field.field === 'note' && props.language === 'en-US' ? 'Notes:' : `${field.label}：`}</strong>
                 {field.text ? (
                   <ConversationMarkdown
                     text={field.text}
                     streamId={`${props.streamIdPrefix}:${block.contextKind}:${block.taskId ?? 'current'}:${field.field}`}
                     phase="final"
                     language={props.language}
+                    documentMode={field.field === 'note'}
+                    showDocumentOutline={false}
                     resources={markdownResources}
                     onOpenResource={props.onOpenResource}
                     onLoadResourcePreview={props.onLoadResourcePreview}

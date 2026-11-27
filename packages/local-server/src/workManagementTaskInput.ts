@@ -1,8 +1,8 @@
-import { isTaskAttachmentField, type TaskAttachmentReference } from '@zeus/shared';
+import { isTaskAttachmentField, taskAttachmentLimit, type TaskAttachmentReference } from '@zeus/shared';
 
 /** 工作管理写入口共用的字段级附件规范化；只接受有限、可归属的本地引用。 */
 export function normalizeWorkManagementTaskAttachments(value: unknown): TaskAttachmentReference[] | null {
-  if (!Array.isArray(value) || value.length > 24) return null;
+  if (!Array.isArray(value) || value.length > taskAttachmentLimit) return null;
   const byPath = new Map<string, TaskAttachmentReference>();
   for (const rawAttachment of value) {
     if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) return null;

@@ -159,7 +159,8 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   resolveConversationCapabilities(project: ZeusProjectRecord, selectedModelRef?: string | null): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
   /** 任务推送使用已冻结的模型身份复验能力。 */
   resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord, selectedModelRef: string): Promise<ConversationCapabilitiesSnapshot>;
-  normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] };
+  /** 备注附件由本次推送已确认的备注修订启用。 */
+  normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string, includeNote?: boolean): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] };
   normalizeTaskPushSupplementalAttachments(value: unknown, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushSupplementalAttachment[] };
   mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>): { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
   buildTaskPushLayoutForTask(
@@ -170,6 +171,7 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
     parentContexts: TaskPushPromptParentContext[],
     relatedContexts: TaskPushPromptRelatedContext[],
     supplementalAttachments: TaskPushSupplementalAttachment[],
+    note?: string,
   ): TaskPushMessageLayout;
   taskEnvironments: TaskEnvironmentRepository;
   taskIntegrationAttempts: TaskIntegrationAttemptRepository;
@@ -3803,8 +3805,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
           currentConversationHistory: TaskPushConversationHistory[];
           parentContexts: TaskPushPromptParentContext[];
           relatedContexts: TaskPushPromptRelatedContext[];
+          note?: string;
         };
-        const currentAttachmentInput = normalizeTaskPushAttachments(task, project.localPath);
+        const currentAttachmentInput = normalizeTaskPushAttachments(task, project.localPath, taskContextInput.note !== undefined);
         const supplementalAttachmentInput = normalizeTaskPushSupplementalAttachments(body.supplementalAttachments, project.localPath);
         const attachmentInput = mergeTaskPushAttachmentInputs(currentAttachmentInput, taskContextInput.attachmentInput, supplementalAttachmentInput);
         const includedAttachmentKeys = new Set(attachmentInput.attachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [attachment.taskPushAttachmentKey] : [])));
@@ -3819,6 +3822,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           filterContextAttachments(taskContextInput.parentContexts),
           filterContextAttachments(taskContextInput.relatedContexts),
           supplementalAttachmentInput.promptAttachments.filter((attachment) => includedAttachmentKeys.has(attachment.key)),
+          taskContextInput.note,
         );
         const taskPushAttachmentKeys = new Set([...taskPushLayout.blocks.flatMap((block) => block.attachments.map((attachment) => attachment.key)), ...(taskPushLayout.supplementalAttachments ?? []).map((attachment) => attachment.key)]);
         const taskPushAttachments = attachmentInput.attachments.filter((attachment) => attachment.taskPushAttachmentKey && taskPushAttachmentKeys.has(attachment.taskPushAttachmentKey));

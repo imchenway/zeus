@@ -20,6 +20,8 @@ export interface CreateTaskFromTemplateInput {
 }
 
 export interface CreateUserTaskInput {
+  /** 复制任务时使用的备注 Markdown 原文。 */
+  note?: string;
   /** 截止配置；显式空值清除截止和提醒。 */
   deadline?: TaskDeadline | null;
   projectId: string;

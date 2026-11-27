@@ -591,6 +591,8 @@ export type StartTaskConversationBody = (
       supplementalAttachments?: NativeConversationAttachment[];
       taskContext?: {
         revision: string;
+        /** 指定本次确认发送的备注修订。 */
+        noteRevision?: string;
         parentSelections: TaskPushParentContextSelection[];
         relatedSelections: TaskPushRelatedContextSelection[];
       };

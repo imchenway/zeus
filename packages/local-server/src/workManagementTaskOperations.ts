@@ -1,5 +1,15 @@
 import { getNextTaskStatus, type TaskStatus } from './taskCore.js';
-import { isTaskBoardGroupProperty, taskBoardEmptyGroupId, type TaskBoardGroupProperty, taskBoardLayoutKey, type TaskBoardMoveRequest, type TaskBoardViewSnapshot, type TaskManagementStatusConfig } from '@zeus/shared';
+import {
+  isTaskBoardGroupProperty,
+  isTaskNote,
+  taskBoardEmptyGroupId,
+  type TaskBoardGroupProperty,
+  taskBoardLayoutKey,
+  type TaskBoardMoveRequest,
+  type TaskBoardViewSnapshot,
+  type TaskManagementStatusConfig,
+  taskNoteMaxLength,
+} from '@zeus/shared';
 import { isTaskPriority, isTaskType, TaskBoardRepository, type TaskManagementStatus, type TaskPriority, TaskRepository, type ZeusProjectRecord, type ZeusTaskRecord } from '@zeus/storage';
 import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
 import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
@@ -510,6 +520,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     if (typeof input.title === 'string' && !input.title.trim()) throw routeError(400, 'ZEUS_TASK_TITLE_REQUIRED', 'Task title is required.');
     if (input.taskType !== undefined && !isTaskType(input.taskType)) throw routeError(400, 'ZEUS_INVALID_TASK_TYPE', '任务类型必须是任务、需求、缺陷或优化。');
     if (input.description !== undefined && typeof input.description !== 'string') throw routeError(400, 'ZEUS_INVALID_TASK_DESCRIPTION', 'Task description must be a string.');
+    if (input.note !== undefined && !isTaskNote(input.note)) throw routeError(400, 'ZEUS_INVALID_TASK_NOTE', `Task note must be a string of at most ${taskNoteMaxLength} characters.`);
     if ([input.defectCurrentState, input.defectExpectedOutcome, input.defectReproductionSteps, input.optimizationCurrentState, input.optimizationExpectedOutcome].some((value) => value !== undefined && typeof value !== 'string')) {
       throw routeError(400, 'ZEUS_INVALID_TASK_CONTENT', 'Task type content fields must be strings when provided.');
     }
@@ -517,6 +528,11 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     if (input.tags !== undefined && (!Array.isArray(input.tags) || !input.tags.every((tag) => typeof tag === 'string'))) throw routeError(400, 'ZEUS_INVALID_TASK_TAGS', 'Task tags must be an array of strings.');
     const attachments = input.attachments === undefined ? undefined : normalizeWorkManagementTaskAttachments(input.attachments);
     if (attachments === null) throw routeError(400, 'ZEUS_INVALID_TASK_ATTACHMENTS', 'Task attachments must contain at most 24 valid field-owned attachment references.');
+    /** 备注编辑只能改自己的附件，避免当前任务的其他字段被旧草稿覆盖。 */
+    const noteAttachments = input.noteAttachments === undefined ? undefined : normalizeWorkManagementTaskAttachments(input.noteAttachments);
+    if (noteAttachments === null || noteAttachments?.some((attachment) => attachment.field !== 'note')) throw routeError(400, 'ZEUS_INVALID_TASK_ATTACHMENTS', 'Invalid task note attachments.');
+    if (noteAttachments !== undefined && (attachments !== undefined || input.sourceContext !== undefined))
+      throw routeError(400, 'ZEUS_AMBIGUOUS_TASK_CONTEXT_UPDATE', 'Note attachments must be updated independently of other attachment fields.');
     if (input.sourceContext !== undefined && (!input.sourceContext || typeof input.sourceContext !== 'object' || Array.isArray(input.sourceContext))) {
       throw routeError(400, 'ZEUS_INVALID_TASK_SOURCE_CONTEXT', 'Task source context must be an object.');
     }
@@ -537,6 +553,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       title: input.title,
       taskType: input.taskType,
       description: input.description,
+      note: input.note,
       defectCurrentState: input.defectCurrentState,
       defectExpectedOutcome: input.defectExpectedOutcome,
       defectReproductionSteps: input.defectReproductionSteps,
@@ -546,6 +563,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       deadline: input.deadline,
       tags: input.tags,
       attachments,
+      noteAttachments,
       sourceContext,
       allowCodeChanges: input.allowCodeChanges,
       allowTests: input.allowTests,

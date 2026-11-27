@@ -1030,6 +1030,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateRetiredUnitTestTemplate(zeusDb);
     migrateTaskManagementStatus(zeusDb);
     migrateTaskTypesAndContents(zeusDb);
+    migrateTaskNote(zeusDb);
     migrateDigitalEmployeeSchema(zeusDb);
     migrateImSchema(zeusDb);
     migrateAutomationSchema(zeusDb);
@@ -1436,6 +1437,7 @@ function migrateCoreSchema(db: ZeusDatabase): void {
       title TEXT NOT NULL,
       task_type TEXT NOT NULL DEFAULT 'requirement',
       description TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '', -- 任务备注的 Markdown 原文，空字符串表示无正文
       defect_current_state TEXT NOT NULL DEFAULT '',
       defect_expected_outcome TEXT NOT NULL DEFAULT '',
       defect_reproduction_steps TEXT NOT NULL DEFAULT '',
@@ -1862,6 +1864,18 @@ function migrateTaskTypesAndContents(db: ZeusDatabase): void {
     migrationId,
     description: '增加任务类型与类型专属内容，历史任务统一迁移为需求',
     checksumSource: 'tasks.task_type:requirement,defect,optimization:typed-content',
+  });
+}
+
+/** 旧任务的备注默认为空，不重写已有正文、附件或修订时间。 */
+function migrateTaskNote(db: ZeusDatabase): void {
+  const migrationId = '20261127_0001_task_note';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    if (!db.select<{ name: string }>('PRAGMA table_info(tasks)').some((column) => column.name === 'note')) {
+      db.execute("ALTER TABLE tasks ADD COLUMN note TEXT NOT NULL DEFAULT ''");
+    }
+    recordSchemaMigration(db, { migrationId, description: '增加任务备注 Markdown 原文字段', checksumSource: 'tasks.note:TEXT:empty-default' });
   });
 }
 

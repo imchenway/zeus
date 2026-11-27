@@ -104,8 +104,8 @@ export function createDesktopApi(transport: DesktopTransport) {
   }
 
   /** 读取剪贴板并复用受授权的附件存储链路。 */
-  async function readTaskClipboardResources(): Promise<{ resources: unknown[]; text: string }> {
-    const raw = (await transport.invoke('zeus:read-task-clipboard-resources')) as { paths?: unknown; attachments?: unknown; text?: unknown };
+  async function readTaskClipboardResources(keepLongText = false): Promise<{ resources: unknown[]; text: string }> {
+    const raw = (await transport.invoke('zeus:read-task-clipboard-resources', keepLongText)) as { paths?: unknown; attachments?: unknown; text?: unknown };
     const paths = Array.isArray(raw?.paths) ? raw.paths.filter((path): path is string => typeof path === 'string') : [];
     const attachments = Array.isArray(raw?.attachments) ? raw.attachments : [];
     if (paths.length > 0) {

@@ -26,6 +26,8 @@ export interface TaskPushPromptTaskContent {
   taskTitle: string;
   taskType: TaskType;
   taskDescription?: string;
+  /** 只有本次主动选中备注时才提供，空字符串可表示只有备注附件。 */
+  note?: string;
   defectCurrentState?: string;
   defectExpectedOutcome?: string;
   defectReproductionSteps?: string;
@@ -87,6 +89,13 @@ export interface TaskPushConversationHistory {
 export interface TaskPushContextAttachmentOption extends TaskPushPromptAttachment {
   available: boolean;
   unavailableReason: string | null;
+}
+
+/** 当前任务的可选备注快照，修订同时绑定正文和附件。 */
+export interface TaskPushNoteOption {
+  text: string;
+  revision: string;
+  attachments: TaskPushContextAttachmentOption[];
 }
 
 export type TaskPushParentAttachmentOption = TaskPushContextAttachmentOption;
@@ -162,18 +171,21 @@ const taskTypeLabels: Record<TaskType, string> = {
 };
 
 function taskContentFields(input: TaskPushPromptTaskContent): Array<{ field: TaskAttachmentField; label: string; text: string }> {
-  return input.taskType === 'defect'
-    ? [
-        { field: 'defectCurrentState', label: '现状', text: input.defectCurrentState?.trim() ?? '' },
-        { field: 'defectExpectedOutcome', label: '预期', text: input.defectExpectedOutcome?.trim() ?? '' },
-        { field: 'defectReproductionSteps', label: '复现步骤', text: input.defectReproductionSteps?.trim() ?? '' },
-      ]
-    : input.taskType === 'optimization'
+  const fields: Array<{ field: TaskAttachmentField; label: string; text: string }> =
+    input.taskType === 'defect'
       ? [
-          { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() ?? '' },
-          { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() ?? '' },
+          { field: 'defectCurrentState', label: '现状', text: input.defectCurrentState?.trim() ?? '' },
+          { field: 'defectExpectedOutcome', label: '预期', text: input.defectExpectedOutcome?.trim() ?? '' },
+          { field: 'defectReproductionSteps', label: '复现步骤', text: input.defectReproductionSteps?.trim() ?? '' },
         ]
-      : [{ field: 'description', label: input.taskType === 'task' ? '任务描述' : '需求描述', text: input.taskDescription?.trim() ?? '' }];
+      : input.taskType === 'optimization'
+        ? [
+            { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() ?? '' },
+            { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() ?? '' },
+          ]
+        : [{ field: 'description', label: input.taskType === 'task' ? '任务描述' : '需求描述', text: input.taskDescription?.trim() ?? '' }];
+  if (input.note !== undefined) fields.push({ field: 'note', label: '备注', text: input.note });
+  return fields;
 }
 
 function activeTaskFields(input: TaskPushPromptTaskContent, attachmentKeysByField: Map<TaskAttachmentField, string[]>): Array<{ field: TaskAttachmentField; label: string; text: string }> {

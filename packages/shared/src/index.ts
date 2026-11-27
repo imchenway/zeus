@@ -63,8 +63,19 @@ export const taskPriorityOrder = ['p0', 'p1', 'p2', 'p3', 'p4'] as const;
 
 export type TaskPriority = (typeof taskPriorityOrder)[number];
 
+/** 备注原文的保存上限，以 UTF-16 代码单元计，给 JSON 请求中的转义和附件元数据留出空间。 */
+export const taskNoteMaxLength = 128_000;
+
+/** 接受原样存储的 Markdown 字符串，包括用于清除正文的空字符串。 */
+export function isTaskNote(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= taskNoteMaxLength;
+}
+
+/** 一个任务可保存的附件引用总数。 */
+export const taskAttachmentLimit = 24;
+
 /** 任务附件只能归属到可接收资源的内容字段，标题不在此集合中。 */
-export const taskAttachmentFieldOrder = ['description', 'defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps', 'optimizationCurrentState', 'optimizationExpectedOutcome', 'tags'] as const;
+export const taskAttachmentFieldOrder = ['description', 'defectCurrentState', 'defectExpectedOutcome', 'defectReproductionSteps', 'optimizationCurrentState', 'optimizationExpectedOutcome', 'tags', 'note'] as const;
 
 export type TaskAttachmentField = (typeof taskAttachmentFieldOrder)[number];
 

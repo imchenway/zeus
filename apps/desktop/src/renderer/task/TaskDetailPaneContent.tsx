@@ -9,16 +9,22 @@ import { LinkSimpleIcon } from '@phosphor-icons/react/dist/csr/LinkSimple';
 import { XIcon } from '@phosphor-icons/react/dist/csr/X';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
+import { PaperclipIcon } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
-import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
+import { isTaskPriority, taskAttachmentLimit, taskNoteMaxLength, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
 import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
+import { IconTooltip } from '../ui/IconTooltip.js';
 import { FormDialog } from '../ui/FormDialog.js';
 import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { MarkdownComposerEditor, type ComposerInputHandle } from '../session/MarkdownComposerEditor.js';
+import { ConversationMarkdown } from '../session/ConversationMarkdown.js';
+import { useComposerInputResources } from '../session/useConversationInputResources.js';
+import type { StructuredToken } from '../session/StructuredComposerInput.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { TaskManagementStatusSelect } from './TaskManagementStatusSelect.js';
@@ -123,9 +129,13 @@ export interface TaskDetailPaneContentProps {
   onOpenRelatedTask: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
   onManagementStatusChange: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string) => Promise<TaskEditResult | undefined>;
-  onAuthorizeFiles?: (files: File[], source: 'paste') => Promise<TaskResourceAuthorizationResult>;
+  /** 附件导入复用任务原生授权，支持粘贴和拖放。 */
+  onAuthorizeFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
+  /** 为备注草稿选择任务附件。 */
+  onChooseAttachments?: () => Promise<TaskAttachmentCandidate[]>;
   onMaterializeResources?: (resources: TaskResourcePayload[]) => Promise<TaskAttachmentCandidate[]>;
-  onReadClipboardResources?: () => Promise<{ resources: TaskAttachmentCandidate[]; text: string }>;
+  /** 备注可将原生粘贴中的长文本保留在正文中。 */
+  onReadClipboardResources?: (keepLongText?: boolean) => Promise<{ resources: TaskAttachmentCandidate[]; text: string }>;
   onLoadAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }
@@ -275,20 +285,21 @@ function TaskDetailFieldAttachments(props: {
   copy: TaskDetailPaneCopy;
   editCopy: TaskEditCopy;
   disabled: boolean;
-  onRemove: (path: string) => void;
+  /** 保存态只读，有移除回调时才提供编辑动作。 */
+  onRemove?: (path: string) => void;
   onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
   const attachments = taskAttachmentsForField(props.attachments, props.field);
   /** 未确认卡片按字段显示，成功预览按真实路径复用。 */
-  const previews = props.pendingResources?.filter((resource) => !resource.pending || resource.scope === props.field);
+  const previews = props.pendingResources?.filter((resource) => !resource.pending || !resource.scope || resource.scope === props.field);
   if (attachments.length === 0 && !previews?.some((resource) => resource.pending)) return null;
   return (
     <div className="task-detail-field-attachments">
       <TaskAttachmentPreviewList
         attachments={attachments}
         pendingResources={previews}
-        mode="editable"
+        mode={props.onRemove ? 'editable' : 'readonly'}
         disabled={props.disabled}
         onRemove={props.onRemove}
         onLoadPreview={props.onLoadPreview}
@@ -308,6 +319,224 @@ function TaskDetailFieldAttachments(props: {
           removeLabel: props.editCopy.removeAttachment,
         }}
       />
+    </div>
+  );
+}
+
+/** 备注使用会话编辑器的 Markdown 能力，正文中的 @ 与斜杠命令按原文保留。 */
+const taskNoteTokens: StructuredToken[] = [];
+
+/** 备注的附件与其他字段共用任务附件记录和预览。 */
+type TaskNoteSectionProps = Pick<
+  TaskDetailPaneContentProps,
+  'task' | 'language' | 'copy' | 'busy' | 'onUpdateTaskContent' | 'onAuthorizeFiles' | 'onChooseAttachments' | 'onReadClipboardResources' | 'onLoadAttachmentPreview' | 'onOpenAttachment'
+> & {
+  attachments: TaskAttachmentView[];
+  editCopy: TaskEditCopy;
+};
+
+/** 详情默认展示保存后的备注；进入编辑时才创建输入草稿。 */
+function TaskNoteSection(props: TaskNoteSectionProps) {
+  const [editing, setEditing] = useState(false);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const titleId = useId();
+  const zh = props.language === 'zh-CN';
+  const label = zh ? '备注' : 'Notes';
+  const hasContent = Boolean(props.task.note || props.attachments.some((attachment) => attachment.field === 'note'));
+
+  /** 收起后焦点回到原入口，保留当前详情的滚动位置。 */
+  function closeEditor(): void {
+    setEditing(false);
+    requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
+  }
+
+  return (
+    <section className="task-detail-block task-note-section session-codex-parity-v1" aria-labelledby={titleId}>
+      <div className="task-detail-section-heading">
+        <strong id={titleId}>{label}</strong>
+        {!editing && hasContent ? (
+          <Button ref={trigger} variant="secondary" size="compact" onClick={() => setEditing(true)} disabled={props.busy || props.task.note === undefined}>
+            {zh ? '编辑' : 'Edit'}
+          </Button>
+        ) : null}
+      </div>
+      {editing ? (
+        <TaskNoteEditor {...props} onClose={closeEditor} />
+      ) : (
+        <>
+          {props.task.note ? <ConversationMarkdown text={props.task.note} streamId={`${props.task.id}-note`} phase="final" language={props.language} documentMode showDocumentOutline={false} renderImmediately /> : null}
+          <TaskDetailFieldAttachments
+            zh={zh}
+            field="note"
+            attachments={props.attachments}
+            copy={props.copy}
+            editCopy={props.editCopy}
+            disabled={false}
+            onLoadPreview={props.onLoadAttachmentPreview}
+            onOpenAttachment={props.onOpenAttachment}
+          />
+          {!hasContent ? (
+            <span className="task-inline-edit">
+              <Button ref={trigger} unstyled type="button" className="task-inline-edit-trigger" onClick={() => setEditing(true)} disabled={props.busy || props.task.note === undefined}>
+                <span className="task-detail-request-text task-inline-edit-empty">{zh ? '添加备注' : 'Add a note'}</span>
+              </Button>
+            </span>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** 编辑期间正文和附件留在同一草稿，提交时只写发生变化的部分。 */
+function TaskNoteEditor(props: TaskNoteSectionProps & { onClose(): void }) {
+  const zh = props.language === 'zh-CN';
+  const editLabel = zh ? '编辑备注' : 'Edit notes';
+  const statusId = useId();
+  const inputRef = useRef<ComposerInputHandle | null>(null);
+  const [original] = useState(() => ({ note: props.task.note ?? '', updatedAt: props.task.updatedAt ?? '', attachments: taskAttachmentsForField(props.attachments, 'note') }));
+  const [draft, setDraft] = useState(original.note);
+  const [attachments, setAttachments] = useState(original.attachments);
+  const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
+  const [resourceError, setResourceError] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
+  const saving = saveState.kind === 'saving';
+  const inputResources = useComposerInputResources<TaskAttachmentCandidate>({
+    attachments,
+    language: zh ? 'zh-CN' : 'en',
+    textareaRef: inputRef,
+    text: draft,
+    disabled: saving || props.busy,
+    backend: {
+      describe: (attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind }),
+      choose: props.onChooseAttachments ?? (async () => []),
+      authorizeFiles: props.onAuthorizeFiles ?? (async (files) => ({ resources: [], failedCount: files.length })),
+      readClipboard: async () => (await props.onReadClipboardResources?.(true)) ?? { resources: [], text: '' },
+      readNativeClipboardOnPaste: true,
+    },
+    onTextChange: setDraft,
+    onAddAttachments: (resources) => {
+      setResourceError(null);
+      setAttachments((current) =>
+        mergeTaskAttachments(
+          current,
+          resources.map((resource) => ({ ...resource, field: 'note' })),
+        ),
+      );
+    },
+    onError: setResourceError,
+  });
+  const noteChanged = draft !== original.note;
+  const attachmentsChanged = attachments.length !== original.attachments.length || attachments.some((attachment, index) => attachment.path !== original.attachments[index].path);
+  const attachmentCount = props.attachments.filter((attachment) => attachment.field !== 'note').length + attachments.length;
+  const lengthLimit = taskNoteMaxLength.toLocaleString(props.language);
+  const validationError =
+    draft.length > taskNoteMaxLength
+      ? zh
+        ? `备注最多可保存 ${lengthLimit} 个字符。`
+        : `Notes can contain up to ${lengthLimit} characters.`
+      : attachmentsChanged && attachmentCount > taskAttachmentLimit
+        ? zh
+          ? `此任务最多可保存 ${taskAttachmentLimit} 个附件。`
+          : `This task can contain up to ${taskAttachmentLimit} attachments.`
+        : null;
+  const blocked = saving || props.busy || inputResources.processing || composing;
+  const canSave = !blocked && !validationError && Boolean(original.updatedAt) && (noteChanged || attachmentsChanged);
+
+  /** 沿用任务版本冲突处理，失败时保留当前输入和全部待保存附件。 */
+  async function save(expectedUpdatedAt: string): Promise<void> {
+    if (!canSave) return;
+    setSaveState({ kind: 'saving' });
+    try {
+      const result = await props.onUpdateTaskContent(props.task.id, {
+        expectedUpdatedAt,
+        ...(noteChanged ? { note: draft } : {}),
+        ...(attachmentsChanged ? { noteAttachments: attachments.map(toPersistedTaskAttachment) } : {}),
+      });
+      if (result.kind === 'conflict') setSaveState({ kind: 'conflict', latest: result.latest });
+      else props.onClose();
+    } catch (error) {
+      setSaveState({ kind: 'error', message: taskEditErrorMessage(error, props.editCopy.saveFailed, zh ? 'zh-CN' : 'en') });
+    }
+  }
+
+  return (
+    <div
+      className="session-composer-input-frame task-note-input"
+      aria-busy={saving || inputResources.processing || undefined}
+      data-resource-dragging={inputResources.dragging || undefined}
+      onDragEnter={inputResources.handleDragEnter}
+      onDragOver={inputResources.handleDragOver}
+      onDragLeave={inputResources.handleDragLeave}
+      onDrop={inputResources.handleDrop}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
+        event.stopPropagation();
+        if (!blocked && !event.nativeEvent.isComposing) props.onClose();
+      }}
+    >
+      <TaskDetailFieldAttachments
+        zh={zh}
+        field="note"
+        attachments={attachments}
+        pendingResources={inputResources.pendingResources}
+        copy={props.copy}
+        editCopy={props.editCopy}
+        disabled={saving || inputResources.processing}
+        onRemove={(path) => setAttachments((current) => current.filter((attachment) => attachment.path !== path))}
+        onLoadPreview={props.onLoadAttachmentPreview}
+        onOpenAttachment={props.onOpenAttachment}
+      />
+      <MarkdownComposerEditor
+        value={draft}
+        inputRef={inputRef}
+        tokens={taskNoteTokens}
+        autoFocus
+        disabled={saving}
+        language={props.language}
+        ariaLabel={editLabel}
+        placeholder={zh ? '写下备注…' : 'Write a note…'}
+        onChange={setDraft}
+        onCompositionStart={() => setComposing(true)}
+        onCompositionEnd={(value) => {
+          setDraft(value);
+          setComposing(false);
+        }}
+        onPaste={inputResources.handlePaste}
+        onKeyDown={inputResources.handlePasteShortcut}
+      />
+      {validationError || resourceError ? (
+        <small className="task-inline-edit-feedback is-error" role="status">
+          {validationError || resourceError}
+        </small>
+      ) : null}
+      <TaskEditFeedback
+        state={saveState}
+        copy={props.editCopy}
+        statusId={statusId}
+        onRetry={canSave ? () => void save(saveState.kind === 'conflict' ? (saveState.latest.updatedAt ?? '') : original.updatedAt) : undefined}
+        onLoadLatest={saveState.kind === 'conflict' && !blocked ? props.onClose : undefined}
+      />
+      <div className="task-note-actions">
+        <IconTooltip label={props.editCopy.addAttachment}>
+          <Button
+            unstyled
+            type="button"
+            className="session-attachment-button task-note-attachment-button"
+            aria-label={props.editCopy.addAttachment}
+            disabled={blocked || !props.onChooseAttachments}
+            onClick={inputResources.chooseAttachments}
+          >
+            <PaperclipIcon aria-hidden="true" />
+          </Button>
+        </IconTooltip>
+        <Button variant="secondary" size="compact" disabled={blocked} onClick={props.onClose}>
+          {zh ? '取消' : 'Cancel'}
+        </Button>
+        <Button variant="primary" size="compact" busy={saving} disabled={!canSave || saveState.kind === 'conflict'} onClick={() => void save(original.updatedAt)}>
+          {zh ? '保存' : 'Save'}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1196,6 +1425,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </section>
       ))}
+      <TaskNoteSection {...props} attachments={taskAttachments} editCopy={editCopy} />
     </div>
   );
 

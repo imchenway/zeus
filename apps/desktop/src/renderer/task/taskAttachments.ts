@@ -1,4 +1,4 @@
-import { isTaskAttachmentField, type TaskAttachmentField, type TaskAttachmentReference } from '@zeus/shared';
+import { isTaskAttachmentField, taskAttachmentLimit, type TaskAttachmentField, type TaskAttachmentReference } from '@zeus/shared';
 
 export type TaskAttachmentKind = TaskAttachmentReference['kind'];
 
@@ -15,7 +15,8 @@ export type TaskResourceAuthorizationResult = {
 };
 
 export interface TaskAttachmentRestoreTarget {
-  field: TaskAttachmentField;
+  /** 创建表单的长粘贴只恢复到表单上可编辑的字段。 */
+  field: Exclude<TaskAttachmentField, 'note'>;
   start: number;
   end: number;
 }
@@ -82,7 +83,7 @@ export function parseTaskAttachments(sourceContextJson?: string): TaskAttachment
   return attachments
     .map(normalizeTaskAttachment)
     .filter((attachment): attachment is TaskAttachmentView => Boolean(attachment))
-    .slice(0, 24);
+    .slice(0, taskAttachmentLimit);
 }
 
 export function taskAttachmentsForField(attachments: readonly TaskAttachmentView[], field: TaskAttachmentField): TaskAttachmentView[] {

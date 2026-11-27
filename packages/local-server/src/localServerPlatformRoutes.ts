@@ -1597,7 +1597,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readWorktreeClean: (localPath, ignoredPaths) => getGitWorktreeClean(localPath, ignoredPaths),
     },
     taskContext: {
-      read: (project, task) => resolveTaskPushContextState(project, task),
+      read: (project, task) => resolveTaskPushContextState(project, task, true),
       readAttachmentOptions: (project, task) => inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment: { option: TaskPushParentAttachmentOption }) => attachment.option),
     },
     readDefaultModel: () => platformMutableState.runtimeSettings.adapterModels.codex ?? null,

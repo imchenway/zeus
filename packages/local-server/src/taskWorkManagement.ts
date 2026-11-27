@@ -2948,9 +2948,10 @@ function resolveContextManifest(options: TaskWorkManagementOptions, task: ZeusTa
     return [{ deliverableId: deliverable.id, version: deliverable.version, contentSha256: deliverable.contentSha256, title: deliverable.title }];
   });
   const source = safeJsonParse(task.sourceContextJson);
+  /** 备注附件供任务详情阅读，员工执行上下文沿用原有任务输入字段。 */
   const attachments =
     isRecord(source) && Array.isArray(source.attachments)
-      ? source.attachments.flatMap((value) => (isRecord(value) && typeof value.path === 'string' ? [{ path: value.path, field: typeof value.field === 'string' ? value.field : null }] : []))
+      ? source.attachments.flatMap((value) => (isRecord(value) && value.field !== 'note' && typeof value.path === 'string' ? [{ path: value.path, field: typeof value.field === 'string' ? value.field : null }] : []))
       : [];
   const project = options.projects.getById(task.projectId)!;
   const rules = projectRuleMetadata(project.localPath);

@@ -163,6 +163,8 @@ export type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 export type TaskCreateAttachment = TaskAttachmentView;
 export type TaskCreateAttachmentCandidate = TaskAttachmentCandidate;
 export type TaskCreateFormState = {
+  /** 复制任务时保留原备注，编辑入口在新任务的详情。 */
+  note?: string;
   /** 仅当前创建表单的可选同步意图，不进入本地任务创建请求。 */
   zentao?: ZentaoTaskDestination;
   /** 独立的截止配置，不从父任务继承。 */
@@ -190,6 +192,8 @@ export type TaskCreateTextField = Extract<
 >;
 export type TaskCreateAttachmentField = Exclude<TaskCreateTextField, 'title'>;
 export type TaskCreateDraft = {
+  /** 复制任务所带入的备注正文。 */
+  note?: string;
   /** 独立的截止配置，不从父任务继承。 */
   deadline?: TaskDeadline | null;
   parentTaskId: string | null;
@@ -1262,6 +1266,7 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
       parentTaskId: form.parentTaskId,
       taskType: form.taskType,
       description: form.description.trim(),
+      note: form.note,
       defectCurrentState: form.defectCurrentState.trim(),
       defectExpectedOutcome: form.defectExpectedOutcome.trim(),
       defectReproductionSteps: form.defectReproductionSteps.trim(),

@@ -15315,6 +15315,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-model-push-parent legend label,
+.macos-ai-app .task-model-push-parent.task-model-push-note,
 .macos-ai-app .task-model-push-parent-resources label {
   display: flex;
   min-inline-size: 0;

@@ -3142,10 +3142,10 @@ function setupIpc(): void {
       return saveTaskAttachmentPayloads(Array.isArray(resources) ? (resources as TaskResourcePayload[]) : [], command.envelope.commandId);
     });
   });
-  ipcMain.handle('zeus:read-task-clipboard-resources', (event) => {
+  ipcMain.handle('zeus:read-task-clipboard-resources', (event, keepLongText: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务剪贴板读取来自不受信任窗口。');
-    return readTaskClipboardResourcesFromNativeClipboard();
+    return readTaskClipboardResourcesFromNativeClipboard(keepLongText === true);
   });
   ipcMain.handle('zeus:read-task-clipboard-attachments', () => readTaskClipboardAttachmentsFromNativeClipboard());
   ipcMain.handle('zeus:save-task-clipboard-attachments', async (event, request: MainCommandRequest) => {
@@ -3886,7 +3886,8 @@ function readTaskClipboardAttachmentsFromNativeClipboard(): Promise<TaskClipboar
   );
 }
 
-async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClipboardResourceRead> {
+/** 备注粘贴可保留长文本原文，普通任务输入继续转为附件。 */
+async function readTaskClipboardResourcesFromNativeClipboard(keepLongText = false): Promise<TaskClipboardResourceRead> {
   const clipboardReader = {
     readImage: () => clipboard.readImage(),
     availableFormats: () => clipboard.availableFormats(),
@@ -3910,7 +3911,7 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClip
   } catch {
     // 剪贴板文字读取失败时按空内容处理，保留用户当前任务表单。
   }
-  if (text.length >= taskLongPasteThreshold) {
+  if (!keepLongText && text.length >= taskLongPasteThreshold) {
     return {
       paths: [],
       attachments: [{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }],

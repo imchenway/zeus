@@ -1,4 +1,4 @@
-import type { ConversationFeatureCatalog, ConversationFeatureAvailability } from '@zeus/shared';
+import type { ConversationFeatureCatalog, ConversationFeatureAvailability, TaskPushNoteOption } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import {
@@ -35,7 +35,9 @@ import type {
 
 interface TaskPushContextProjection {
   revision: string;
-  /** 任务检查结果中的独立图片预览来源，不写入布局或提示词。 */
+  /** 独立修订仅供本次选择的备注内容使用。 */
+  currentNote?: TaskPushNoteOption;
+  /** 已授权的附件预览来源独立于布局和提示词。 */
   attachmentPreviewSources: unknown[];
   current: { options: unknown[] };
   parent: { options: unknown[] };
@@ -254,6 +256,7 @@ export class ConversationCapabilityQueryApplication {
       parentContextOptions: taskContext.parent.options,
       relatedContextOptions: taskContext.related.options,
       currentAttachmentOptions,
+      currentNote: taskContext.currentNote,
       attachmentPreviewSources: taskContext.attachmentPreviewSources,
       repositoryRevision: repositoryRevision(registeredRepositories),
       repositoryDiscovery,

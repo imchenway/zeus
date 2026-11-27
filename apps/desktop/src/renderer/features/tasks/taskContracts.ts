@@ -37,6 +37,8 @@ export interface TaskRecord {
   deadline?: TaskDeadline | null;
   /** 正文在详情读取，列表预览只供显示。 */
   contentPreview?: string;
+  /** Markdown 原文随详情读取，摘要和普通写回执省略该字段。 */
+  note?: string;
   /** 服务端完整内容搜索命中的查询，不能当作正文使用。 */
   matchedQuery?: string;
   id: string;
@@ -230,6 +232,8 @@ export interface UpdateTaskStageRequest {
 export interface CreateTaskRequest {
   /** 截止配置；显式空值清除截止和提醒。 */
   deadline?: TaskDeadline | null;
+  /** 复制任务时带入原备注。 */
+  note?: string;
   idempotencyKey: string;
   projectId: string;
   parentTaskId?: string | null;
@@ -283,6 +287,8 @@ export interface UpdateTaskRequest {
   title?: string;
   taskType?: TaskType;
   description?: string;
+  /** 保存 Markdown 原文，传入空字符串清空正文。 */
+  note?: string;
   defectCurrentState?: string;
   defectExpectedOutcome?: string;
   defectReproductionSteps?: string;
@@ -291,6 +297,8 @@ export interface UpdateTaskRequest {
   priority?: TaskPriority;
   tags?: string[];
   attachments?: TaskAttachmentReference[];
+  /** 单独替换备注所属的附件引用。 */
+  noteAttachments?: TaskAttachmentReference[];
   sourceContext?: Record<string, unknown>;
   allowCodeChanges?: boolean;
   allowTests?: boolean;

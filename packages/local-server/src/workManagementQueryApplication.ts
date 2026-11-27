@@ -29,7 +29,7 @@ export class WorkManagementQueryApplication {
   constructor(private readonly ports: WorkManagementQueryPorts) {}
 
   readTask(taskId: string): ZeusTaskRecord {
-    const task = this.ports.tasks.getById(taskId);
+    const task = this.ports.tasks.getById(taskId, { includeNote: true });
     if (!task) throw queryError('ZEUS_TASK_NOT_FOUND', 'Task not found', 404);
     return task;
   }

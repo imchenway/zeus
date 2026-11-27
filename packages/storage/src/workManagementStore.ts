@@ -8,6 +8,7 @@ import {
   isTaskManagementStatus,
   isTaskType,
   normalizeTaskBoardViewSettings,
+  taskAttachmentLimit,
   type TaskAttachmentReference,
   type TaskBoardLaneIdentity,
   type TaskBoardPosition,
@@ -73,6 +74,8 @@ export interface ZeusProjectSharedPathRecord {
 export interface ZeusTaskRecord {
   /** 截止日期、具体时间、时区及提醒方式。 */
   deadline?: TaskDeadline | null;
+  /** 任务备注的 Markdown 原文，仅在任务详情查询中返回。 */
+  note?: string;
   id: string;
   projectId: string;
   taskCode: string;
@@ -335,6 +338,8 @@ export interface ProjectArchiveConfirmation {
 export interface CreateTaskInput {
   /** 未提供时不设置截止时间。 */
   deadline?: TaskDeadline | null;
+  /** 复制任务时可带入原备注。 */
+  note?: string;
   id?: string;
   projectId: string;
   parentTaskId?: string | null;
@@ -455,6 +460,7 @@ export type TaskEditableField =
   | 'title'
   | 'taskType'
   | 'description'
+  | 'note'
   | 'defectCurrentState'
   | 'defectExpectedOutcome'
   | 'defectReproductionSteps'
@@ -477,6 +483,10 @@ export interface UpdateTaskContentInput extends UpdateTaskInput {
   priority?: TaskPriority;
   tags?: string[];
   attachments?: TaskAttachmentReference[];
+  /** 提供空字符串时清除备注正文。 */
+  note?: string;
+  /** 仅替换备注所属附件，空数组解除该字段的全部附件关联。 */
+  noteAttachments?: TaskAttachmentReference[];
   sourceContext?: Record<string, unknown>;
 }
 
@@ -924,11 +934,11 @@ export class TaskRepository {
         updatedAt: timestamp,
       };
       this.db.execute(
-        `INSERT INTO tasks (id, project_id, task_code, task_sequence, parent_task_id, title, task_type, description,
+        `INSERT INTO tasks (id, project_id, task_code, task_sequence, parent_task_id, title, task_type, description, note,
         defect_current_state, defect_expected_outcome, defect_reproduction_steps, optimization_current_state, optimization_expected_outcome,
         management_status, status, priority, tags_json, template_id,
         allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           record.id,
           record.projectId,
@@ -938,6 +948,7 @@ export class TaskRepository {
           record.title,
           record.taskType,
           record.description,
+          input.note ?? '',
           record.defectCurrentState,
           record.defectExpectedOutcome,
           record.defectReproductionSteps,
@@ -994,9 +1005,10 @@ export class TaskRepository {
   }
 
   /** 按身份读取任务；后台操作可限定未归档的任务。 */
-  getById(taskId: string, { includeArchived = true }: { includeArchived?: boolean } = {}): ZeusTaskRecord | undefined {
+  /** 备注按需读取，避免正文进入任务列表、运行时上下文及命令回执。 */
+  getById(taskId: string, { includeArchived = true, includeNote = false }: { includeArchived?: boolean; includeNote?: boolean } = {}): ZeusTaskRecord | undefined {
     const row = this.db.get<DbTaskRow>(
-      `SELECT ${selectTaskFields}
+      `SELECT ${selectTaskFields}${includeNote ? ', note' : ''}
        FROM tasks WHERE id = ? AND deleted_at IS NULL${includeArchived ? '' : ' AND archived = 0'}`,
       [taskId],
     );
@@ -1179,14 +1191,23 @@ export class TaskRepository {
       const previousSourceContext = parseTaskSourceContextJson(existing.sourceContextJson);
       // 跨项目只沿用附件，原项目的来源上下文、执行者及目录配置不进入目标项目。
       const baseSourceContext = projectChanged ? { attachments: previousSourceContext.attachments ?? [] } : previousSourceContext;
-      const sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...baseSourceContext, attachments: input.attachments } : baseSourceContext;
-      const sourceContextJson = JSON.stringify(sourceContext);
+      let sourceContext = input.sourceContext ? { ...input.sourceContext } : input.attachments ? { ...baseSourceContext, attachments: input.attachments } : baseSourceContext;
+      if (input.noteAttachments !== undefined) {
+        /** 在事务内保留其他字段已有的附件引用。 */
+        const otherAttachments = Array.isArray(baseSourceContext.attachments) ? baseSourceContext.attachments.filter((attachment) => !isPlainRecord(attachment) || attachment.field !== 'note') : [];
+        const notePaths = new Set(input.noteAttachments.map((attachment) => attachment.path));
+        if (otherAttachments.length + input.noteAttachments.length > taskAttachmentLimit || otherAttachments.some((attachment) => isPlainRecord(attachment) && typeof attachment.path === 'string' && notePaths.has(attachment.path))) {
+          throw Object.assign(new Error('任务附件超过数量上限，或已有其他字段关联了同一附件。'), { code: 'ZEUS_INVALID_TASK_ATTACHMENTS' });
+        }
+        sourceContext = { ...baseSourceContext, attachments: [...otherAttachments, ...input.noteAttachments] };
+      }
       const changedFields: TaskEditableField[] = [];
       if (projectChanged) changedFields.push('projectId');
       if (canonicalJson(deadline) !== canonicalJson(existing.deadline ?? null)) changedFields.push('deadline');
       if (title !== existing.title) changedFields.push('title');
       if (taskType !== existing.taskType) changedFields.push('taskType');
       if (description !== existing.description) changedFields.push('description');
+      if (input.note !== undefined && input.note !== this.db.get<{ note: string }>('SELECT note FROM tasks WHERE id = ?', [taskId])?.note) changedFields.push('note');
       if (defectCurrentState !== existing.defectCurrentState) changedFields.push('defectCurrentState');
       if (defectExpectedOutcome !== existing.defectExpectedOutcome) changedFields.push('defectExpectedOutcome');
       if (defectReproductionSteps !== existing.defectReproductionSteps) changedFields.push('defectReproductionSteps');
@@ -1194,7 +1215,7 @@ export class TaskRepository {
       if (optimizationExpectedOutcome !== existing.optimizationExpectedOutcome) changedFields.push('optimizationExpectedOutcome');
       if (priority !== existing.priority) changedFields.push('priority');
       if (canonicalJson(tags) !== canonicalJson(existing.tags)) changedFields.push('tags');
-      if (input.attachments !== undefined && canonicalJson(sourceContext.attachments) !== canonicalJson(previousSourceContext.attachments)) changedFields.push('attachments');
+      if ((input.attachments !== undefined || input.noteAttachments !== undefined) && canonicalJson(sourceContext.attachments) !== canonicalJson(previousSourceContext.attachments)) changedFields.push('attachments');
       else if (input.sourceContext !== undefined && canonicalJson(sourceContext) !== canonicalJson(previousSourceContext)) changedFields.push('sourceContext');
       if (allowCodeChanges !== existing.allowCodeChanges) changedFields.push('allowCodeChanges');
       if (allowTests !== existing.allowTests) changedFields.push('allowTests');
@@ -1228,7 +1249,7 @@ export class TaskRepository {
       this.db.execute(
         `UPDATE tasks
          SET project_id = ?, task_sequence = ?, task_code = ?, parent_task_id = ?, management_status = ?, status = ?, template_id = ?, created_from = ?,
-             title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?,
+             title = ?, task_type = ?, description = ?, note = COALESCE(?, note), defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?,
              optimization_current_state = ?, optimization_expected_outcome = ?, priority = ?, tags_json = ?, source_context_json = ?,
              allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ?
          WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`,
@@ -1244,6 +1265,7 @@ export class TaskRepository {
           title,
           taskType,
           description,
+          input.note ?? null,
           defectCurrentState,
           defectExpectedOutcome,
           defectReproductionSteps,
@@ -1251,7 +1273,7 @@ export class TaskRepository {
           optimizationExpectedOutcome,
           priority,
           JSON.stringify(tags),
-          sourceContextJson,
+          JSON.stringify(sourceContext),
           allowCodeChanges ? 1 : 0,
           allowTests ? 1 : 0,
           allowGitCommit ? 1 : 0,
@@ -2349,6 +2371,8 @@ interface DbTaskEnvironmentRow {
 }
 
 interface DbTaskRow {
+  /** 只有查询显式选择备注列时才有值。 */
+  note?: string;
   /** 已标准化的截止配置。 */
   deadline_json: string | null;
   id: string;
@@ -2469,6 +2493,7 @@ function mapProjectRow(row: DbProjectRow): ZeusProjectRecord {
     slug: row.slug,
     localPath: row.local_path,
     description: row.description,
+    ...(row.note === undefined ? {} : { note: row.note }),
     note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

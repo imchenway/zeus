@@ -1443,6 +1443,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       title: source.title,
       taskType: source.taskType,
       description: source.description ?? '',
+      note: source.note,
       defectCurrentState: source.defectCurrentState ?? '',
       defectExpectedOutcome: source.defectExpectedOutcome ?? '',
       defectReproductionSteps: source.defectReproductionSteps ?? '',
@@ -2794,6 +2795,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '所选模型来源不明确或已经不可用，请重新选择模型后重试。' : 'The selected model source is ambiguous or unavailable. Select the model again and retry.');
       }
       const normalizedForm = selectedModel.id === form.model ? form : { ...form, model: selectedModel.id };
+      /** 请求与待创建首条消息使用同一个已选备注快照。 */
+      const selectedNote = normalizedForm.includeNote ? capabilities.currentNote : undefined;
       const supportedEfforts = selectedModel.supportedReasoningEfforts;
       if (supportedEfforts.length > 0 && !supportedEfforts.includes(normalizedForm.effort)) {
         throw new Error(
@@ -2808,6 +2811,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         taskId: task.id,
         projectId: task.projectId,
         taskContextRevision: capabilities.taskContextRevision,
+        noteRevision: selectedNote?.revision,
         repositoryRevision: capabilities.repositoryRevision,
         form: normalizedForm,
       });
@@ -2846,6 +2850,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               ...(form.supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(form.supplementalAttachments) } : {}),
               taskContext: {
                 revision: capabilities.taskContextRevision,
+                ...(selectedNote ? { noteRevision: selectedNote.revision } : {}),
                 currentConversationIds: form.currentConversationIds,
                 parentSelections: capabilities.parentContextOptions.flatMap((option) => {
                   const selection = form.parentContextSelections[option.taskId];
@@ -2864,7 +2869,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const parentContexts = selectedTaskPushParentContexts(capabilities.parentContextOptions, form.parentContextSelections);
       const relatedContexts = selectedTaskPushRelatedContexts(capabilities.relatedContextOptions, form.relatedContextSelections);
       const supplementalAttachments = taskPushSupplementalLayoutAttachments(form.supplementalAttachments);
-      const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationHistory, parentContexts, relatedContexts, supplementalAttachments);
+      const layout = buildTaskModelPushLayout(task, form.supplementalInfo, capabilities.currentAttachmentOptions, currentConversationHistory, parentContexts, relatedContexts, supplementalAttachments, selectedNote);
       const pending: TrackedTaskModelPushState = {
         ...createTaskModelPushPendingState(
           {
@@ -3209,7 +3214,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         }),
       );
       setTaskModelPushCapabilities(capabilities);
-      setTaskModelPushForm({ ...pending.form, currentConversationIds, parentContextSelections, relatedContextSelections });
+      setTaskModelPushForm({ ...pending.form, includeNote: Boolean(pending.form.includeNote && capabilities.currentNote), currentConversationIds, parentContextSelections, relatedContextSelections });
       setTaskModelPushStatus('ready');
       setTaskModelPushError(
         appShellSettings.appLanguage === 'zh-CN'

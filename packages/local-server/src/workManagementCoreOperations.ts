@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { getNextTaskStatus } from './taskCore.js';
-import type { CommandActor, TaskBoardViewUpdateRequest, TaskManagementStatus } from '@zeus/shared';
+import { type CommandActor, isTaskNote, type TaskBoardViewUpdateRequest, type TaskManagementStatus, taskNoteMaxLength } from '@zeus/shared';
 import {
   type AppendAuditLogInput,
   type ConversationRepository,
@@ -51,6 +51,7 @@ export class WorkManagementCoreOperations {
 
   createUserTask(input: CreateUserTaskInput, taskId: string, context: CoreOperationContext): ZeusTaskRecord {
     if (!input?.projectId || !input.title || !isTaskType(input.taskType)) throw routeError(400, 'ZEUS_INVALID_TASK', 'projectId, title and taskType are required');
+    if (input.note !== undefined && !isTaskNote(input.note)) throw routeError(400, 'ZEUS_INVALID_TASK_NOTE', `Task note must be a string of at most ${taskNoteMaxLength} characters.`);
     if (
       [input.description, input.defectCurrentState, input.defectExpectedOutcome, input.defectReproductionSteps, input.optimizationCurrentState, input.optimizationExpectedOutcome].some(
         (value) => value !== undefined && typeof value !== 'string',
@@ -82,6 +83,7 @@ export class WorkManagementCoreOperations {
       title: input.title,
       taskType: input.taskType,
       description: input.description ?? '',
+      note: input.note,
       defectCurrentState: input.defectCurrentState,
       defectExpectedOutcome: input.defectExpectedOutcome,
       defectReproductionSteps: input.defectReproductionSteps,

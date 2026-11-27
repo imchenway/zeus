@@ -13,6 +13,7 @@ import type {
   ConversationTranscriptPlacementBatch,
   NativeTokenUsageSnapshot as SharedNativeTokenUsageSnapshot,
   TaskPushParentContextOption,
+  TaskPushNoteOption,
   TaskPushParentContextSelection,
   TaskPushRelatedContextOption,
   TaskPushRelatedContextSelection,
@@ -1183,7 +1184,9 @@ export interface CodexTaskPushCapabilities {
   parentContextRevision: string;
   repositoryRevision: string;
   currentAttachmentOptions: TaskPushParentContextOption['attachments'];
-  /** 服务端已校验的图片来源，按 taskPushAttachmentKey 对应布局，不进入发送内容。 */
+  /** 本次推送可选的备注及对应附件修订。 */
+  currentNote?: TaskPushNoteOption;
+  /** 服务端已校验的附件预览来源，按 taskPushAttachmentKey 对应布局。 */
   attachmentPreviewSources: NativeConversationAttachment[];
   currentConversationOptions: TaskPushParentContextOption['conversations'];
   parentContextOptions: TaskPushParentContextOption[];
@@ -1555,6 +1558,8 @@ export interface StartTaskModelPushRequest {
   supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
   taskContext?: {
     revision: string;
+    /** 用户勾选时传入确认过的备注快照修订。 */
+    noteRevision?: string;
     currentConversationIds: string[];
     parentSelections: TaskPushParentContextSelection[];
     relatedSelections: TaskPushRelatedContextSelection[];

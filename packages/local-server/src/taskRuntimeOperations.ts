@@ -6,6 +6,7 @@ import {
   type TaskPushContextConversationOption,
   type TaskPushConversationHistory,
   type TaskPushMessageLayout,
+  type TaskPushNoteOption,
   type TaskPushParentAttachmentOption,
   type TaskPushParentContextOption,
   type TaskPushParentContextSelection,
@@ -63,7 +64,9 @@ export interface TaskPushRelatedContextState {
 
 export interface TaskPushContextState {
   revision: string;
-  /** 独立展示数据，只含已通过任务附件校验的图片来源，不参与首发正文。 */
+  /** 当前可选择的备注快照，缺省表示任务没有可发的备注。 */
+  currentNote?: TaskPushNoteOption;
+  /** 通过校验的图片及备注附件来源，用于推送预览。 */
   attachmentPreviewSources: NativeConversationAttachment[];
   current: TaskPushCurrentConversationState;
   parent: TaskPushParentContextState;
@@ -223,6 +226,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     };
   }
 
+  /** 将已确认的备注与现有任务输入一起组装为首发快照。 */
   function buildTaskPushLayoutForTask(
     task: ZeusTaskRecord,
     supplementalInfo: string,
@@ -231,11 +235,13 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     parentContexts: TaskPushPromptParentContext[] = [],
     relatedContexts: TaskPushPromptRelatedContext[] = [],
     supplementalAttachments: TaskPushSupplementalAttachment[] = [],
+    note?: string,
   ): TaskPushMessageLayout {
     return buildTaskPushLayout({
       taskId: task.id,
       taskCode: task.taskCode,
       ...taskPushPromptContent(task),
+      note,
       attachments,
       conversationHistory: currentConversationHistory,
       supplementalInfo,
@@ -262,7 +268,11 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     const name = typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : path ? parse(path).base : `附件 ${index + 1}`;
     const kind = candidate.kind === 'image' || candidate.kind === 'directory' || candidate.kind === 'pasted_text' ? candidate.kind : 'file';
     const field = isTaskAttachmentField(candidate.field) ? candidate.field : historicalTaskAttachmentField(task.taskType);
-    const key = `task-attachment-${createHash('sha256').update(`${task.id}\0${index}\0${name}`).digest('hex').slice(0, 24)}`;
+    /** 备注有自己的附件序号，增减备注不会改变任务原附件的身份。 */
+    const key = `task-attachment-${createHash('sha256')
+      .update(`${task.id}\0${field === 'note' ? 'note\0' : ''}${index}\0${name}`)
+      .digest('hex')
+      .slice(0, 24)}`;
     const unavailable = (reason: string): InspectedTaskPushAttachment => ({
       option: { key, field, name, kind, available: false, unavailableReason: reason },
     });
@@ -303,19 +313,28 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     }
   }
 
-  function inspectTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { inspected: InspectedTaskPushAttachment[]; allowedRoots: string[] } {
+  /** 备注附件仅在读取推送选项或选中备注时检查。 */
+  function inspectTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string, includeNote = false): { inspected: InspectedTaskPushAttachment[]; allowedRoots: string[] } {
     const sourceContext = parseTaskSourceContext(task);
     const rawAttachments = Array.isArray(sourceContext.attachments) ? sourceContext.attachments : [];
     const allowedRoots = taskPushTrustedAttachmentRoots(projectLocalPath);
     const activeFields = taskPushContentAttachmentFields(task.taskType);
+    let taskIndex = 0;
+    let noteIndex = 0;
     return {
-      inspected: rawAttachments.map((attachment, index) => inspectTaskPushAttachment(task, attachment, index, allowedRoots)).filter((attachment) => activeFields.has(attachment.option.field)),
+      inspected: rawAttachments.flatMap((rawAttachment) => {
+        const belongsToNote = isNativeApiRecord(rawAttachment) && rawAttachment.field === 'note';
+        if (belongsToNote && !includeNote) return [];
+        const entry = inspectTaskPushAttachment(task, rawAttachment, belongsToNote ? noteIndex++ : taskIndex++, allowedRoots);
+        return entry.option.field === 'note' || activeFields.has(entry.option.field) ? [entry] : [];
+      }),
       allowedRoots,
     };
   }
 
-  function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] } {
-    const { inspected, allowedRoots } = inspectTaskPushAttachments(task, projectLocalPath);
+  /** 校验本次需要发送的任务附件并保存受控资源引用。 */
+  function normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string, includeNote = false): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] } {
+    const { inspected, allowedRoots } = inspectTaskPushAttachments(task, projectLocalPath, includeNote);
     const unavailable = inspected.filter((entry) => !entry.attachment).map((entry) => entry.option.name);
     if (unavailable.length > 0) {
       throw nativeApiError('ZEUS_TASK_PUSH_ATTACHMENT_UNAVAILABLE', `以下附件不可用，未创建会话：${unavailable.join('、')}`);
@@ -480,22 +499,27 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return { options, revision, tasksById, attachmentsByTaskId };
   }
 
-  function resolveTaskPushContextState(project: ZeusProjectRecord, task: ZeusTaskRecord): TaskPushContextState {
+  /** 默认上下文与备注分别绑定修订，未选择备注的推送只检查原有上下文。 */
+  function resolveTaskPushContextState(project: ZeusProjectRecord, task: ZeusTaskRecord, includeNote = false): TaskPushContextState {
     const current = resolveTaskPushCurrentConversationState(task);
     const parent = resolveTaskPushParentContextState(project, task);
     const related = resolveTaskPushRelatedContextState(project, task, new Set(parent.options.map((option) => option.taskId)));
     // 同次检查同时提供修订依据与图片预览来源，避免重复读取产生不同快照。
-    const inspectedCurrentAttachments = inspectTaskPushAttachments(task, project.localPath).inspected;
-    const currentAttachments = inspectedCurrentAttachments.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    const inspectedCurrentAttachments = inspectTaskPushAttachments(task, project.localPath, includeNote).inspected;
+    const inspectedAttachmentSources = inspectedCurrentAttachments.map((attachment) => ({ option: attachment.option, localPath: attachment.attachment?.localPath ?? null }));
+    const currentAttachments = inspectedAttachmentSources.filter((attachment) => attachment.option.field !== 'note');
+    const noteAttachments = inspectedAttachmentSources.filter((attachment) => attachment.option.field === 'note');
+    const noteText = includeNote ? (tasks.getById(task.id, { includeNote: true })?.note ?? '') : '';
+    const currentNote = noteText.trim() || noteAttachments.length > 0 ? { text: noteText, revision: taskPushContextRevision([noteText], noteAttachments), attachments: noteAttachments.map((attachment) => attachment.option) } : undefined;
     // 来源独立于布局；客户端只加载当前选中附件，名称相同也按稳定标识区分。
     const attachmentPreviewSources = [...inspectedCurrentAttachments, ...Array.from(parent.attachmentsByTaskId.values()).flat(), ...Array.from(related.attachmentsByTaskId.values()).flat()].flatMap((entry) =>
-      entry.option.kind === 'image' && entry.attachment ? [entry.attachment] : [],
+      (entry.option.kind === 'image' || entry.option.field === 'note') && entry.attachment ? [entry.attachment] : [],
     );
     // 管理状态不属于首发正文；修订只绑定真实输入资源，避免推送确认时的状态同步使同一次首发失效。
     const revision = createHash('sha256')
       .update(JSON.stringify({ current: { content: taskPushPromptContent(task), attachments: currentAttachments, conversations: current.revision }, parent: parent.revision, related: related.revision }))
       .digest('hex');
-    return { revision, current, parent, related, attachmentPreviewSources };
+    return { revision, current, parent, related, currentNote, attachmentPreviewSources };
   }
 
   function parseTaskPushSelectionStringArray(value: unknown, field: string): string[] {
@@ -525,6 +549,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return selections;
   }
 
+  /** 根据用户确认的修订读取所选内容，备注变化后由界面重新确认。 */
   function resolveSelectedTaskPushContext(
     project: ZeusProjectRecord,
     task: ZeusTaskRecord,
@@ -533,18 +558,26 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     currentConversationHistory: TaskPushConversationHistory[];
     parentContexts: TaskPushPromptParentContext[];
     relatedContexts: TaskPushPromptRelatedContext[];
+    note?: string;
     attachmentInput: { attachments: NativeConversationAttachment[]; allowedRoots: string[] };
   } {
     if (value === undefined) return { currentConversationHistory: [], parentContexts: [], relatedContexts: [], attachmentInput: { attachments: [], allowedRoots: [] } };
     if (!isNativeApiRecord(value) || typeof value.revision !== 'string') {
       throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', 'taskContext must contain a revision.');
     }
+    const noteRevision = value.noteRevision;
+    if (noteRevision !== undefined && (typeof noteRevision !== 'string' || !/^[a-f0-9]{64}$/u.test(noteRevision))) {
+      throw nativeApiError('ZEUS_INVALID_TASK_PUSH_CONTEXT', 'noteRevision must be a valid task note revision.');
+    }
     const currentConversationIds = value.currentConversationIds === undefined ? [] : parseTaskPushSelectionStringArray(value.currentConversationIds, 'currentConversationIds');
     const parentSelections = parseTaskPushContextSelections(value.parentSelections, 'parentSelections');
     const relatedSelections = parseTaskPushContextSelections(value.relatedSelections, 'relatedSelections');
-    const state = resolveTaskPushContextState(project, task);
+    const state = resolveTaskPushContextState(project, task, noteRevision !== undefined);
     if (value.revision !== state.revision) {
       throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '任务上下文已变化，请刷新弹窗后重新确认。');
+    }
+    if (noteRevision !== undefined && noteRevision !== state.currentNote?.revision) {
+      throw nativeApiError('ZEUS_TASK_PUSH_CONTEXT_CHANGED', '任务备注已变化，请重新确认本次推送内容。');
     }
 
     const selectedAttachments: NativeConversationAttachment[] = [];
@@ -621,7 +654,7 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
       selections: relatedSelections,
     });
     for (const root of selectedAttachments.length > 0 ? taskPushTrustedAttachmentRoots(project.localPath) : []) allowedRoots.add(root);
-    return { currentConversationHistory, parentContexts, relatedContexts, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
+    return { currentConversationHistory, parentContexts, relatedContexts, note: state.currentNote?.text, attachmentInput: { attachments: selectedAttachments, allowedRoots: [...allowedRoots] } };
   }
 
   function mergeTaskPushAttachmentInputs(...inputs: Array<{ attachments: NativeConversationAttachment[]; allowedRoots: string[] }>) {

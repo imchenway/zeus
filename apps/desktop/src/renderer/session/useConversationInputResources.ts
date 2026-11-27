@@ -5,19 +5,33 @@ import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolic
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import { clipboardNeedsResourceRead, dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 
-interface UseConversationInputResourcesOptions {
+/** 输入交互共用，资源由实际拥有草稿的业务保存和授权。 */
+interface ComposerResourceBackend<Attachment> {
+  describe(attachment: Attachment): PendingResourceCardItem;
+  choose(): Promise<Attachment[]>;
+  authorizeFiles(files: File[], source: 'paste' | 'drop'): Promise<{ resources: Attachment[]; failedCount: number; failureMessage?: string }>;
+  readClipboard(): Promise<{ resources: Attachment[]; text: string }>;
+  /** 会话把超长粘贴存成附件，备注保留正文以渲染 Markdown。 */
+  materializeLongText?(text: string): Promise<Attachment[]>;
+  /** 剪贴板只给出文件格式时仍可导入资源，例如从 Finder 菜单粘贴。 */
+  readNativeClipboardOnPaste?: boolean;
+}
+
+/** 当前输入和待保存附件由调用方持有。 */
+interface ComposerInputResourcesOptions<Attachment> {
   /** 附件处理失败跟随当前页面语言。 */
   language: ApplicationErrorLanguage;
   /** 当前草稿用于在附件移除后及时释放本地图片预览。 */
-  attachments: NativeConversationAttachment[];
+  attachments: Attachment[];
   textareaRef: RefObject<ComposerInputHandle | null>;
   text: string;
   disabled: boolean;
   onTextChange: (text: string) => void;
-  onAddAttachments: (attachments: NativeConversationAttachment[]) => void;
+  onAddAttachments: (attachments: Attachment[]) => void;
   onError: (message: string) => void;
+  backend: ComposerResourceBackend<Attachment>;
 }
 
 export interface ConversationInputResourceHandlers {
@@ -35,9 +49,39 @@ export interface ConversationInputResourceHandlers {
   handleDrop(event: DragEvent<HTMLElement>): void;
 }
 
-export function useConversationInputResources(options: UseConversationInputResourcesOptions): ConversationInputResourceHandlers {
-  /** 会话与任务输入共用即时预览，不改变真实附件授权契约。 */
-  const previews = usePendingResourcePreviews(options.attachments.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' })));
+/** 会话附件继续由原生会话资源代理授权。 */
+const conversationResourceBackend: ComposerResourceBackend<NativeConversationAttachment> = {
+  describe: (attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' }),
+  choose: async () => {
+    const bridge = window.zeus?.chooseConversationResources;
+    if (!bridge) throw new Error('当前应用版本未提供会话附件选择能力。');
+    return bridge();
+  },
+  authorizeFiles: async (files, source) => {
+    const bridge = window.zeus?.authorizeConversationFiles;
+    if (!bridge) throw new Error('当前应用版本未提供会话附件导入能力。');
+    return bridge(files, source);
+  },
+  readClipboard: async () => {
+    const bridge = window.zeus?.readConversationClipboardResources;
+    if (!bridge) throw new Error('当前应用版本未提供原生剪贴板附件读取能力。');
+    return bridge();
+  },
+  materializeLongText: async (text) => {
+    const bridge = window.zeus?.materializeConversationResources;
+    if (!bridge) throw new Error('当前应用版本未提供长文本转附件能力。');
+    return bridge([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }]);
+  },
+};
+
+/** 会话入口使用默认的附件权限及长文本处理。 */
+export function useConversationInputResources(options: Omit<ComposerInputResourcesOptions<NativeConversationAttachment>, 'backend'>): ConversationInputResourceHandlers {
+  return useComposerInputResources({ ...options, backend: conversationResourceBackend });
+}
+
+/** 文件选择、粘贴、拖放及即时预览和资源授权实现解耦。 */
+export function useComposerInputResources<Attachment>(options: ComposerInputResourcesOptions<Attachment>): ConversationInputResourceHandlers {
+  const previews = usePendingResourcePreviews(options.attachments.map(options.backend.describe));
   const [dragDepth, setDragDepth] = useState(0);
   const pasteGeneration = useRef(0);
   const mounted = useRef(true);
@@ -76,15 +120,10 @@ export function useConversationInputResources(options: UseConversationInputResou
     (files: File[], source: 'paste' | 'drop') => {
       if (files.length === 0 || latest.current.disabled) return;
       void runResourceOperation(async (pending) => {
-        const bridge = window.zeus?.authorizeConversationFiles;
-        if (!bridge) throw new Error('当前应用版本未提供会话附件导入能力。');
-        const result = await bridge(files, source);
+        const result = await latest.current.backend.authorizeFiles(files, source);
         if (!pending.current()) return;
         if (result.resources.length === 0) throw new Error(result.failureMessage || '附件导入未返回可用资源。');
-        pending.complete(
-          result.resources.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' })),
-          result.failedCount,
-        );
+        pending.complete(result.resources.map(latest.current.backend.describe), result.failedCount);
         latest.current.onAddAttachments(result.resources);
         if (result.failedCount > 0) {
           latest.current.onError(
@@ -101,33 +140,25 @@ export function useConversationInputResources(options: UseConversationInputResou
   /** 选择文件只写入当前草稿，不触碰主输入框或已排队消息。 */
   const chooseAttachments = useCallback(() => {
     void runResourceOperation(async (pending) => {
-      /** 选择器返回宿主已经授权的资源，保存消息时服务端仍会复验。 */
-      const bridge = window.zeus?.chooseConversationResources;
-      if (!bridge) throw new Error('当前应用版本未提供会话附件选择能力。');
       /** 选择结果仍归打开菜单时的草稿，不能落入后来切换的提问字段。 */
       const addAttachments = latest.current.onAddAttachments;
       /** 取消选择返回空列表，不视为导入失败。 */
-      const attachments = await bridge();
+      const attachments = await latest.current.backend.choose();
       if (!pending.current() || attachments.length === 0) return;
       addAttachments(attachments);
     });
   }, [runResourceOperation]);
 
   const materializeLongText = useCallback(
-    (text: string, selection: TextSelection) => {
+    (text: string, selection: TextSelection, materialize: (text: string) => Promise<Attachment[]>) => {
       void runResourceOperation(
         async (pending) => {
-          const bridge = window.zeus?.materializeConversationResources;
-          if (!bridge) {
-            insertText(latest.current, text, selection);
-            throw new Error('当前应用版本未提供长文本转附件能力。');
-          }
           try {
-            const attachments = await bridge([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }]);
+            const attachments = await materialize(text);
             if (!pending.current()) return;
             if (attachments.length === 0) throw new Error('长文本附件未能保存。');
             // 保存结果使用受信引用，卡片只显示已有元信息。
-            pending.complete(attachments.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'pasted_text' })));
+            pending.complete(attachments.map(latest.current.backend.describe));
             latest.current.onAddAttachments(attachments);
           } catch (error) {
             if (mounted.current) insertText(latest.current, text, selection);
@@ -141,9 +172,29 @@ export function useConversationInputResources(options: UseConversationInputResou
     [runResourceOperation],
   );
 
+  /** 回收系统附件及未被附件消费的文字，旧粘贴回执不能改写当前输入。 */
+  const pasteNativeClipboard = useCallback(
+    (generation: number, selection: TextSelection, fallbackText = '') => {
+      void runResourceOperation(async (pending) => {
+        try {
+          const result = await latest.current.backend.readClipboard();
+          if (!pending.current() || generation !== pasteGeneration.current) return;
+          if (result.resources.length > 0) latest.current.onAddAttachments(result.resources);
+          const text = result.text || (result.resources.length === 0 ? fallbackText : '');
+          if (text) insertText(latest.current, text, selection);
+        } catch (error) {
+          if (!pending.current() || generation !== pasteGeneration.current) return;
+          if (fallbackText) insertText(latest.current, fallbackText, selection);
+          throw error;
+        }
+      });
+    },
+    [runResourceOperation],
+  );
+
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
-      pasteGeneration.current += 1;
+      const generation = ++pasteGeneration.current;
       if (latest.current.disabled) return;
       const files = dataTransferFiles(event.clipboardData);
       if (files.length > 0) {
@@ -152,12 +203,18 @@ export function useConversationInputResources(options: UseConversationInputResou
         return;
       }
       const text = safelyReadData(event.clipboardData, 'text/plain');
+      const { materializeLongText: materialize, readNativeClipboardOnPaste } = latest.current.backend;
+      if (readNativeClipboardOnPaste && clipboardNeedsResourceRead(event.clipboardData, text)) {
+        event.preventDefault();
+        pasteNativeClipboard(generation, currentSelection(latest.current.textareaRef.current, latest.current.text.length), text);
+        return;
+      }
       // 粘贴时读取共享门槛，避免打包分块循环加载时把尚未初始化的值复制为常量。
-      if (text.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD) return;
+      if (!materialize || text.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD) return;
       event.preventDefault();
-      materializeLongText(text, currentSelection(latest.current.textareaRef.current, latest.current.text.length));
+      materializeLongText(text, currentSelection(latest.current.textareaRef.current, latest.current.text.length), materialize);
     },
-    [addFiles, materializeLongText],
+    [addFiles, materializeLongText, pasteNativeClipboard],
   );
 
   const handlePasteShortcut = useCallback(
@@ -167,19 +224,11 @@ export function useConversationInputResources(options: UseConversationInputResou
       const selection = currentSelection(latest.current.textareaRef.current, latest.current.text.length);
       globalThis.setTimeout(() => {
         if (!mounted.current || generation !== pasteGeneration.current || latest.current.disabled) return;
-        void runResourceOperation(async () => {
-          const bridge = window.zeus?.readConversationClipboardResources;
-          if (!bridge) throw new Error('当前应用版本未提供原生剪贴板附件读取能力。');
-          const result = await bridge();
-          if (!mounted.current || generation !== pasteGeneration.current) return;
-          if (result.resources.length > 0) latest.current.onAddAttachments(result.resources);
-          // 剪贴板可能是“文件路径 + 说明文字”：附件之外的正文仍要落回输入框。
-          if (result.text) insertText(latest.current, result.text, selection);
-        });
+        pasteNativeClipboard(generation, selection);
         // 同一事件轮结束后即可判断浏览器是否处理了 paste，无需固定等待。
       }, 0);
     },
-    [runResourceOperation],
+    [pasteNativeClipboard],
   );
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLElement>) => {
@@ -237,16 +286,16 @@ function currentSelection(textarea: ComposerInputHandle | null, fallback = 0): T
   };
 }
 
-function insertText(options: UseConversationInputResourcesOptions, inserted: string, selection: TextSelection): void {
+/** 按原文选区补回文字，光标更新只作用于原来的编辑器。 */
+function insertText<Attachment>(options: ComposerInputResourcesOptions<Attachment>, inserted: string, selection: TextSelection): void {
   const start = Math.min(selection.start, options.text.length);
   const end = Math.min(Math.max(start, selection.end), options.text.length);
   const next = `${options.text.slice(0, start)}${inserted}${options.text.slice(end)}`;
+  const textarea = options.textareaRef.current;
   options.onTextChange(next);
   globalThis.requestAnimationFrame(() => {
-    const textarea = options.textareaRef.current;
-    if (!textarea) return;
+    if (!textarea?.isConnected || options.textareaRef.current !== textarea || !textarea.contains(document.activeElement)) return;
     const caret = start + inserted.length;
-    textarea.focus();
     textarea.setSelectionRange(caret, caret);
   });
 }

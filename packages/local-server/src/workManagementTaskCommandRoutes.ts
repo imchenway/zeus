@@ -37,6 +37,8 @@ export interface UpdateTaskContentCommandInput {
   title?: string;
   taskType?: TaskType;
   description?: string;
+  /** 任务备注的 Markdown 原文，空字符串清除正文。 */
+  note?: string;
   defectCurrentState?: string;
   defectExpectedOutcome?: string;
   defectReproductionSteps?: string;
@@ -45,6 +47,8 @@ export interface UpdateTaskContentCommandInput {
   priority?: TaskPriority;
   tags?: string[];
   attachments?: TaskAttachmentReference[];
+  /** 仅替换归属备注的附件引用。 */
+  noteAttachments?: TaskAttachmentReference[];
   sourceContext?: Record<string, unknown>;
   allowCodeChanges?: boolean;
   allowTests?: boolean;

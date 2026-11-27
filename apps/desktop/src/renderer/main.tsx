@@ -143,7 +143,7 @@ async function renderWithClient(
             onLoadArchivedTasks={(projectId) => client.tasks.loadArchivedTasks(projectId)}
             onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
             onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
-            onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}
+            onReadTaskClipboardResources={(keepLongText) => window.zeus?.readTaskClipboardResources?.(keepLongText) ?? Promise.resolve({ resources: [], text: '' })}
             onParseThirdPartyTaskLink={(url, onMetadata) => window.zeus?.parseThirdPartyTaskLink?.(url, onMetadata) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
             onLoadTaskAttachmentPreview={(path) => window.zeus?.getTaskAttachmentPreview?.(path) ?? Promise.resolve(null)}
             onOpenTaskAttachment={(path) => window.zeus?.openTaskAttachment?.(path) ?? Promise.resolve({ opened: false, error: 'open_attachment_unavailable' })}
@@ -170,6 +170,7 @@ async function renderWithClient(
                 title: draft.title,
                 taskType: draft.taskType,
                 description: draft.description,
+                note: draft.note,
                 defectCurrentState: draft.defectCurrentState,
                 defectExpectedOutcome: draft.defectExpectedOutcome,
                 defectReproductionSteps: draft.defectReproductionSteps,
@@ -197,7 +198,9 @@ async function renderWithClient(
             }
             onLoadTask={(taskId) => client.tasks.loadTask(taskId)}
             onUpdateTask={async (taskId, input) => {
-              return changed({ tasks: [await client.tasks.updateTask(taskId, input)] });
+              /** 服务端原样写入正文，回执只携带任务元数据。 */
+              const task = await client.tasks.updateTask(taskId, input);
+              return changed({ tasks: [input.note === undefined ? task : { ...task, note: input.note }] });
             }}
             onUpdateTaskRelationships={async (taskId, input) => {
               return changed({ tasks: [await client.tasks.updateTaskRelationships(taskId, input)] });
