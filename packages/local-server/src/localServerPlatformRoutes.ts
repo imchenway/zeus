@@ -1871,6 +1871,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     commandCenter,
     runtimeManager: aiRuntimeManager,
     stopCommands: executionHostStopCommands,
+    commandDeliveries,
     redactSensitiveText,
     publish: publishNativeConversationEvent,
     save: () => db.save(),

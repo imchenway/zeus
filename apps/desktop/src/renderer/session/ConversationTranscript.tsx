@@ -463,7 +463,10 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   /** 客户端消息身份覆盖首次提交后尚未取得本地提交身份的乐观消息。 */
   const composerQueueClientUserMessageIds = useMemo(() => new Set(composerQueue.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [composerQueue]);
   /** 引导、失败和恢复项仍由时间线承载，只有普通等待项进入输入框卡片。 */
-  const transcriptQueuedSubmissions = useMemo(() => queuedSubmissions.filter((submission) => !composerQueueSubmissionIds.has(submission.id)), [composerQueueSubmissionIds, queuedSubmissions]);
+  const transcriptQueuedSubmissions = useMemo(
+    () => [...queuedSubmissions.filter((submission) => !composerQueueSubmissionIds.has(submission.id)), ...(props.state.queue?.recoveredSubmissions ?? [])],
+    [composerQueueSubmissionIds, props.state.queue?.recoveredSubmissions, queuedSubmissions],
+  );
   /** 新沟通消息形成过程边界；工具增量和旧历史补页不重复读取目录。 */
   const latestNavigationMessage = props.state.itemOrder.map((key) => props.state.items[key]).findLast((item) => item && ['user', 'assistant', 'commentary'].includes(itemRole(item)) && normalizeItemType(item.type) !== 'reasoning');
   /** 只观察最新发言的身份与结束状态，不订阅流式正文。 */
@@ -2623,7 +2626,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       {showPendingDeliveryFeedback ? (
         <MessageDeliveryOutcomeFeedback
           item={row.item}
-          submissionId={queuedSubmission?.id}
+          submissionId={queuedSubmission?.id ?? (row.item.payload.recoveredAfterQuit ? transcriptPayloadString(row.item, 'submissionId') : undefined)}
           language={options.props.language}
           onOpenAiSettings={options.props.onOpenAiSettings}
           onReconnectCodex={options.props.onReconnectCodex}
@@ -2801,6 +2804,9 @@ export function MessageDeliveryOutcomeFeedback(props: {
     return <TranscriptActiveStatus language={props.language} kind="reconnecting" reconnectAttempt={deliveryReconnectAttempt} reconnectAttempts={Number(props.item.payload.deliveryReconnectAttempts) || 5} />;
   }
   const pausedReason = props.item.payload.pausedReason;
+  const recoveredAfterQuit = props.item.payload.recoveredAfterQuit === true;
+  /** 退出记录的核对按钮只读取原送达结果。 */
+  const checkingDelivery = recoveredAfterQuit && props.item.status === 'unconfirmed';
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
@@ -2830,9 +2836,12 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const zh = props.language === 'zh-CN';
   /** 复用统一错误解释，仅将内部送达核对说明替换为用户可理解的结果获取失败。 */
   const explanation = feedbackError ? describeUserFacingError(feedbackError, zh ? 'zh-CN' : 'en') : null;
+  /** 退出记录沿用对应的送达标签，操作出错时仍可在当前提示查看原因。 */
+  const quitMessage = checkingDelivery ? (zh ? '送达待核对' : 'Delivery unconfirmed') : recoveredAfterQuit && props.item.status === 'failed' ? (zh ? '未发送' : 'Not sent') : undefined;
   /** 没有送达结论时不能声称消息未发送，更不能声称模型仍在回复。 */
   const message =
-    explanation && explanation.action !== 'check'
+    quitMessage ??
+    (explanation && explanation.action !== 'check'
       ? explanation.message
       : (unconfirmed && pausedReason !== 'recovered_unsent') || explanation?.action === 'check'
         ? zh
@@ -2840,7 +2849,10 @@ export function MessageDeliveryOutcomeFeedback(props: {
           : 'Unable to retrieve the request result. Please retry.'
         : zh
           ? '消息尚未发送。'
-          : 'This message has not been sent.';
+          : 'This message has not been sent.');
+  /** 核对和重试使用当前消息对应的动作名称。 */
+  const retryLabel = checkingDelivery ? (zh ? '核对状态' : 'Check status') : zh ? '重试' : 'Retry';
+  const pendingRetryLabel = checkingDelivery ? (zh ? '正在核对…' : 'Checking…') : zh ? '正在重试…' : 'Retrying…';
   /** 已落库消息沿用提交身份，本地发送失败沿用原客户端消息身份。 */
   const canRetry = props.submissionId ? Boolean(props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
   /** 只有明确失败消息可以本地取消；结果未知不能伪装成未发送。 */
@@ -2889,7 +2901,7 @@ export function MessageDeliveryOutcomeFeedback(props: {
           ) : null}
           {canRetry ? (
             <Button unstyled type="button" disabled={pendingAction !== null} onClick={() => retryDelivery()}>
-              {pendingAction === 'retry' ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
+              {pendingAction === 'retry' ? pendingRetryLabel : retryLabel}
             </Button>
           ) : null}
           {canCancelLocalSend ? (
@@ -3675,10 +3687,13 @@ export function projectQueuedSubmissionItems(state: NativeSessionState, submissi
       .flatMap(transcriptUserMessageClientIds)
       .filter((value): value is string => Boolean(value)),
   );
+  /** 退出恢复的提交沿用原正文和时间线位置。 */
+  const recoveredIds = new Set(state.queue?.recoveredSubmissions?.map((submission) => submission.id));
   return submissions.flatMap((submission) => {
     if (visibleSubmissionIds.has(submission.id) || visibleSubmissionIds.has(`queued-submission:${submission.id}`)) return [];
     if (submission.clientUserMessageId && visibleClientMessageIds.has(submission.clientUserMessageId)) return [];
-    const text = submission.composerDraft?.trim() || submission.content.trim();
+    const recoveredAfterQuit = recoveredIds.has(submission.id);
+    const text = recoveredAfterQuit ? submission.content : submission.composerDraft?.trim() || submission.content.trim();
     const hasVisibleResources = Boolean(submission.attachments?.length || submission.browserComments?.length || submission.conversationContext);
     if (!text && !hasVisibleResources) return [];
     const timestamp = submission.createdAt ?? '';
@@ -3709,6 +3724,7 @@ export function projectQueuedSubmissionItems(state: NativeSessionState, submissi
           content: text,
           submissionId: submission.id,
           delivery: submission.delivery ?? 'queue',
+          ...(recoveredAfterQuit ? { recoveredAfterQuit: true } : {}),
           pausedReason: submission.pausedReason,
           // 冷开与实时发送使用同一份题目和答案，不能把结构化回答恢复成普通引导消息。
           ...(submission.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}),
@@ -3718,7 +3734,7 @@ export function projectQueuedSubmissionItems(state: NativeSessionState, submissi
           ...(deliveryError ? { deliveryError } : {}),
         },
         resources: [],
-        optimistic: true,
+        optimistic: !recoveredAfterQuit || submission.status !== 'completed',
         ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId, durableClientUserMessageId: submission.clientUserMessageId } : {}),
         messageCreatedAt: submission.createdAt,
         ...(timestamp ? { timelineAt: timestamp, updatedAt: submission.updatedAt ?? timestamp } : {}),

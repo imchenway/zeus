@@ -367,6 +367,8 @@ export interface NativeQueueSnapshot {
   state: NativeConversationRunState;
   waitReason?: NativeQueueWaitReason;
   submissions: NativeQueuedSubmission[];
+  /** 保留原始位置和身份的退出记录，不能参与调度或排序。 */
+  recoveredSubmissions?: NativeQueuedSubmission[];
 }
 
 export interface NativePendingRequest {

@@ -13,13 +13,24 @@ export function queuedSubmissionIdentity(submission: NativeQueuedSubmission): st
 
 /** 仅未确认接纳的本地消息进入待发区域；等待原生回显不等于仍在排队。 */
 export function isUnacceptedTranscriptMessage(item: NativeSessionItemBuffer): boolean {
-  if (!item.optimistic || item.providerItemId || item.status === 'active' || item.status === 'completed' || item.status === 'resolved') return false;
+  if (item.payload.recoveredAfterQuit || !item.optimistic || item.providerItemId || item.status === 'active' || item.status === 'completed' || item.status === 'resolved') return false;
   // 已交给当前轮次的引导消息沿用发言位置，不能等待原生回显才退出队尾。
   return !(item.payload.delivery === 'steer_now' && item.status === 'steering');
 }
 
 /** 待发送消息按权威队列顺序放在记录末尾，恢复时不会被提交时间插回旧回复之前。 */
 export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemBuffer[], queue: NativeQueueSnapshot | null): NativeSessionItemBuffer[] {
+  /** 迟到的持久正文接管旧气泡时使用同一条输入的原时间。 */
+  const recoveredByClientId = new Map(queue?.recoveredSubmissions?.map((submission) => [submission.clientUserMessageId, submission]));
+  const history =
+    recoveredByClientId.size === 0
+      ? items
+      : items.map((item) => {
+          const clientId = item.clientUserMessageId ?? item.durableClientUserMessageId;
+          const recovered = clientId ? recoveredByClientId.get(clientId) : undefined;
+          if (item.optimistic || item.payload.recoveredAfterQuit || !recovered?.createdAt) return item;
+          return { ...item, timelineAt: recovered.createdAt, messageCreatedAt: recovered.createdAt, payload: { ...item.payload, recoveredAfterQuit: true } };
+        });
   /** 提交与客户端消息身份共同覆盖本地气泡和冷开队列投影。 */
   const positions = new Map<string, number>();
   /** 失败提交仍占据原发送位置；已结束历史则由条目的原生身份排除。 */
@@ -37,20 +48,35 @@ export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemB
     // 本地消息尚无队列回执时，也必须排在既有待发消息之后。
     return submissions.length;
   };
-  return [...items].sort((left, right) => {
-    /** 已有队列身份和等待本地回执的消息统一在历史末尾排序。 */
-    const leftPosition = queuePosition(left);
-    /** 同时比较两端，保证已确认历史位于待发队列之前。 */
-    const rightPosition = queuePosition(right);
-    if (leftPosition === undefined && rightPosition === undefined) {
-      // 已接纳历史已经由持久显示位置排好，队列层不得跨来源再次排序。
-      return 0;
+  const ordered = history
+    .filter((item) => !item.payload.recoveredAfterQuit)
+    .sort((left, right) => {
+      /** 已有队列身份和等待本地回执的消息统一在历史末尾排序。 */
+      const leftPosition = queuePosition(left);
+      /** 同时比较两端，保证已确认历史位于待发队列之前。 */
+      const rightPosition = queuePosition(right);
+      if (leftPosition === undefined && rightPosition === undefined) {
+        // 已接纳历史已经由持久显示位置排好，队列层不得跨来源再次排序。
+        return 0;
+      }
+      if (leftPosition === undefined) return -1;
+      if (rightPosition === undefined) return 1;
+      /** 同时等待本地回执时按首次显示时间排序，状态更新时间不能移动气泡。 */
+      return leftPosition - rightPosition || (left.timelineAt ?? '').localeCompare(right.timelineAt ?? '');
+    });
+  /** 退出记录用原时间插回正文，保留已持久化条目之间的显示顺序。 */
+  const recovered = history.filter((item) => item.payload.recoveredAfterQuit).sort((left, right) => (left.timelineAt ?? '').localeCompare(right.timelineAt ?? '') || left.key.localeCompare(right.key));
+  if (recovered.length === 0) return ordered;
+  const merged: NativeSessionItemBuffer[] = [];
+  let index = 0;
+  for (const item of ordered) {
+    const timestamp = item.messageCreatedAt ?? item.timelineAt;
+    while (index < recovered.length && (isUnacceptedTranscriptMessage(item) || (timestamp && (recovered[index]!.timelineAt ?? '') <= timestamp))) {
+      merged.push(recovered[index++]!);
     }
-    if (leftPosition === undefined) return -1;
-    if (rightPosition === undefined) return 1;
-    /** 同时等待本地回执时按首次显示时间排序，状态更新时间不能移动气泡。 */
-    return leftPosition - rightPosition || (left.timelineAt ?? '').localeCompare(right.timelineAt ?? '');
-  });
+    merged.push(item);
+  }
+  return [...merged, ...recovered.slice(index)];
 }
 
 /** 沿用提交的稳定队列顺序，保留模型接手前的消息及发送失败后的重试入口。 */
@@ -108,7 +134,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
   const local = state.itemOrder.flatMap((key, index): ComposerQueuedSubmission[] => {
     /** 只读取当前稳定条目，不为已经清理的顺序占位生成空卡片。 */
     const item = state.items[key];
-    if (!item || !item.optimistic || item.type !== 'userMessage' || item.payload.delivery !== 'queue' || item.payload.queuedForActiveTurn !== true) return [];
+    if (!item || !item.optimistic || item.payload.recoveredAfterQuit || item.type !== 'userMessage' || item.payload.delivery !== 'queue' || item.payload.queuedForActiveTurn !== true) return [];
     // 首次提交已冻结等待关系；轮次尚未建立或已结束时，仍由权威提交回执接管，不能提前退回正文。
     if ((item.status !== 'pending' && item.status !== 'queued') || item.payload.deliveryError || item.payload.error) return [];
     /** 本地客户端身份是等待接纳期间唯一可依赖的去重键。 */

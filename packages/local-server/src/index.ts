@@ -157,7 +157,7 @@ import { ConversationExecutionCoordinator, type ConversationExecutionRoute } fro
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { clearMcpStartupHistory, compactStoredCommandOutputs } from './conversationStorageCompaction.js';
 import { ConversationSourceContextReader } from './conversationSourceContext.js';
-import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
+import { ConversationQueueCoreMutationApplication, interruptedSubmissionDelivery, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import { isObjectLike } from './conversationResourcePreview.js';
@@ -2693,10 +2693,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const recoverUnifiedOutcomeUnknownSwitches = async (conversationId?: string) => {
     /** 按当前会话缩小范围，避免一次检查拉取所有未知提交。 */
     const operations = conversationExecution.listOpenSwitchOperations().filter((operation) => operation.state === 'outcome_unknown' && (!conversationId || operation.conversationId === conversationId));
+    /** 目标会话的核对也能读取退出后已经收口的候选线程，保留当前执行路由。 */
+    const interrupted = new Set<string>();
+    if (conversationId) {
+      for (const submission of conversationSubmissions.listInterruptedSubmissionsByConversation(conversationId)) {
+        if (interruptedSubmissionDelivery(commandDeliveries, submission) !== 'outcome_unknown') continue;
+        const operation = conversationExecution.getSwitchBySubmission(submission.id);
+        if (!operation || operation.state === 'accepted' || operation.state === 'failed') continue;
+        interrupted.add(submission.id);
+        if (!operations.some((existing) => existing.id === operation.id)) operations.push(operation);
+      }
+    }
     for (const operation of operations) {
       const segment = conversationExecution.segmentById(operation.targetSegmentId);
       const submission = conversationSubmissions.getById(operation.submissionId);
       if (!segment || !submission || segment.runtimeKind !== 'codex' || !segment.nativeSessionId) continue;
+      if (submission.status === 'cancelled' && !interrupted.has(submission.id)) continue;
       /** 归档边界在只读恢复时同样有效。 */
       const conversation = conversations.getRecordById(operation.conversationId);
       if (!conversation || conversation.archived || conversation.providerState === 'archived') continue;
@@ -2737,24 +2749,57 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         }
         /** 读取期间其他入口可能已经恢复或归档会话，落库前复验当前归属。 */
         const currentConversation = conversations.getRecordById(operation.conversationId);
-        if (conversationExecution.getSwitch(operation.id)?.state !== 'outcome_unknown' || !currentConversation || currentConversation.archived || currentConversation.providerState === 'archived') continue;
+        if (!currentConversation || currentConversation.archived || currentConversation.providerState === 'archived') continue;
         const recoveredAt = now().toISOString();
+        const nativeTurnId = matchedTurnId;
+        const latestAttempt = commandDeliveries.getByScope('submission', submission.id)?.attempts.at(-1);
+        /** 只结算最后一次结果未知的外发，避免回执改变更早的尝试。 */
+        const unknownOutbox = latestAttempt?.outcome === 'outcome_unknown_after_write' ? latestAttempt : undefined;
+        /** 可用于确认原提交的 Provider 历史身份。 */
+        const receiptEvidence = {
+          source: 'provider_history_reconciliation',
+          nativeSessionId: segment.nativeSessionId,
+          clientUserMessageId: submission.clientMessageId,
+          method,
+        };
+        /** 回执和对应的会话状态由调用方在同一事务内提交。 */
+        const settleReceipt = unknownOutbox
+          ? () =>
+              commandDeliveries.reconcileUnknownAsAcceptedInCurrentTransaction({
+                outboxId: unknownOutbox.id,
+                providerId: 'codex',
+                nativeSessionId: segment.nativeSessionId,
+                nativeTurnId,
+                evidence: receiptEvidence,
+                occurredAt: recoveredAt,
+              })
+          : undefined;
+        if (interrupted.has(submission.id)) {
+          const current = conversationSubmissions.getById(submission.id);
+          if (current?.status !== 'cancelled' || current.providerTurnId) continue;
+          /** 迟到的回执只确认原消息，不能重新激活退出时停止的轮次。 */
+          const previousError: unknown = current.errorJson ? JSON.parse(current.errorJson) : null;
+          db.durableTransactionSync(() => {
+            if (unknownOutbox?.destinationKind === 'provider_turn') settleReceipt?.();
+            conversationExecution.cancelOpenSwitchForSubmission({ conversationId: operation.conversationId, submissionId: submission.id, reason: 'submission_cancelled', occurredAt: recoveredAt });
+            conversationSubmissions.updateStatus(submission.id, 'cancelled', {
+              providerTurnId: nativeTurnId,
+              error: { ...(isNativeApiRecord(previousError) ? previousError : {}), providerOutcomeUnconfirmed: false, deliveryReconciledAfterQuit: true },
+              updatedAt: recoveredAt,
+            });
+          });
+          publishNativeConversationEvent('conversation.queue.changed', { conversationId: operation.conversationId, submissionId: submission.id, queueDispatchRequested: false });
+          continue;
+        }
+        if (conversationExecution.getSwitch(operation.id)?.state !== 'outcome_unknown' || conversationSubmissions.getById(submission.id)?.status === 'cancelled') continue;
         const persisted = isNativeApiRecord(JSON.parse(submission.inputJson)) ? (JSON.parse(submission.inputJson) as Record<string, unknown>) : {};
-        const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${matchedTurnId}`).digest('hex').slice(0, 24)}`;
-        const commandDelivery = commandDeliveries.getByScope('submission', submission.id);
-        const unknownOutbox = commandDelivery?.attempts.at(-1)?.outcome === 'outcome_unknown_after_write' ? commandDelivery.attempts.at(-1) : undefined;
+        const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${nativeTurnId}`).digest('hex').slice(0, 24)}`;
         conversationExecution.acceptSwitchDurably(
           {
             operationId: operation.id,
-            providerTurnId: matchedTurnId,
+            providerTurnId: nativeTurnId,
             turnId,
-            acceptanceEvidence: {
-              source: 'provider_history_reconciliation',
-              nativeSessionId: segment.nativeSessionId,
-              clientUserMessageId: submission.clientMessageId,
-              method,
-              nativeTurnId: matchedTurnId,
-            },
+            acceptanceEvidence: { ...receiptEvidence, nativeTurnId },
             userHistoryContent: {
               text: typeof persisted.text === 'string' ? persisted.text : '',
               ...(typeof persisted.displayText === 'string' ? { displayText: persisted.displayText } : {}),
@@ -2766,22 +2811,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             },
             acceptedAt: recoveredAt,
           },
-          unknownOutbox
-            ? () =>
-                commandDeliveries.reconcileUnknownAsAcceptedInCurrentTransaction({
-                  outboxId: unknownOutbox.id,
-                  evidence: {
-                    source: 'provider_history_reconciliation',
-                    nativeSessionId: segment.nativeSessionId,
-                    clientUserMessageId: submission.clientMessageId,
-                    method,
-                  },
-                  providerId: 'codex',
-                  nativeSessionId: segment.nativeSessionId,
-                  nativeTurnId: matchedTurnId,
-                  occurredAt: recoveredAt,
-                })
-            : undefined,
+          settleReceipt,
         );
         conversationExecution.appendConfigEvidence({
           conversationId: operation.conversationId,

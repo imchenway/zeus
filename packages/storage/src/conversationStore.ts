@@ -2564,6 +2564,26 @@ export class ConversationSubmissionRepository {
       .map(mapConversationSubmissionRow);
   }
 
+  /** 被退出中止的记录保留原位置，迟到的用户回显可补齐轮次身份。 */
+  listInterruptedSubmissionsByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
+    return this.db
+      .select<DbConversationSubmissionRow & { confirmed_provider_turn_id: string | null }>(
+        `SELECT stopped.*, (SELECT message.provider_turn_id FROM conversation_messages AS message
+            WHERE stopped.provider_turn_id IS NULL AND message.conversation_id = stopped.conversation_id
+              AND message.client_message_id = stopped.client_message_id AND message.role = 'user'
+              AND message.provider_turn_id IS NOT NULL AND message.provider_item_id IS NOT NULL
+            ORDER BY message.created_at, message.id LIMIT 1) AS confirmed_provider_turn_id
+          FROM conversation_submissions AS stopped
+          WHERE stopped.conversation_id = ? AND stopped.status = 'cancelled'
+            AND json_extract(stopped.error_json, '$.code') = 'ZEUS_FORCED_QUIT_INTERRUPTED'
+            AND (stopped.provider_turn_id IS NULL OR json_extract(stopped.error_json, '$.deliveryReconciledAfterQuit') = 1)
+            AND NOT EXISTS (SELECT 1 FROM conversation_submissions AS replacement WHERE replacement.replacement_of_submission_id = stopped.id)
+          ORDER BY stopped.created_at, stopped.id`,
+        [conversationId],
+      )
+      .map((row) => mapConversationSubmissionRow({ ...row, provider_turn_id: row.provider_turn_id ?? row.confirmed_provider_turn_id }));
+  }
+
   /** Provider 与专家路由共用的权威队列；展示层仍通过 listQueueByConversation 隐藏内部专家提交。 */
   listDispatchQueueByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
     return this.db

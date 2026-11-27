@@ -3,6 +3,13 @@ import { ConversationExecutionRepository, ConversationServerRequestRepository, C
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 
+/** 退出收口只终止调度，送达仍以原轮次的写入证据为准。 */
+export function interruptedSubmissionDelivery(deliveries: CommandDeliveryRepository, submission: ZeusConversationSubmissionRecord): 'accepted' | 'not_sent' | 'outcome_unknown' {
+  if (submission.providerTurnId || submission.acceptedAt) return 'accepted';
+  if (submission.status === 'cancelled' && submission.errorJson && parseJsonRecord(submission.errorJson).providerOutcomeUnconfirmed === true) return 'outcome_unknown';
+  return hasUnwrittenSubmissionEvidence(deliveries, submission, 'turn') ? 'not_sent' : 'outcome_unknown';
+}
+
 /**
  * 自动排空只选择仍处于 queued 的最早提交。paused/failed 是需要人工处理或保留审计的
  * 历史状态，不能因为排在更早位置就永久遮挡用户在活动轮次中新增的 queued 消息。
@@ -128,22 +135,32 @@ export class ConversationQueueCoreMutationApplication {
 
   retry(input: { conversationId: string; submissionId: string }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
+    /** 退出后只有仍保留原输入、且能证明未送达的记录可由用户明确恢复。 */
+    const interrupted = submission.status === 'cancelled' ? this.options.submissions.listInterruptedSubmissionsByConversation(input.conversationId).find((candidate) => candidate.id === submission.id) : undefined;
+    const restartInterrupted = interrupted && interruptedSubmissionDelivery(this.options.commandDeliveries, interrupted) === 'not_sent';
     // 多条恢复消息由用户逐条点选；显式选择本身就是越过其他 recovered_unsent 的授权。
     // 其他暂停/失败原因仍必须保持队首闸机，禁止借普通重试绕过真实阻塞。
-    if (!canRecoverQueueSubmission(submission, this.queueEntries(input.conversationId)) && submission.pausedReason !== 'recovered_unsent') {
+    if (!restartInterrupted && !canRecoverQueueSubmission(submission, this.queueEntries(input.conversationId)) && submission.pausedReason !== 'recovered_unsent') {
       throw mutationError('ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', '只能重试暂停的队首提交。');
     }
-    if ((submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
+    if ((!restartInterrupted && submission.status !== 'paused' && submission.status !== 'failed') || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '只有 Provider 写入前失败且未产生 turn 的队首可以重试。');
     }
-    if (!hasUnwrittenSubmissionEvidence(this.options.commandDeliveries, submission, submission.pausedReason === 'route_switch_failed' ? 'turn' : undefined)) {
+    /** 退出记录的未发送状态已在当前事务内核对原轮次的外发证据。 */
+    if (!restartInterrupted && !hasUnwrittenSubmissionEvidence(this.options.commandDeliveries, submission, submission.pausedReason === 'route_switch_failed' ? 'turn' : undefined)) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', '尚未确认这条消息未发送，不能安全重试。');
     }
     if (submission.pausedReason === 'semantic_route_changed' || submission.pausedReason === 'upgrade_interrupted' || !submission.executionSnapshotId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_REROUTE_REQUIRED', '原执行路由已变化或不可恢复，请使用当前输入框模型创建改路由 replacement。');
     }
     const persisted = JSON.parse(submission.inputJson) as unknown;
-    this.options.submissions.createReplacement(submission.id, { requestHash: requestHash(persisted), input: persisted, reason: 'retry', updatedAt: this.options.now() });
+    const updatedAt = this.options.now();
+    if (restartInterrupted) {
+      if (isRecord(persisted) && persisted.internalOperation === true) throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE', '退出中止的内部操作不能作为消息重试。');
+      this.options.execution.cancelOpenSwitchForSubmission({ conversationId: input.conversationId, submissionId: submission.id, reason: 'submission_cancelled', occurredAt: updatedAt });
+      this.options.submissions.updateStatus(submission.id, 'failed', { pausedReason: 'recovered_unsent', preserveError: true, updatedAt });
+    }
+    this.options.submissions.createReplacement(submission.id, { requestHash: requestHash(persisted), input: persisted, reason: 'retry', updatedAt });
     return this.options.snapshot(input.conversationId);
   }
 

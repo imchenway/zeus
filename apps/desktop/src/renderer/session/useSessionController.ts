@@ -622,6 +622,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     composerConsumed: true,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
   }));
+  /** 上次进程留下的待发请求先等权威队列，避免正文首帧触发历史重发。 */
+  const restoredDeferredSends = new Set(deferredSends);
   /** 发送占用释放后，显示记录独立保留到同一持久正文到达。 */
   let acceptedDisplaySends: PendingSendEnvelope[] = persisted.acceptedDisplaySends ?? [];
   let pendingBrowserCommentMarks = persisted.pendingBrowserCommentMarks ?? [];
@@ -652,6 +654,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
   /** 同一身份只能由发送账本或显示账本中的一方持有。 */
   const activeSendIdentities = new Set([...recoverableSends.map((envelope) => envelope.clientUserMessageId), ...deferredSends.map((envelope) => envelope.clientUserMessageId)]);
   acceptedDisplaySends = acceptedDisplaySends.filter((envelope) => !activeSendIdentities.has(envelope.clientUserMessageId) && !durableCachedIdentities.has(`user-message:${envelope.clientUserMessageId}`));
+  /** 上个进程的接纳缓存只用于核对原回执，不能直接恢复成发送中的气泡。 */
+  const restoredDisplays = new Set(acceptedDisplaySends);
+  let checkingRestoredDisplays = false;
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId))
@@ -681,38 +686,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
-  for (const envelope of acceptedDisplaySends) {
-    const acceptance = envelope.acceptance;
-    if (!acceptance) continue;
-    const previousConversationState = state.conversationState;
-    const startedAt = envelope.startedAt ?? new Date().toISOString();
-    state = sessionReducer(state, {
-      type: 'send_started',
-      clientUserMessageId: envelope.clientUserMessageId,
-      durableClientUserMessageId: envelope.clientUserMessageId,
-      draft: envelope.displayText,
-      composerDraft: envelope.draft,
-      attachments: envelope.composerAttachments,
-      submittedAttachments: envelope.attachments,
-      browserSubmission: envelope.browserSubmission,
-      contextDraft: envelope.contextDraft,
-      browserComments: envelope.browserSubmission?.comments ?? [],
-      delivery: envelope.delivery,
-      ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
-      previousConversationState,
-      startedAt,
-      queuedUntilHydrated: true,
-      preserveComposer: true,
-    });
-    state = sessionReducer(state, {
-      type: 'send_accepted',
-      clientUserMessageId: envelope.clientUserMessageId,
-      status: acceptedStatus(acceptance),
-      ...(typeof acceptance.submission?.createdAt === 'string' ? { messageCreatedAt: acceptance.submission.createdAt } : {}),
-      ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
-      ...(typeof (acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId) === 'string' ? { providerTurnId: (acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId) as string } : {}),
-    });
-  }
   /** 每条历史发送只恢复自己的气泡和操作，不改变 Composer，也不改变其他消息状态。 */
   for (const recoveredSend of recoverableSends) {
     const previousConversationState = state.conversationState;
@@ -733,6 +706,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       ...(recoveredSend.questionAnswer ? { questionAnswer: recoveredSend.questionAnswer } : {}),
       previousConversationState,
       startedAt,
+      restored: true,
       preserveComposer: true,
     });
     if (recoveredSend.deliveryState === 'failed') {
@@ -782,6 +756,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
         previousConversationState: state.conversationState,
         startedAt: envelope.startedAt ?? new Date().toISOString(),
+        restored: true,
         queuedUntilHydrated: true,
       });
     }
@@ -1141,7 +1116,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function reconcileAcceptedDisplays(): boolean {
     let changed = false;
     const retained = acceptedDisplaySends.flatMap((envelope) => {
-      if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || (state.snapshot && envelopeWasTerminalWithoutProviderFact(state.snapshot, envelope))) {
+      const restoredInHistory = state.queue?.recoveredSubmissions?.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId);
+      if (restoredInHistory || selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || (state.snapshot && envelopeWasTerminalWithoutProviderFact(state.snapshot, envelope))) {
+        restoredDisplays.delete(envelope);
         changed = true;
         return [];
       }
@@ -1230,7 +1207,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 将接纳显示记录投影到当前状态；持久正文稍后按同一身份原位接管。 */
-  function projectAcceptedDisplay(envelope: PendingSendEnvelope): void {
+  function projectAcceptedDisplay(envelope: PendingSendEnvelope, restored = false): void {
     if (!envelope.acceptance) return;
     dispatch({
       type: 'send_started',
@@ -1247,6 +1224,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
       previousConversationState: state.conversationState,
       startedAt: envelope.startedAt ?? new Date().toISOString(),
+      restored,
       queuedUntilHydrated: true,
       preserveComposer: true,
     });
@@ -1300,6 +1278,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         : snapshot;
     const projectedSnapshot = withoutResolvedRequests(snapshotWithExecutionContext);
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
+    void reconcileRestoredDisplays();
     if (placementRecovery) await placementRecovery;
     if (disposed || token !== connectionToken) return;
     if (refreshMetadata) {
@@ -1656,6 +1635,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   function envelopeWasTerminalWithoutProviderFact(snapshot: NativeConversationSnapshot, envelope: PendingSendEnvelope): boolean {
     if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || envelopeHasProviderUserFact(snapshot, envelope)) return false;
+    if (snapshot.queue.recoveredSubmissions?.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId)) return true;
     const matchingSubmissions = matchingEnvelopeSubmissions(snapshot, envelope);
     return matchingSubmissions.length > 0 && matchingSubmissions.every((submission) => submission.status === 'failed' || submission.status === 'deleted' || submission.status === 'cancelled' || isManualConfirmationSubmission(submission));
   }
@@ -1844,15 +1824,59 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 历史分页不能决定已接收消息的送达状态；只读回执也不会重放旧消息。 */
-  async function reconcileSubmissionReceipt(envelope: PendingSendEnvelope): Promise<boolean> {
+  async function readEnvelopeSubmissionReceipt(envelope: PendingSendEnvelope): Promise<NativeSubmissionReceipt | null> {
     const load = options.client.loadNativeSubmissionReceipt;
     const submissionId = envelope.acceptance?.submission?.id;
-    if (!load || !submissionId) return false;
+    if (!load || !submissionId) return null;
     const receipt = await withSessionTimeout(load(options.projectId, options.conversationId, submissionId), conversationHydrationTimeoutMs, () => new ConversationHydrationTimeoutError());
-    if (disposed || !recoverableSend(envelope.clientUserMessageId)) return true;
     if (receipt.id !== submissionId || receipt.conversationId !== options.conversationId || receipt.clientUserMessageId !== envelope.clientUserMessageId) {
       throw new Error('消息提交回执身份不一致，已保留草稿，请重新连接后再试。');
     }
+    return receipt;
+  }
+
+  /** 冷开只核对仍缺权威记录的旧显示缓存，队列与正文自行接管已持久化的消息。 */
+  async function reconcileRestoredDisplays(): Promise<void> {
+    if (checkingRestoredDisplays || restoredDisplays.size === 0 || disposed) return;
+    checkingRestoredDisplays = true;
+    try {
+      for (const envelope of restoredDisplays) {
+        if (disposed) break;
+        try {
+          const receipt = await readEnvelopeSubmissionReceipt(envelope);
+          if (disposed || !acceptedDisplaySends.includes(envelope)) continue;
+          if (!receipt) continue;
+          restoredDisplays.delete(envelope);
+          if (receipt.providerTurnId) {
+            /** 回显未接管前保留已确认送达的原正文，状态只来自本次回执。 */
+            const status = receipt.status === 'active' ? 'active' : 'completed';
+            projectAcceptedDisplay(
+              {
+                ...envelope,
+                acceptance: { conversation: { id: options.conversationId }, operation: { status }, submission: { ...receipt, status } },
+              },
+              true,
+            );
+            continue;
+          }
+          if (!['cancelled', 'deleted', 'failed'].includes(receipt.status)) continue;
+          removeAcceptedDisplay(receipt.id, envelope.clientUserMessageId);
+          dispatch({ type: 'send_terminal', clientUserMessageId: envelope.clientUserMessageId });
+          persistDraft();
+        } catch {
+          // 只读核对失败保留原信封，后续权威快照可以继续收口。
+        }
+      }
+    } finally {
+      checkingRestoredDisplays = false;
+    }
+  }
+
+  /** 核对本进程尚未完成的发送，沿用原回执身份。 */
+  async function reconcileSubmissionReceipt(envelope: PendingSendEnvelope): Promise<boolean> {
+    const receipt = await readEnvelopeSubmissionReceipt(envelope);
+    if (disposed || !recoverableSend(envelope.clientUserMessageId)) return true;
+    if (!receipt) return false;
     if (submissionIsDurableEnvelopeEvidence(receipt)) {
       finalizeDurableEnvelope(envelope);
       return true;
@@ -2254,7 +2278,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
           /** 侧栏已确认的身份可先显示正文，最新目录事实与交互状态并行补齐。 */
           const choicePromise = options.client.loadNativeConversationChoice(options.projectId, options.conversationId);
           void choicePromise.catch(() => undefined);
-          const interactionPromise = loadConversationInteractionForHydration();
+          /** 队列若早于正文到达，首帧即可放回退出消息的原位置。 */
+          let currentInteraction: Awaited<ReturnType<typeof loadConversationInteractionForHydration>> | undefined;
+          const interactionPromise = loadConversationInteractionForHydration().then((interaction) => {
+            currentInteraction = interaction;
+            return interaction;
+          });
           // 队列或确认项即使比正文更早失败，也由稍后的权威阶段统一处理，不能制造未处理 Promise。
           void interactionPromise.catch(() => undefined);
           let latestGoal: NativeGoalResponse | null = null;
@@ -2270,7 +2299,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
             await hooks.onReadable(
               adaptConversationSnapshotV2({
                 ...readable,
-                queue: state.queue ?? emptyQueueWhileHydrating(),
+                queue: currentInteraction?.queue ?? state.queue ?? emptyQueueWhileHydrating(),
                 requests: state.pendingRequests,
                 planImplementationRequests: state.planImplementationRequests,
                 goal: latestGoal ?? fallbackGoalForHydration(),
@@ -2908,8 +2937,18 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     while (!disposed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && !hasUnresolvedAdmission()) {
       const envelope = deferredSends[0]!;
+      if (restoredDeferredSends.has(envelope) && !hasCompleteSnapshot) return;
+      // 重启前已接纳并被退出收口的原消息由持久历史接管，不能再次进入发送。
+      if (state.queue?.recoveredSubmissions?.some((submission) => submission.clientUserMessageId === envelope.clientUserMessageId)) {
+        deferredSends = deferredSends.slice(1);
+        restoredDeferredSends.delete(envelope);
+        dispatch({ type: 'send_terminal', clientUserMessageId: envelope.clientUserMessageId });
+        persistDraft();
+        continue;
+      }
       if (envelope.delivery !== 'queue' && (state.transportState !== 'ready' || !realtimeSubscribed)) return;
       deferredSends = deferredSends.slice(1);
+      restoredDeferredSends.delete(envelope);
       try {
         await submitEnvelope(envelope);
       } catch {
@@ -4017,14 +4056,16 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return runOperation(
         `queue:retry:${submissionId}`,
         async () => {
-          /** 每次重试先取得真实状态，原消息可能在报错后已经被接收。 */
-          const queue = await options.client.recoverNativeQueue(options.projectId, options.conversationId, 'check');
+          /** 旧消息的核对和重试是两个动作，只有明确点击重试才允许重新提交。 */
+          const recoveredStatus = state.queue?.recoveredSubmissions?.find((entry) => entry.id === submissionId)?.status;
+          const queue = recoveredStatus === 'failed' && state.queue ? state.queue : await options.client.recoverNativeQueue(options.projectId, options.conversationId, 'check');
           await applyAuthoritativeQueue(queue);
+          if (recoveredStatus === 'unconfirmed' || recoveredStatus === 'completed') return queue;
           /** 仅核对当前被点击的提交，不能借重试恢复其他失败消息。 */
           const submission = queue.submissions.find((entry) => entry.id === submissionId);
           // 核对尚无结论时保留原气泡及恢复入口，不把同一状态再次抛成操作失败，更不能自动重发。
           if (submission?.pausedReason === 'outcome_unknown') return queue;
-          if (!submission || submission.providerTurnId || !['paused', 'failed'].includes(submission.status)) {
+          if (recoveredStatus !== 'failed' && (!submission || submission.providerTurnId || !['paused', 'failed'].includes(submission.status))) {
             await applyAuthoritativeSnapshot(await loadConversationForHydration());
             return state.queue ?? queue;
           }

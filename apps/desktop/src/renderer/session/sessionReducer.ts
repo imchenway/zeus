@@ -101,6 +101,8 @@ export type NativeSessionAction =
       delivery: 'queue' | 'steer_now';
       previousConversationState: ConversationState;
       startedAt: string;
+      /** 从本地存储恢复的消息须等待权威队列确认后才进入底部。 */
+      restored?: boolean;
       queuedUntilHydrated?: boolean;
       preserveComposer?: boolean;
       /** 异步回答的原问题身份，不从可见正文推断。 */
@@ -657,15 +659,18 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
+  /** 退出记录拥有原消息的展示权，无论送达结论如何都接管本地副本。 */
+  const recoveredSubmissions = snapshot.queue.recoveredSubmissions ?? [];
+  const recoveredIds = new Set(recoveredSubmissions.map((submission) => submission.id));
   // 本地用户消息由 Renderer 持有，直到同一客户端身份的持久正文在本次归约中原位接管。
-  const submissionsByClientId = new Map(snapshot.submissions.flatMap((submission) => (submission.clientUserMessageId ? [[submission.clientUserMessageId, submission] as const] : [])));
+  const submissionsByClientId = new Map([...snapshot.submissions, ...recoveredSubmissions].flatMap((submission) => (submission.clientUserMessageId ? [[submission.clientUserMessageId, submission] as const] : [])));
   for (const key of state.itemOrder) {
     const item = state.items[key];
     if (!item?.optimistic || item.conversationId !== snapshot.id || key in items) continue;
     /** 明确失败、删除、取消或人工确认不会产生 Provider 用户正文，本地临时项应按权威终态退出。 */
     const terminalSubmission = userMessageClientIds(item)
       .map((clientId) => submissionsByClientId.get(clientId))
-      .find((submission) => submission && (['failed', 'deleted', 'cancelled'].includes(submission.status) || submission.pausedReason === 'user_confirmation'));
+      .find((submission) => submission && (recoveredIds.has(submission.id) || ['failed', 'deleted', 'cancelled'].includes(submission.status) || submission.pausedReason === 'user_confirmation'));
     if (terminalSubmission) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
@@ -1734,6 +1739,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const threadId = state.providerThreadId ?? 'pending-thread';
   /** 首次提交即承认前序待接纳消息；同一消息续发时保留原等待关系，避免正文与队列来回切换。 */
   const queuedForActiveTurn =
+    !action.restored &&
     !action.taskPushLayout &&
     action.delivery === 'queue' &&
     (existingOptimisticEntry ? existingOptimisticEntry[1].payload.queuedForActiveTurn === true : hasUnfinishedConversationTurn(state) || Boolean(selectPendingExecutionMessage(state)));
@@ -1787,12 +1793,17 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
 /** 队列更新已有消息的送达状态；正文、附件和稳定身份仍由时间线持有。 */
 function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
   if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
+  /** 恢复来源由权威队列快照中的独立列表标识。 */
+  const recoveredSubmissions = queue.recoveredSubmissions ?? [];
+  const recoveredIds = new Set(recoveredSubmissions.map((submission) => submission.id));
+  const submissions = [...queue.submissions, ...recoveredSubmissions];
   /** 两种持久身份分别索引，禁止用相同正文合并不同提交。 */
-  const bySubmission = new Map(queue.submissions.map((submission) => [submission.id, submission]));
+  const bySubmission = new Map(submissions.map((submission) => [submission.id, submission]));
   /** 跨过 HTTP 回执丢失的情况，队列仍能凭客户端身份接管原消息。 */
-  const byClientMessage = new Map(queue.submissions.filter((submission) => submission.clientUserMessageId).map((submission) => [submission.clientUserMessageId, submission]));
-  /** 只复制发生接管的消息，不创建或删除时间线条目。 */
+  const byClientMessage = new Map(submissions.filter((submission) => submission.clientUserMessageId).map((submission) => [submission.clientUserMessageId, submission]));
+  /** 持久恢复记录接管之前的乐观副本，其余消息只同步送达状态。 */
   let items = state.items;
+  let removedRecoveredItem = false;
   for (const [key, item] of Object.entries(state.items)) {
     if (!item.optimistic || !isUserMessageItem(item) || item.providerItemId || item.status === 'completed' || item.status === 'resolved') continue;
     /** 提交身份优先；尚未收到回执时才使用原始客户端身份。 */
@@ -1803,11 +1814,17 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
         .find(Boolean);
     if (!submission) continue;
     if (items === state.items) items = { ...state.items };
+    if (recoveredIds.has(submission.id)) {
+      delete items[key];
+      removedRecoveredItem = true;
+      continue;
+    }
     items[key] = { ...item, status: submission.status, payload: mergeSubmissionUserMessagePayload(item.payload, submission) };
   }
   return {
     ...state,
     items,
+    itemOrder: removedRecoveredItem ? state.itemOrder.filter((key) => items[key]) : state.itemOrder,
     transcriptRevision: state.transcriptRevision + (items === state.items ? 0 : 1),
     queue,
     conversationState: conversationStateFromQueue(queue, state),

@@ -1,8 +1,18 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AiRuntimeSessionManager, CodexAppServerManager } from '@zeus/ai-runtime';
 import type { ExecutionHostStopActiveCommandRequest, ExecutionHostStopActiveFailure, ExecutionHostStopActiveResult } from '@zeus/shared';
-import { ConversationGoalRepository, ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, ExecutionHostWorkRepository, type ZeusConversationRecord } from '@zeus/storage';
+import {
+  ConversationGoalRepository,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationSubmissionRepository,
+  ConversationTurnRepository,
+  ExecutionHostWorkRepository,
+  type CommandDeliveryRepository,
+  type ZeusConversationRecord,
+} from '@zeus/storage';
 import type { CommandCenterController } from './commandCenter.js';
+import { interruptedSubmissionDelivery } from './conversationQueueCoreMutationApplication.js';
 import { providerStopPendingError, type CodexProviderStopRequestResult } from './codexProviderStopRecoveryApplication.js';
 import { ExecutionHostStopCommandApplication, executionHostStopCommandHttpError, executionHostStopCommandPolicy, type ParsedExecutionHostStopActiveCommand } from './executionHostStopCommandApplication.js';
 
@@ -53,6 +63,8 @@ interface ExecutionHostControlApiOptions {
   conversations: ConversationRepository;
   turns: ConversationTurnRepository;
   submissions: ConversationSubmissionRepository;
+  /** 关闭执行宿主时保留每条未完成消息的送达证据。 */
+  commandDeliveries: CommandDeliveryRepository;
   requests: ConversationServerRequestRepository;
   commandCenter: Pick<CommandCenterController, 'stopActiveRuns'>;
   runtimeManager: Pick<AiRuntimeSessionManager, 'listSessions' | 'stopSession' | 'killSession'>;
@@ -294,13 +306,18 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
       updatedAt: requestedAt,
     });
   }
-  for (const submission of plan.recoverableSubmissions) {
+  let closedSubmissionCount = 0;
+  for (const planned of plan.recoverableSubmissions) {
+    /** 等待停止回执期间可能已自然完成，退出不能覆盖新的终态。 */
+    const submission = options.submissions.getById(planned.id);
+    if (!submission || !['queued', 'dispatching', 'active', 'paused'].includes(submission.status)) continue;
+    const delivery = interruptedSubmissionDelivery(options.commandDeliveries, submission);
     options.submissions.updateStatus(submission.id, 'cancelled', {
-      providerTurnId: submission.providerTurnId,
-      error: forcedExitError,
+      error: { ...forcedExitError, providerOutcomeUnconfirmed: delivery === 'outcome_unknown' },
       resolvedAt: requestedAt,
       updatedAt: requestedAt,
     });
+    closedSubmissionCount += 1;
     interruptedConversationIds.add(submission.conversationId);
   }
   for (const request of plan.pendingRequests) options.requests.fail(request.id, { error: forcedExitError, resolvedAt: requestedAt });
@@ -317,7 +334,7 @@ async function stopActiveWork(options: ExecutionHostControlApiOptions, plan: Sto
   return {
     requestedTurnCount: plan.providerInterrupts.length,
     providerInterruptFailureCount,
-    closedSubmissionCount: plan.recoverableSubmissions.length,
+    closedSubmissionCount,
     failedRequestCount: plan.pendingRequests.length,
     stoppedRuntimeCount: plan.activeRuntimeSessions.length,
     stoppedCommandRunCount,
