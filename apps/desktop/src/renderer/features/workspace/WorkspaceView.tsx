@@ -737,6 +737,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const sessionCodexParityVisible = upstreamMainLayout
     ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
     : projectSessionSourceListVisible;
+  /** 经典会话页的来源列表、会话和右栏共用顶栏高度。 */
+  const sessionTopbar = upstreamMainLayout && sessionCodexParityVisible;
 
   /** 项目工具与源码工作区共用应用语言。 */
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
@@ -744,7 +746,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const activeSourceTarget = sourceWorkspaceTarget?.ownerProjectId === selectedProject?.id && activeProjectSection === 'code' && (activeNavTarget === 'projects' || activeNavTarget === 'conversations') ? sourceWorkspaceTarget : null;
   /** 工具只绑定当前选中的真实项目，临时会话不提供项目操作。 */
   const projectToolsVisible = Boolean(selectedProject && selectedProject.id !== temporaryWorkspaceId);
-  /** 搜索由右上角和平台快捷键共同控制，项目范围在弹窗内选择。 */
+  /** 搜索入口和平台快捷键共用弹窗状态，项目范围在弹窗内选择。 */
   const [searchOpen, setSearchOpen] = useState(false);
   /** 所有项目源码搜索结果共用文件导航与未保存保护。 */
   function openSourceMatch(project: ProjectRecord, match: ProjectSourceContentMatch): void {
@@ -879,6 +881,26 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openProjectSection(project, 'tasks');
   }
 
+  /** 搜索提示与读屏名称共用平台快捷键。 */
+  const workspaceSearchLabel = platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)');
+  /** 会话顶栏与其他页面的右上角共用同一个搜索入口。 */
+  const workspaceSearchTrigger = (
+    <Button
+      unstyled
+      type="button"
+      className={`project-workspace-search-trigger${searchOpen ? ' is-active' : ''}`}
+      onClick={() => setSearchOpen(true)}
+      aria-label={workspaceSearchLabel}
+      data-icon-tooltip={workspaceSearchLabel}
+      aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
+      data-project-tool="search"
+      aria-haspopup="dialog"
+      aria-expanded={searchOpen}
+    >
+      <MagnifyingGlass aria-hidden="true" />
+    </Button>
+  );
+
   /** 会话与停靠侧栏中的命令详情共用工作台弹窗。 */
   const workspace = (
     <main
@@ -886,6 +908,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-main-layout={appShellSettings.mainLayout}
+      data-session-topbar={sessionTopbar || undefined}
       data-project-tools-visible="true"
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
       style={projectSidebarShellStyle}
@@ -1110,6 +1133,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
           notificationCenter={<NotificationCenter model={notifications} language={appShellSettings.appLanguage} />}
+          headerSearch={sessionTopbar ? workspaceSearchTrigger : undefined}
           mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}
           activeProjectId={activeProjectId}
@@ -2471,22 +2495,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </Suspense>
         </ProjectToolsWorkspace>
       </section>
-      <nav className="project-workspace-tool-rail project-workspace-search-rail" aria-label={codeWorkspaceZh ? '全局搜索' : 'Global search'}>
-        <Button
-          unstyled
-          type="button"
-          className={searchOpen ? 'is-active' : ''}
-          onClick={() => setSearchOpen(true)}
-          aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
-          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
-          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
-          data-project-tool="search"
-          aria-haspopup="dialog"
-          aria-expanded={searchOpen}
-        >
-          <MagnifyingGlass aria-hidden="true" />
-        </Button>
-      </nav>
+      {sessionTopbar ? null : (
+        <nav className="project-workspace-tool-rail project-workspace-search-rail" aria-label={codeWorkspaceZh ? '全局搜索' : 'Global search'}>
+          {workspaceSearchTrigger}
+        </nav>
+      )}
       {projectToolRail}
     </main>
   );

@@ -3338,7 +3338,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
             </div>
           ) : null}
           <div className="session-context-header-tools">
-            <div ref={setContextToolbarHost} className="session-context-toolbar-host" inert={!contextOpen} style={sessionContextToolbarExitStyle(contextExit?.toolbarWidth)} />
             <div className="session-thread-header-actions">
               {props.embeddedInTask ? conversationInformation : null}
               {!legacy && props.conversation && props.state ? (
@@ -3443,6 +3442,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 />
               ) : null}
             </div>
+            <div ref={setContextToolbarHost} className="session-context-toolbar-host" inert={!contextOpen} style={sessionContextToolbarExitStyle(contextExit?.toolbarWidth)} />
           </div>
           {/* 运行详情归左侧正文；旧会话或未就绪会话仅在标题下保留项目名称。 */}
           {(legacy || !props.state) && displayedHeader.contextLabel ? (
@@ -4977,7 +4977,6 @@ export function NewConversationComposer(props: {
           <strong>{props.language === 'zh-CN' ? '新对话' : 'New conversation'}</strong>
         </div>
         <div className="session-context-header-tools">
-          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" inert={!browserVisible} style={sessionContextToolbarExitStyle(browserClosing?.toolbarWidth)} />
           <div className="session-thread-header-actions">
             <Button
               unstyled
@@ -4992,6 +4991,7 @@ export function NewConversationComposer(props: {
               <GlobeSimple aria-hidden="true" weight="regular" />
             </Button>
           </div>
+          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" inert={!browserVisible} style={sessionContextToolbarExitStyle(browserClosing?.toolbarWidth)} />
         </div>
       </header>
       <div ref={browserLayoutRef} className="session-conversation-browser-layout" data-browser-open={browserVisible || undefined} data-browser-expanded={(browserVisible && browserExpanded) || undefined}>

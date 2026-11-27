@@ -3289,7 +3289,7 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > .project-workspace-tool-rail:not(.project-workspace-search-rail) {
   grid-column: -2 / -1;
   grid-row: 1 / -1;
-  padding-block-start: 44px;
+  padding-block-start: var(--zeus-workspace-right-rail-top-padding, 44px);
 }
 
 /* 搜索固定在内容区最右上角；Windows 原生标题栏位于页面之外。 */
@@ -3331,6 +3331,155 @@ body:has(.macos-ai-app.zeus-shell) {
 
   .macos-ai-app.zeus-shell.main-layout-upstream.settings-dedicated-shell[data-project-tools-visible='true'] > .ai-workspace {
     grid-row: 1 / -1;
+  }
+}
+
+/* 经典会话页的品牌、会话工具和右栏标签共用一条顶栏，窗口拖拽止于下沿。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] {
+  --zeus-session-topbar-height: 48px;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] > .window-drag-strip {
+  height: var(--zeus-session-topbar-height);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] > .project-first-sidebar {
+  --zeus-navigation-background: color-mix(in srgb, var(--zeus-page-background) 96%, var(--zeus-product-text));
+  position: relative;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-first-sidebar > .project-sidebar-brand-row {
+  block-size: var(--zeus-session-topbar-height);
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  box-sizing: border-box;
+  gap: 2px;
+  inset: 0 0 auto;
+  margin-block-end: 0;
+  padding-inline: var(--zeus-sidebar-brand-inset) 8px;
+  position: absolute;
+  z-index: 31;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-sidebar-brand-row > .project-sidebar-brand {
+  display: block;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding-inline-start: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-sidebar-brand-row > :is(.project-workspace-search-trigger, .automation-notification-trigger) {
+  block-size: 28px;
+  flex: 0 0 28px;
+  inline-size: 28px;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-sidebar-brand-row > .project-workspace-search-trigger {
+  app-region: no-drag;
+  border-radius: 6px;
+  color: var(--zeus-product-muted);
+  display: grid;
+  padding: 0;
+  place-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-sidebar-brand-row > .project-workspace-search-trigger:is(:hover, [aria-expanded='true']) {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .project-workspace-search-trigger > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+/* 会话面覆盖最右网格列，右侧工具列从标题下方开始。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] > .ai-workspace.classic-project-workspace {
+  --project-frame-gap: 0px;
+  grid-column: -3 / -1;
+}
+
+/* 正文与底部工具避开右侧工具列，顶栏使用同一段空间。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .conversation-detail-pane .session-workspace-root {
+  --session-topbar-extension: var(--zeus-workspace-right-rail-width);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .conversation-detail-pane .session-primary-pane {
+  padding-inline-end: var(--session-topbar-extension);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .conversation-detail-pane .task-digital-team-progress {
+  margin-inline-end: var(--zeus-workspace-right-rail-width);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .conversation-detail-pane .session-terminal-panel:not([data-position='right']) {
+  inline-size: calc(100% - var(--session-topbar-extension, 0px));
+}
+
+/* 团队进展和右停靠终端有独立操作区，会话标题跟随自己的正文列。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .conversation-detail-pane :is(
+    .session-workspace-root:has(> .session-terminal-panel[data-position='right']),
+    .task-conversation-with-team-progress:has(> .task-digital-team-progress) > .session-workspace-root
+  ) {
+  --session-topbar-extension: 0px;
+  padding-inline-end: var(--zeus-workspace-right-rail-width);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] > .ai-workspace > .project-tools-layout > :is(.project-tools-panel, .project-terminal-overlay-host) {
+  inset-inline-end: var(--zeus-workspace-right-rail-width);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .workspace-view-project-sessions .session-thread-header {
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  box-sizing: border-box;
+  margin-inline-end: calc(-1 * var(--session-topbar-extension, 0px));
+  min-block-size: var(--zeus-session-topbar-height);
+}
+
+/* 旧会话的项目名称保留在顶栏内，长名称只压缩本行。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .session-thread-header:has(> .session-thread-subtitle-row) {
+  padding-block: 4px;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .session-thread-subtitle-row {
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .browser-tab-strip .zeus-workspace-tab-shell[data-active] {
+  background: var(--zeus-product-accent-soft);
+  border-color: transparent;
+  color: var(--zeus-brand-text);
+}
+
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .browser-tab-strip .browser-view-actions {
+  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  padding-inline-start: 4px;
+}
+
+/* 快捷操作浮层以会话按钮为右缘，留在项目工具列以内。 */
+.macos-ai-app.zeus-shell[data-session-topbar='true'] .session-quick-actions-surface[data-presentation='popover'] {
+  inset-inline-end: var(--session-topbar-extension, 0px);
+}
+
+/* 项目工具从顶栏分隔线下方起排，右侧只保留一列工具。 */
+.macos-ai-app.zeus-shell.main-layout-upstream[data-session-topbar='true'] > .project-workspace-tool-rail {
+  --zeus-workspace-right-rail-top-padding: 6px;
+  margin-block-start: var(--zeus-session-topbar-height);
+  z-index: 1;
+}
+
+/* 窄窗保留侧栏与会话的同行关系，右栏按会话的实际宽度决定是否覆盖正文。 */
+@media (max-width: 759px) {
+  .macos-ai-app.zeus-shell.ai-native-shell.main-layout-upstream[data-session-topbar='true'] {
+    grid-template-columns: var(--zeus-project-sidebar-width) minmax(0, 1fr) var(--zeus-workspace-right-rail-width);
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 

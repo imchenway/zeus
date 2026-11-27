@@ -629,6 +629,8 @@ const projectConversationHeightMotion = { enterMs: 280, exitMs: 220, easing: 'cu
 export function SidebarNav(props: {
   /** 通知状态驻留工作台，标题行仅承载全局入口。 */
   notificationCenter?: ReactNode;
+  /** 经典会话页把全局搜索放到品牌和通知同行。 */
+  headerSearch?: ReactNode;
   mainLayout?: 'current' | 'upstream';
   activeNavTarget: WorkspaceViewId;
   activeProjectId?: string;
@@ -871,24 +873,33 @@ export function SidebarNav(props: {
     return !(showConversationNavigation && hasConversationFilter && hideEmptyFilteredProjects && conversations.length === 0);
   });
   const enteringProjectIds = useNewItemMotionIds(scopedProjects.map((project) => project.id));
-  // macOS 避让交通灯；Windows 使用系统标题栏，内容区只保留正常内边距。
+  /** macOS 的窗口按钮覆盖应用内容，Windows 的系统标题栏在内容区之外。 */
+  const hasTrafficLights = isMacOSPlatform();
+  /** 会话顶栏用横向安全区安放应用入口，正文从整条顶栏下方开始。 */
   const titlebarProtectedSidebarStyle = {
-    '--zeus-hidden-titlebar-safe-top': isMacOSPlatform() ? (props.mainLayout === 'upstream' ? '44px' : '20px') : '8px',
-    '--zeus-traffic-light-no-content-zone': isMacOSPlatform() ? '44px' : '0px',
+    '--zeus-hidden-titlebar-safe-top': props.headerSearch ? 'calc(var(--zeus-session-topbar-height) + 8px)' : hasTrafficLights ? (props.mainLayout === 'upstream' ? '44px' : '20px') : '8px',
+    '--zeus-traffic-light-no-content-zone': hasTrafficLights ? '44px' : '0px',
+    '--zeus-sidebar-brand-inset': hasTrafficLights ? '76px' : '14px',
     paddingBlockStart: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
     paddingTop: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
   } as CSSProperties;
+  /** 品牌和通知在经典布局各页面共用，只有会话页加入搜索。 */
+  const brandRow = (
+    <div className="project-sidebar-brand-row">
+      <strong className="project-sidebar-brand">Zeus</strong>
+      {props.headerSearch}
+      {props.notificationCenter}
+    </div>
+  );
   const projectMenuPortalHost = typeof document === 'undefined' ? undefined : (document.querySelector<HTMLElement>('.macos-ai-app.zeus-shell') ?? undefined);
 
   return (
     <aside className="zeus-sidebar ai-sidebar project-first-sidebar zeus-titlebar-protected-source-list" aria-label={copy.ariaLabel} style={titlebarProtectedSidebarStyle}>
       <div className="project-window-control-reserved-space" aria-hidden="true" />
+      {props.headerSearch ? brandRow : null}
       {props.mainLayout === 'upstream' ? (
         <nav className="project-quick-actions codex-source-list-quick-actions" aria-label={copy.quickActionsLabel}>
-          <div className="project-sidebar-brand-row">
-            <strong className="project-sidebar-brand">Zeus</strong>
-            {props.notificationCenter}
-          </div>
+          {props.headerSearch ? null : brandRow}
           <Button unstyled type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
             <span className="project-quick-action-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" focusable="false">
