@@ -68,6 +68,11 @@ function createEntry(repository: ProjectGitRepositoryWorkbenchItem, sourceBranch
   return { repositoryId: repository.id, sourceBranch, ...defaultPushTarget(repository, sourceBranch), setUpstream: true, checked };
 }
 
+/** 预览与推送共用请求字段，勾选状态只用于弹窗交互。 */
+function toPushSelection({ repositoryId, sourceBranch, remote, targetBranch, setUpstream, sourceRevision }: PushEntry): PushSelection {
+  return { repositoryId, sourceBranch, remote, targetBranch, setUpstream, sourceRevision };
+}
+
 /** 推送确认以仓库和提交为中心，文件树只负责审阅，不改变推送范围。 */
 export function PushDialog(props: PushDialogProps) {
   /** 默认只勾选入口对应的仓库，避免扩大原有推送范围。 */
@@ -111,9 +116,7 @@ export function PushDialog(props: PushDialogProps) {
   /** 当前仓库不受其他异步状态更新影响。 */
   const active = entries.find((entry) => entryKey(entry) === activeKey) ?? entries[0];
   /** 预览请求只包含展开项和当前查看项。 */
-  const queryEntries = JSON.stringify(
-    entries.filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey)).map(({ checked: _checked, ...entry }) => entry),
-  );
+  const queryEntries = JSON.stringify(entries.filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey)).map(toPushSelection));
   /** 结果页与提交期间都锁定范围。 */
   const locked = submitting || props.busy !== null;
   /** 逐仓执行后的结果不自动清除，也不自动重试。 */
@@ -210,7 +213,7 @@ export function PushDialog(props: PushDialogProps) {
     setOperationError(null);
     try {
       await props.onPush(
-        entries.filter((entry) => entry.checked).map(({ checked: _checked, ...entry }) => ({ ...entry, targetBranch: entry.targetBranch.trim() })),
+        entries.filter((entry) => entry.checked).map((entry) => ({ ...toPushSelection(entry), targetBranch: entry.targetBranch.trim() })),
         forceWithLease,
         pushTags,
       );
