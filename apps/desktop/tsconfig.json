@@ -11,5 +11,5 @@
     "baseUrl": ".",
     "paths": {}
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts", "src/preload/**/*.cts", "src/preload/**/*.cjs"]
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/renderer/**/*.json", "src/preload/**/*.ts", "src/preload/**/*.cts", "src/preload/**/*.cjs"]
 }
