@@ -98,14 +98,25 @@ const DEFAULT_VISIBLE_SOURCE_COUNT = 3;
 const environmentStatusCache = new WeakMap<DashboardClient, Map<string, GitEnvironmentStatus>>();
 
 /** 分支引用一致时提供单键复制，存在差异时按仓库展示。 */
-function SessionBranchCard(props: { kind: 'source' | 'target'; zh: boolean; branches?: GitEnvironmentStatus['sourceBranches']; branch: string | null; emptyLabel: string }) {
+function SessionBranchCard(props: {
+  kind: 'source' | 'target';
+  zh: boolean;
+  branches?: GitEnvironmentStatus['sourceBranches'];
+  branch: string | null;
+  emptyLabel: string;
+}) {
   /** 会话环境以创建工作树时的分支为来源，以工作分支为目标。 */
-  const label = props.kind === 'source' ? (props.zh ? '来源分支' : 'Source branch') : props.zh ? '目标分支' : 'Target branch';
-  /** 多仓只有全部分支已知且一致时才有一个可复制值。 */
+  const label = props.kind === 'source' ? (props.zh ? '来源分支' : 'Source branch') : (props.zh ? '目标分支' : 'Target branch');
+  /** 同名判断以首仓真实分支为起点。 */
   const firstBranch = props.branches?.[0]?.branch;
+  /** 多仓只有分支全部已知且一致时才复制单个名称。 */
   const copyableBranch = props.branches?.length ? (firstBranch && props.branches.every((entry) => entry.branch === firstBranch) ? firstBranch : null) : props.branch;
-  /** 多仓异名保留各仓映射，完整文本可在截断处查看。 */
-  const value = copyableBranch ?? (props.branches?.some((entry) => entry.branch) ? props.branches.map((entry) => `${entry.repositoryRelativePath}: ${entry.branch ?? (props.zh ? '未记录' : 'Not recorded')}`).join(' · ') : props.emptyLabel);
+  /** 多仓异名时优先显示分支名，完整的仓库映射可悬停查看。 */
+  const value =
+    copyableBranch ??
+    (props.branches?.some((entry) => entry.branch)
+      ? props.branches.map((entry) => `${entry.branch ?? (props.zh ? '未记录' : 'Not recorded')} (${entry.repositoryRelativePath})`).join(' · ')
+      : props.emptyLabel);
   return (
     <div className="session-quick-actions-row is-static session-quick-actions-branch">
       <GitBranch aria-hidden="true" weight="regular" />
@@ -113,7 +124,9 @@ function SessionBranchCard(props: { kind: 'source' | 'target'; zh: boolean; bran
         <small>{label}</small>
         <strong title={value}>{value}</strong>
       </span>
-      {copyableBranch ? <RuntimeCopyButton text={copyableBranch} label={props.zh ? `复制${label}` : `Copy ${label.toLowerCase()}`} copiedLabel={props.zh ? `${label}已复制` : `${label} copied`} /> : null}
+      {copyableBranch ? (
+        <RuntimeCopyButton text={copyableBranch} label={props.zh ? `复制${label}` : `Copy ${label.toLowerCase()}`} copiedLabel={props.zh ? `${label}已复制` : `${label} copied`} />
+      ) : null}
     </div>
   );
 }
@@ -171,29 +184,20 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       : zh
         ? '工作目录不可用'
         : 'Working directory unavailable';
-  /** 首屏和旧状态接口可使用单仓分支，多仓依赖按仓库返回的工作分支。 */
-  const workingBranch = (summary?.repositoryCount ?? 1) === 1 ? (summary?.branch ?? executionContext?.branch ?? props.conversation.workspace?.branchName ?? null) : null;
+  /** 有摘要入口时，确定仓库范围后再使用单仓分支。 */
+  const workingBranch = summary?.repositoryCount === 1 ? summary.branch : !gitClient ? (executionContext?.branch ?? props.conversation.workspace?.branchName ?? null) : null;
   /** 独立工作树提前预留来源卡，直接使用目录时只有已记录的来源才显示。 */
   const showSourceBranch = useTaskWorkspaces || props.conversation.workspaceMode === 'worktree' || Boolean(summary?.sourceBranch || summary?.sourceBranches?.length);
   /** 分支读取和补齐期间保留卡片位置。 */
-  const branchLoading = workspaceState === 'idle' || workspaceState === 'loading';
+  const branchLoading = Boolean(gitClient && (workspaceState === 'idle' || workspaceState === 'loading'));
   /** 没有工作分支时显示实际的 Git 状态。 */
-  const missingWorkingBranch =
-    workspaceState === 'error'
-      ? zh
-        ? 'Git 状态读取失败'
-        : 'Failed to read Git status'
-      : branchLoading
-        ? zh
-          ? '正在读取分支…'
-          : 'Loading branch…'
-        : summary?.repositoryCount === 0
-          ? zh
-            ? '非 Git 目录'
-            : 'Not a Git repository'
-          : zh
-            ? '分支不可用'
-            : 'Branch unavailable';
+  const missingWorkingBranch = workspaceState === 'error'
+    ? (zh ? 'Git 状态读取失败' : 'Failed to read Git status')
+    : branchLoading
+      ? (zh ? '正在读取分支…' : 'Loading branch…')
+      : summary?.repositoryCount === 0
+        ? (zh ? '非 Git 目录' : 'Not a Git repository')
+        : (zh ? '分支不可用' : 'Branch unavailable');
   const conversationReady = !useTaskWorkspaces && (Boolean(summary?.repositoryCount) || executionContext?.isGitRepository === true);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
@@ -536,7 +540,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       zh={zh}
                       branches={summary?.sourceBranches}
                       branch={summary?.sourceBranch ?? null}
-                      emptyLabel={branchLoading ? (zh ? '正在读取分支…' : 'Loading branch…') : zh ? '未记录' : 'Not recorded'}
+                      emptyLabel={branchLoading ? (zh ? '正在读取分支…' : 'Loading branch…') : (zh ? '未记录' : 'Not recorded')}
                     />
                   ) : null}
                   <SessionBranchCard kind="target" zh={zh} branches={summary?.workingBranches} branch={workingBranch} emptyLabel={missingWorkingBranch} />

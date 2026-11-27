@@ -3051,6 +3051,15 @@ a {
   min-width: 126px;
   padding: 4px 9px;
 }
+/* 表单与工具栏共用触发器，字段宽度跟随当前布局。 */
+.project-git-branch-trigger.is-field {
+  box-sizing: border-box;
+  flex: 1 1 0;
+  inline-size: 100%;
+  margin-inline: 0;
+  min-inline-size: 0;
+  min-block-size: 32px;
+}
 .project-git-branch-trigger:hover:not(:disabled):not([aria-disabled='true']),
 .project-git-branch-trigger.is-open {
   background: var(--zeus-source-list-hover);
@@ -15136,10 +15145,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   color: var(--zeus-product-muted);
 }
 
-.macos-ai-app .task-model-push-batch-source .zeus-select {
-  inline-size: 100%;
-}
-
 .macos-ai-app .task-model-push-batch-source-empty {
   margin: 0;
   color: var(--zeus-product-muted);
@@ -16808,11 +16813,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   align-items: center;
   gap: 6px;
 }
-.macos-ai-app .task-git-delivery-source-branch > .zeus-select {
-  flex: 1;
-  min-inline-size: 0;
-}
-.macos-ai-app .task-git-delivery-source-branch > button {
+.macos-ai-app .task-git-delivery-source-branch > button:not(.project-git-branch-trigger) {
   flex: none;
 }
 

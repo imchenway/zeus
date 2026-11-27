@@ -1,5 +1,6 @@
 import { contextCapacitySelectionAllowed, contextCapacitySelectionOptions, contextCapacitySelectionFromValue, contextCapacitySelectionValue } from '../session/contextCapacitySelection.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
+import { BranchPicker } from '../git/GitRepositoryControls.js';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatZeusDateTime,
@@ -91,7 +92,8 @@ type TaskPushContextCapability = CodexTaskPushCapabilities['parentContextOptions
 type TaskPushEnvironmentCapability = NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number];
 
 interface TaskPushCommonSource {
-  key: string;
+  /** 分支树展示去掉完整引用命名空间后的名称。 */
+  ref: string;
   label: string;
   kind: TaskPushSourceRef['kind'];
   group: string;
@@ -117,6 +119,11 @@ export function normalizeTaskModelPushCapabilities(capabilities: CodexTaskPushCa
 
 function taskPushSourceIdentity(source: TaskPushSourceRef): string {
   return JSON.stringify([source.kind, source.kind === 'remote' ? source.group : '', source.label]);
+}
+
+/** 分支树使用短引用，表单通过原候选恢复完整引用。 */
+function taskPushBranchRef(source: TaskPushSourceRef): string {
+  return source.ref.replace(/^refs\/(?:heads|remotes)\//u, '');
 }
 
 /** 只聚合每个仓库都唯一存在的同来源分支，避免批量选择时猜测真实 Git 引用。 */
@@ -148,21 +155,12 @@ function resolveTaskPushCommonSources(repositories: TaskPushRepositoryCapability
     }
     if (!complete) continue;
     const source = firstMatches[0]!;
-    commonSources.push({ key, label: source.label, kind: source.kind, group: source.kind === 'remote' ? source.group : '', refsByRepository });
+    commonSources.push({ ref: taskPushBranchRef(source), label: source.label, kind: source.kind, group: source.kind === 'remote' ? source.group : '', refsByRepository });
   }
   return commonSources.sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === 'local' ? -1 : 1;
     return left.group.localeCompare(right.group) || left.label.localeCompare(right.label);
   });
-}
-
-function resolveSelectedTaskPushCommonSourceKey(repositories: TaskPushRepositoryCapability[], selections: TaskModelPushForm['repositorySelections'], commonSources: TaskPushCommonSource[]): string {
-  return commonSources.find((source) => repositories.every((repository) => selections[repository.id]?.sourceRef === source.refsByRepository[repository.id]))?.key ?? '';
-}
-
-function taskPushCommonSourceLabel(source: TaskPushCommonSource, repositoryCount: number, zh: boolean): string {
-  if (zh) return `${source.label} · ${source.kind === 'local' ? '本地' : `${source.group} 远端`} · ${repositoryCount} 个仓库`;
-  return `${source.label} · ${source.kind === 'local' ? 'local' : `${source.group} remote`} · ${repositoryCount} repositories`;
 }
 
 export function taskPushEnvironmentLabel(environment: TaskPushEnvironmentCapability, zh: boolean, availableAfterStop = false): string {
@@ -811,8 +809,8 @@ export function TaskModelPushModal(props: {
       setAttachingRepositoryId(null);
     }
   }
-  const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
-  const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);
+  /** 批量选择只在各仓选中的完整引用都匹配时显示选中。 */
+  const selectedCommonSource = commonSources.find((source) => repositories.every((repository) => props.form.repositorySelections[repository.id]?.sourceRef === source.refsByRepository[repository.id]));
   const hasRepositorySourceSelection = repositories.some((repository) => Boolean(props.form.repositorySelections[repository.id]?.sourceRef));
   const directWorkspaceBusy = (props.capabilities?.directWorkspace.activeWritableConversationCount ?? 0) > 0;
   const directWorkspaceNeedsConfirmation = directWorkspaceBusy && props.form.permissionMode !== 'read-only';
@@ -843,8 +841,8 @@ export function TaskModelPushModal(props: {
     props.onChange({ ...props.form, [field]: { ...props.form[field], [taskId]: next } });
   }
 
-  function applyCommonSource(sourceKey: string): void {
-    const commonSource = commonSources.find((source) => source.key === sourceKey);
+  function applyCommonSource(ref: string, kind: TaskPushSourceRef['kind']): void {
+    const commonSource = commonSources.find((source) => source.ref === ref && source.kind === kind);
     if (!commonSource) return;
     const repositorySelections = { ...props.form.repositorySelections };
     for (const repository of repositories) {
@@ -1311,14 +1309,14 @@ export function TaskModelPushModal(props: {
                       <small>{zh ? `${repositories.length} 个仓库` : `${repositories.length} repositories`}</small>
                     </span>
                     {commonSources.length > 0 ? (
-                      <ZeusSelect
-                        size="regular"
+                      <BranchPicker
+                        zh={zh}
                         ariaLabel={zh ? '批量选择来源分支' : 'Select source branch for all repositories'}
                         ariaDescribedBy="task-model-push-batch-source-description"
-                        value={selectedCommonSourceKey}
+                        value={selectedCommonSource}
                         triggerLabel={
                           selectedCommonSource
-                            ? taskPushCommonSourceLabel(selectedCommonSource, repositories.length, zh)
+                            ? selectedCommonSource.ref
                             : hasRepositorySourceSelection
                               ? zh
                                 ? '逐仓选择不一致'
@@ -1327,16 +1325,10 @@ export function TaskModelPushModal(props: {
                                 ? '批量选择来源分支'
                                 : 'Select a source branch for all repositories'
                         }
-                        options={commonSources.map((source) => ({
-                          value: source.key,
-                          label: taskPushCommonSourceLabel(source, repositories.length, zh),
-                          group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? `${source.group} 远端分支` : `${source.group} remote branches`,
-                        }))}
+                        localBranches={commonSources.filter((source) => source.kind === 'local').map((source) => source.ref)}
+                        remoteBranches={commonSources.filter((source) => source.kind === 'remote').map((source) => source.ref)}
                         onChange={applyCommonSource}
                         disabled={busy || props.refreshingRepositoryId !== null}
-                        searchable
-                        searchPlaceholder={zh ? '搜索全部仓库共有的分支' : 'Search branches shared by all repositories'}
-                        emptyLabel={zh ? '没有匹配的共同来源分支' : 'No matching common source branch'}
                       />
                     ) : (
                       <p className="task-model-push-batch-source-empty" role="status">
@@ -1365,6 +1357,8 @@ export function TaskModelPushModal(props: {
                     includeLocalChanges: false,
                   };
                   const selectedSource = repository.sourceRefs.find((source) => source.ref === selection.sourceRef);
+                  /** 选中态使用原引用对应的短名称和分支类型。 */
+                  const selectedBranch = selectedSource ? { ref: taskPushBranchRef(selectedSource), kind: selectedSource.kind } : undefined;
                   /** unborn 来源的项目文件就是初始代码，不作为可选的“未提交修改”。 */
                   const selectedSourceUnborn = !repository.headSha && selectedSource?.kind === 'local' && selectedSource.current;
                   const refreshing = props.refreshingRepositoryId === repository.id;
@@ -1387,26 +1381,23 @@ export function TaskModelPushModal(props: {
                       <div className="task-model-push-workspace-grid">
                         <label>
                           <span>{zh ? '来源分支（必选）' : 'Source branch (required)'}</span>
-                          <ZeusSelect
-                            size="regular"
+                          <BranchPicker
+                            zh={zh}
                             ariaLabel={`${repository.name} ${zh ? '来源分支' : 'source branch'}`}
-                            value={selection.sourceRef}
-                            options={[
-                              { value: '', label: zh ? '请选择来源分支' : 'Select source branch', disabled: true },
-                              ...repository.sourceRefs.map((source) => ({
-                                value: source.ref,
-                                label: `${source.label}${source.current ? (zh ? ' · 当前分支' : ' · current branch') : ''}`,
-                                group: source.kind === 'local' ? (zh ? '本地分支' : 'Local branches') : zh ? `${source.group} 远端分支` : `${source.group} remote branches`,
-                              })),
-                            ]}
-                            onChange={(sourceRef) =>
+                            triggerLabel={selectedBranch?.ref ?? (zh ? '选择来源分支' : 'Select source branch')}
+                            value={selectedBranch}
+                            localBranches={repository.sourceRefs.filter((source) => source.kind === 'local').map(taskPushBranchRef)}
+                            remoteBranches={repository.sourceRefs.filter((source) => source.kind === 'remote').map(taskPushBranchRef)}
+                            onChange={(ref, kind) => {
+                              /** 返回给推送表单的值必须是既有候选的完整引用。 */
+                              const sourceRef = repository.sourceRefs.find((source) => source.kind === kind && taskPushBranchRef(source) === ref)?.ref;
+                              if (!sourceRef) return;
                               props.onChange({
                                 ...props.form,
                                 repositorySelections: { ...props.form.repositorySelections, [repository.id]: { ...selection, sourceRef } },
-                              })
-                            }
+                              });
+                            }}
                             disabled={!props.capabilities || busy || refreshing}
-                            searchPlaceholder={zh ? '搜索分支' : 'Search branches'}
                           />
                         </label>
                         <label>

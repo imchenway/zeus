@@ -9,7 +9,6 @@ import { MenuSurface, type MenuSubmenuAnchor } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { Button } from '../ui/Button.js';
-import { ZeusSelect } from '../ZeusSelect.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import type { ProjectGitAction, ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
 import type { ProjectGitBranchRepository } from '@zeus/git-core';
@@ -29,11 +28,14 @@ interface BranchTreeNode {
   children: Map<string, BranchTreeNode>;
 }
 
-/** 草稿来源使用类型与名称共同确定选择。 */
+/** 直接选择的分支由类型与短引用共同确定。 */
 interface SelectedBranchSource {
   sourceKind: BranchKind;
   sourceRef: string;
 }
+
+/** 表单与来源模式直接选择引用，检出模式打开分支操作。 */
+type BranchSelectionMode = 'checkout' | 'source' | 'pick';
 
 /** 分支树的叶节点保留完整 Git 引用和引用类型。 */
 interface BranchReference {
@@ -57,7 +59,7 @@ export function BranchSwitcher(props: {
   cascadeRepositories?: boolean;
   /** 会话只提供签出或来源选择，不显示工作区的提交、合并等动作。 */
   referenceSelection?: {
-    mode: 'checkout' | 'source';
+    mode: BranchSelectionMode;
     selectedSource?: (repository: ProjectGitBranchRepository) => SelectedBranchSource | undefined;
     onSelect: (repositories: ProjectGitBranchRepository[], ref: string, kind: BranchKind) => Promise<boolean>;
   };
@@ -71,6 +73,14 @@ export function BranchSwitcher(props: {
   footer?: ReactNode;
   /** 会话加载、发送或 Git 操作期间禁用入口及选择。 */
   disabled?: boolean;
+  /** 表单中的选择器占满字段宽度。 */
+  field?: boolean;
+  /** 字段名称用于区分不同仓库和分支用途。 */
+  ariaLabel?: string;
+  /** 关联表单已展示的选择说明。 */
+  ariaDescribedBy?: string;
+  /** 替换表单原控件时保留初始焦点。 */
+  autoFocus?: boolean;
   /** 会话可显示多仓状态或尚未创建的工作树来源。 */
   triggerLabel?: string;
   /** 混合分支逐项收缩，使长分支名不会盖住其他来源。 */
@@ -230,7 +240,7 @@ export function BranchSwitcher(props: {
   };
   /** 单仓来源选择只编辑草稿，点击后直接返回输入框。 */
   const openReferenceMenu = (event: ReactMouseEvent<HTMLButtonElement>, repository: ProjectGitBranchRepository, ref: string, kind: BranchKind | 'tag' | 'revision') => {
-    if (props.referenceSelection?.mode === 'source' && (kind === 'local' || kind === 'remote')) {
+    if (props.referenceSelection && props.referenceSelection.mode !== 'checkout' && (kind === 'local' || kind === 'remote')) {
       if (props.disabled || props.busy) return;
       return props.referenceSelection.onSelect([repository], ref, kind).then((selected) => {
         if (selected) {
@@ -661,12 +671,14 @@ export function BranchSwitcher(props: {
         unstyled
         ref={triggerRef}
         type="button"
-        className={`project-git-branch-trigger${open ? ' is-open' : ''}`}
+        className={`project-git-branch-trigger${props.field ? ' is-field' : ''}${open ? ' is-open' : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={triggerKindLabel ? `${triggerLabel} · ${triggerKindLabel}` : triggerLabel}
+        aria-label={props.ariaLabel ?? (triggerKindLabel ? `${triggerLabel} · ${triggerKindLabel}` : triggerLabel)}
+        aria-describedby={props.ariaDescribedBy}
         data-icon-tooltip={!props.triggerLabel && props.selectedRepository ? `${props.selectedRepository.name} · ${triggerLabel}` : triggerLabel}
         disabled={props.disabled || (!props.repositories.length && !props.onOpen)}
+        autoFocus={props.autoFocus}
         onClick={() => {
           setQuery('');
           setExpandedGroups(new Map());
@@ -701,6 +713,55 @@ export function BranchSwitcher(props: {
       </Button>
       {typeof document !== 'undefined' && document.body && popover ? createPortal(popover, triggerRef.current?.closest('.macos-ai-app') ?? document.body) : popover}
     </>
+  );
+}
+
+/** 表单把现有候选交给会话共用的分支树，选中后只更新字段。 */
+export function BranchPicker(props: {
+  zh: boolean;
+  ariaLabel?: string;
+  ariaDescribedBy?: string;
+  triggerLabel: string;
+  value?: { ref: string; kind: BranchKind };
+  localBranches?: string[];
+  remoteBranches?: string[];
+  disabled?: boolean;
+  autoFocus?: boolean;
+  menuStatus?: ReactNode;
+  onChange: (ref: string, kind: BranchKind) => void;
+}) {
+  /** 多个字段各自拥有分支树的焦点和展开标识。 */
+  const repositoryId = useId();
+  /** 将字段候选投影为分支树读取的单仓范围。 */
+  const repository: ProjectGitBranchRepository = {
+    id: repositoryId,
+    name: props.ariaLabel ?? props.triggerLabel,
+    relativePath: '.',
+    snapshot: { branch: '', detached: false, headSha: '', submodules: [], localBranches: props.localBranches, remoteBranches: props.remoteBranches },
+  };
+  return (
+    <BranchSwitcher
+      zh={props.zh}
+      field
+      ariaLabel={props.ariaLabel && props.value ? `${props.ariaLabel} · ${props.value.ref}` : props.ariaLabel}
+      ariaDescribedBy={props.ariaDescribedBy}
+      triggerLabel={props.triggerLabel}
+      repositories={[repository]}
+      selectedRepository={repository}
+      busy={null}
+      disabled={props.disabled}
+      autoFocus={props.autoFocus}
+      menuStatus={props.menuStatus}
+      onSelectRepository={() => undefined}
+      referenceSelection={{
+        mode: 'pick',
+        selectedSource: () => props.value ? { sourceRef: props.value.ref, sourceKind: props.value.kind } : undefined,
+        onSelect: async (_repositories, ref, kind) => {
+          props.onChange(ref, kind);
+          return true;
+        },
+      }}
+    />
   );
 }
 
@@ -739,7 +800,7 @@ export function RepositoryBranchGroups(props: {
   submodule?: boolean;
   scope: string;
   disclosure: BranchDisclosureState;
-  selectionMode?: 'checkout' | 'source';
+  selectionMode?: BranchSelectionMode;
   repository: ProjectGitBranchRepository;
   selectedSource?: SelectedBranchSource;
   query: string;
@@ -757,24 +818,25 @@ export function RepositoryBranchGroups(props: {
   for (const group of groups) {
     group.values = group.values.filter(
       (item) =>
-        (!props.query || item.ref.toLocaleLowerCase().includes(props.query)) && (!selectionMode || item.kind === 'local' || (selectionMode === 'source' && item.kind === 'remote' && item.ref.includes('/') && !item.ref.endsWith('/HEAD'))),
+        (!props.query || item.ref.toLocaleLowerCase().includes(props.query)) &&
+        (!selectionMode || item.kind === 'local' || (item.kind === 'remote' && (selectionMode === 'pick' || (selectionMode === 'source' && item.ref.includes('/') && !item.ref.endsWith('/HEAD'))))),
     );
   }
   if (!groups.some((group) => group.values.length)) return null;
 
-  /** 来源模式标记草稿选择，签出模式标记当前引用。 */
-  const sourceMode = selectionMode === 'source';
+  /** 来源和表单选择直接选中引用，检出入口保留操作菜单。 */
+  const directSelection = selectionMode === 'source' || selectionMode === 'pick';
   /** 来源模式把实际 HEAD 放在详情，完整路径随仓库名称提供。 */
-  const currentRef = currentRepositoryRefLabel(repository, props.zh, sourceMode);
+  const currentRef = currentRepositoryRefLabel(repository, props.zh, directSelection);
   const isSelected = (item: BranchReference) =>
-    sourceMode ? props.selectedSource?.sourceKind === item.kind && props.selectedSource.sourceRef === item.ref : item.kind === 'local' && item.ref === repository.snapshot.branch && !repository.snapshot.detached;
+    directSelection ? props.selectedSource?.sourceKind === item.kind && props.selectedSource.sourceRef === item.ref : item.kind === 'local' && item.ref === repository.snapshot.branch && !repository.snapshot.detached;
 
   return (
     <section className="project-git-branch-repository">
-      {!sourceMode || props.showRepository ? (
-        <header className={sourceMode ? 'project-git-source-repository-head' : undefined}>
-          <strong data-icon-tooltip={sourceMode ? repository.relativePath : undefined}>{repository.name}</strong>
-          <small>{sourceMode ? `${props.submodule ? (props.zh ? '子模块 · ' : 'Submodule · ') : ''}${currentRef}` : repository.relativePath === '.' ? currentRef : `${repository.relativePath} · ${currentRef}`}</small>
+      {!directSelection || props.showRepository ? (
+        <header className={directSelection ? 'project-git-source-repository-head' : undefined}>
+          <strong data-icon-tooltip={directSelection ? repository.relativePath : undefined}>{repository.name}</strong>
+          <small>{directSelection ? `${props.submodule ? (props.zh ? '子模块 · ' : 'Submodule · ') : ''}${currentRef}` : repository.relativePath === '.' ? currentRef : `${repository.relativePath} · ${currentRef}`}</small>
         </header>
       ) : null}
       <ReferenceGroups
@@ -795,11 +857,11 @@ export function RepositoryBranchGroups(props: {
               data-icon-tooltip={item.ref}
               aria-label={item.ref}
               aria-current={selected ? 'true' : undefined}
-              aria-haspopup={sourceMode ? undefined : 'menu'}
-              aria-expanded={sourceMode ? undefined : active}
+              aria-haspopup={directSelection ? undefined : 'menu'}
+              aria-expanded={directSelection ? undefined : active}
               aria-controls={active ? props.submenuId : undefined}
               onKeyDown={(event) => {
-                if (sourceMode || event.key !== 'ArrowRight') return;
+                if (directSelection || event.key !== 'ArrowRight') return;
                 event.preventDefault();
                 event.currentTarget.click();
               }}
@@ -807,7 +869,7 @@ export function RepositoryBranchGroups(props: {
             >
               <GitBranch aria-hidden="true" />
               <span>{label}</span>
-              {sourceMode ? (
+              {directSelection ? (
                 selected ? (
                   <Check aria-hidden="true" />
                 ) : null
@@ -1143,24 +1205,29 @@ export function RemoteBranchCheckoutDialog(props: {
         <main>
           <label>
             <span>{props.zh ? '检出远程分支' : 'Remote branch'}</span>
-            <select value={remoteRef} onChange={(event) => selectRemote(event.currentTarget.value)} disabled={props.busy !== null}>
-              {props.repository.snapshot.remoteBranches.map((branch) => (
-                <option key={branch} value={branch}>
-                  {branch}
-                </option>
-              ))}
-            </select>
+            <BranchPicker
+              zh={props.zh}
+              ariaLabel={props.zh ? '检出远程分支' : 'Remote branch'}
+              triggerLabel={remoteRef}
+              value={{ ref: remoteRef, kind: 'remote' }}
+              remoteBranches={props.repository.snapshot.remoteBranches}
+              onChange={selectRemote}
+              disabled={props.busy !== null}
+            />
           </label>
           {mode === 'existing' ? (
             <label>
               <span>{props.zh ? '现有本地分支' : 'Existing local branch'}</span>
-              <select value={existingBranch} onChange={(event) => setExistingBranch(event.currentTarget.value)} autoFocus disabled={props.busy !== null}>
-                {existingCandidates.map((branch) => (
-                  <option key={branch} value={branch}>
-                    {branch}
-                  </option>
-                ))}
-              </select>
+              <BranchPicker
+                zh={props.zh}
+                ariaLabel={props.zh ? '现有本地分支' : 'Existing local branch'}
+                triggerLabel={existingBranch}
+                value={{ ref: existingBranch, kind: 'local' }}
+                localBranches={existingCandidates}
+                onChange={setExistingBranch}
+                autoFocus
+                disabled={props.busy !== null}
+              />
             </label>
           ) : (
             <>
@@ -1734,18 +1801,16 @@ export function PullDialog(props: {
             <label>
               <span>{props.zh ? '要拉取的远程分支' : 'Remote branch'}</span>
               <span className="project-git-sync-branch-input">
-                <ZeusSelect
+                <BranchPicker
                   key={remote}
+                  zh={props.zh}
                   ariaLabel={props.zh ? '要拉取的远程分支' : 'Remote branch to pull'}
-                  value={selectedBranch}
-                  onChange={setBranch}
-                  options={branches.map((name) => ({ value: name, label: name }))}
+                  value={selectedBranch ? { ref: `${remote}/${selectedBranch}`, kind: 'remote' } : undefined}
+                  remoteBranches={branches.map((name) => `${remote}/${name}`)}
+                  onChange={(ref) => setBranch(ref.slice(remote.length + 1))}
                   triggerLabel={selectedBranch || (props.zh ? '选择远程分支' : 'Select a remote branch')}
                   disabled={locked || !remote}
-                  size="regular"
-                  searchable
-                  searchPlaceholder={props.zh ? '搜索远程分支' : 'Search remote branches'}
-                  emptyLabel={branches.length ? (props.zh ? '没有匹配的远程分支' : 'No matching remote branches') : props.zh ? '暂无远程分支，请点击刷新' : 'No remote branches. Refresh to fetch them.'}
+                  menuStatus={branches.length ? undefined : (props.zh ? '暂无远程分支，请点击刷新' : 'No remote branches. Refresh to fetch them.')}
                 />
                 <Button
                   variant="secondary"
@@ -1834,8 +1899,13 @@ export function MergeBranchDialog(props: {
   onClose(): void;
   onExecute(repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string): Promise<ExecutionOutcome>;
 }) {
-  const branches = [...props.repository.snapshot.localBranches, ...props.repository.snapshot.remoteBranches].filter((branch) => branch !== props.repository.snapshot.branch);
-  const [branch, setBranch] = useState(branches[0] ?? '');
+  /** 候选维持本地优先，排除当前合入目标。 */
+  const localBranches = props.repository.snapshot.localBranches.filter((branch) => branch !== props.repository.snapshot.branch);
+  const remoteBranches = props.repository.snapshot.remoteBranches.filter((branch) => branch !== props.repository.snapshot.branch);
+  /** 分支类型和名称共同确定选中引用。 */
+  const [selection, setSelection] = useState<{ ref: string; kind: BranchKind } | undefined>(() =>
+    localBranches[0] ? { ref: localBranches[0], kind: 'local' } : remoteBranches[0] ? { ref: remoteBranches[0], kind: 'remote' } : undefined,
+  );
   return (
     <ModalPortal rootClassName="project-git-modal-root" backdropClassName="project-git-modal-backdrop" role="dialog" aria-label={props.zh ? '合并分支' : 'Merge branch'} onDismiss={props.onClose} dismissDisabled={props.busy !== null}>
       <section className="project-git-reference-dialog">
@@ -1848,19 +1918,18 @@ export function MergeBranchDialog(props: {
         <main>
           <label>
             <span>{props.zh ? '来源分支' : 'Source branch'}</span>
-            <ZeusSelect
+            <BranchPicker
+              zh={props.zh}
               ariaLabel={props.zh ? '来源分支' : 'Source branch'}
-              value={branch}
-              onChange={setBranch}
-              options={branches.map((ref) => ({ value: ref, label: ref }))}
-              disabled={props.busy !== null}
-              size="regular"
-              searchable
-              searchPlaceholder={props.zh ? '搜索分支' : 'Search branches'}
-              emptyLabel={props.zh ? '没有匹配的分支' : 'No matching branches'}
+              triggerLabel={selection?.ref ?? (props.zh ? '选择来源分支' : 'Select source branch')}
+              value={selection}
+              onChange={(ref, kind) => setSelection({ ref, kind })}
+              localBranches={localBranches}
+              remoteBranches={remoteBranches}
+              disabled={props.busy !== null || (!localBranches.length && !remoteBranches.length)}
             />
           </label>
-          {!branches.length ? <p>{props.zh ? '没有其他可合并的分支。' : 'No other branches to merge.'}</p> : null}
+          {!localBranches.length && !remoteBranches.length ? <p>{props.zh ? '没有其他可合并的分支。' : 'No other branches to merge.'}</p> : null}
         </main>
         <footer>
           <Button variant="secondary" onClick={props.onClose} disabled={props.busy !== null}>
@@ -1868,9 +1937,12 @@ export function MergeBranchDialog(props: {
           </Button>
           <Button
             variant="primary"
-            disabled={!branch || props.busy !== null}
+            disabled={!selection || props.busy !== null}
             busy={props.busy?.action === 'merge'}
             onClick={async () => {
+              if (!selection) return;
+              /** 完整引用使同名的本地和远程分支仍指向各自提交。 */
+              const branch = `refs/${selection.kind === 'local' ? 'heads' : 'remotes'}/${selection.ref}`;
               /** 目标身份取自当前弹窗展示的仓库快照，后台不替换为更新后的分支。 */
               const result = await props.onExecute(props.repository, createProjectGitMergeAction(props.repository, branch), props.zh ? '合并分支' : 'Merge branch');
               if (result) return props.onClose();

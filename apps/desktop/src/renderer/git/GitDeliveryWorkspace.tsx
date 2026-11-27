@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import type { TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ZeusSelect } from '../ZeusSelect.js';
+import { BranchPicker } from './GitRepositoryControls.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { beginGitDiffSelection, useGitDeliveryWindowFrame } from './gitDeliveryPerformance.js';
@@ -950,7 +950,7 @@ export function GitDeliveryActions(props: {
           </section>
           <section className="task-git-delivery-action-step" aria-label={mergeLabel}>
             <div className="task-git-delivery-step-heading">
-              <strong>{props.zh ? '目标分支' : 'Target branches'}</strong>
+              <strong>{props.zh ? '合入目标分支' : 'Merge target branches'}</strong>
               <div
                 className="git-delivery-merge-actions"
                 onKeyDown={(event) => {
@@ -967,7 +967,7 @@ export function GitDeliveryActions(props: {
                 <Button
                   variant="secondary"
                   size="compact"
-                  aria-label={`${mergeButtonLabel} (${props.mergeCount}) · ${props.zh ? '所选目标分支' : 'Selected target branches'}`}
+                  aria-label={`${mergeButtonLabel} (${props.mergeCount}) · ${props.zh ? '所选合入目标分支' : 'Selected merge target branches'}`}
                   busy={props.busyAction === 'merge'}
                   onClick={() => props.onMerge?.(executionSettings)}
                   disabled={busy || !canMerge || props.mergeCount === 0}
@@ -1027,14 +1027,12 @@ export function GitDeliveryActions(props: {
             <div className="task-git-delivery-targets">
               {props.mergeTargets.map((target) => (
                 <div className="task-git-delivery-source-branch" key={target.repositoryId}>
-                  <ZeusSelect
-                    size="compact"
+                  <BranchPicker
+                    zh={props.zh}
                     ariaLabel={`${target.label} · ${props.zh ? '合入目标分支' : 'Merge target branch'}`}
-                    value={target.value}
-                    options={[
-                      ...(!target.value || !target.branches.includes(target.value) ? [{ value: target.value, label: target.value || (props.zh ? '选择目标分支' : 'Choose target branch'), disabled: true }] : []),
-                      ...target.branches.map((branch) => ({ value: branch, label: props.mergeTargets.length > 1 ? `${target.label}: ${branch}` : branch })),
-                    ]}
+                    triggerLabel={`${props.mergeTargets.length > 1 ? `${target.label} · ` : ''}${target.value || (props.zh ? '选择合入目标分支' : 'Choose merge target branch')}`}
+                    value={target.value ? { ref: target.value, kind: 'local' } : undefined}
+                    localBranches={target.branches}
                     onChange={(branch) => props.onMergeTargetChange(target.repositoryId, branch)}
                     disabled={busy || !target.branches.length}
                   />
@@ -1057,8 +1055,8 @@ export function GitDeliveryActions(props: {
           </section>
           <section className="task-git-delivery-action-step">
             <div className="task-git-delivery-step-heading">
-              <strong>{props.zh ? '远端' : 'Remote'}</strong>
-              <Button variant="secondary" size="compact" aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '远端' : 'Remote'}`} busy={props.busyAction === 'push'} onClick={props.onPush} disabled={busy || props.pushCount === 0}>
+              <strong>{props.zh ? '推送当前分支' : 'Push current branch'}</strong>
+              <Button variant="secondary" size="compact" aria-label={`${pushLabel} (${props.pushCount}) · ${props.zh ? '推送当前分支' : 'Push current branch'}`} busy={props.busyAction === 'push'} onClick={props.onPush} disabled={busy || props.pushCount === 0}>
                 {pushLabel}
                 {props.pushCount > 0 ? ` (${props.pushCount})` : ''}
               </Button>
