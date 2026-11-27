@@ -15,7 +15,10 @@ function findIcon(associations: Readonly<Record<string, string>>, key: string): 
 
 /** 主题名称规则忽略大小写，并接受两端路径分隔符及目录末尾的斜杠。 */
 function pathSegments(path: string): string[] {
-  return path.toLowerCase().split(/[\\/]+/u).filter(Boolean);
+  return path
+    .toLowerCase()
+    .split(/[\\/]+/u)
+    .filter(Boolean);
 }
 
 /** 父目录限定名称比全局名称更具体。 */

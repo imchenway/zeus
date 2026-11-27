@@ -304,7 +304,13 @@ export function normalizeConversationResources(input: NormalizeConversationResou
 }
 
 /** 只登记 Provider 明确确认的 imageView 路径，并重新核对工作区或附件授权边界。 */
-function normalizeViewedImageResource(input: { sourceIndex: number; item: ConversationResourceSourceItem; payload: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): AttachmentResourceCandidate | null {
+function normalizeViewedImageResource(input: {
+  sourceIndex: number;
+  item: ConversationResourceSourceItem;
+  payload: Record<string, unknown>;
+  projectRoot: string;
+  trustedAttachmentRoots: readonly string[];
+}): AttachmentResourceCandidate | null {
   if (input.item.itemType !== 'imageView') return null;
   const rawPath = stringValue(input.payload.path ?? input.payload.filePath);
   if (!rawPath) return null;
@@ -591,7 +597,10 @@ function sanitizeRichPayloadValue(value: unknown): unknown {
 }
 
 function normalizeGeneratedImageResources(input: { sourceIndex: number; item: ConversationResourceSourceItem; payload: Record<string, unknown>; generatedImageRoot?: string }): AttachmentResourceCandidate[] {
-  const { generatedImageRoot, item: { providerThreadId } } = input;
+  const {
+    generatedImageRoot,
+    item: { providerThreadId },
+  } = input;
   if (input.item.status !== 'completed' || !generatedImageRoot || !providerThreadId) return [];
   const savedPaths: string[] = [];
   if (input.item.itemType === 'imageGeneration' || input.payload.type === 'imageGeneration') {
@@ -1267,7 +1276,7 @@ function authorityForCandidate(candidate: ResourceCandidate): Record<string, unk
 
 function digestResourceCandidate(candidate: ResourceCandidate): string {
   /** 同一文件的绝对路径写法和 file URL 都需要保留各自的链接身份。 */
-  const reference = candidate.kind === 'file' ? candidate.externalReference ?? candidate.sourceReference : undefined;
+  const reference = candidate.kind === 'file' ? (candidate.externalReference ?? candidate.sourceReference) : undefined;
   return createHash('sha256')
     .update(JSON.stringify({ kind: candidate.kind, target: targetForCandidate(candidate), ...(reference ? { reference } : {}) }))
     .digest('hex');

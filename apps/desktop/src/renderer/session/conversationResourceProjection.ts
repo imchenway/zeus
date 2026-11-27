@@ -113,9 +113,7 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
             current.kind === 'file' &&
             (current.projectRelativePath !== resource.projectRelativePath || current.sourceReference !== resource.sourceReference || current.externalReference !== resource.externalReference || current.mimeType !== resource.mimeType)) ||
           (resource.kind === 'website' && current.kind === 'website' && current.url !== resource.url) ||
-          (resource.kind === 'attachment' &&
-            current.kind === 'attachment' &&
-            (current.attachmentRef !== resource.attachmentRef || current.sourceReference !== resource.sourceReference || current.mimeType !== resource.mimeType))
+          (resource.kind === 'attachment' && current.kind === 'attachment' && (current.attachmentRef !== resource.attachmentRef || current.sourceReference !== resource.sourceReference || current.mimeType !== resource.mimeType))
         );
       });
     if (!resourcesChanged) return [item];

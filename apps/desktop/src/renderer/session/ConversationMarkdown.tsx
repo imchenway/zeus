@@ -1151,7 +1151,7 @@ export function matchingInlineResource(resources: ConversationResource[], label:
   });
   /** 图片与下载可引用同一原文件，sandbox 下载仍须找到自己的文件授权。 */
   const sandbox = /^sandbox:/iu.test(reference);
-  const exact = referenceKind === 'link' ? exactFile ?? (sandbox ? undefined : exactImage) : exactImage ?? exactFile;
+  const exact = referenceKind === 'link' ? (exactFile ?? (sandbox ? undefined : exactImage)) : (exactImage ?? exactFile);
   if (sandbox && !exact) return null;
   /** 旧记录若存在同说明图片则拒绝猜测；新记录始终按完整引用匹配。 */
   const legacyImages = resources.filter((candidate) => candidate.kind === 'attachment' && !candidate.sourceReference && candidate.displayName === label);

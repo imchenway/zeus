@@ -33,7 +33,15 @@ import type {
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
-import { conversationMarkdownReferences, conversationResourceRecoveryBatchLimit, type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
+import {
+  conversationMarkdownReferences,
+  conversationResourceRecoveryBatchLimit,
+  type ConversationFileLocation,
+  type ConversationOpenTarget,
+  type ConversationResponseAnnotation,
+  type ConversationResponseTextAnchor,
+  parseCanonicalRequestUserInputQuestions,
+} from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
 import { latestReasoningSummaryText } from './reasoningSummary.js';
@@ -188,11 +196,14 @@ function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name
 /** 正文中的受信链接与图片都需要资源登记，不能等待用户展开处理过程。 */
 function itemNeedsInlineResources(item: NativeSessionItemBuffer): boolean {
   /** 与服务端共用引用解析，代码示例和页内锚点不触发补载。 */
-  if (conversationMarkdownReferences(transcriptItemText(item)).some(({ label, href, image }) => {
-    if (!image && href.startsWith('#')) return false;
-    const resource = matchingInlineResource(item.resources, label, href, image ? 'image' : 'link');
-    return !resource || (image && !isImageResource(resource));
-  })) return true;
+  if (
+    conversationMarkdownReferences(transcriptItemText(item)).some(({ label, href, image }) => {
+      if (!image && href.startsWith('#')) return false;
+      const resource = matchingInlineResource(item.resources, label, href, image ? 'image' : 'link');
+      return !resource || (image && !isImageResource(resource));
+    })
+  )
+    return true;
   if (item.optimistic) return false;
   return imageAttachmentDescriptors(item).some(
     (attachment) =>
@@ -878,7 +889,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const itemsNeedingInlineResources = useMemo(() => items.filter(itemNeedsInlineResources), [items]);
   /** 当前显示的完成正文按持久身份补登记，单次只提交有界条目。 */
   const resourceRecoveryEntryIds = useMemo(
-    () => [...new Set(itemsNeedingInlineResources.flatMap((item) => item.status === 'completed' && item.transcript && isFinalAnswerItem(item) ? [item.transcript.placement.entryId] : []))].slice(0, conversationResourceRecoveryBatchLimit),
+    () => [...new Set(itemsNeedingInlineResources.flatMap((item) => (item.status === 'completed' && item.transcript && isFinalAnswerItem(item) ? [item.transcript.placement.entryId] : [])))].slice(0, conversationResourceRecoveryBatchLimit),
     [itemsNeedingInlineResources],
   );
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
@@ -928,7 +939,17 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     // 才能取得资源元数据。
     // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
     void Promise.resolve(loadConversationResources(resourceRecoveryEntryIds)).catch(() => undefined);
-  }, [assistantDeliverablesAvailable, inlineResourceSignature, itemsNeedingInlineResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, renderProps.onLoadTurnArtifacts, resourcePaging, resourceRecoveryEntryIds]);
+  }, [
+    assistantDeliverablesAvailable,
+    inlineResourceSignature,
+    itemsNeedingInlineResources,
+    props.state.conversationId,
+    props.state.transportState,
+    renderProps.onLoadConversationResources,
+    renderProps.onLoadTurnArtifacts,
+    resourcePaging,
+    resourceRecoveryEntryIds,
+  ]);
   /** 浏览器在滚动偏移为零时不锚定，只有顶端前插需要保存阅读点。 */
   const loadEarlierHistory = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
