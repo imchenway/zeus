@@ -3101,6 +3101,8 @@ a {
   flex-direction: column;
   max-height: min(600px, calc(100vh - 16px));
   overflow: hidden;
+  /* 弹层挂在透明模态根层时，需要自行接收鼠标事件。 */
+  pointer-events: auto;
   position: fixed;
   width: min(520px, calc(100vw - 16px));
   z-index: 120;
