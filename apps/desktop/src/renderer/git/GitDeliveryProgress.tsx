@@ -40,6 +40,11 @@ function gitDeliveryStepErrorSummary(step: GitDeliveryStep, zh: boolean): string
     }
     return zh ? '这一步的执行结果尚未确认。' : 'The outcome of this step is unconfirmed.';
   }
+  if (step.state === 'attention' && step.mergeMode && !step.stopped) {
+    /** 按原候选的方式提示续办，旧命令的错误仍可查看。 */
+    const mode = gitDeliveryActionLabel('merge', zh, step.mergeMode);
+    return zh ? (step.message ?? undefined) : `The existing integration uses ${mode}. Its changes are preserved. Start another task integration with ${mode} to continue.`;
+  }
   if (!step.error && !step.message) return undefined;
   /** 生成阶段失败时，说明本次尚未进入 Git 提交。 */
   const reason = describeUserFacingError(step.error ?? step.message, zh ? 'zh-CN' : 'en').message;
@@ -64,7 +69,7 @@ function describeGitDeliveryCommandFailure(step: GitDeliveryStep, zh: boolean) {
 export function GitDeliveryStepError({ step, zh, mode, summary, commandRunLinked = false }: { step: GitDeliveryStep; zh: boolean; mode: GitDeliveryInput['mode']; summary?: string; commandRunLinked?: boolean }) {
   /** 首屏使用当前界面语言，详情保留真实错误链。 */
   const language = zh ? 'zh-CN' : 'en';
-  const visibleSummary = summary ?? (step.state === 'unknown' || step.commitMessageFailed ? gitDeliveryStepErrorSummary(step, zh) : (step.message ?? undefined));
+  const visibleSummary = summary ?? (step.state === 'unknown' || step.commitMessageFailed || step.mergeMode ? gitDeliveryStepErrorSummary(step, zh) : (step.message ?? undefined));
   const cause = step.error ?? step.message;
   if (!cause) return visibleSummary;
   /** 持久步骤已确认写入状态未知，底层连接错误不能覆盖这一事实。 */
@@ -79,7 +84,7 @@ export function GitDeliveryStepError({ step, zh, mode, summary, commandRunLinked
       </span>
     );
   }
-  return <VisibleApplicationError error={error} summary={visibleSummary} title={`${step.repositoryName} · ${gitDeliveryActionLabel(step.action, zh, mode)}`} language={language} />;
+  return <VisibleApplicationError error={error} summary={visibleSummary} title={`${step.repositoryName} · ${gitDeliveryActionLabel(step.action, zh, step.mergeMode ?? mode)}`} language={language} />;
 }
 
 /** 两个入口显示同一已完成步数，等待和异常不虚增进度。 */
@@ -97,7 +102,7 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
   const count = `${completed}/${run.steps.length}`;
   const countLabel = stopped ? (zh ? `已完成 ${count}` : `${count} completed`) : count;
   /** 当前动作与仓库名就近显示，任务收尾无需仓库前缀。 */
-  const action = step ? gitDeliveryActionLabel(step.action, zh, run.input.mode) : '';
+  const action = step ? gitDeliveryActionLabel(step.action, zh, step.mergeMode ?? run.input.mode) : '';
   /** 文案依据真实运行状态，不以进度条推测完成。 */
   const label = run.stopping
     ? zh
@@ -158,7 +163,11 @@ export function GitDeliveryProgress({ run, zh, showErrorSummaries = false }: { r
     const { action } = first;
     const current = steps.some((item) => item.id === step?.id);
     const commandRunId = action === 'command' ? first.commandRunId : undefined;
-    const label = action === 'command' ? `${gitDeliveryActionLabel(action, zh)} · ${first.repositoryName}` : current ? detail : gitDeliveryActionLabel(action, zh, run.input.mode);
+    /** 首个仓库的方式用于同方式汇总。 */
+    const mode = first.mergeMode ?? run.input.mode;
+    /** 混合方式的结果用通用合入标签，不把旧结果标成这次选择。 */
+    const mixedModes = action === 'merge' && steps.some((item) => (item.mergeMode ?? run.input.mode) !== mode);
+    const label = action === 'command' ? `${gitDeliveryActionLabel(action, zh)} · ${first.repositoryName}` : current ? detail : mixedModes ? (zh ? '合入' : 'Integration') : gitDeliveryActionLabel(action, zh, mode);
     /** 分组计数与总进度采用相同的成功状态口径。 */
     const completed = steps.filter((item) => item.state === 'succeeded').length;
     /** 异常优先于活动状态，部分完成不等同于整组完成。 */

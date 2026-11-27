@@ -555,7 +555,9 @@ export function GitDeliveryRunControl(props: {
                   {detailedSteps.map((step) => (
                     <li key={step.id}>
                       <div className="git-delivery-run-step-heading">
-                        <strong>{step.action === 'task_status' || step.action === 'conversation_archive' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh, run.input.mode)}`}</strong>
+                        <strong>
+                          {step.action === 'task_status' || step.action === 'conversation_archive' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh, step.mergeMode ?? run.input.mode)}`}
+                        </strong>
                         <span data-state={step.state}>
                           {
                             {
@@ -579,7 +581,7 @@ export function GitDeliveryRunControl(props: {
                           {props.zh ? '打开冲突会话' : 'Open conflict conversation'}
                         </Button>
                       ) : null}
-                      {step.action === 'merge' && ['attention', 'waiting'].includes(step.state) ? (
+                      {step.action === 'merge' && ['attention', 'waiting'].includes(step.state) && (step.mergeMode ?? run.input.mode) === run.input.mode ? (
                         <Button size="compact" disabled={busy} onClick={() => openConflict(run, step)}>
                           {props.zh ? '处理冲突' : 'Resolve conflicts'}
                         </Button>

@@ -5,7 +5,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { CodeDiffView } from './CodeDiffView.js';
 import { FilePreviewDataContext } from './FilePreview.js';
 import { fullFileDiff } from './fullFileDiff.js';
-import type { SourceGitComparison } from './sourceGitGutter.js';
+import { sourceGitNewlineLabel, type SourceGitComparison } from './sourceGitGutter.js';
 
 /** 在已有差异视图中比较 HEAD 与内存草稿，打开时定位原来的差异块。 */
 export function SourceGitDiffDialog({ path, before, draft, changes, revealLine, zh, onClose }: SourceGitComparison & { path: string; before: string; zh: boolean; onClose(): void }) {
@@ -37,8 +37,25 @@ export function SourceGitDiffDialog({ path, before, draft, changes, revealLine, 
         ],
       });
     }
-    return { file, complete: fullFileDiff(file, versions) };
-  }, [before, changes, draft, path]);
+    /** 全文上下文须与两端正文吻合。 */
+    const complete = fullFileDiff(file, versions);
+    /** 只有最后一个差异块能承载末尾换行变化。 */
+    const newline = changes.at(-1)?.newline;
+    if (complete && newline) {
+      /** 从已核对的正文取两侧终点，说明不会使任一侧行号前进。 */
+      const body = complete.hunks[0]!;
+      /** 将说明放在独立的元信息片段中，避免作为增删正文参与配对。 */
+      complete.hunks.push({
+        header: '',
+        oldStart: body.oldStart + body.oldLines,
+        newStart: body.newStart + body.newLines,
+        oldLines: 0,
+        newLines: 0,
+        lines: [{ type: 'metadata', content: sourceGitNewlineLabel(newline, zh), oldLineNumber: null, newLineNumber: null }],
+      });
+    }
+    return { file, complete };
+  }, [before, changes, draft, path, zh]);
   const label = zh ? '完整差异' : 'Full diff';
   return (
     <ModalPortal rootClassName="project-source-modal-root" backdropClassName="project-source-modal-backdrop" onDismiss={onClose} role="dialog" aria-label={label}>

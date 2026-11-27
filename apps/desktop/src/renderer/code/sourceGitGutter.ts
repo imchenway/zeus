@@ -8,12 +8,17 @@ import './sourceGitGutter.css';
 /** 类型决定色块颜色和旧内容的显示方式。 */
 type GitChangeTone = 'addition' | 'replacement' | 'deletion';
 
+/** 末尾换行的变化方向以 HEAD 为基线。 */
+type SourceGitNewlineChange = 'added' | 'removed';
+
 /** 两端使用一基行号，纯增加和纯删除的空侧保留插入位置。 */
 interface SourceGitChange {
   beforeLine: number;
   afterLine: number;
   removed: number;
   added: number;
+  /** 该区块恢复时也恢复文件末尾的换行。 */
+  newline?: SourceGitNewlineChange;
 }
 
 /** 连续色带共用一个索引，中间的每一行指向同一段差异。 */
@@ -39,6 +44,8 @@ export interface SourceGitPreview {
   count: number;
   tone: GitChangeTone;
   before: string | null;
+  /** 预览显示当前块包含的末尾换行变化。 */
+  newline?: SourceGitNewlineChange;
   words: DiffWordRanges['left'];
   navigate(direction: -1 | 1): void;
   compare(): void;
@@ -216,7 +223,7 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
     if (!current) return;
     const refresh = current.doc !== view.state.doc;
     const snapshot = refresh ? sourceGitSnapshot(baseline!, view.state.doc) : current;
-    const index = rangeAt(snapshot.markers, position)?.index ?? -1;
+    const index = rangeAt(snapshot.markers, position, current.active)?.index ?? -1;
     if (index >= 0 && index === current.active) close(view);
     else open(view, snapshot, index, refresh);
   }
@@ -238,6 +245,7 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
         count,
         tone,
         before: oldText,
+        ...(change.newline ? { newline: change.newline } : {}),
         words: words?.left ?? [],
         navigate(direction) {
           if (isCurrent()) open(view, view.state.field(field), index + direction);
@@ -268,12 +276,12 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
       class: 'cm-source-git-gutter',
       lineMarker(view, line) {
         const current = view.state.field(field);
-        const match = rangeAt(current.markers, line.from);
+        const match = rangeAt(current.markers, line.from, current.active);
         const change = match && current.changes[match.index];
         if (!match || !change) return null;
         const tone = changeTone(change);
         const edges = tone === 'deletion' ? (change.afterLine > (current.doc ?? view.state.doc).lines ? ' at-end' : '') : (match.from === line.from ? ' start' : '') + (match.to === line.from ? ' end' : '');
-        return new SourceGitMarker(match.index, tone, changeLabel(tone, change.added || change.removed, zh), line.from, edges, match.from === line.from, current.active === match.index, toggle, close);
+        return new SourceGitMarker(match.index, tone, changeLabel(tone, change.added || change.removed, zh, change.newline), line.from, edges, match.from === line.from, current.active === match.index, toggle, close);
       },
       lineMarkerChange: (update) => update.startState.field(field, false) !== update.state.field(field, false),
     }),
@@ -283,10 +291,10 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
       const position = update.state.doc.lineAt(update.state.selection.main.head).from;
       if (!update.focusChanged && position === update.startState.doc.lineAt(update.startState.selection.main.head).from) return;
       const snapshot = update.state.field(field);
-      const match = rangeAt(snapshot.markers, position);
+      const match = rangeAt(snapshot.markers, position, snapshot.active);
       if (!match) return;
       const change = snapshot.changes[match.index]!;
-      update.view.dispatch({ effects: EditorView.announce.of(changeLabel(changeTone(change), change.added || change.removed, zh)) });
+      update.view.dispatch({ effects: EditorView.announce.of(changeLabel(changeTone(change), change.added || change.removed, zh, change.newline)) });
     }),
     EditorView.decorations.of((view) => {
       const current = view.state.field(field);
@@ -327,12 +335,11 @@ export function sourceGitGutter(baseline: string | null, zh: boolean, actions: S
   ];
 }
 
-/** 读取行首命中的连续范围与变更序号。 */
-function rangeAt(ranges: RangeSet<SourceGitRange>, position: number): { index: number; from: number; to: number } | null {
+/** 末行的删除与换行可以共用行首，区块导航选中后优先显示当前色块。 */
+function rangeAt(ranges: RangeSet<SourceGitRange>, position: number, active: number): { index: number; from: number; to: number } | null {
   let match = null;
   ranges.between(position, position, (from, to, range) => {
-    match = { index: range.index, from, to };
-    return false;
+    if (!match || range.index === active) match = { index: range.index, from, to };
   });
   return match;
 }
@@ -348,12 +355,12 @@ function sourceGitSnapshot(baseline: string, doc: Text): SourceGitSnapshot {
   let added = 0;
   let removed = 0;
   /** 合并相邻的增加和删除，后续不变行同时推进两侧行号。 */
-  const flush = () => {
+  const flush = (newline?: SourceGitNewlineChange) => {
     if (!added && !removed) return;
     const first = doc.line(Math.min(afterLine, doc.lines)).from;
     const last = added ? doc.line(afterLine + added - 1).from : first;
     markers.push(new SourceGitRange(changes.length).range(first, last));
-    changes.push({ beforeLine, afterLine, added, removed });
+    changes.push({ beforeLine, afterLine, added, removed, ...(newline ? { newline } : {}) });
     beforeLine += removed;
     afterLine += added;
     added = removed = 0;
@@ -369,12 +376,20 @@ function sourceGitSnapshot(baseline: string, doc: Text): SourceGitSnapshot {
       }
     }
     flush();
-    if (!changes.length) {
-      /** 仅末尾换行变化时，在最后一行正文上保留修改标记。 */
-      beforeLine--;
-      afterLine--;
-      added = removed = 1;
-      flush();
+    /** 逐行比较保持忽略末尾换行，单独记录它的变化以保留行间删除定位。 */
+    const endsWithNewline = content.endsWith('\n');
+    if (baseline.endsWith('\n') !== endsWithNewline) {
+      /** 草稿相对 HEAD 的换行变化方向。 */
+      const newline = endsWithNewline ? 'added' : 'removed';
+      /** 最后一个正文块若已覆盖文件尾，换行随该块一起恢复。 */
+      const last = changes.at(-1);
+      if (last && last.beforeLine + last.removed === beforeLine && last.afterLine + last.added === afterLine) last.newline = newline;
+      else {
+        beforeLine--;
+        afterLine--;
+        added = removed = 1;
+        flush(newline);
+      }
     }
   }
   return { doc, changes, markers: RangeSet.of(markers, true) };
@@ -411,8 +426,17 @@ function changeTone(change: SourceGitChange): GitChangeTone {
   return change.added ? (change.removed ? 'replacement' : 'addition') : 'deletion';
 }
 
-/** 色块名称同时表达类型和行数，鼠标和读屏使用同一措辞。 */
-function changeLabel(tone: GitChangeTone, count: number, zh: boolean): string {
-  if (zh) return '查看差异 · ' + { addition: '新增', replacement: '修改', deletion: '删除' }[tone] + ' ' + count + ' 行';
-  return 'View change · ' + { addition: 'Added', replacement: 'Modified', deletion: 'Deleted' }[tone] + ' ' + count + ' ' + (count === 1 ? 'line' : 'lines');
+/** 行内预览与全文差异用同一措辞表达换行变化。 */
+export function sourceGitNewlineLabel(newline: SourceGitNewlineChange, zh: boolean): string {
+  if (newline === 'added') return zh ? '末尾换行已添加' : 'Final newline added';
+  return zh ? '末尾换行已删除' : 'Final newline removed';
+}
+
+/** 色块名称表达类型、行数与末尾换行，鼠标和读屏使用同一措辞。 */
+function changeLabel(tone: GitChangeTone, count: number, zh: boolean, newline?: SourceGitNewlineChange): string {
+  /** 保留原有逐行差异名称。 */
+  const label = zh
+    ? `查看差异 · ${{ addition: '新增', replacement: '修改', deletion: '删除' }[tone]} ${count} 行`
+    : `View change · ${{ addition: 'Added', replacement: 'Modified', deletion: 'Deleted' }[tone]} ${count} ${count === 1 ? 'line' : 'lines'}`;
+  return newline ? `${label} · ${sourceGitNewlineLabel(newline, zh)}` : label;
 }

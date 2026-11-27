@@ -105,6 +105,8 @@ export interface GitDeliveryStep {
   repositoryName: string;
   /** 固定操作类型。 */
   action: GitDeliveryAction;
+  /** 与本次选择不同的任务合入记录方式，用于说明暂停或已交付结果。 */
+  mergeMode?: GitDeliveryInput['mode'];
   /** 实际执行状态。 */
   state: GitDeliveryStepState;
   /** 真实错误或待处理原因。 */

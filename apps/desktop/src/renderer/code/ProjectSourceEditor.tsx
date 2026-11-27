@@ -8,7 +8,7 @@ import { copyText } from '../ui/clipboard.js';
 import { CodeEditor, type CodeEditorProps } from './CodeEditor.js';
 import { DiffChangeNavigation } from './DiffReviewToolbar.js';
 import { blameDecorations } from './blameDecorations.js';
-import { sourceGitGutter, type SourceGitComparison, type SourceGitPreview } from './sourceGitGutter.js';
+import { sourceGitGutter, sourceGitNewlineLabel, type SourceGitComparison, type SourceGitPreview } from './sourceGitGutter.js';
 import { useGitBlame } from './useGitBlame.js';
 import './blameGutter.css';
 import './codeDiffView.css';
@@ -149,6 +149,7 @@ function SourceGitChangePanel({ preview, revertDisabled, zh }: { preview: Source
       <div className="diff-review-toolbar source-git-preview-toolbar">
         <DiffChangeNavigation zh={zh} current={preview.index} count={preview.count} onNavigate={preview.navigate} />
         {preview.before !== null ? <span className="source-git-preview-label">{zh ? '改前 · HEAD' : 'Before · HEAD'}</span> : null}
+        {preview.newline ? <span className="source-git-preview-label">{sourceGitNewlineLabel(preview.newline, zh)}</span> : null}
         <div className="source-git-preview-actions">
           {preview.before !== null ? (
             <Button unstyled type="button" onClick={copyBefore}>

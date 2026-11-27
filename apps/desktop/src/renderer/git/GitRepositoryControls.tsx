@@ -305,6 +305,24 @@ export function BranchSwitcher(props: {
 
   /** 共同分支菜单把完整引用交给原有的批量来源、签出或合入操作。 */
   function renderCommonBranchActions(branch: string, kind: BranchKind) {
+    /** 工作台负责写入，来源选择和签出入口不发起合入。 */
+    const executeMerge = props.referenceSelection ? undefined : props.onExecute;
+    /** 已在该分支的仓库无需合入。 */
+    const mergeRepositories = executeMerge ? props.repositories.filter(isWorkbenchRepository).filter((repository) => repository.snapshot.branch !== branch) : [];
+    /** 合入按实际名单校验来源和当前分支，签出交集不包含这些约束。 */
+    const unavailableRepository = mergeRepositories.find((repository) => repository.snapshot.detached || !repository.snapshot.headSha || !repositoryLocalBranches(repository).includes(branch));
+    /** 禁用项就地说明首个阻止合入的仓库。 */
+    const mergeUnavailable = unavailableRepository
+      ? unavailableRepository.snapshot.detached || !unavailableRepository.snapshot.headSha
+        ? props.zh
+          ? `当前分支不可合入 · ${unavailableRepository.name}`
+          : `Current branch unavailable · ${unavailableRepository.name}`
+        : props.zh
+          ? `缺少来源分支 · ${unavailableRepository.name}`
+          : `Source branch missing · ${unavailableRepository.name}`
+      : undefined;
+    /** 名称沿用现有合入动作。 */
+    const mergeLabel = props.zh ? '合入各仓当前分支' : 'Merge into each current branch';
     return (
       <>
         <Button
@@ -334,22 +352,21 @@ export function BranchSwitcher(props: {
         >
           {sourceMode ? (props.zh ? '设为来源分支' : 'Set as source branch') : props.zh ? `在全部 ${props.repositories.length} 个仓库签出` : `Checkout in all ${props.repositories.length} repositories`}
         </Button>
-        {!props.referenceSelection && props.onExecute ? (
+        {executeMerge ? (
           <Button
             unstyled
             type="button"
             role="menuitem"
-            disabled={props.disabled || props.busy !== null}
+            disabled={props.disabled || props.busy !== null || Boolean(mergeUnavailable)}
+            aria-label={mergeUnavailable ? `${mergeLabel} · ${mergeUnavailable}` : undefined}
+            title={mergeUnavailable}
             onClick={async () => {
-              const execute = props.onExecute!;
-              await executeRepositoryBatch(
-                props.repositories.filter(isWorkbenchRepository).filter((repository) => repository.snapshot.branch !== branch),
-                (repository) => execute(repository, createProjectGitMergeAction(repository, branch), props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`),
-              );
+              if (mergeUnavailable) return;
+              await executeRepositoryBatch(mergeRepositories, (repository) => executeMerge(repository, createProjectGitMergeAction(repository, branch), props.zh ? `将“${branch}”合入当前分支` : `Merge '${branch}' into current branch`));
               closeMenus();
             }}
           >
-            {props.zh ? '合入各仓当前分支' : 'Merge into each current branch'}
+            {mergeUnavailable ?? mergeLabel}
           </Button>
         ) : null}
       </>

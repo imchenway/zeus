@@ -324,6 +324,7 @@ export class GitDeliveryRepository {
           repositoryId,
           repositoryName,
           action,
+          ...(action === 'merge' && (result?.mergeMode === 'merge' || result?.mergeMode === 'squash') ? { mergeMode: result.mergeMode } : {}),
           commandDefinitionId,
           ...(commandRun?.projectId === run.projectId && commandRun.commandId === commandDefinitionId ? { commandRunId: commandRun.id } : {}),
           state,

@@ -1145,17 +1145,30 @@ export class GitDeliveryExecution {
   /** 只有真实合入终态允许继续推送，不把 AI 轮次结束等同于成功。 */
   private async finishMerge(run: GitDeliveryRunRecord, original: GitDeliveryStepRecord, selection: GitDeliverySelection, context: DeliveryRepositoryContext): Promise<boolean> {
     let step = this.step(original);
+    /** 持久候选的方式对应实际 Git 现场，续办使用同一条合入记录。 */
+    const boundIntegration = run.scope.kind === 'task' && step.integrationId ? this.options.taskIntegrations.getById(step.integrationId) : undefined;
+    if (boundIntegration && boundIntegration.mode !== run.input.mode) {
+      /** 已交付的同一提交可复用，仍未完成的候选只暂停本仓。 */
+      const delivered = boundIntegration.state === 'merged';
+      /** 错误提示使用与交付方式菜单一致的 Git 名称。 */
+      const modeLabel = boundIntegration.mode === 'squash' ? 'Squash' : 'Merge';
+      this.repository.updateStep(step, {
+        state: delivered ? 'succeeded' : 'attention',
+        message: delivered ? null : `原合入方式为 ${modeLabel}，现场已保留。请在任务代码交付中选择 ${modeLabel} 后重新发起合入。`,
+        result: { ...step.result, mergeMode: boundIntegration.mode },
+      });
+      return delivered;
+    }
     if (run.scope.kind === 'task' && step.integrationId && !step.conversationId) {
       /** 全目录运行接管已有单仓冲突会话，不为同一现场再启动第二个 AI。 */
-      const integration = this.options.taskIntegrations.getById(step.integrationId);
-      if (integration?.state === 'merged') {
+      if (boundIntegration?.state === 'merged') {
         this.succeed(step);
         return true;
       }
       /** 只接管同一精确候选的未失效尝试，不能按创建时间猜测使用哪份结果。 */
       const attempts = this.options.taskIntegrationAttempts
         .listByIntegration(step.integrationId)
-        .filter((attempt) => (attempt.state === 'preparing' || attempt.state === 'active') && attempt.targetHeadSha === integration?.targetHeadSha && attempt.taskHeadSha === integration?.taskHeadSha);
+        .filter((attempt) => (attempt.state === 'preparing' || attempt.state === 'active') && attempt.targetHeadSha === boundIntegration?.targetHeadSha && attempt.taskHeadSha === boundIntegration?.taskHeadSha);
       if (attempts.length > 1) throw deliveryError('同一仓库存在多个有效冲突处理会话，请核对原现场后继续，不能自动选择覆盖。');
       if (attempts[0]) {
         this.repository.updateStep(step, { conversationId: attempts[0].conversationId });
