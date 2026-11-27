@@ -106,6 +106,8 @@ export interface ZeusBrowserApprovalRequest {
   conversationId: string;
   tabId?: string;
   kind: ZeusBrowserApprovalKind;
+  /** Chromium 请求的权限类型，通知可在地址栏等待用户主动展开。 */
+  permission: string;
   origin?: string;
   title: string;
   detail: string;

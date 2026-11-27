@@ -8278,6 +8278,39 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   outline: 0;
 }
 
+/* 权限入口只占地址栏右侧，原生网页可用宽度不随请求改变。 */
+.session-codex-parity-v1 .browser-address-form .browser-permission-trigger {
+  align-items: center;
+  background: color-mix(in oklab, var(--session-accent) 13%, var(--session-control));
+  border-radius: 6px;
+  color: var(--session-focus-outline);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 4px;
+  min-block-size: 23px;
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .browser-permission-trigger svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .browser-permission-trigger:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 1px;
+}
+
+/* 窄窗保留可聚焦的图标入口和可读的地址。 */
+@media (max-width: 760px) {
+  .session-codex-parity-v1 .browser-permission-trigger span {
+    display: none;
+  }
+}
+
 .session-codex-parity-v1 .browser-annotate-button {
   align-items: center;
   border: 1px solid var(--session-line);
@@ -8355,42 +8388,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 12px;
 }
 
-.session-codex-parity-v1 .browser-approval-card {
-  background: color-mix(in oklab, var(--session-warning) 7%, var(--session-canvas));
-  border: 1px solid color-mix(in oklab, var(--session-warning) 30%, var(--session-line));
-  border-radius: 10px;
-  display: grid;
-  gap: 7px;
-  margin-block-end: 10px;
-  padding: 11px;
-}
-
-.session-codex-parity-v1 .browser-approval-card strong,
 .session-codex-parity-v1 .browser-comments-empty strong {
   font-size: 12px;
 }
 
-.session-codex-parity-v1 .browser-approval-card p,
 .session-codex-parity-v1 .browser-comments-empty p {
   color: var(--session-text-muted);
   font-size: 11px;
   line-height: 16px;
   margin: 0;
-}
-
-.session-codex-parity-v1 .browser-approval-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.session-codex-parity-v1 .browser-approval-actions button {
-  background: var(--session-control);
-  border: 1px solid var(--session-line);
-  border-radius: 7px;
-  color: var(--session-text);
-  min-block-size: 27px;
-  padding-inline: 8px;
 }
 
 .session-codex-parity-v1 .browser-comments-empty {

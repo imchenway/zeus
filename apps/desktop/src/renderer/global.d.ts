@@ -23,7 +23,6 @@ import type {
   TrashProjectSourceEntryInput,
   UsageModelCostBreakdown,
   UsageModelOutputRateBreakdown,
-  ZeusBrowserApprovalDecision,
   ZeusBrowserCommand,
   ZeusBrowserConversationSnapshot,
   ZeusBrowserEvent,
@@ -514,11 +513,12 @@ declare global {
         bounds: { x: number; y: number; width: number; height: number };
         visible: boolean;
         capturePreview?: boolean;
+        /** 当前标签权限浮窗跟随工具栏锚点，坐标单位与网页视口相同。 */
+        permissionPrompt?: { requestId: string; anchor: { x: number; y: number; width: number; height: number }; focus: boolean };
       }) => Promise<{ applied: boolean; previewImageUrl?: string }>;
       prepareBrowserComments: (input: { conversationId: string; tabId: string; commentIds?: string[] }) => Promise<ZeusBrowserPreparedSubmission>;
       getBrowserCommentPreview: (path: string) => Promise<{ previewUrl: string; mimeType: 'image/png' } | null>;
       markBrowserCommentsSent: (input: { conversationId: string; tabId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;
-      respondToBrowserApproval: (input: { requestId: string; decision: ZeusBrowserApprovalDecision }) => Promise<{ resolved: boolean }>;
       getBrowserSettings: () => Promise<ZeusBrowserSettings>;
       /** 密码管理只接收元数据、冲突来源与统计回执。 */
       listBrowserPasswords: () => Promise<ZeusBrowserPasswordAccount[]>;

@@ -9,6 +9,7 @@ import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/Arrow
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { ArrowsInSimpleIcon as ArrowsInSimple } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
 import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
+import { BellIcon as Bell } from '@phosphor-icons/react/dist/csr/Bell';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CrosshairSimpleIcon as CrosshairSimple } from '@phosphor-icons/react/dist/csr/CrosshairSimple';
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
@@ -16,12 +17,13 @@ import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PuzzlePieceIcon as PuzzlePiece } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
+import { ShieldIcon as Shield } from '@phosphor-icons/react/dist/csr/Shield';
 import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TranslateIcon as Translate } from '@phosphor-icons/react/dist/csr/Translate';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { KeyIcon as Key } from '@phosphor-icons/react/dist/csr/Key';
-import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserNativePage, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserNativePage, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { modelSetupRequestedEvent, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Form } from '../ui/Form.js';
 import { Button } from '../ui/Button.js';
@@ -76,8 +78,8 @@ const copy = {
     focusNext: '定位下一条评论',
     showComments: '显示评论列表',
     hideComments: '隐藏评论列表',
-    allowOnce: '允许一次',
-    deny: '拒绝',
+    notificationPermission: '通知权限',
+    webPermission: '网页权限',
     closeTab: '关闭标签',
     close: '关闭浏览器',
     expand: '展开浏览器',
@@ -120,8 +122,8 @@ const copy = {
     focusNext: 'Focus next comment',
     showComments: 'Show comments',
     hideComments: 'Hide comments',
-    allowOnce: 'Allow once',
-    deny: 'Deny',
+    notificationPermission: 'Notifications',
+    webPermission: 'Site permission',
     closeTab: 'Close tab',
     close: 'Close browser',
     expand: 'Expand browser',
@@ -166,6 +168,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const [snapshot, setSnapshot] = useState<ZeusBrowserConversationSnapshot | null>(() => (props.initialSnapshot?.conversationId === props.conversationId ? props.initialSnapshot : null));
   const [address, setAddress] = useState('');
   const [addressFocused, setAddressFocused] = useState(false);
+  /** 地址输入框接收权限入口消失后的键盘焦点。 */
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  /** 当前权限入口同时是原生小窗的定位锚点。 */
+  const permissionTrigger = useRef<HTMLButtonElement>(null);
+  /** 通知在用户主动选择后展开，设备权限可直接展示。 */
+  const [openedPermissionId, setOpenedPermissionId] = useState<string | null>(null);
+  /** 手动打开的入口移除后把焦点交回地址输入框。 */
+  const permissionFocus = useRef<string | null>(null);
+  /** 权限变化触发布局更新时保留已经挂载的网页。 */
+  const permissionPromptRef = useRef<{ requestId: string; focus: boolean } | null>(null);
+  const applyLayoutRef = useRef<(() => void) | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   /** 查找栏占用真实高度，避免原生网页盖住输入框。 */
@@ -182,6 +195,15 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const downloads = snapshot?.downloads ?? [];
   const hasActiveDownloads = downloads.some((download) => download.state === 'downloading');
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
+  /** 一次展示当前标签的一项请求，主动展开的请求先完成。 */
+  const pendingPermissions = snapshot?.pendingApprovals.filter((request) => request.tabId === activeTab?.id) ?? [];
+  const permission = pendingPermissions.find((request) => request.id === openedPermissionId) ?? pendingPermissions.find((request) => request.permission !== 'notifications') ?? pendingPermissions[0];
+  const notificationPermission = permission?.permission === 'notifications';
+  const permissionLabel = notificationPermission ? labels.notificationPermission : labels.webPermission;
+  /** 批注工具栏没有地址栏，待处理请求在正常工具栏恢复后展示。 */
+  const annotationToolbar = Boolean(activeTab?.annotationMode && draftComments.length);
+  const permissionPromptId = !annotationToolbar && permission && (!notificationPermission || permission.id === openedPermissionId) ? permission.id : null;
+  const focusPermissionPrompt = Boolean(permissionPromptId && openedPermissionId === permissionPromptId);
 
   useEffect(() => {
     if (findOpen) findInputRef.current?.focus();
@@ -292,6 +314,9 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       const rect = viewport.getBoundingClientRect();
       /** 零尺寸及被浮层遮挡的网页继续立即隐藏。 */
       const visible = !isSuspended() && rect.width > 0 && rect.height > 0;
+      /** 同一轮布局提交网页和权限锚点，浮窗不参与网页尺寸测量。 */
+      const permissionPrompt = permissionPromptRef.current;
+      const anchor = visible && permissionPrompt ? permissionTrigger.current?.getBoundingClientRect() : null;
       void bridge.setBrowserLayout!({
         conversationId: props.conversationId,
         tabId,
@@ -299,6 +324,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         visible,
         capturePreview: !visible && rect.width > 0 && rect.height > 0,
         bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        ...(permissionPrompt && anchor ? { permissionPrompt: { ...permissionPrompt, anchor: { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height } } } : {}),
       })
         .then((result) => {
           if (disposed) return;
@@ -341,6 +367,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     overlayObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'inert', 'data-motion-state'] });
     observePopovers();
     window.addEventListener('resize', apply);
+    applyLayoutRef.current = apply;
     apply();
     return () => {
       disposed = true;
@@ -348,6 +375,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       observer.disconnect();
       overlayObserver.disconnect();
       window.removeEventListener('resize', apply);
+      applyLayoutRef.current = null;
       if (closedTabIdsRef.current.has(tabId)) return;
       const rect = viewport.getBoundingClientRect();
       void bridge
@@ -359,7 +387,19 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         })
         .catch(() => undefined);
     };
-  }, [activeTab?.id, commentsOpen, props.conversationId, snapshot?.pendingApprovals.length]);
+  }, [activeTab?.id, commentsOpen, props.conversationId]);
+
+  useLayoutEffect(() => {
+    permissionPromptRef.current = permissionPromptId ? { requestId: permissionPromptId, focus: focusPermissionPrompt } : null;
+    applyLayoutRef.current?.();
+  }, [focusPermissionPrompt, permissionPromptId]);
+
+  useLayoutEffect(() => {
+    const previous = permissionFocus.current;
+    if (!previous || snapshot?.pendingApprovals.some((request) => request.id === previous)) return;
+    permissionFocus.current = null;
+    if (document.hasFocus() && document.activeElement === document.body) addressInputRef.current?.focus();
+  }, [snapshot?.pendingApprovals]);
 
   /** 使用系统菜单覆盖网页；动作继续复用已有命令和分栏状态。 */
   async function openMoreMenu(trigger: HTMLButtonElement): Promise<void> {
@@ -522,12 +562,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     if (comment) await command({ action: 'focus_comment', commentId: comment.id });
   }
 
-  /** 回应网页设备权限；AI 操作无需确认卡。 */
-  async function respondToApproval(request: ZeusBrowserApprovalRequest, decision: ZeusBrowserApprovalDecision): Promise<void> {
-    if (!window.zeus?.respondToBrowserApproval) return;
-    await window.zeus.respondToBrowserApproval({ requestId: request.id, decision });
-  }
-
   if (!snapshot || !activeTab) {
     return (
       <section className="browser-workspace browser-workspace-loading" data-loading={!error || undefined} aria-label={labels.title}>
@@ -611,7 +645,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         </p>
       ) : null}
 
-      {activeTab.annotationMode && draftComments.length > 0 ? (
+      {annotationToolbar ? (
         <div className="browser-toolbar browser-annotation-toolbar">
           <span className="browser-annotation-actions browser-annotation-actions-leading">
             <Button unstyled type="button" aria-label={labels.exit} data-icon-tooltip={labels.exit} onClick={() => command({ action: 'set_annotation_mode', enabled: false })}>
@@ -669,6 +703,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           <Form className="browser-address-form" onSubmit={(event) => navigate(event)}>
             <GlobeSimple aria-hidden="true" />
             <input
+              ref={addressInputRef}
               value={addressFocused ? address : displayBrowserAddress(address)}
               aria-label={labels.address}
               placeholder={labels.address}
@@ -680,6 +715,25 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               onBlur={() => setAddressFocused(false)}
               onChange={(event) => setAddress(event.currentTarget.value)}
             />
+            {permission ? (
+              <Button
+                unstyled
+                ref={permissionTrigger}
+                type="button"
+                className="browser-permission-trigger"
+                aria-label={permissionLabel}
+                aria-haspopup="dialog"
+                aria-expanded={permissionPromptId === permission.id}
+                data-icon-tooltip={permissionLabel}
+                onClick={() => {
+                  permissionFocus.current = permission.id;
+                  setOpenedPermissionId(permission.id);
+                }}
+              >
+                {notificationPermission ? <Bell aria-hidden="true" /> : <Shield aria-hidden="true" />}
+                <span>{permissionLabel}</span>
+              </Button>
+            ) : null}
           </Form>
           <span className="browser-navigation-trailing">
             <Button
@@ -829,22 +883,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         <div ref={viewportRef} className="browser-native-viewport" aria-label={activeTab.title || activeTab.url}>
           {viewportPreview?.tabId === activeTab.id ? <img className="browser-native-viewport-preview" src={viewportPreview.imageUrl} alt="" aria-hidden="true" draggable={false} /> : null}
         </div>
-        {commentsOpen || snapshot.pendingApprovals.length ? (
+        {commentsOpen ? (
           <aside className="browser-comments-rail" aria-label={labels.comments}>
-            {snapshot.pendingApprovals.map((request) => (
-              <article className="browser-approval-card" key={request.id}>
-                <strong>{request.title}</strong>
-                <p>{request.detail}</p>
-                <div className="browser-approval-actions">
-                  <Button unstyled type="button" onClick={() => respondToApproval(request, 'deny')}>
-                    {labels.deny}
-                  </Button>
-                  <Button unstyled type="button" onClick={() => respondToApproval(request, 'allow_once')}>
-                    {labels.allowOnce}
-                  </Button>
-                </div>
-              </article>
-            ))}
             {draftComments.length === 0 ? (
               <div className="browser-comments-empty">
                 <strong>{labels.noComments}</strong>

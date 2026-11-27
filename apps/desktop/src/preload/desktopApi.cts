@@ -694,11 +694,6 @@ export function createDesktopApi(transport: DesktopTransport) {
     getBrowserCommentPreview: (path: string) => transport.invoke('zeus:browser:comment-preview', path),
     /** 按会话身份记录批注已发送。 */
     markBrowserCommentsSent: (input: unknown) => invokeBrowserConversationCommand('zeus:browser:mark-comments-sent', 'desktop.browser.mark_comments_sent', input),
-    /** 按审批请求身份提交用户决定。 */
-    respondToBrowserApproval: (input: unknown) => {
-      const candidate = input && typeof input === 'object' && !Array.isArray(input) ? (input as { requestId?: unknown }) : {};
-      return invokeMainCommand('zeus:browser:respond-approval', 'desktop.browser.respond_approval', 'approval', mainCommandScopeId(candidate.requestId, 'browser-approval'), input);
-    },
     /** 读取内置浏览器设置。 */
     getBrowserSettings: () => transport.invoke('zeus:browser:get-settings'),
     /** 读取账号元数据，密码不进入 Renderer。 */

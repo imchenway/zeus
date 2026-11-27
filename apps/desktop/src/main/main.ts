@@ -3298,6 +3298,7 @@ function setupIpc(): void {
       desktopNotificationsEnabled: typeof settings.desktopNotificationsEnabled === 'boolean' ? settings.desktopNotificationsEnabled : appShellSettings.desktopNotificationsEnabled,
       openAtLoginEnabled: typeof settings.openAtLoginEnabled === 'boolean' ? settings.openAtLoginEnabled : appShellSettings.openAtLoginEnabled,
     };
+    browserHost?.syncPageLanguage();
     /** 同步原生主题，让后续窗口的加载页立即沿用应用选择。 */
     const deliveryAppearance = settings.appearance === 'light' || settings.appearance === 'dark' ? settings.appearance : 'system';
     nativeTheme.themeSource = deliveryAppearance;
@@ -4564,6 +4565,7 @@ async function initializeApplication(): Promise<void> {
       projectGitWorkbench = new ProjectGitWorkbenchService(loadProjectIdentity);
     }
     appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);
+    browserHost?.syncPageLanguage();
     traceApplicationStartup('app_shell_settings_ready');
 
     if (!readOnlyValidationDescriptor) applyLoginItemSettings();

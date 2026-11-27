@@ -1,5 +1,6 @@
 import { browserCredentialPromptHtml } from './browserCredentialPrompt.js';
 import { showBrowserPasswordPicker } from './browserPasswordPicker.js';
+import { browserPermissionPromptBounds, showBrowserPermissionPrompt } from './browserPromptWindow.js';
 import {
   BrowserWindow,
   clipboard,
@@ -56,7 +57,7 @@ import {
   type BrowserFrozenContractEntry,
 } from '@zeus/local-server';
 import { googleWorkspaceExportRequest, sanitizeBrowserArtifactName } from './browserArtifactExport.js';
-import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
+import { createSystemMainCommandEnvelope, type MainCommandLedger, type MainCommandRequest } from './mainCommandLedger.js';
 import type { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
 import { BrowserPasswordStore, browserPasswordOrigin } from './browserPasswords.js';
 import { BrowserCuaHost } from './browserCuaHost.js';
@@ -79,6 +80,8 @@ interface LiveBrowserTab {
   passwordValues?: Set<string>;
   /** 各标签只允许一个填充选择，隐藏或离开页面时取消。 */
   passwordPicker?: AbortController;
+  /** 当前标签的权限浮窗及相对工具栏的锚点。 */
+  permissionPrompt?: { requestId: string; popup: BrowserWindow; anchor: Rectangle };
   snapshot: ZeusBrowserTabSnapshot;
   view?: WebContentsView;
   ownerWindowId?: number;
@@ -123,7 +126,11 @@ interface PageAssetInventory {
 
 interface PendingApproval {
   request: ZeusBrowserApprovalRequest;
+  /** 设备请求的音视频类型，用打开浮窗时的应用语言生成标题。 */
+  media: readonly string[];
   resolve: (decision: ZeusBrowserApprovalDecision) => void;
+  /** 用户已提交决定，等待命令账本确认期间不再展示。 */
+  deciding?: boolean;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -180,7 +187,7 @@ interface CreateBrowserHostOptions {
   computer?: () => ComputerHost;
   /** 免费服务和已配置模型都通过本机 Core 请求，不把凭据交给网页。 */
   translation?: ReturnType<typeof createBrowserTranslationClient>;
-  /** 内置浏览器的授权和登录窗口跟随应用语言。 */
+  /** 网页语言偏好、授权和登录窗口跟随应用语言。 */
   language?: () => 'zh-CN' | 'en-US';
   statePath: string;
   preloadPath: string;
@@ -286,6 +293,16 @@ export class BrowserHost implements BrowserAutomationPort {
     return this.options.language?.() === 'en-US' ? en : zh;
   }
 
+  /** 向网站提供首选语言和同语种回退。 */
+  private pageLanguages(): string[] {
+    return this.options.language?.() === 'en-US' ? ['en-US', 'en'] : ['zh-CN', 'zh'];
+  }
+
+  /** 更新独立浏览器会话的 Accept-Language，供后续网页请求使用。 */
+  syncPageLanguage(): void {
+    this.browserSession.setUserAgent(this.browserSession.getUserAgent(), this.pageLanguages().join(','));
+  }
+
   constructor(private readonly options: CreateBrowserHostOptions) {
     this.cua = new BrowserCuaHost(() => {
       const computer = options.computer?.();
@@ -298,6 +315,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.settings = defaultSettings(options);
     this.browserSession = session.fromPartition(browserPartition, { cache: true });
     this.restorePersistedState();
+    this.syncPageLanguage();
     this.configureSession();
   }
 
@@ -487,6 +505,8 @@ export class BrowserHost implements BrowserAutomationPort {
       if (active) this.activeTabByConversation.set(target, active);
       this.activeTabByConversation.delete(source);
       for (const download of this.downloads) if (download.conversationId === source) download.conversationId = target;
+      /** 标签仍是同一网页，待处理权限跟随已迁移的标签。 */
+      for (const { request } of this.pendingApprovals.values()) if (request.conversationId === source) request.conversationId = target;
       this.schedulePersist();
       this.emitSnapshot(source);
       this.emitSnapshot(target);
@@ -546,6 +566,7 @@ export class BrowserHost implements BrowserAutomationPort {
           : undefined;
       /** 布局继续使用原有会话校验及网页实例；截图不写入文件或持久状态。 */
       const applied = await this.setLayout(window, conversationId, tabId, bounds, visible);
+      if (applied && visible && tab && this.visibleTabByWindow.get(window.id) === tabId) this.syncPermissionPrompt(window, tab, value.permissionPrompt);
       /** 一次遮挡只返回当前可视区画面，恢复后由 Renderer 释放。 */
       const previewImageUrl = await preview;
       return { applied, ...(previewImageUrl ? { previewImageUrl } : {}) };
@@ -573,18 +594,6 @@ export class BrowserHost implements BrowserAutomationPort {
         await command.markWriteStarted();
         await this.markCommentsSent(conversationId, tabId, commentIds);
         return this.snapshotFor(conversationId);
-      });
-    });
-    ipcMain.handle('zeus:browser:respond-approval', (event, request: MainCommandRequest) => {
-      this.requireRendererWindow(event);
-      return this.options.mainCommandLedger().execute(request, 'desktop.browser.respond_approval', async (input, command) => {
-        const value = asRecord(input);
-        const requestId = requireNonEmptyString(value.requestId, 'requestId');
-        const decision = normalizeApprovalDecision(value.decision);
-        await command.markWriteStarted();
-        const result = this.respondToApproval(requestId, decision);
-        await this.flushPersistence();
-        return result;
       });
     });
     ipcMain.handle('zeus:browser:get-settings', (event) => {
@@ -639,6 +648,10 @@ export class BrowserHost implements BrowserAutomationPort {
         await this.options.passwords.remove(requireNonEmptyString(asRecord(input).id, 'id'), () => command.markWriteStarted());
         return { deleted: true };
       });
+    });
+    /** 页面脚本执行前同步读取语言。通道只向内置网页返回公开语言偏好。 */
+    ipcMain.on('zeus:browser-page:languages', (event) => {
+      event.returnValue = this.tabFromWebContents(event.sender) ? this.pageLanguages() : null;
     });
     /** 各 frame 只读取自身的运行身份，凭据由原生菜单在用户选择后交接。 */
     ipcMain.handle('zeus:browser-page:autofill-runtime', (event) => {
@@ -924,6 +937,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.pendingApprovals.clear();
     for (const tab of this.tabs.values()) {
       this.stopTranslation(tab);
+      this.closePermissionPrompt(tab);
       if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     }
     if (!this.options.readOnlyValidation) await this.persist();
@@ -1016,14 +1030,20 @@ export class BrowserHost implements BrowserAutomationPort {
         return;
       }
       const origin = safeOrigin(details.requestingUrl || tab.snapshot.url);
-      void this.requestApproval({
-        conversationId: tab.snapshot.conversationId,
-        tabId: tab.snapshot.id,
-        kind: 'web_permission',
-        origin,
-        title: this.text(`允许网页使用 ${permission} 权限吗？`, `Allow ${permission}?`),
-        detail: this.text(`${origin || this.text('这个网页', 'This page')} 请求浏览器权限 ${permission}。`, `${origin || 'This page'} requested the ${permission} browser permission.`),
-      }).then((decision) => {
+      /** 媒体请求可单独申请麦克风、摄像头或两者。 */
+      const media = 'mediaTypes' in details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+      void this.requestApproval(
+        {
+          conversationId: tab.snapshot.conversationId,
+          tabId: tab.snapshot.id,
+          kind: 'web_permission',
+          permission,
+          origin,
+          title: this.webPermissionTitle(permission, media),
+          detail: origin || this.text('这个网页', 'This page'),
+        },
+        media,
+      ).then((decision) => {
         const allowed = decision !== 'deny';
         if (allowed && origin) this.grantedWebPermissions.add(`${origin}\u0000${permission}`);
         callback(allowed);
@@ -1193,6 +1213,7 @@ export class BrowserHost implements BrowserAutomationPort {
     const focusedBounds = this.visibleTabByWindow.get(window.id) === tabId && this.isVisibleTabFocused(window) ? tab.view!.getBounds() : null;
     this.stopTranslation(tab);
     if (this.visibleTabByWindow.get(window.id) === tabId) this.detachTab(tabId);
+    this.cancelTabPermissions(tabId);
     if (tab.view && !tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tabs.delete(tabId);
     this.invalidateAdvancedHandlesForTab(tabId);
@@ -1251,6 +1272,7 @@ export class BrowserHost implements BrowserAutomationPort {
     void this.cua.hideTabCursor(tabId).catch((error) => console.warn('CUA browser visibility cleanup failed', error));
     const tab = this.tabs.get(tabId);
     tab?.passwordPicker?.abort();
+    if (tab) this.closePermissionPrompt(tab);
     if (!tab?.view || tab.ownerWindowId === undefined) return;
     const window = this.windows.get(tab.ownerWindowId);
     if (window && !window.isDestroyed()) {
@@ -1314,6 +1336,7 @@ export class BrowserHost implements BrowserAutomationPort {
     view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       tab.passwordPicker?.abort();
       if (!isMainFrame || isInPlace) return;
+      this.cancelTabPermissions(tab.snapshot.id);
       void this.cua.hideTabCursor(tab.snapshot.id).catch((error) => console.warn('CUA browser navigation cursor cleanup failed', error));
       this.stopTranslation(tab);
       tab.pagePreloadFailed = false;
@@ -1356,6 +1379,7 @@ export class BrowserHost implements BrowserAutomationPort {
       update();
     });
     view.webContents.on('render-process-gone', () => {
+      this.cancelTabPermissions(tab.snapshot.id);
       void this.cua.releaseTab(tab.snapshot.id).catch((error) => console.warn('CUA browser cleanup failed', error));
       this.stopTranslation(tab);
       this.activeJsDialogs.delete(tab.snapshot.id);
@@ -1957,23 +1981,126 @@ export class BrowserHost implements BrowserAutomationPort {
     }
   }
 
+  /** 用实际的权限名称替代 Chromium 的通知和媒体代号。 */
+  private webPermissionTitle(permission: string, media: readonly string[]): string {
+    if (permission === 'notifications') return this.text('允许发送桌面通知？', 'Allow desktop notifications?');
+    if (permission !== 'media') return this.text(`允许网页使用 ${permission} 权限？`, `Allow ${permission}?`);
+    const microphone = media.includes('audio');
+    const camera = media.includes('video');
+    if (microphone && camera) return this.text('允许使用麦克风和摄像头？', 'Allow microphone and camera access?');
+    if (microphone) return this.text('允许使用麦克风？', 'Allow microphone access?');
+    if (camera) return this.text('允许使用摄像头？', 'Allow camera access?');
+    return this.text('允许使用麦克风或摄像头？', 'Allow microphone or camera access?');
+  }
+
+  /** 只显示当前可见标签的待处理请求，视口的尺寸和可见性由原布局负责。 */
+  private syncPermissionPrompt(window: BrowserWindow, tab: LiveBrowserTab, input: unknown): void {
+    if (this.closed || window.isDestroyed()) return;
+    const placement = input ? asRecord(input) : null;
+    const pending = typeof placement?.requestId === 'string' ? this.pendingApprovals.get(placement.requestId) : undefined;
+    const current = tab.permissionPrompt;
+    const view = tab.view;
+    /** 标签切换之后收到的旧布局不能重新展示原标签的请求。 */
+    const active = this.activeTabByConversation.get(tab.snapshot.conversationId) === tab.snapshot.id;
+    if (!active || !placement || !pending || pending.deciding || pending.request.tabId !== tab.snapshot.id || pending.request.conversationId !== tab.snapshot.conversationId || !view || view.webContents.isDestroyed()) {
+      this.closePermissionPrompt(tab);
+      return;
+    }
+    const anchor = normalizeBounds(placement.anchor);
+    const bounds = browserPermissionPromptBounds(window, view.getBounds(), anchor);
+    if (!bounds) {
+      this.closePermissionPrompt(tab);
+      return;
+    }
+    if (current?.requestId === pending.request.id && !current.popup.isDestroyed()) {
+      current.anchor = anchor;
+      current.popup.setBounds(bounds);
+      if (placement.focus === true && window.isFocused() && current.popup.isVisible()) current.popup.focus();
+      return;
+    }
+    this.closePermissionPrompt(tab);
+    const { id: requestId, permission, origin } = pending.request;
+    const popup = showBrowserPermissionPrompt({
+      parent: window,
+      page: view.webContents,
+      bounds,
+      preloadPath: this.options.preloadPath,
+      permission,
+      title: this.webPermissionTitle(permission, pending.media),
+      origin: origin || this.text('这个网页', 'This page'),
+      language: this.options.language?.() ?? 'zh-CN',
+      focus: placement.focus === true,
+      onDecision: (decision) => {
+        if (tab.permissionPrompt?.requestId === requestId) this.submitPermissionDecision(tab, pending, decision);
+      },
+    });
+    const prompt = { requestId, popup, anchor };
+    tab.permissionPrompt = prompt;
+    /** Windows 子窗口不会随父窗口移动，使用同一锚点计算坐标。 */
+    const realign = (): void => {
+      if (window.isDestroyed() || popup.isDestroyed() || view.webContents.isDestroyed()) return;
+      const next = browserPermissionPromptBounds(window, view.getBounds(), prompt.anchor);
+      if (next) popup.setBounds(next);
+      else this.closePermissionPrompt(tab);
+    };
+    window.on('move', realign);
+    popup.once('closed', () => {
+      window.off('move', realign);
+      if (tab.permissionPrompt === prompt) tab.permissionPrompt = undefined;
+    });
+  }
+
+  /** 隐藏或移除网页时只关闭弹层，决定由请求自身的生命周期处理。 */
+  private closePermissionPrompt(tab: LiveBrowserTab): void {
+    const prompt = tab.permissionPrompt;
+    tab.permissionPrompt = undefined;
+    if (prompt && !prompt.popup.isDestroyed()) prompt.popup.destroy();
+  }
+
+  /** 用户在原生弹层中提交决定，沿用网页授权的命令账本和请求身份。 */
+  private submitPermissionDecision(tab: LiveBrowserTab, pending: PendingApproval, decision: ZeusBrowserApprovalDecision): void {
+    const requestId = pending.request.id;
+    if (pending.deciding || this.pendingApprovals.get(requestId) !== pending) return;
+    pending.deciding = true;
+    const commandType = 'desktop.browser.respond_approval';
+    const envelope = {
+      ...createSystemMainCommandEnvelope(commandType, requestId),
+      scope: { kind: 'approval' as const, id: requestId },
+      payload: { transport: 'electron-browser-permission-prompt' },
+    };
+    void this.options
+      .mainCommandLedger()
+      .execute({ envelope, body: { requestId, decision } }, commandType, async (_input, command) => {
+        await command.markWriteStarted();
+        const result = this.respondToApproval(requestId, decision);
+        await this.flushPersistence();
+        return result;
+      })
+      .catch((error) => {
+        this.respondToApproval(requestId, 'deny');
+        this.emitError(tab, error);
+      });
+  }
+
+  /** 标签关闭或换页时结束旧文档的权限请求。 */
+  private cancelTabPermissions(tabId: string): void {
+    for (const { request } of this.pendingApprovals.values()) {
+      if (request.tabId === tabId) this.respondToApproval(request.id, 'deny');
+    }
+  }
+
   /** 仅处理网页自身申请的设备等权限，不接收 AI 操作授权。 */
-  private requestApproval(input: Omit<ZeusBrowserApprovalRequest, 'id' | 'createdAt'>): Promise<ZeusBrowserApprovalDecision> {
+  private requestApproval(input: Omit<ZeusBrowserApprovalRequest, 'id' | 'createdAt'>, media: readonly string[]): Promise<ZeusBrowserApprovalDecision> {
     const request: ZeusBrowserApprovalRequest = {
       ...input,
       id: `browser-approval-${randomUUID()}`,
       createdAt: this.now(),
     };
     return new Promise((resolveDecision) => {
-      const timer = setTimeout(() => {
-        this.pendingApprovals.delete(request.id);
-        this.emitSnapshot(request.conversationId);
-        resolveDecision('deny');
-      }, approvalTimeoutMs);
+      const timer = setTimeout(() => this.respondToApproval(request.id, 'deny'), approvalTimeoutMs);
       timer.unref();
-      this.pendingApprovals.set(request.id, { request, resolve: resolveDecision, timer });
+      this.pendingApprovals.set(request.id, { request, media, resolve: resolveDecision, timer });
       this.emitSnapshot(request.conversationId);
-      this.emitOpenRequested(request.conversationId);
     });
   }
 
@@ -1982,6 +2109,8 @@ export class BrowserHost implements BrowserAutomationPort {
     if (!pending) return { resolved: false };
     clearTimeout(pending.timer);
     this.pendingApprovals.delete(requestId);
+    const tab = pending.request.tabId ? this.tabs.get(pending.request.tabId) : undefined;
+    if (tab?.permissionPrompt?.requestId === requestId) this.closePermissionPrompt(tab);
     pending.resolve(decision);
     this.schedulePersist();
     this.emitSnapshot(pending.request.conversationId);
@@ -3222,6 +3351,7 @@ export class BrowserHost implements BrowserAutomationPort {
     this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((download) => this.downloadItems.has(download.id)));
     for (const tab of this.tabs.values()) {
       if (tab.view && !tab.view.webContents.isDestroyed()) {
+        this.closePermissionPrompt(tab);
         await tab.view.webContents.loadURL('about:blank');
         tab.view.webContents.navigationHistory.clear();
       }
@@ -3361,11 +3491,6 @@ function normalizeBounds(value: unknown): Rectangle {
   const width = Math.max(1, Math.round(finiteNumber(record.width, 1)));
   const height = Math.max(1, Math.round(finiteNumber(record.height, 1)));
   return { x, y, width, height };
-}
-
-function normalizeApprovalDecision(value: unknown): ZeusBrowserApprovalDecision {
-  if (value === 'allow_once' || value === 'deny') return value;
-  throw new TypeError('Browser approval decision is invalid.');
 }
 
 function normalizeSettings(value: unknown, fallback: ZeusBrowserSettings): ZeusBrowserSettings {

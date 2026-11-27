@@ -25,14 +25,30 @@ function invokeBrowserPageCommand(commandType: string, body: unknown, channel = 
   return ipcRenderer.invoke(channel, Object.freeze({ envelope, body }));
 }
 
-/** 密码弹层复用沙箱 preload，只在宿主创建的本地文档中安装选择接口。 */
-const isPasswordPicker = process.isMainFrame && location.protocol === 'data:' && process.argv.includes('--zeus-browser-password-picker');
-if (isPasswordPicker) {
-  contextBridge.exposeInMainWorld('zeusPasswordPicker', {
-    /** 回传候选序号，关闭弹层时回传空选择。 */
-    choose: (index: number | null) => ipcRenderer.send('zeus:browser-password-picker:choose', index),
+/** 原生弹层复用沙箱 preload，只在宿主创建的本地文档中安装选择接口。 */
+const isBrowserPrompt = process.isMainFrame && location.protocol === 'data:' && process.argv.includes('--zeus-browser-prompt');
+if (isBrowserPrompt) {
+  contextBridge.exposeInMainWorld('zeusBrowserPrompt', {
+    /** 回传选择序号，关闭弹层时回传空选择。 */
+    choose: (index: number | null) => ipcRenderer.send('zeus:browser-prompt:choose', index),
   });
 } else {
+  /** Electron 的会话设置只修改请求头。页面及各 frame 同步读取相同的首选语言。 */
+  const languages = ipcRenderer.sendSync('zeus:browser-page:languages') as string[] | null;
+  if (languages) {
+    contextBridge.executeInMainWorld({
+      /** 在网页脚本开始前安装当前文档的语言偏好，刷新时重新读取。 */
+      func: (values: string[]) => {
+        /** 与 Navigator.languages 一致，网页可读取但无法修改偏好列表。 */
+        const preferred = Object.freeze(values);
+        Object.defineProperties(navigator, {
+          language: { configurable: true, get: () => preferred[0] },
+          languages: { configurable: true, get: () => preferred },
+        });
+      },
+      args: [languages],
+    });
+  }
   installBrowserPasswordAutofill((documentId) => invokeBrowserPageCommand('desktop.browser.autofill', { documentId }, 'zeus:browser-page:show-passwords'));
 }
 
@@ -891,7 +907,7 @@ function handleBrowserPageCommand(_event: unknown, message: unknown): void {
   }
 }
 
-if (process.isMainFrame && !isPasswordPicker) {
+if (process.isMainFrame && !isBrowserPrompt) {
   window.addEventListener('pagehide', () => pageTranslation.stop(), { once: true });
   ipcRenderer.on('zeus-browser-page:command', handleBrowserPageCommand);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });

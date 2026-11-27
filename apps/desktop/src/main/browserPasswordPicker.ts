@@ -1,5 +1,6 @@
-import { BrowserWindow, nativeTheme, screen, type WebContentsView } from 'electron';
+import { screen, type BrowserWindow, type WebContentsView } from 'electron';
 import type { BrowserPasswordFrameProbe } from '../preload/browserPasswordFrame.js';
+import { createBrowserPromptWindow } from './browserPromptWindow.js';
 
 /** 候选弹层只接收来源和账号标签，密码由宿主在选中后读取。 */
 interface BrowserPasswordPickerOptions {
@@ -50,37 +51,8 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
   const below = anchorY + 6;
   const above = anchor ? viewY + Math.round(anchor.y * zoom) - height - 6 : below;
   const y = Math.max(top, Math.min(below + height <= bottom || above < top ? below : above, bottom - height));
-  /** 独立的沙箱窗口在网页上方展示，网页不能读候选列表或提交选择。 */
-  const picker = new BrowserWindow({
-    parent,
-    x,
-    y,
-    width,
-    height,
-    show: false,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    focusable: !automatic,
-    acceptFirstMouse: true,
-    skipTaskbar: true,
-    title: options.title,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#242529' : '#ffffff',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      devTools: false,
-      preload: options.preloadPath,
-      additionalArguments: ['--zeus-browser-password-picker'],
-    },
-  });
+  const picker = createBrowserPromptWindow(parent, { x, y, width, height }, options.title, options.preloadPath, !automatic);
   const contents = picker.webContents;
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  contents.on('will-navigate', (event) => event.preventDefault());
   /** 页面只渲染候选标签，选择通过当前窗口的 IPC 返回。 */
   const html = browserPasswordPickerHtml(options);
   return new Promise((resolve) => {
@@ -124,7 +96,7 @@ export function showBrowserPasswordPicker(options: BrowserPasswordPickerOptions)
     }
     picker.once('blur', close);
     picker.once('closed', close);
-    contents.ipc.on('zeus:browser-password-picker:choose', (event, index: unknown) => {
+    contents.ipc.on('zeus:browser-prompt:choose', (event, index: unknown) => {
       if (event.senderFrame !== contents.mainFrame) return;
       if (index === null) {
         close();
@@ -189,13 +161,13 @@ function browserPasswordPickerHtml({ title, origin, labels, emptyLabel, closeLab
   const list = document.getElementById('accounts');
   const close = document.getElementById('close');
   close.setAttribute('aria-label', data.closeLabel);
-  close.onclick = () => window.zeusPasswordPicker.choose(null);
+  close.onclick = () => window.zeusBrowserPrompt.choose(null);
   const choices = data.labels.map((label, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'account';
     button.textContent = label;
-    button.onclick = () => window.zeusPasswordPicker.choose(index);
+    button.onclick = () => window.zeusBrowserPrompt.choose(index);
     list.append(button);
     return button;
   });

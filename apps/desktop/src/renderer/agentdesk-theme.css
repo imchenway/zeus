@@ -285,19 +285,7 @@
 }
 
 .macos-ai-app.zeus-shell
-  :where(
-    .task-board-card,
-    .session-resource-card,
-    .session-quick-actions-card,
-    .session-turn-change-card,
-    .browser-approval-card,
-    .git-review-workbench,
-    .project-settings-card,
-    .model-definition-card,
-    .im-connection-card,
-    .codex-usage-section,
-    .memory-record
-  ) {
+  :where(.task-board-card, .session-resource-card, .session-quick-actions-card, .session-turn-change-card, .git-review-workbench, .project-settings-card, .model-definition-card, .im-connection-card, .codex-usage-section, .memory-record) {
   border-radius: var(--agentdesk-radius-card);
 }
 
@@ -889,7 +877,6 @@ body:has(.macos-ai-app.zeus-shell) {
     .im-connection-card,
     .task-board-card,
     .session-resource-card,
-    .browser-approval-card,
     .session-goal-panel
   ) {
   background: var(--zeus-card-background) !important;
