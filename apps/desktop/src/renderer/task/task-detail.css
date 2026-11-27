@@ -221,6 +221,12 @@
   padding: 28px;
 }
 
+/* 正文的加载占位独占一行，光扫以占位本身为边界。 */
+.macos-ai-app .task-detail-body > .task-detail-block > .resource-loading {
+  position: relative;
+  min-block-size: 32px;
+}
+
 .macos-ai-app .task-detail-overview {
   display: grid;
   gap: 24px;
