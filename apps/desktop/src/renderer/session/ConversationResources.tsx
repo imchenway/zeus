@@ -16,6 +16,7 @@ import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { fileIconForKind } from '../code/FileTypeIcon.js';
+import { materialFileIconUrl } from '../code/materialFileIcon.js';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
 import { filePreviewKind, filePreviewMime, userFacingErrorCause } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
@@ -317,7 +318,7 @@ export function ConversationInlineResource(
         data-error={Boolean(error) || undefined}
         onClick={() => open()}
       >
-        <ResourceIcon resource={props.resource} />
+        <ResourceIcon resource={props.resource} inline />
         {props.resource.kind === 'file' ? '\u00a0' : null}
         <span>{label}</span>
         {location ? (
@@ -975,13 +976,18 @@ function isWebPageResource(resource: ConversationResource): boolean {
   return resource.kind === 'website' ? !resource.url.startsWith('mailto:') : resource.kind === 'file' && resource.iconKind === 'html';
 }
 
-export function ResourceIcon(props: { resource: ConversationResource }) {
+/** 根据展示位置选择文件图标，网页继续使用站点标识。 */
+export function ResourceIcon(props: { resource: ConversationResource; inline?: boolean }) {
+  if (props.inline && props.resource.kind === 'file') {
+    return <img className="session-inline-file-icon" src={materialFileIconUrl(props.resource.projectRelativePath)} alt="" width={14} height={14} draggable={false} />;
+  }
   if (props.resource.kind === 'file' && props.resource.presentation === 'card' && props.resource.iconKind === 'html') {
     return <GlobeSimple aria-hidden="true" weight="regular" />;
   }
   if (props.resource.kind === 'website') {
     return props.resource.domain.toLocaleLowerCase().replace(/^www\./u, '') === 'github.com' ? <GithubLogo aria-hidden="true" weight="regular" /> : <GlobeSimple aria-hidden="true" weight="regular" />;
   }
+  /** 资源卡和附件使用对应的 Phosphor 图标。 */
   const Icon = fileIconForKind(props.resource.iconKind);
   return <Icon aria-hidden="true" weight="regular" />;
 }

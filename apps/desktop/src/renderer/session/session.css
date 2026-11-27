@@ -8564,7 +8564,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 /* 文件图标与首行文字垂直居中，长文件名仍按行内文本换行。 */
-.session-codex-parity-v1 .session-inline-resource-shell[data-resource-kind='file'] > button.session-inline-resource > svg {
+.session-codex-parity-v1 .session-inline-resource-shell[data-resource-kind='file'] > button.session-inline-resource > :is(svg, .session-inline-file-icon) {
   display: inline-block;
   vertical-align: middle;
 }
