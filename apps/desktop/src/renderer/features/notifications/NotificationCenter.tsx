@@ -5,6 +5,7 @@ import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { formatZeusDateTime, formatTaskDeadline, type AutomationNotificationStatus, type CommandRunNotification } from '@zeus/shared';
 import type { NotificationsModel } from './useNotifications.js';
 import { Button } from '../../ui/Button.js';
+import { ZeusSelect } from '../../ZeusSelect.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import './notifications.css';
 
@@ -24,14 +25,19 @@ const notificationDescriptions: Record<AutomationNotificationStatus | CommandRun
 export function NotificationCenter({
   model,
   language,
+  projects,
 }: {
   /** 工作台持有统一通知和导航回执。 */
   model: NotificationsModel;
   /** 文案与应用语言一致。 */
   language: 'zh-CN' | 'en-US';
+  /** 用项目名称解释各待处理项的归属。 */
+  projects: readonly { id: string; name: string }[];
 }) {
   /** 当前文案语言。 */
   const zh = language === 'zh-CN';
+  /** 已读按钮只出现在未读视图，待处理视图按业务状态更新。 */
+  const pending = model.filter.view === 'pending';
   /** 同一工作台的弹层身份保持稳定。 */
   const id = useId();
   /** 弹层开关用于可访问属性与定位。 */
@@ -127,7 +133,7 @@ export function NotificationCenter({
             >
               <header className="automation-notification-header">
                 <strong>{zh ? '通知' : 'Notifications'}</strong>
-                {model.unreadCount > 0 ? (
+                {!pending && model.unreadCount > 0 ? (
                   <div className="automation-notification-header-actions">
                     <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
                     <Button size="compact" disabled={Boolean(model.busyId)} busy={model.busyId === 'all'} onClick={() => model.markAllRead()}>
@@ -136,6 +142,25 @@ export function NotificationCenter({
                   </div>
                 ) : null}
               </header>
+              <div className="automation-notification-filters">
+                <div className="automation-notification-views" role="group" aria-label={zh ? '通知视图' : 'Notification view'}>
+                  <Button type="button" size="compact" variant={pending ? 'secondary' : 'primary'} aria-pressed={!pending} onClick={() => model.changeFilter({})}>
+                    {zh ? '未读' : 'Unread'}
+                  </Button>
+                  <Button type="button" size="compact" variant={pending ? 'primary' : 'secondary'} aria-pressed={pending} onClick={() => model.changeFilter({ view: 'pending' })}>
+                    {zh ? '待处理' : 'Needs attention'}
+                  </Button>
+                </div>
+                {pending && projects.length > 0 ? (
+                  <ZeusSelect
+                    size="compact"
+                    ariaLabel={zh ? '按项目筛选' : 'Filter by project'}
+                    value={model.filter.projectId ?? ''}
+                    options={[{ value: '', label: zh ? '全部项目' : 'All projects' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]}
+                    onChange={(projectId) => model.changeFilter({ view: 'pending', ...(projectId ? { projectId } : {}) })}
+                  />
+                ) : null}
+              </div>
               {model.loadError || model.actionError ? (
                 <div className="automation-notification-error" role="alert">
                   <p>{model.actionError ?? model.loadError}</p>
@@ -154,7 +179,7 @@ export function NotificationCenter({
                 ) : null}
                 {model.loaded && !model.loading && !model.items.length && !model.loadError ? (
                   <p className="automation-notification-empty" role="status">
-                    {zh ? '暂无未读通知' : 'No unread notifications'}
+                    {pending ? (zh ? '暂无待处理事项' : 'Nothing needs attention') : zh ? '暂无未读通知' : 'No unread notifications'}
                   </p>
                 ) : null}
                 <ul>
@@ -163,6 +188,8 @@ export function NotificationCenter({
                     const key = `${item.source}:${item.id}`;
                     /** 标题沿用原对象名称，不展示技术来源分类。 */
                     const title = item.source !== 'automation' ? item.title : item.automationName;
+                    /** 未读列表沿用原标题，待处理项显示来源项目供跨项目区分。 */
+                    const project = pending ? projects.find((entry) => entry.id === item.projectId) : undefined;
                     /** 描述说明截止时间或执行结果，具体异常优先展示原有完整说明组件。 */
                     const description =
                       item.source === 'git_delivery'
@@ -196,27 +223,32 @@ export function NotificationCenter({
                                 });
                               }}
                             >
-                              <strong>{title}</strong>
+                              <strong>{project ? `${project.name} · ${title}` : title}</strong>
+                              {pending ? <span className="automation-notification-action-label">{item.source === 'git_delivery' ? (zh ? '处理' : 'Resolve') : zh ? '查看' : 'Open'}</span> : null}
                             </Button>
                           ) : (
                             <div className="automation-notification-summary">
                               <strong data-icon-tooltip={title}>{title}</strong>
                             </div>
                           )}
-                          <time className="automation-notification-time" dateTime={item.occurredAt}>
-                            {formatZeusDateTime(item.occurredAt, language, { dateStyle: 'short', timeStyle: 'short' })}
-                          </time>
-                          <Button
-                            size="compact"
-                            className="automation-notification-read"
-                            disabled={Boolean(model.busyId)}
-                            busy={model.busyId === key}
-                            aria-label={zh ? `将“${title}”标为已读` : `Mark “${title}” as read`}
-                            data-icon-tooltip={zh ? '标为已读' : 'Mark as read'}
-                            onClick={() => model.markRead(item)}
-                          >
-                            <CheckIcon size={16} aria-hidden="true" />
-                          </Button>
+                          {!pending ? (
+                            <time className="automation-notification-time" dateTime={item.occurredAt}>
+                              {formatZeusDateTime(item.occurredAt, language, { dateStyle: 'short', timeStyle: 'short' })}
+                            </time>
+                          ) : null}
+                          {!pending ? (
+                            <Button
+                              size="compact"
+                              className="automation-notification-read"
+                              disabled={Boolean(model.busyId)}
+                              busy={model.busyId === key}
+                              aria-label={zh ? `将“${title}”标为已读` : `Mark “${title}” as read`}
+                              data-icon-tooltip={zh ? '标为已读' : 'Mark as read'}
+                              onClick={() => model.markRead(item)}
+                            >
+                              <CheckIcon size={16} aria-hidden="true" />
+                            </Button>
+                          ) : null}
                         </div>
                         <p className="automation-notification-description">
                           {item.source === 'automation' && item.errorMessage ? <VisibleApplicationError error={{ code: item.errorCode, message: item.errorMessage }} language={zh ? 'zh-CN' : 'en'} /> : description}

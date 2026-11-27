@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AutomationNotification, CommandRun, CommandRunNotification, NotificationItem, TaskReminder } from '@zeus/shared';
+import type { AutomationNotification, CommandRun, CommandRunNotification, NotificationItem, NotificationListFilter, TaskReminder } from '@zeus/shared';
 import type { DashboardClient } from '../../apiClient.js';
 import type { WorkspacePageProps } from '../workspace/workspaceContracts.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -57,6 +57,10 @@ export function useNotifications(input: {
   const [pendingRead, setPendingRead] = useState<NotificationItem | null>(null);
   /** 旧查询响应不能覆盖后来的实时刷新或客户端切换。 */
   const queryRevision = useRef(0);
+  /** 视图变化先同步更新查询范围，已排队的事件刷新仍读取当前视图。 */
+  const filterRef = useRef<NotificationListFilter>({});
+  /** 用户当前选中的视图及项目。 */
+  const [filter, setFilter] = useState<NotificationListFilter>({});
   /** 同步锁在 React 重渲染前也能阻止重复请求。 */
   const actionInFlight = useRef(false);
   /** 正文回执可能连续渲染，确认写入只提交一次。 */
@@ -72,7 +76,7 @@ export function useNotifications(input: {
       setLoadError(null);
       try {
         /** 数据库投影在接口内补齐，Renderer 不从事件猜测未读数量。 */
-        const page = await client.loadNotifications(cursor);
+        const page = await client.loadNotifications(cursor, filterRef.current);
         if (queryRevision.current !== revision) return;
         setItems((current) => (cursor ? [...new Map([...current, ...page.items].map((item) => [`${item.source}:${item.id}`, item])).values()] : page.items));
         setUnreadCount(page.unreadCount);
@@ -180,6 +184,17 @@ export function useNotifications(input: {
     actionError,
     busyId,
     refresh,
+    filter,
+    /** 切换视图时清空旧分页，保留全局未读数。 */
+    changeFilter(next: NotificationListFilter): void {
+      if (next.view === filterRef.current.view && next.projectId === filterRef.current.projectId) return;
+      filterRef.current = next;
+      setFilter(next);
+      setItems([]);
+      setNextCursor(null);
+      setLoaded(false);
+      void refresh();
+    },
     /** 全部已读覆盖服务端全部分页，写入成功后再刷新，失败时保留现有通知。 */
     async markAllRead(): Promise<void> {
       if (actionInFlight.current || !client) return;

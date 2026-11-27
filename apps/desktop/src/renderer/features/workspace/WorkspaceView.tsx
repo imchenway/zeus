@@ -1163,7 +1163,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       {!upstreamMainLayout && projectWorkspaceNavigationVisible ? <div className="project-workspace-status-bar" data-workspace-tool-slot="bottom" aria-hidden="true" /> : null}
       {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
-          notificationCenter={<NotificationCenter model={notifications} language={appShellSettings.appLanguage} />}
+          notificationCenter={<NotificationCenter model={notifications} language={appShellSettings.appLanguage} projects={snapshot.projects} />}
           headerSearch={sessionTopbar ? workspaceSearchTrigger : undefined}
           mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}

@@ -4276,6 +4276,22 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
+/* 首次会话的连接入口与标题同行，窄窗口让状态自然换行。 */
+.session-codex-parity-v1 .session-thread-title-copy.session-new-conversation-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+/* 顶栏默认让指针穿透，连接模型按钮需要接收点击。 */
+.session-new-conversation-title > button {
+  pointer-events: auto;
+}
+.session-new-conversation-title > [role='status'] {
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+}
+
 /* 宽屏并排展示标题和统计，分栏或窄窗口时在同一标题区自然换行。 */
 .session-codex-parity-v1 .session-thread-title-copy.session-thread-title-overview {
   display: flex;
@@ -13825,20 +13841,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
       transform: none;
     }
   }
-}
-
-/* 接入模型是文字操作，按钮与承载槽一起按内容取宽，避免沿用图标槽造成横向溢出。 */
-.session-codex-parity-v1 .session-primary-command-slot:has(> .session-send-button.is-model-setup) {
-  inline-size: auto;
-  flex: 0 0 auto;
-}
-.session-codex-parity-v1 .session-send-button.is-model-setup {
-  inline-size: auto;
-  min-inline-size: 88px;
-  padding-inline: 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 /* 评论正文直接呈现，只有截图需要展开；布局与回答评论一致。 */

@@ -350,13 +350,17 @@ export class GitDeliveryRepository {
   }
 
   /** 摘要按全局边界限量读取，不加载运行输入或步骤；总数独立统计。 */
-  notifications(before?: NotificationPosition): { items: GitDeliveryNotification[]; unreadCount: number } {
+  notifications(before?: NotificationPosition, pending?: { projectId?: string }): { items: GitDeliveryNotification[]; unreadCount: number } {
     /** 多读一条供统一列表判断下一页。 */
     const unreadWhere = "state IN ('succeeded','attention') AND read_at IS NULL";
+    /** 已读只是回执，仍需处理的交付以运行状态为准。 */
+    const where = pending ? "state = 'attention' AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)" : unreadWhere;
+    /** 项目筛选在分页前执行。 */
+    const projectFilter = pending?.projectId ? ' AND project_id = ?' : '';
     /** 时间相同时继续比较来源和身份，与统一列表排序一致。 */
     const boundary = before ? " AND (updated_at < ? OR (updated_at = ? AND ('git_delivery' < ? OR ('git_delivery' = ? AND id < ?))))" : '';
     /** 客户端游标仅通过绑定参数进入查询。 */
-    const params: SqlValue[] = before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [];
+    const params: SqlValue[] = [...(pending?.projectId ? [pending.projectId] : []), ...(before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [])];
     /** 入口身份直接来自运行列，不解析完整授权输入。 */
     const rows = this.db.select<
       Omit<GitDeliveryNotification, 'scope' | 'title'> & {
@@ -366,7 +370,7 @@ export class GitDeliveryRepository {
         scopeId: string;
       }
     >(
-      `SELECT id, project_id AS projectId, scope_kind AS scopeKind, scope_id AS scopeId, state AS status, updated_at AS occurredAt, notification_revision AS revision FROM git_delivery_runs WHERE ${unreadWhere}${boundary} ORDER BY updated_at DESC, id DESC LIMIT 21`,
+      `SELECT id, project_id AS projectId, scope_kind AS scopeKind, scope_id AS scopeId, state AS status, updated_at AS occurredAt, notification_revision AS revision FROM git_delivery_runs WHERE ${where}${projectFilter}${boundary} ORDER BY updated_at DESC, id DESC LIMIT 21`,
       params,
     );
     return {

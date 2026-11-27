@@ -4383,7 +4383,7 @@ export function NewConversationComposer(props: {
   );
   const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
   const selectedModelLabel = modelPresentation.triggerLabel;
-  /** 空目录和未登录的订阅目录均允许点击发送进入接入引导。 */
+  /** 空目录和未登录的订阅目录都需要先连接模型。 */
   const needsModelSetup = Boolean(activeCapabilities && !hasAvailableConversationModel(activeCapabilities));
   const goalAvailable = Boolean(selectedModel?.features?.goals.state === 'available' || (!selectedModel?.features && activeCapabilities?.goals?.supported && activeCapabilities?.goals?.enabled));
   const goalInputActive = goalInputOpen && goalAvailable;
@@ -4445,6 +4445,37 @@ export function NewConversationComposer(props: {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  /** 从新对话标题连接模型，刷新当前项目的草稿后把焦点还给输入框。 */
+  function connectDraftModel(): void {
+    if (!props.owner || !needsModelSetup) return;
+    setLocalError(null);
+    modelSetupRequestRef.current?.abort();
+    /** 接入回调仅作用于打开时的项目和草稿。 */
+    const request = new AbortController();
+    modelSetupRequestRef.current = request;
+    const conversationContext: ConversationModelSetupContext = {
+      projectId: props.owner.projectId,
+      signal: request.signal,
+      loadModels: async () => {
+        const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
+        if (!refreshed) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+        return refreshed.models;
+      },
+      onComplete: async (reference) => {
+        const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
+        if (request.signal.aborted) return;
+        const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
+        if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+        setCapabilities(refreshed);
+        recoverDraftOperation('model_capabilities');
+        if (resolveModelCapability(refreshed.models, selectedModelId)?.id === model.id) setSelectedModelId(model.id);
+        else changeNewConversationModel(model.id, refreshed.models);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      },
+    };
+    window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { conversationContext } }));
+  }
+
   /** 创建会话时，目标模式以同一段草稿作为首条消息和目标。 */
   async function submit(goalDraft = goalInputActive ? content : undefined): Promise<void> {
     // 键盘提交也需等待导入完成，避免附件落回已发送的草稿。
@@ -4461,9 +4492,10 @@ export function NewConversationComposer(props: {
       executionContextBusy ||
       modelCapabilitiesPending ||
       runtimeProjectId !== props.owner.projectId ||
-      (!selectedModel && !needsModelSetup) ||
-      (selectedModel && !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) ||
-      (!needsModelSetup && !submittedContent.trim() && attachments.length === 0 && !browserDraft.submission) ||
+      needsModelSetup ||
+      !selectedModel ||
+      !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity) ||
+      (!submittedContent.trim() && attachments.length === 0 && !browserDraft.submission) ||
       (goalDraft !== undefined && (!submittedGoal || [...submittedGoal].length > 4_000))
     )
       return;
@@ -4473,37 +4505,6 @@ export function NewConversationComposer(props: {
       return;
     }
     setOfflineSubmission(null);
-    if (needsModelSetup) {
-      setLocalError(null);
-      modelSetupRequestRef.current?.abort();
-      /** 同一次接入只刷新此项目和此草稿，不自动创建会话或发送消息。 */
-      const request = new AbortController();
-      modelSetupRequestRef.current = request;
-      /** 接入目录和完成回调始终使用打开弹窗时的项目。 */
-      const conversationContext: ConversationModelSetupContext = {
-        projectId: props.owner.projectId,
-        signal: request.signal,
-        loadModels: async () => {
-          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
-          if (!refreshed) throw new Error('ZEUS_MODEL_UNAVAILABLE');
-          return refreshed.models;
-        },
-        onComplete: async (reference) => {
-          /** 读取最新目录；失败保留引导和全部草稿内容。 */
-          const refreshed = await props.onLoadCapabilities?.(conversationContext.projectId, true);
-          if (request.signal.aborted) return;
-          /** 订阅登录优先选用可用的订阅模型，自定义接入遵循用户明确选择。 */
-          const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
-          if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
-          setCapabilities(refreshed);
-          recoverDraftOperation('model_capabilities');
-          if (resolveModelCapability(refreshed.models, selectedModelId)?.id === model.id) setSelectedModelId(model.id);
-          else changeNewConversationModel(model.id, refreshed.models);
-        },
-      };
-      window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { conversationContext } }));
-      return;
-    }
     if (submittedGoal && structured.expertMentions.length > 0) {
       setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
       return;
@@ -4927,8 +4928,8 @@ export function NewConversationComposer(props: {
               <Button
                 unstyled
                 type="button"
-                className={needsModelSetup ? 'session-send-button is-model-setup' : 'session-send-button'}
-                aria-label={needsModelSetup ? (props.language === 'zh-CN' ? '配置模型' : 'Set up model') : goalInputActive ? copy.createGoal : copy.send}
+                className="session-send-button"
+                aria-label={goalInputActive ? copy.createGoal : copy.send}
                 onClick={() => submit()}
                 disabled={
                   submitting ||
@@ -4937,13 +4938,14 @@ export function NewConversationComposer(props: {
                   inputResources.processing ||
                   !props.owner ||
                   runtimeProjectId !== props.owner.projectId ||
-                  (!selectedModel && !needsModelSetup) ||
+                  needsModelSetup ||
+                  !selectedModel ||
                   Boolean(selectedModel && !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) ||
-                  (!needsModelSetup && (goalInputActive ? !goalDraftValid : !content.trim() && attachments.length === 0 && !browserDraft.submission))
+                  (goalInputActive ? !goalDraftValid : !content.trim() && attachments.length === 0 && !browserDraft.submission)
                 }
                 aria-busy={submitting || undefined}
               >
-                {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : needsModelSetup ? <span>{props.language === 'zh-CN' ? '配置模型' : 'Set up model'}</span> : <ArrowUp aria-hidden="true" weight="bold" />}
+                {submitting ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
               </Button>
             </span>
           </span>
@@ -4973,8 +4975,16 @@ export function NewConversationComposer(props: {
       }}
     >
       <header className="session-thread-header" data-context-toolbar={browserPresent || undefined}>
-        <div className="session-thread-title-copy" inert={browserCoversConversation}>
+        <div className="session-thread-title-copy session-new-conversation-title" inert={browserCoversConversation}>
           <strong>{props.language === 'zh-CN' ? '新对话' : 'New conversation'}</strong>
+          {needsModelSetup ? (
+            <>
+              <span role="status">{props.language === 'zh-CN' ? '模型未连接' : 'No model connected'}</span>
+              <Button type="button" variant="primary" size="compact" onClick={connectDraftModel}>
+                {props.language === 'zh-CN' ? '连接模型' : 'Connect model'}
+              </Button>
+            </>
+          ) : null}
         </div>
         <div className="session-context-header-tools">
           <div className="session-thread-header-actions">

@@ -521,15 +521,29 @@ export class CommandRunRepository {
   }
 
   /** 与统一通知采用相同全局边界；多读一条以判断下一页，计数覆盖全部未读。 */
-  notifications(before?: NotificationPosition): { items: CommandRunNotification[]; unreadCount: number } {
+  notifications(before?: NotificationPosition, pending?: { projectId?: string }): { items: CommandRunNotification[]; unreadCount: number } {
     /** 已删除项目的结果不再出现在可导航列表中。 */
-    const unreadWhere = "notification_unread = 1 AND ended_at IS NOT NULL AND status IN ('succeeded', 'failed', 'timed_out', 'cancelled') AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)";
+    const visibleWhere = 'ended_at IS NOT NULL AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)';
+    /** 未读数独立于待处理视图及项目筛选。 */
+    const unreadWhere = `${visibleWhere} AND notification_unread = 1 AND status IN ('succeeded', 'failed', 'timed_out', 'cancelled')`;
+    /** 同一项目、命令、执行目录及参数的最新有效结果决定失败是否仍待处理。 */
+    const where = pending
+      ? `${visibleWhere} AND status IN ('failed', 'timed_out') AND NOT EXISTS (
+           SELECT 1 FROM command_runs AS later
+           WHERE later.project_id = command_runs.project_id AND later.command_id = command_runs.command_id
+             AND later.cwd = command_runs.cwd AND later.parameter_snapshot_json = command_runs.parameter_snapshot_json
+             AND later.ended_at IS NOT NULL AND later.status IN ('succeeded', 'failed', 'timed_out')
+             AND (later.created_at, later.id) > (command_runs.created_at, command_runs.id)
+         )`
+      : unreadWhere;
+    /** 项目筛选在分页前执行。 */
+    const projectFilter = pending?.projectId ? ' AND project_id = ?' : '';
     /** 相同时间时先比较来源，再比较原执行身份，保持跨来源分页稳定。 */
     const boundary = before ? " AND (ended_at < ? OR (ended_at = ? AND ('command' < ? OR ('command' = ? AND id < ?))))" : '';
     /** 所有边界值均使用绑定参数，不拼接外部输入。 */
-    const params: SqlValue[] = before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [];
+    const params: SqlValue[] = [...(pending?.projectId ? [pending.projectId] : []), ...(before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [])];
     return {
-      items: this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE ${unreadWhere}${boundary} ORDER BY ended_at DESC, id DESC LIMIT 21`, params).map((row) => {
+      items: this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE ${where}${projectFilter}${boundary} ORDER BY ended_at DESC, id DESC LIMIT 21`, params).map((row) => {
         /** 仅提取可展示摘要，状态和结束时间由查询条件保证。 */
         const run = mapCommandRunRow(row);
         return { id: run.id, projectId: run.projectId, title: run.commandSnapshot.title, status: run.status as CommandRunNotification['status'], occurredAt: run.endedAt! };

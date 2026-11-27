@@ -26,13 +26,21 @@ export type NotificationItem =
 /** 统一分页使用全局边界，不依赖上一条通知仍存在或仍未读。 */
 export type NotificationPosition = Pick<NotificationItem, 'occurredAt' | 'source' | 'id'>;
 
-/** 统一列表一次返回完整未读数和下一页位置。 */
+/** 待处理视图按业务状态和项目读取，默认视图仍按未读回执读取。 */
+export interface NotificationListFilter {
+  /** 缺省为未读列表。 */
+  view?: 'pending';
+  /** 待处理视图中的项目身份，缺省为全部项目。 */
+  projectId?: string;
+}
+
+/** 统一列表每页保留全局未读数和当前视图的下一页位置。 */
 export interface NotificationPage {
-  /** 本页按全局顺序排列的未读记录。 */
+  /** 本页按全局顺序排列的通知。 */
   items: NotificationItem[];
   /** 全部来源的有效未读数。 */
   unreadCount: number;
-  /** 没有更多未读记录时为空。 */
+  /** 当前视图没有更多记录时为空。 */
   nextCursor: string | null;
 }
 

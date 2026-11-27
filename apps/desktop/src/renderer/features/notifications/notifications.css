@@ -109,6 +109,24 @@
   color: var(--zeus-product-muted);
   font-size: 12px;
 }
+/* 项目筛选和视图按钮在窄弹层中自然换行。 */
+.automation-notification-filters,
+.automation-notification-views {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.automation-notification-filters {
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--zeus-product-line-soft);
+}
+.automation-notification-action-label {
+  margin-inline-start: auto;
+  color: var(--zeus-brand-primary);
+  flex: 0 0 auto;
+}
 .automation-notification-list {
   min-height: 0;
   overflow-y: auto;

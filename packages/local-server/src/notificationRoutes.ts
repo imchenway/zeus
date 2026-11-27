@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { compareNotificationPositions, type NotificationItem, type NotificationPage, type NotificationPosition } from '@zeus/shared';
+import { compareNotificationPositions, type NotificationItem, type NotificationListFilter, type NotificationPage, type NotificationPosition } from '@zeus/shared';
 import type { ZeusDatabasePort, GitDeliveryRepository } from '@zeus/storage';
 import { CommandRunRepository } from '@zeus/storage';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -39,23 +39,28 @@ export function registerNotificationRoutes(options: {
     return reply.code(statusCode).send({ error: code, message });
   };
 
-  options.server.get('/api/notifications', async (request: FastifyRequest<{ Querystring: { cursor?: string } }>, reply) => {
+  options.server.get('/api/notifications', async (request: FastifyRequest<{ Querystring: NotificationListFilter & { cursor?: string } }>, reply) => {
     try {
+      const { view, projectId } = request.query;
+      if ((view !== undefined && view !== 'pending') || (projectId !== undefined && (view !== 'pending' || typeof projectId !== 'string' || !projectId || projectId.length > 512)))
+        return reply.code(400).send({ error: 'ZEUS_NOTIFICATION_FILTER_INVALID', message: '通知筛选条件无效。' });
+      /** 待处理查询不使用未读回执，原未读总数仍返回给铃铛。 */
+      const pending = view === 'pending' ? { projectId } : undefined;
       /** 全局游标不依赖来源页大小，也不依赖边界行是否被删除或已读。 */
       const before = decodeNotificationCursor(request.query.cursor);
       /** 原服务仍负责补齐投影和检查可导航对象。 */
       const automations = options.automations.list(undefined, before);
       const tasks = options.tasks.list(undefined, before);
       /** 命令来源按同一边界限量读取，未读总数独立统计。 */
-      const commandNotifications = commands.notifications(before);
+      const commandNotifications = commands.notifications(before, pending);
       /** 来源参与身份排序，相同时间与相同业务身份不会互相覆盖。 */
       /** 全部交付通知按同一全局边界分页。 */
-      const deliveries = options.deliveries?.notifications(before);
+      const deliveries = options.deliveries?.notifications(before, pending);
       const candidates: NotificationItem[] = [
         ...commandNotifications.items.map((item) => ({ ...item, source: 'command' as const })),
         ...(deliveries?.items ?? []).map((item) => ({ ...item, source: 'git_delivery' as const })),
-        ...automations.items.map((item) => ({ ...item, source: 'automation' as const })),
-        ...tasks.items.map((item) => ({ ...item, source: 'task' as const })),
+        ...(!pending ? automations.items.map((item) => ({ ...item, source: 'automation' as const })) : []),
+        ...(!pending ? tasks.items.map((item) => ({ ...item, source: 'task' as const })) : []),
       ].sort(compareNotificationPositions);
       // 源查询与全局排序若不一致则拒绝响应，不能静默重复或跳过通知。
       assert(
@@ -67,7 +72,7 @@ export function registerNotificationRoutes(options: {
       /** 游标只携带稳定排序字段，不暴露通知正文。 */
       const last = items.at(-1);
       /** 来源仍有下一页时，统一入口必须保留继续读取的入口。 */
-      const hasMore = candidates.length > items.length || Boolean(automations.nextCursor || tasks.nextCursor);
+      const hasMore = candidates.length > items.length || (!pending && Boolean(automations.nextCursor || tasks.nextCursor));
       return {
         items,
         unreadCount: automations.unreadCount + tasks.unreadCount + (deliveries?.unreadCount ?? 0) + commandNotifications.unreadCount,
