@@ -245,6 +245,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   /** 额外 Log 页保存各自的分支、查询和根选择。 */
   const [activeLog, setActiveLog] = useState('main');
   const [logTabs, setLogTabs] = useState<string[]>(['main']);
+  /** 可横向滚动的标签列表，与加号和视图菜单分开。 */
+  const gitViewTabList = useRef<HTMLDivElement>(null);
   const logTabViews = useRef(new Map<string, { ref: string; text: string; scope: GitLogScope }>());
   const [consoleOpen, setConsoleOpen] = useState(false);
   /** Console 一次打开只展示该窗口会话内实际执行的 Git 命令。 */
@@ -439,6 +441,19 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   useEffect(() => {
     window.localStorage.setItem(`zeus.project-git-tab-v2:${props.project.id}`, tab);
   }, [props.project.id, tab]);
+
+  useLayoutEffect(() => {
+    /** 标签栏存在时，选中和调整宽度都会保留关闭入口。 */
+    const list = gitViewTabList.current;
+    if (!list) return;
+    /** 只需滚到能完整显示当前标签的位置。 */
+    const revealSelectedTab = () => list.querySelector('[data-active]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    revealSelectedTab();
+    /** 工作区分栏与窗口缩放都会改变标签栏宽度。 */
+    const observer = new ResizeObserver(revealSelectedTab);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [activeLog, loadState, tab]);
 
   useEffect(() => {
     if (props.conversationScope || tab !== 'console') return;
@@ -1433,7 +1448,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       ) : null}
 
       {/* 工具栏跨越整个 Git 工作区，底线与左右工作面同时衔接。 */}
-      <header className="project-git-toolbar git-command-toolbar" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
+      <header className="project-git-toolbar git-command-toolbar git-toolbar-controls" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
         <strong className="git-workspace-heading">{zh ? '工作区' : 'Workspace'}</strong>
         {selectedRepository ? (
           <GitToolbarMenu
@@ -1569,7 +1584,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         >
           <Archive aria-hidden="true" />
         </Button>
-        <span className="project-git-menu-anchor">
+        <span className="project-git-menu-anchor git-toolbar-controls">
           <Button
             unstyled
             ref={operationsTriggerRef}
@@ -1618,8 +1633,10 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </Button>
         {props.toolbarActions}
       </header>
-      <nav className="git-workbench-tabs" aria-label="Git views">
+      <nav className="git-workbench-tabs git-toolbar-controls" aria-label="Git views">
         <div
+          ref={gitViewTabList}
+          className="zeus-workspace-tabs"
           role="tablist"
           aria-label="Git views"
           onKeyDown={(event) => {
@@ -1634,21 +1651,28 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           }}
         >
           {(['local', 'shelf', 'stash'] as const).map((name) => (
-            <Button key={name} unstyled type="button" role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>
-              {{ local: 'Local Changes', shelf: 'Shelf', stash: 'Stash' }[name]}
-            </Button>
+            <div key={name} className="zeus-workspace-tab-shell" data-active={tab === name || undefined}>
+              <Button unstyled type="button" role="tab" className="zeus-workspace-tab" aria-selected={tab === name} onClick={() => setTab(name)}>
+                <span>{{ local: 'Local Changes', shelf: 'Shelf', stash: 'Stash' }[name]}</span>
+              </Button>
+            </div>
           ))}
           {logTabs.map((id) => {
             const view = id === activeLog ? { ref: historyRef, scope: logScope } : logTabViews.current.get(id);
+            /** 标签和提示共用完整名称，由标签宽度决定是否截断。 */
+            const label = 'Log' + (view?.ref ? ': on ' + gitLogRefName(view.ref) : '') + (view?.scope.filter.me ? ' by me' : '');
+            /** 仅当前 Git 视图中的 Log 标签使用选中样式。 */
+            const selected = tab === 'log' && id === activeLog;
             return (
-              <div key={id} className="git-workbench-tab-group">
-                <Button unstyled type="button" role="tab" aria-selected={tab === 'log' && id === activeLog} onClick={() => openLogTab(id)}>
-                  {'Log' + (view?.ref ? ': on ' + gitLogRefName(view.ref).slice(0, 64) : '') + (view?.scope.filter.me ? ' by me' : '')}
+              <div key={id} className="zeus-workspace-tab-shell" data-active={selected || undefined}>
+                <Button unstyled type="button" role="tab" className="zeus-workspace-tab" aria-selected={selected} data-icon-tooltip={label} onClick={() => openLogTab(id)}>
+                  <span>{label}</span>
                 </Button>
                 {id !== 'main' ? (
                   <Button
                     unstyled
                     type="button"
+                    className="zeus-workspace-tab-close"
                     aria-label="Close Log tab"
                     onClick={() => {
                       if (activeLog === id) openLogTab('main');
@@ -1663,13 +1687,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             );
           })}
           {consoleOpen ? (
-            <div className="git-workbench-tab-group">
-              <Button unstyled type="button" role="tab" aria-selected={tab === 'console'} onClick={() => setTab('console')}>
-                Console
+            <div className="zeus-workspace-tab-shell" data-active={tab === 'console' || undefined}>
+              <Button unstyled type="button" role="tab" className="zeus-workspace-tab" aria-selected={tab === 'console'} onClick={() => setTab('console')}>
+                <span>Console</span>
               </Button>
               <Button
                 unstyled
                 type="button"
+                className="zeus-workspace-tab-close"
                 aria-label="Close Console"
                 onClick={() => {
                   setConsoleOpen(false);
@@ -1682,13 +1707,14 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
             </div>
           ) : null}
           {updateInfo ? (
-            <div className="git-workbench-tab-group">
-              <Button unstyled type="button" role="tab" aria-selected={tab === 'update'} onClick={() => setTab('update')}>
-                Update Info: {formatZeusDateTime(updateInfo.at, 'en-US')}
+            <div className="zeus-workspace-tab-shell" data-active={tab === 'update' || undefined}>
+              <Button unstyled type="button" role="tab" className="zeus-workspace-tab" aria-selected={tab === 'update'} onClick={() => setTab('update')}>
+                <span>Update Info: {formatZeusDateTime(updateInfo.at, 'en-US')}</span>
               </Button>
               <Button
                 unstyled
                 type="button"
+                className="zeus-workspace-tab-close"
                 aria-label="Close Update Info"
                 onClick={() => {
                   setUpdateInfo(undefined);
@@ -2719,7 +2745,7 @@ function GitCommitInspector(props: {
     <aside className="project-git-inspector git-log-inspector" data-show-details={showDetails}>
       <section className="project-git-changed-files">
         <header
-          className="git-log-file-actions"
+          className="git-log-file-actions git-toolbar-controls"
           onKeyDown={(event) => {
             if (path && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
               event.preventDefault();

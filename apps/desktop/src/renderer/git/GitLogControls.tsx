@@ -79,13 +79,13 @@ export function GitToolbarMenu(props: { label: string; caption?: string; icon?: 
   const anchor = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   return (
-    <div className="git-log-menu-anchor">
+    <div className="git-log-menu-anchor git-toolbar-controls">
       <Button
         unstyled
         ref={anchor}
         type="button"
         aria-label={props.label}
-        data-icon-tooltip={props.label}
+        data-icon-tooltip={props.caption ?? props.label}
         aria-haspopup="menu"
         aria-expanded={Boolean(menu)}
         onClick={() => {
@@ -95,7 +95,7 @@ export function GitToolbarMenu(props: { label: string; caption?: string; icon?: 
       >
         {props.icon ?? (
           <>
-            {props.caption ?? props.label}
+            <span>{props.caption ?? props.label}</span>
             <CaretDown aria-hidden="true" />
           </>
         )}
@@ -239,7 +239,7 @@ export function GitLogControls(props: {
   ];
   const pathCount = Object.values(scope.paths).reduce((count, paths) => count + paths.length, 0);
   return (
-    <div className="git-log-toolbar">
+    <div className="git-log-toolbar git-toolbar-controls">
       <label className="git-branch-tree-search">
         <Search aria-hidden="true" />
         <input
@@ -313,7 +313,7 @@ export function GitLogControls(props: {
           { label: 'Expand Linear Branches', run: () => props.onPresentation?.({ ...presentation, collapsed: false, foldRevision: presentation.foldRevision + 1 }) },
         ]}
       />
-      <div className="git-log-toolbar-actions">
+      <div className="git-log-toolbar-actions git-toolbar-controls">
         <Button unstyled type="button" aria-label="Refresh" data-icon-tooltip={'Refresh ' + props.refreshShortcut} onClick={props.onRefresh}>
           <Refresh aria-hidden="true" />
         </Button>

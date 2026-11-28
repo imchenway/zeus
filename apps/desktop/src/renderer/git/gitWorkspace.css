@@ -2,7 +2,8 @@
 .macos-ai-app.zeus-shell .project-git-workbench .git-command-toolbar {
   box-sizing: border-box;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: safe flex-end;
   gap: 3px;
   min-height: 36px;
   flex: 0 0 36px;
@@ -20,36 +21,67 @@
   font-weight: 600;
   color: var(--zeus-product-muted);
 }
-.git-command-toolbar > button,
-.git-command-toolbar > .project-git-menu-anchor > button {
-  position: relative;
-  display: flex;
+/* Git 的操作、筛选与菜单触发器共用顶栏的扁平按钮样式。 */
+.git-toolbar-controls > button {
+  appearance: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
-  width: 30px;
-  height: 30px;
-  padding: 4px;
-  flex-shrink: 0;
+  gap: 4px;
+  min-inline-size: 28px;
+  block-size: 28px;
+  padding: 0 6px;
+  flex: none;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--zeus-product-text);
+  color: var(--zeus-product-muted);
   font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
+}
+.git-toolbar-controls > button > svg {
+  inline-size: 14px;
+  block-size: 14px;
+  flex: none;
+}
+.git-toolbar-controls > button:where(:hover:not(:disabled)) {
+  background: var(--zeus-interaction-hover);
+}
+.git-toolbar-controls > button:is([aria-pressed='true'], [aria-expanded='true']) {
+  background: var(--zeus-source-list-selected);
+  color: var(--zeus-product-text);
+}
+.git-toolbar-controls > button:active:not(:disabled) {
+  background: var(--zeus-interaction-pressed);
+}
+.git-toolbar-controls > button:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+.git-toolbar-controls > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.git-command-toolbar > button,
+.git-command-toolbar > .project-git-menu-anchor > button {
+  position: relative;
+  min-inline-size: 30px;
+  inline-size: 30px;
+  block-size: 30px;
+  padding: 4px;
+  color: var(--zeus-product-text);
+}
+.git-command-toolbar > .git-log-menu-anchor > button {
+  block-size: 30px;
+  font-size: 12px;
+  color: var(--zeus-product-text);
 }
 .git-command-toolbar > button > svg,
 .git-command-toolbar > .project-git-menu-anchor > button > svg {
   width: 18px;
   height: 18px;
-}
-.git-command-toolbar > button:hover:not(:disabled),
-.git-command-toolbar > .project-git-menu-anchor > button:hover {
-  background: var(--zeus-interaction-hover);
-}
-.git-command-toolbar > button:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 .git-command-toolbar > button > small {
   position: absolute;
@@ -286,8 +318,7 @@
   background: var(--zeus-source-list-selected);
 }
 .git-reference-tree button:focus-visible,
-.git-branch-repositories button:focus-visible,
-.git-command-toolbar > button:focus-visible {
+.git-branch-repositories button:focus-visible {
   outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
 }
@@ -651,57 +682,24 @@
   flex: 1;
 }
 
-/* Git 视图的标签保留独立状态，长分支名不会挤掉关闭和新建操作。 */
-.git-workbench-tabs,
-.git-workbench-tabs > [role='tablist'],
-.git-workbench-tab-group {
-  display: flex;
-  align-items: stretch;
-  min-width: 0;
-}
+/* Git 标签使用共享的工作区标签外观，标签列表在窄窗内独立滚动。 */
 .git-workbench-tabs {
-  gap: 2px;
-  min-height: 32px;
-  padding-inline: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-inline-size: 0;
+  padding: 2px 8px;
   border-bottom: 1px solid var(--zeus-product-line);
   flex: none;
 }
-.git-workbench-tabs > [role='tablist'] {
+.git-workbench-tabs > .zeus-workspace-tabs {
   flex: 0 1 auto;
-  overflow: auto hidden;
 }
-.git-workbench-tab-group,
-.git-workbench-tabs [role='tab'] {
-  flex: none;
+.git-workbench-tabs .zeus-workspace-tabs > .zeus-workspace-tab-shell {
+  min-inline-size: 0;
 }
-.git-workbench-tabs [role='tab'] {
-  position: relative;
-  padding: 4px 9px;
-  color: var(--zeus-product-muted);
-  text-wrap: nowrap;
-  font-size: 12px;
-}
-.git-workbench-tabs [aria-selected='true'] {
-  color: var(--zeus-product-text);
-  box-shadow: inset 0 -2px 0 var(--zeus-product-accent);
-}
-.git-workbench-tabs button:not([role='tab']) {
-  display: grid;
-  place-items: center;
-  min-width: 24px;
-  color: var(--zeus-product-muted);
-}
-.git-workbench-tabs button svg,
-.git-log-toolbar button svg,
-.git-log-file-actions button svg {
-  width: 14px;
-  height: 14px;
-  flex: none;
-}
-.git-workbench-tabs button:hover,
-.git-log-toolbar button:hover:not(:disabled),
-.git-log-file-actions button:hover:not(:disabled) {
-  background: var(--zeus-interaction-hover);
+.git-workbench-tabs :is(.zeus-workspace-tab, .zeus-workspace-tab-close):focus-visible {
+  outline-offset: -2px;
 }
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-layout[data-single-pane='true'] {
   grid-template-columns: minmax(0, 1fr);
@@ -734,26 +732,19 @@
 }
 .git-log-menu-anchor {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  min-inline-size: 0;
+  max-inline-size: min(200px, 100%);
   flex: none;
 }
-:is(.git-log-toolbar, .git-log-file-actions, .git-workbench-tabs .git-log-menu-anchor) button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 26px;
-  border-radius: 4px;
+/* 长名称只截断文字，箭头与清除按钮保留完整点击区域。 */
+.git-log-menu-anchor > button[aria-haspopup='menu'] {
+  flex-shrink: 1;
 }
-.git-log-toolbar button:not([data-variant]),
-.git-log-file-actions button {
-  padding-inline: 6px;
-  white-space: nowrap;
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-}
-.git-log-toolbar button[aria-pressed='true'] {
-  background: var(--zeus-source-list-selected);
-  color: var(--zeus-product-text);
+.git-log-menu-anchor > button > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .git-log-toolbar-menu {
   max-height: min(420px, calc(100vh - 24px));
