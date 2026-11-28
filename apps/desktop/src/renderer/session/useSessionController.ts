@@ -453,13 +453,16 @@ export interface SessionController {
   /** 已失败轮次显式续跑，保留草稿与原轮次的发送事实。 */
   retryFailedTurn(providerTurnId: string): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
-  editQueuedSubmission(submissionId: string, content: string, attachments?: NativeConversationAttachment[]): Promise<NativeQueueSnapshot>;
+  /** 临时卡片保存前需取得服务端提交身份。 */
+  editQueuedSubmission(submissionId: string, content: string, attachments?: NativeConversationAttachment[], localOnly?: boolean): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   rerouteQueuedSubmission(submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
-  deleteQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
-  reorderQueue(orderedSubmissionIds: string[]): Promise<NativeQueueSnapshot>;
+  /** 删除仅作用于原消息对应的服务端提交。 */
+  deleteQueuedSubmission(submissionId: string, localOnly?: boolean): Promise<NativeQueueSnapshot>;
+  /** 调序保留完整队列，并等待被移动的本地消息接纳。 */
+  reorderQueue(orderedSubmissionIds: string[], localMessageIds?: ReadonlySet<string>): Promise<NativeQueueSnapshot>;
   /** 接纳本地队列身份后，将原提交引导到指定轮次。 */
-  sendQueuedNow(submissionId: string, expectedTurnId: string): Promise<NativeOperationAcceptance>;
+  sendQueuedNow(submissionId: string, expectedTurnId: string, localOnly?: boolean): Promise<NativeOperationAcceptance>;
   resumeQueue(): Promise<NativeQueueSnapshot>;
   recoverQueue(intent: 'check' | 'continue'): Promise<NativeQueueSnapshot>;
 
@@ -2679,19 +2682,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 以原发送身份等待 HTTP 或实时事件接纳，保留原有送达超时。 */
-  function resolveQueueSubmissionId(id: string): Promise<string> {
+  function resolveQueueSubmissionId(id: string, localOnly = false): Promise<string> {
     /** 回执可能先于用户点击到达，同一客户端消息仍定位到当初那条提交。 */
-    const admitted = () => state.queue?.submissions.find((entry) => entry.id === id || entry.clientUserMessageId === id)?.id;
+    const admitted = () => state.queue?.submissions.find((entry) => entry.clientUserMessageId === id || (!localOnly && entry.id === id))?.id;
     /** 连续发送中，原信封可能还在等待前一条消息的接纳。 */
     const pending = () => {
       const send = recoverableSend(id);
       return deferredSends.some((entry) => entry.clientUserMessageId === id) || Boolean(send && send.deliveryState !== 'failed' && send.deliveryState !== 'uncertain');
     };
-    /** 存量调用仍可直接交给原接口处理服务端提交身份。 */
+    /** 当前队列已知的提交可立即使用。 */
     const existingId = admitted();
-    if (existingId || !pending()) return Promise.resolve(existingId ?? id);
+    if (existingId) return Promise.resolve(existingId);
     /** 发送失败或超时时只报告用户这次操作，继续由送达链路核对原消息。 */
     const unavailable = () => new Error('排队消息尚未接纳，操作未保存。');
+    /** 队列快照缺失时，只有原服务端提交身份可直达操作接口。 */
+    if (!pending()) return localOnly ? Promise.reject(unavailable()) : Promise.resolve(id);
     /** 一次监听同时接收发送状态和队列接管，完成后立即释放。 */
     let listener: () => void;
     const acceptance = new Promise<string>((resolve, reject) => {
@@ -2706,9 +2711,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 串行保存卡片动作，保存期间输入框仍可继续编辑和发送。 */
-  function enqueueQueueMutation<T>(ids: string[], mutate: (submissionIds: string[]) => Promise<T>): Promise<T> {
+  function enqueueQueueMutation<T>(ids: string[], localMessageIds: ReadonlySet<string> | undefined, mutate: (submissionIds: string[]) => Promise<T>): Promise<T> {
     /** 立即订阅客户端身份，避免等前一操作结束时错过发送接纳。 */
-    const identities = Promise.all(ids.map(resolveQueueSubmissionId));
+    const identities = Promise.all(ids.map((id) => resolveQueueSubmissionId(id, localMessageIds?.has(id))));
     void identities.catch(() => undefined);
     /** 失败只拒绝本次操作，后续点击仍可继续。 */
     const result = queueMutationTail.then(async () => {
@@ -4045,8 +4050,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     cancelPendingSend,
-    editQueuedSubmission(id, content, attachments) {
-      return enqueueQueueMutation([id], async ([submissionId]) => {
+    editQueuedSubmission(id, content, attachments, localOnly) {
+      return enqueueQueueMutation([id], localOnly ? new Set([id]) : undefined, async ([submissionId]) => {
         const queue = await options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId!, content, attachments);
         await applyAuthoritativeQueue(queue, submissionId);
         return queue;
@@ -4085,8 +4090,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (queue) => applyAuthoritativeQueue(queue, submissionId),
       );
     },
-    deleteQueuedSubmission(id) {
-      return enqueueQueueMutation([id], async (ids) => {
+    deleteQueuedSubmission(id, localOnly) {
+      return enqueueQueueMutation([id], localOnly ? new Set([id]) : undefined, async (ids) => {
         /** 删除回执可能晚于队列事件，提前保存原题身份和本地卡片身份。 */
         const submissionId = ids[0]!;
         const submission = state.queue?.submissions.find((candidate) => candidate.id === submissionId);
@@ -4098,8 +4103,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return queue;
       });
     },
-    reorderQueue(orderedSubmissionIds) {
-      return enqueueQueueMutation(orderedSubmissionIds, async (resolvedIds) => {
+    reorderQueue(orderedSubmissionIds, localMessageIds) {
+      return enqueueQueueMutation(orderedSubmissionIds, localMessageIds, async (resolvedIds) => {
         /** 新到达的成员和隐藏项仍占据服务端队列的原位置。 */
         const current = reorderableQueuedSubmissions(state.queue);
         /** 编辑在原位置换代，仍可承接保存之前发出的调序。 */
@@ -4114,8 +4119,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     },
     /** 实时订阅恢复期间仍可通过命令接口引导，目标轮次由服务端核对。 */
-    sendQueuedNow(id, expectedTurnId) {
-      return enqueueQueueMutation([id], async ([submissionId]) => {
+    sendQueuedNow(id, expectedTurnId, localOnly) {
+      return enqueueQueueMutation([id], localOnly ? new Set([id]) : undefined, async ([submissionId]) => {
         /** 先用原消息身份完成入队交接，再发起一次引导。 */
         const acceptance = await options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId!, expectedTurnId);
         // 引导回执交接队列，正文由 Provider 接纳事件生成。

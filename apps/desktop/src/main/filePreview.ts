@@ -832,9 +832,11 @@ export function registerFilePreview(services: {
   });
 
   ipcMain.handle('zeus:file-preview:review', async (event, id: string) => {
+    /** 后台审阅读取只接受当前窗口持有的有效预览令牌。 */
     const window = services.requireWindow(event);
+    /** 正文刷新可能已释放旧令牌，此时没有可补充的审阅信息。 */
     const grant = grants.get(id);
-    if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
+    if (!grant || grant.owner !== window.id) return undefined;
     if (grant.request.kind !== 'resource' || grant.request.comparison || grant.item.kind !== 'text') return grant.item.review;
     const path = await currentPath(grant);
     if (!grant.reviewRead) {

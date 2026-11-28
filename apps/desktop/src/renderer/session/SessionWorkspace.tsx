@@ -255,16 +255,18 @@ export interface SessionWorkspaceActions {
   onChooseStartAttachments?: () => Promise<NativeConversationAttachment[]>;
   onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
-  onEditQueuedSubmission?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
+  /** 队列编辑携带提交或客户端消息身份。 */
+  onEditQueuedSubmission?: QueuedConversationMessagesProps['onEdit'];
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   /** 网络失败停止后，只续跑用户明确选择的最新轮次。 */
   onRetryFailedTurn?: (providerTurnId: string) => void | Promise<void>;
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
-  onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  /** 正文与卡片共用队列删除入口。 */
+  onDeleteQueuedSubmission?: QueuedConversationMessagesProps['onDelete'];
   /** 引导已排队的消息，并保留卡片显示的当前轮次。 */
-  onSendQueuedNow?: (submissionId: string, expectedTurnId: string) => void | Promise<void>;
+  onSendQueuedNow?: QueuedConversationMessagesProps['onSendNow'];
   /** 异步问题答复与普通 Composer 消息分开取草稿，共用提交通道。 */
   onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
   /** 保留调序回执水位，让卡片即时顺序平稳交给权威快照。 */
@@ -1156,8 +1158,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       input.controller.setAttachments(input.controller.getState().attachments.filter((candidate) => candidate !== attachment));
     },
     // 编辑器只有在服务端确认后才退出；失败必须向组件传播以保留用户草稿。
-    onEditQueuedSubmission: async (submissionId, content, attachments) => {
-      await input.controller.editQueuedSubmission(submissionId, content, attachments);
+    onEditQueuedSubmission: async (submissionId, content, attachments, localOnly) => {
+      await input.controller.editQueuedSubmission(submissionId, content, attachments, localOnly);
     },
     // 重试失败必须回到原消息旁，不能吞掉拒绝原因或重复弹出全局错误。
     onRetryQueuedSubmission: async (submissionId) => {
@@ -1172,18 +1174,18 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     },
     onRerouteQueuedSubmission: (submissionId, settings) => settle(input.controller.rerouteQueuedSubmission(submissionId, settings)),
     // 删除未进入 provider turn 的内容是本地软删除；失败必须回到气泡，不得静默制造“点了没反应”。
-    onDeleteQueuedSubmission: async (submissionId) => {
-      await input.controller.deleteQueuedSubmission(submissionId);
+    onDeleteQueuedSubmission: async (submissionId, localOnly) => {
+      await input.controller.deleteQueuedSubmission(submissionId, localOnly);
     },
     // 引导失败由队列气泡给出可重试结果，技术细节同时写入统一运行日志。
-    onSendQueuedNow: async (submissionId, expectedTurnId) => {
-      await input.controller.sendQueuedNow(submissionId, expectedTurnId);
+    onSendQueuedNow: async (submissionId, expectedTurnId, localOnly) => {
+      await input.controller.sendQueuedNow(submissionId, expectedTurnId, localOnly);
     },
     onAnswerAsyncQuestion: async (item, answers, asNewMessage, answerAttachments) => {
       await input.controller.answerAsyncQuestion(item, answers, asNewMessage, answerAttachments);
     },
     // 回执携带权威水位；失败由原卡片展示，不能静默吞掉。
-    onReorderQueue: (orderedSubmissionIds) => input.controller.reorderQueue(orderedSubmissionIds),
+    onReorderQueue: (orderedSubmissionIds, localMessageIds) => input.controller.reorderQueue(orderedSubmissionIds, localMessageIds),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
     onRestoreArchivedConversation: () => settle(input.controller.restoreArchivedConversation()),
     onRespondToRequest: (requestId, response) => input.controller.respondToRequest(requestId, response).then(() => undefined),

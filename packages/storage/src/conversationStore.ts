@@ -23,11 +23,23 @@ export const conversationWorkStartedAtSql = `CASE WHEN c.listing_scope = 'ordina
     ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at)) END`;
 
 /** 交付冲突的真实来源，项目和仓库归属由交付记录核验。 */
-type DeliveryConflictOrigin = { conversationId: string; taskId: string | null; repositoryId: string; repositoryPath: string | null; integrationPath: string };
+type DeliveryConflictOrigin = {
+  conversationId: string;
+  taskId: string | null;
+  repositoryId: string;
+  repositoryPath: string | null;
+  integrationPath: string;
+  /** 合入结果已定，原隔离目录仅用于同步与回收。 */
+  executionClosed: 0 | 1;
+};
 
 /** 批量和单条读取共用同一套来源、项目和合入条件。 */
 const deliveryConflictOriginSql = `origin.id AS conversationId, task.id AS taskId, step.repository_id AS repositoryId,
-              repository.local_path AS repositoryPath, json_extract(step.result_json, '$.merge.integrationPath') AS integrationPath
+              repository.local_path AS repositoryPath, json_extract(step.result_json, '$.merge.integrationPath') AS integrationPath,
+              CASE WHEN step.state = 'succeeded'
+                OR json_type(step.result_json, '$.merge.resultHeadSha') = 'text'
+                OR json_type(step.result_json, '$.phases.complete.resultHeadSha') = 'text'
+                THEN 1 ELSE 0 END AS executionClosed
        FROM git_delivery_steps step JOIN git_delivery_runs run ON run.id = step.run_id
        JOIN conversations conflict ON conflict.id = step.conversation_id AND conflict.project_id = run.project_id
        JOIN conversations origin ON origin.id = run.scope_id AND origin.project_id = run.project_id

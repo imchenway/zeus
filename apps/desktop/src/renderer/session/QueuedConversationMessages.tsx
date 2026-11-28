@@ -16,7 +16,7 @@ import { useConversationInputResources } from './useConversationInputResources.j
 import { formatAsyncQuestionAnswer } from '@zeus/shared';
 import { Form } from '../ui/Form.js';
 import { Button } from '../ui/Button.js';
-import { queuedSubmissionIdentity } from './conversationQueuePresentation.js';
+import { type ComposerQueuedSubmission, queuedSubmissionIdentity } from './conversationQueuePresentation.js';
 import { useListReorderMotion } from '../ui/useListReorderMotion.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
@@ -26,10 +26,11 @@ export interface QueuedConversationMessagesProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
   /** 编辑正文和附件使用同一次权威替换。 */
-  onEdit?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
-  onDelete?: (submissionId: string) => void | Promise<void>;
+  onEdit?: (submissionId: string, content: string, attachments: NativeConversationAttachment[], localOnly?: boolean) => void | Promise<void>;
+  /** 临时卡片删除前先等待同一消息的接纳回执。 */
+  onDelete?: (submissionId: string, localOnly?: boolean) => void | Promise<void>;
   /** 引导使用点击时显示的轮次，入队回执到达后仍指向该轮次。 */
-  onSendNow?: (submissionId: string, expectedTurnId: string) => void | Promise<void>;
+  onSendNow?: (submissionId: string, expectedTurnId: string, localOnly?: boolean) => void | Promise<void>;
   /** 中断后由用户明确继续原队列，沿用既有恢复命令。 */
   onResumeQueue?: () => void | Promise<void>;
   /** 调序回执用于等待权威队列接管即时位置。 */
@@ -99,7 +100,8 @@ type QueueAction = 'edit' | 'delete' | 'steer' | 'resume';
 
 /** 请求已改变队列时，保留原卡片直至退出动效结束。 */
 interface QueueCardExit {
-  submission: NativeQueuedSubmission;
+  /** 退出动画期间保留卡片原始身份与正文。 */
+  submission: ComposerQueuedSubmission;
   index: number;
   confirmed: boolean;
 }
@@ -109,7 +111,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   /** 当前语言对应的短文案。 */
   const copy = labels[props.language];
   /** 独立保存草稿，切换卡片时仍保留正在写入或失败的编辑。 */
-  const [editingRows, setEditingRows] = useState<ReadonlyMap<string, NativeQueuedSubmission>>(() => new Map());
+  const [editingRows, setEditingRows] = useState<ReadonlyMap<string, ComposerQueuedSubmission>>(() => new Map());
   /** 连续点击同一个动作只提交一次，其他操作照常接收点击。 */
   const actionRef = useRef(new Set<string>());
   /** 写入进度只用于原按钮的反馈。 */
@@ -216,7 +218,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   }
 
   /** 进入编辑态时优先恢复用户在 Composer 中实际输入的草稿。 */
-  function startEdit(submission: NativeQueuedSubmission): void {
+  function startEdit(submission: ComposerQueuedSubmission): void {
     const identity = queuedSubmissionIdentity(submission);
     setEditingRows((current) => new Map([...current].filter(([id]) => actionRef.current.has(`edit:${id}`) || actionErrors.has(id) || !queueIds.includes(id)).concat([[identity, submission]])));
     setActionError(identity);
@@ -230,16 +232,16 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   }
 
   /** 保存仍使用原提交身份，服务端负责原子替换排队内容。 */
-  async function saveEdit(submission: NativeQueuedSubmission, content: string, attachments: NativeConversationAttachment[]): Promise<void> {
+  async function saveEdit(submission: ComposerQueuedSubmission, content: string, attachments: NativeConversationAttachment[]): Promise<void> {
     if (!props.onEdit || (!content.trim() && attachments.length === 0)) return;
     /** 保存期间允许编辑别的卡片；旧回执只关闭自己打开的编辑框。 */
     const identity = queuedSubmissionIdentity(submission);
-    const saved = await runAction(submission, 'edit', () => props.onEdit?.(submission.id, content.trim(), attachments));
+    const saved = await runAction(submission, 'edit', () => props.onEdit?.(submission.id, content.trim(), attachments, submission.localOnly));
     if (saved) cancelEdit(identity);
   }
 
   /** 点击引导或删除即开始退出，拒绝时在当前队列位置反向展开。 */
-  async function runAction(submission: NativeQueuedSubmission, action: QueueAction, operation: () => void | Promise<void>): Promise<boolean> {
+  async function runAction(submission: ComposerQueuedSubmission, action: QueueAction, operation: () => void | Promise<void>): Promise<boolean> {
     /** 原提交身份跨越本地排队和确认回执。 */
     const submissionId = queuedSubmissionIdentity(submission);
     /** 去重范围仅限当前消息的同一操作。 */
@@ -322,15 +324,17 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
           /** 前端保留引导入口，队首和轮次是否可接收由服务端核对。 */
           const steerTurnId = submission.status === 'queued' ? props.state.activeTurnId : null;
           /** 中断后继续原队列，活动轮次使用点击时显示的轮次。 */
-          const sendAction = resumable ? props.onResumeQueue : steerTurnId && props.onSendNow ? () => props.onSendNow?.(submission.id, steerTurnId) : undefined;
+          const sendAction = resumable ? props.onResumeQueue : steerTurnId && props.onSendNow ? () => props.onSendNow?.(submission.id, steerTurnId, submission.localOnly) : undefined;
           /** 操作名称明确区分引导当前回复与继续整个队列。 */
           const sendLabel = resumable ? copy.resume : copy.steer;
           /** 上移只允许与相邻普通排队项交换。 */
           const canMoveUp = ordering.canMove(identity, -1);
           /** 下移只允许与相邻普通排队项交换。 */
           const canMoveDown = ordering.canMove(identity, 1);
-          /** 当前行的错误保持在原提交旁。 */
-          const rowError = actionErrors.get(identity) ?? (!saving && leftQueue ? copy.editUnavailable : submission.error?.message);
+          /** 已离队的编辑草稿仍可复制，显示状态提示。 */
+          const editNotice = !saving && leftQueue ? copy.editUnavailable : undefined;
+          /** 当前操作的实际错误优先显示在原提交旁。 */
+          const rowError = actionErrors.get(identity) ?? (editNotice ? undefined : submission.error?.message);
           /** 附件与正文分别投影，纯附件消息不再退化成空白或泛化占位。 */
           const attachments = submission.attachments ?? [];
           /** 折叠态正文保持单行，编辑态仍使用完整原稿。 */
@@ -404,7 +408,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                           busy={deleting}
                           data-icon-tooltip={copy.remove}
                           aria-label={copy.remove}
-                          onClick={() => void runAction(submission, 'delete', () => props.onDelete?.(submission.id))}
+                          onClick={() => void runAction(submission, 'delete', () => props.onDelete?.(submission.id, submission.localOnly))}
                         >
                           <Trash aria-hidden="true" />
                         </Button>
@@ -424,6 +428,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                   {rowError ? (
                     <small className="session-queued-message-error" role="alert">
                       <VisibleApplicationError error={rowError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+                    </small>
+                  ) : editNotice ? (
+                    <small className="session-queued-message-notice" role="status">
+                      {editNotice}
                     </small>
                   ) : null}
                 </article>

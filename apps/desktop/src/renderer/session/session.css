@@ -1335,11 +1335,19 @@
   color: color-mix(in srgb, var(--zeus-brand-primary) 58%, var(--session-text-muted));
 }
 
-.session-codex-parity-v1 .session-queued-message-error {
-  color: var(--session-danger);
+.session-codex-parity-v1 :is(.session-queued-message-error, .session-queued-message-notice) {
   display: block;
   grid-column: 1 / -1;
   margin-block-start: 4px;
+}
+
+/* 离队状态与操作失败占用同一行，各自使用对应状态色。 */
+.session-codex-parity-v1 .session-queued-message-notice {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-queued-message-error {
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-thread-item-meta .session-expert-actor-label {

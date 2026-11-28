@@ -226,6 +226,14 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     return roots[0] === resolve(executionRoot) && roots.every((root) => (root === resolve(executionRoot) || registeredRoots.has(root)) && existsSync(root) && statSync(root).isDirectory()) ? [...new Set(roots)] : [resolve(executionRoot)];
   }
 
+  /** 合入结果已定时保留冲突会话历史，禁止再向即将回收的隔离目录派发工作。 */
+  function assertDeliveryConflictConversationOpen(conversationId: string): void {
+    if (conversations.getDeliveryConflictOrigin(conversationId)?.executionClosed) {
+      throw nativeApiError('ZEUS_GIT_DELIVERY_CONFLICT_COMPLETED', '冲突处理已结束，请回原会话继续。');
+    }
+  }
+
+  /** 按当前操作核对会话的持久目录身份，恢复后才允许执行。 */
   async function ensureNativeConversationExecutionContext(input: {
     conversationId: string;
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
@@ -234,6 +242,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
   }): Promise<{ projectLocalPath: string; writableRoots: string[]; executionWorkspaceMode?: 'direct' | 'worktree' } | null> {
     const lockConversation = conversations.getById(input.conversationId);
     if (!lockConversation) return null;
+    if (input.mode !== 'reconcile') assertDeliveryConflictConversationOpen(lockConversation.id);
     /** 恢复线程和准备目录之前，重新核对冻结预算所依赖的引擎身份。 */
     if (lockConversation.contextCapacityTokens != null && input.mode !== 'dispatch' && input.mode !== 'submit') dependencies.validateContextCapacity(lockConversation);
     // 共用目录准备可以合并，但各会话自己的归档边界不能被另一条会话的并发恢复绕过。
@@ -491,6 +500,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
     taskConflictExecutionForConversation,
     taskConversationExecutionWorkspaceMode,
     resolveNativeConversationExecutionRoot,
+    assertDeliveryConflictConversationOpen,
     ensureNativeConversationExecutionContext,
   };
 }

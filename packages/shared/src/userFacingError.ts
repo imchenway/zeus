@@ -1084,6 +1084,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
   [['ZEUS_TURN_CHANGE_SET_PATH_INVALID'], ['部分文件路径无效，本轮修改无法撤销或重新应用。', 'Some file paths are invalid. Changes from this turn cannot be undone or reapplied.']],
   [['ZEUS_TURN_CHANGE_SET_UNAVAILABLE'], ['本轮文件变更记录不完整，无法安全撤销或重新应用。', 'File change records for this turn are incomplete. Changes cannot be safely undone or reapplied.']],
   [['ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED'], ['这段会话已归档，需要先恢复会话才能继续。', 'This conversation is archived. Restore it before continuing.']],
+  // 交付收尾后冲突会话仍保留历史，新的输入应回到交付来源会话。
+  [['ZEUS_GIT_DELIVERY_CONFLICT_COMPLETED'], ['冲突处理已结束，请回原会话继续。', 'Conflict resolution has ended. Continue in the original conversation.']],
   // 派发状态变化不等于用户取消；旧记录也使用重新核对状态的统一恢复入口。
   [['ZEUS_NATIVE_SUBMISSION_NOT_QUEUED'], ['消息状态已更新，请重新检查发送结果。', 'The message status has changed. Check its delivery status again.', 'check']],
   [

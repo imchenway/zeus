@@ -2,8 +2,8 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { composerQueuedSubmissions, queuedSubmissionIdentity, reorderableQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { NativeQueuedSubmission, NativeQueueSnapshot, NativeSessionState } from './sessionTypes.js';
 
-/** 服务端返回队列水位，尚未创建会话的本地队列可以同步完成。 */
-export type ReorderQueuedMessages = (orderedSubmissionIds: string[]) => void | NativeQueueSnapshot | Promise<void | NativeQueueSnapshot>;
+/** 服务端返回队列水位，调序中的客户端身份需先取得接纳回执。 */
+export type ReorderQueuedMessages = (orderedSubmissionIds: string[], localMessageIds?: ReadonlySet<string>) => void | NativeQueueSnapshot | Promise<void | NativeQueueSnapshot>;
 
 /** 本地调序以稳定的客户端消息身份表达，渲染等到权威水位接管。 */
 interface OrderProjection {
@@ -85,19 +85,20 @@ export function useQueuedMessageReorder(input: {
     latest.current = next;
     setProjection(next);
     /** 所有操作在点击时即进入同一写入队列，后续引导或删除不会越过本次调序。 */
-    void persist(
-      next,
-      current.map((entry) => entry.id),
-      submissionId,
-      save,
-    );
+    void persist(next, current, submissionId, save);
     return true;
   }
 
   /** 迟到的处理结果不能替换后续点击的即时顺序。 */
-  async function persist(next: OrderProjection, orderedIds: string[], submissionId: string, save: ReorderQueuedMessages): Promise<void> {
+  async function persist(next: OrderProjection, ordered: NativeQueuedSubmission[], submissionId: string, save: ReorderQueuedMessages): Promise<void> {
     try {
-      const result = await save(orderedIds);
+      /** 在点击时冻结哪些身份仍属于客户端，排队状态变化后也不能将它们直接交给服务端。 */
+      const localMessageIds = new Set(ordered.filter((entry) => 'localOnly' in entry && entry.localOnly === true).map((entry) => entry.id));
+      /** 回执用队列水位确认本次顺序。 */
+      const result = await save(
+        ordered.map((entry) => entry.id),
+        localMessageIds,
+      );
       if (latest.current !== next) return;
       const settled: OrderProjection = { ...next, settled: true, ...(result ? { throughEventSeq: result.throughEventSeq } : {}) };
       latest.current = settled;

@@ -143,6 +143,8 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   conversationTranscripts: ConversationTranscriptRepository;
   conversationTurns: ConversationTurnRepository;
   conversations: ConversationRepository;
+  /** 合入步骤控制原冲突会话是否仍可接收输入。 */
+  assertDeliveryConflictConversationOpen(conversationId: string): void;
   digitalEmployees: DigitalEmployeeRepository;
   db: ZeusDatabase;
   idempotencyRequests: IdempotencyRequestRepository;
@@ -279,6 +281,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     appendAuditLog,
     artifactStore,
     assertCodexAccountReady,
+    assertDeliveryConflictConversationOpen,
     buildTaskPushLayoutForTask,
     codexAppServerManager,
     codexExternalAgentHome,
@@ -2250,6 +2253,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         throw nativeApiError('ZEUS_CONVERSATION_RETRY_NOT_READY', '会话状态已改变，请先检查处理状态。');
       }
     }
+    /** 冻结路由可能等待模型数据，入队前读取最新交付状态。 */
+    assertDeliveryConflictConversationOpen(conversation.id);
     const nativeOperation = await (async () => {
       if (isManagedAgentKind(selectedAgentKind)) {
         if (delivery === 'queue') {
