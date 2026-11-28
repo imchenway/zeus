@@ -48,6 +48,10 @@ export function NotificationCenter({
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   /** 外部点击和 Esc 由原生弹层处理。 */
   const surface = useRef<HTMLDivElement>(null);
+  /** 跳转会把焦点交给目标页面或离开确认。 */
+  const navigating = useRef(false);
+  /** 导航取消或失败时，把焦点交还仍存在的原条目。 */
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     /** 系统摘要打开同一个列表，不自动确认任何未读。 */
@@ -77,7 +81,6 @@ export function NotificationCenter({
       panel.style.maxHeight = `${Math.max(0, Math.min(520, window.innerHeight - top - 8))}px`;
     };
     position();
-    panel.focus({ preventScroll: true });
     /** 只观察标题宽度，避免列表与定位相互触发。 */
     const observer = new ResizeObserver(position);
     observer.observe(anchor.parentElement ?? anchor);
@@ -127,8 +130,15 @@ export function NotificationCenter({
                 /** 展开仅刷新内容，不批量已读。 */
                 const expanded = event.newState === 'open';
                 setOpen(expanded);
-                if (expanded) return model.refresh();
-                else if (!document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) trigger.current?.focus({ preventScroll: true });
+                if (expanded) {
+                  /** 刷新前返回原操作，已失效的条目则回到弹层。 */
+                  const row = returnFocus.current;
+                  returnFocus.current = null;
+                  (row?.isConnected && !row.disabled ? row : event.currentTarget).focus({ preventScroll: true });
+                  return model.refresh();
+                }
+                if (!navigating.current && !document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) trigger.current?.focus({ preventScroll: true });
+                navigating.current = false;
               }}
             >
               <header className="automation-notification-header">
@@ -190,21 +200,44 @@ export function NotificationCenter({
                     const title = item.source !== 'automation' ? item.title : item.automationName;
                     /** 未读列表沿用原标题，待处理项显示来源项目供跨项目区分。 */
                     const project = pending ? projects.find((entry) => entry.id === item.projectId) : undefined;
+                    /** 问题条目可先于项目目录加载，仍显示其真实归属。 */
+                    const projectName = project?.name ?? (item.source === 'question' ? item.projectName : undefined);
                     /** 描述说明截止时间或执行结果，具体异常优先展示原有完整说明组件。 */
                     const description =
-                      item.source === 'git_delivery'
-                        ? item.status === 'succeeded'
-                          ? zh
-                            ? '代码交付已完成'
-                            : 'Code delivery completed'
-                          : zh
-                            ? '代码交付需要处理'
-                            : 'Code delivery needs attention'
-                        : item.source === 'task'
-                          ? `${zh ? '截止时间：' : 'Due: '}${formatTaskDeadline(item.deadline)}`
-                          : notificationDescriptions[item.status][zh ? 0 : 1];
+                      item.source === 'question'
+                        ? item.excerpt
+                        : item.source === 'git_delivery'
+                          ? item.status === 'succeeded'
+                            ? zh
+                              ? '代码交付已完成'
+                              : 'Code delivery completed'
+                            : zh
+                              ? '代码交付需要处理'
+                              : 'Code delivery needs attention'
+                          : item.source === 'task'
+                            ? `${zh ? '截止时间：' : 'Due: '}${formatTaskDeadline(item.deadline)}`
+                            : notificationDescriptions[item.status][zh ? 0 : 1];
                     /** 无会话异常不能伪装成可导航的标题。 */
                     const canOpen = item.source !== 'automation' || Boolean(item.conversationId);
+                    /** 详情按钮是独立操作，普通说明可随标题一起导航。 */
+                    const error = item.source === 'automation' && item.errorMessage ? { code: item.errorCode, message: item.errorMessage } : null;
+                    /** 动作名称明确区分查看结果、处理交付和回答原问题。 */
+                    const action = item.source === 'question' ? (zh ? '回答问题' : 'Answer question') : item.source === 'git_delivery' ? (zh ? '处理' : 'Resolve') : zh ? '查看' : 'Open';
+                    /** 同一阅读区域用于可导航内容和无会话的异常。 */
+                    const summary = (
+                      <>
+                        <span className="automation-notification-heading">
+                          <strong>{projectName ? `${projectName} · ${title}` : title}</strong>
+                          {pending && canOpen ? <span className="automation-notification-action-label">{action}</span> : null}
+                          {!pending && item.source !== 'question' ? (
+                            <time className="automation-notification-time" dateTime={item.occurredAt}>
+                              {formatZeusDateTime(item.occurredAt, language, { dateStyle: 'short', timeStyle: 'short' })}
+                            </time>
+                          ) : null}
+                        </span>
+                        {error ? null : <span className="automation-notification-description">{description}</span>}
+                      </>
+                    );
                     return (
                       <li key={key} className="automation-notification-item">
                         <div className="automation-notification-item-header">
@@ -215,28 +248,27 @@ export function NotificationCenter({
                               className="automation-notification-open"
                               data-icon-tooltip={title}
                               disabled={Boolean(model.busyId)}
-                              onClick={() => {
+                              onClick={(event) => {
+                                /** 失败后恢复当前行，避免要求键盘用户重新找通知。 */
+                                const button = event.currentTarget;
                                 // 导航确认弹窗需要正常焦点；取消导航时恢复通知列表。
+                                navigating.current = true;
                                 surface.current?.hidePopover();
                                 return model.open(item).then((opened) => {
-                                  if (!opened && surface.current?.isConnected) surface.current.showPopover();
+                                  if (!opened && surface.current?.isConnected) {
+                                    navigating.current = false;
+                                    returnFocus.current = button;
+                                    surface.current.showPopover();
+                                  }
                                 });
                               }}
                             >
-                              <strong>{project ? `${project.name} · ${title}` : title}</strong>
-                              {pending ? <span className="automation-notification-action-label">{item.source === 'git_delivery' ? (zh ? '处理' : 'Resolve') : zh ? '查看' : 'Open'}</span> : null}
+                              {summary}
                             </Button>
                           ) : (
-                            <div className="automation-notification-summary">
-                              <strong data-icon-tooltip={title}>{title}</strong>
-                            </div>
+                            <div className="automation-notification-summary">{summary}</div>
                           )}
-                          {!pending ? (
-                            <time className="automation-notification-time" dateTime={item.occurredAt}>
-                              {formatZeusDateTime(item.occurredAt, language, { dateStyle: 'short', timeStyle: 'short' })}
-                            </time>
-                          ) : null}
-                          {!pending ? (
+                          {!pending && item.source !== 'question' ? (
                             <Button
                               size="compact"
                               className="automation-notification-read"
@@ -250,9 +282,11 @@ export function NotificationCenter({
                             </Button>
                           ) : null}
                         </div>
-                        <p className="automation-notification-description">
-                          {item.source === 'automation' && item.errorMessage ? <VisibleApplicationError error={{ code: item.errorCode, message: item.errorMessage }} language={zh ? 'zh-CN' : 'en'} /> : description}
-                        </p>
+                        {error ? (
+                          <div className="automation-notification-description">
+                            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+                          </div>
+                        ) : null}
                         {item.source === 'automation' && item.canResume ? (
                           <Button
                             size="compact"

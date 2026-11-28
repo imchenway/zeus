@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { asyncMessageQuestions, classifyAssistantMessage, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { asyncMessageQuestions, classifyAssistantMessage, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionNotification, type AsyncQuestionResponse } from '@zeus/shared';
 import type { AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { clearRuiDraft, normalizeRequestQuestions, RequestUserInputPanel } from './PendingRequestSurface.js';
 import { itemRole, ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
+import type { SessionController } from './useSessionController.js';
 import { Button } from '../ui/Button.js';
 
 /** 按原问题身份查找答复；失败记录保留重试状态，不借用相同正文或别的轮次。 */
@@ -84,12 +85,27 @@ interface AsyncQuestionDockSelection {
 /** 按产品会话隔离底部状态，切换会话时不串用草稿或展开选择。 */
 const asyncQuestionDockSelections = new Map<string, AsyncQuestionDockSelection>();
 
+/** 通知只打开已有表单，完成定位后由工作区释放本次请求。 */
+export interface AsyncQuestionNavigation {
+  /** 已经确认可答的目标问题。 */
+  target: AsyncQuestionNotification;
+  /** 结束定位，读取失败时附上原因。 */
+  onSettled: (target: AsyncQuestionNotification, error?: unknown) => void;
+}
+
+/** 供首屏和按轮次补读共用，绝不选择同会话的另一道题。 */
+function findNotificationQuestion(state: NativeSessionState, target: AsyncQuestionNotification): NativeSessionItemBuffer | undefined {
+  return Object.values(state.items).find((item) => item.conversationId === target.conversationId && item.turnId === target.providerTurnId && (item.providerItemId ?? item.itemId) === target.providerItemId);
+}
+
 /** 在底部依次处理异步问题；无需把异步交付伪装成阻塞请求。 */
-export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: boolean) {
+export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: boolean, { navigation, controller, language }: { navigation?: AsyncQuestionNavigation; controller?: SessionController; language: SessionUiLanguage }) {
   /** 会话身份变化时读取该会话已保存的界面状态。 */
   const conversationId = state?.conversationId ?? '';
   /** 选择变化只重画当前工作区，流式消息仍由原有投影负责。 */
   const [, refresh] = useState(0);
+  /** 同题被通知再次打开时重新聚焦，消费导航后保留该次焦点身份。 */
+  const focusedNotification = useRef<AsyncQuestionNotification | null>(null);
   /** 记忆只存界面选择，不存问题正文或答案。 */
   const selection = useMemo(() => {
     /** 已访问会话复用同一份收起状态。 */
@@ -113,9 +129,20 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
           return left.key.localeCompare(right.key);
         })
     : [];
+  /** 热缓存可展示正文，确认待答要等原控制器取得当前快照。 */
+  const target = navigation?.target;
+  /** 父工作区持有定位请求的生命周期。 */
+  const onSettled = navigation?.onSettled;
+  /** 首屏若包含原题，直接使用渲染状态中的位置。 */
+  const located = target && state ? findNotificationQuestion(state, target) : undefined;
+  /** 当前控制器必须已经取得同一会话。 */
+  const ready = Boolean(target && state?.snapshot?.id === target.conversationId && state.transportState === 'ready');
+  /** 等待定位时暂不自动弹出另一个问题。 */
+  const requested = ready && located && state && questions.includes(located) && !asyncQuestionStatus(located, state).closed ? located : undefined;
   /** 先保留当前题，再处理本窗口接到的队列；旧历史题仍由用户主动打开。 */
-  const selected =
-    enabled && state
+  const selected = target
+    ? (requested ?? null)
+    : enabled && state
       ? (questions.find((item) => asyncQuestionIdentity(item) === selection.selectedId) ??
         questions.find((item) => (selection.offered.has(asyncQuestionIdentity(item)) || (item.turnId === state.activeTurnId && !asyncQuestionStatus(item, state).closed)) && !selection.dismissed.has(asyncQuestionIdentity(item))) ??
         null)
@@ -124,11 +151,40 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
   const selectedId = selected ? asyncQuestionIdentity(selected) : null;
   useEffect(() => {
     if (!enabled) return;
-    selection.selectedId = selectedId;
+    if (!target || requested) selection.selectedId = selectedId;
+    if (requested && selectedId) selection.dismissed.delete(selectedId);
     for (const item of questions) {
       if (item.turnId === state?.activeTurnId) selection.offered.add(asyncQuestionIdentity(item));
     }
-  }, [enabled, questions, selectedId, selection, state?.activeTurnId]);
+  }, [enabled, questions, requested, selectedId, selection, state?.activeTurnId, target]);
+
+  useEffect(() => {
+    if (!target || !onSettled || !ready) return;
+    if (requested) {
+      focusedNotification.current = target;
+      onSettled(target);
+      return;
+    }
+    if (located || !enabled || !controller) {
+      onSettled(target, new Error(language === 'zh-CN' ? '原问题已处理或轮次已结束。' : 'The question was answered or its turn ended.'));
+      return;
+    }
+    /** 首屏有限量，问题缺失时按准确轮次补读。页面切走后忽略旧结果。 */
+    let current = true;
+    void controller.loadNavigationTurn(target.providerTurnId).then(
+      () => {
+        if (current && !findNotificationQuestion(controller.getState(), target)) {
+          onSettled(target, new Error(language === 'zh-CN' ? '原问题当前无法读取。' : 'The original question is unavailable.'));
+        }
+      },
+      (error: unknown) => {
+        if (current) onSettled(target, error);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [controller, enabled, language, located, onSettled, ready, requested, target]);
 
   /** 所有待回答入口只改变底部选择，不滚动到历史里的选项表单。 */
   function open(item: NativeSessionItemBuffer): void {
@@ -146,6 +202,7 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
 
   return {
     selected,
+    focusRequest: requested ? target : selected ? (focusedNotification.current ?? undefined) : undefined,
     questions: questions.filter(
       (item) => state && (item.turnId === state.activeTurnId || selection.offered.has(asyncQuestionIdentity(item)) || selection.dismissed.has(asyncQuestionIdentity(item)) || asyncQuestionIdentity(item) === selectedId),
     ),
@@ -213,6 +270,8 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
 /** 底部复用同步询问表单；答案仍通过原异步问题的引导通道发送。 */
 export function AsyncQuestionPanel(props: {
   item: NativeSessionItemBuffer;
+  /** 同一问题从通知再次打开时，重新聚焦原表单。 */
+  focusRequest?: AsyncQuestionNotification;
   state: NativeSessionState;
   language: SessionUiLanguage;
   onAnswer: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
@@ -252,6 +311,7 @@ export function AsyncQuestionPanel(props: {
       questions={questions}
       language={language}
       autoFocus
+      focusRequest={props.focusRequest}
       busy={status.pending}
       onChooseAttachments={props.onChooseAttachments}
       retainDraft

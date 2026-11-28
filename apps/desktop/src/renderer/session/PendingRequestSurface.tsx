@@ -660,6 +660,8 @@ export interface RequestUserInputPanelProps extends Omit<PendingRequestSurfacePr
   questions: RequestQuestion[];
   /** 异步回答在 Provider 确认前保留草稿。 */
   retainDraft?: boolean;
+  /** 同一表单被明确重新打开时，使用本次请求重放焦点。 */
+  focusRequest?: object;
   /** 历史轮次的答复通过明确的新消息动作发送。 */
   submitLabel?: string;
   /** 异步面板收起只改变展示，不产生跳过请求。 */
@@ -729,7 +731,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
     if (props.autoFocus === false) return;
     if (currentQuestion.kind === 'freeform') freeformRef.current?.focus();
     else optionRefs.current[0]?.focus();
-  }, [currentQuestion.id, currentQuestion.kind, props.autoFocus, props.request.id]);
+  }, [currentQuestion.id, currentQuestion.kind, props.autoFocus, props.focusRequest, props.request.id]);
 
   useEffect(() => {
     // 询问可能在用户连续输入时异步替换会话输入框；固定保护期内不接受任何答题快捷键。

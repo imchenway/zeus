@@ -15,7 +15,9 @@ import {
   type ConversationProcessGroup,
   type AssistantMessageMetadata,
   type AsyncQuestionAnswer,
+  type AsyncQuestionNotification,
   type AsyncQuestionResponse,
+  type NotificationPosition,
 } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import {
@@ -836,6 +838,29 @@ const stableChangeSetStates = new Set(['applied', 'undone', 'conflicted', 'unava
  * Snapshot V2 只执行有界投影查询；不会调用 V1 的全历史 repository。
  * 游标携带第一页读取时的高水位，后续追加的数据不会插入当前分页窗口。
  */
+/** 侧栏和待处理共享未结束且无有效答复的判定。 */
+const pendingAsyncQuestionSql = `message.role = 'assistant' AND message.provider_turn_id IS NOT NULL AND message.provider_item_id IS NOT NULL
+          AND json_valid(message.metadata_json) AND json_extract(message.metadata_json, '$.delivery') = 'async'
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_turns AS turn
+             WHERE turn.conversation_id = message.conversation_id
+               AND (turn.provider_turn_id = message.provider_turn_id OR turn.id = message.provider_turn_id)
+               AND (turn.status IN ('completed', 'interrupted', 'failed') OR turn.completed_at IS NOT NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_messages AS final_message
+             WHERE final_message.conversation_id = message.conversation_id
+               AND final_message.provider_turn_id = message.provider_turn_id AND final_message.role = 'assistant'
+               AND json_valid(final_message.metadata_json) AND json_extract(final_message.metadata_json, '$.messageKind') = 'final'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_submissions AS submission
+             WHERE submission.conversation_id = message.conversation_id
+               AND submission.status NOT IN ('failed', 'cancelled', 'deleted') AND json_valid(submission.input_json)
+               AND json_extract(submission.input_json, '$.questionAnswer.providerItemId') = message.provider_item_id
+               AND json_extract(submission.input_json, '$.questionAnswer.providerTurnId') = message.provider_turn_id
+          )`;
+
 export class ConversationSnapshotV2Repository {
   /** 系统消息独立于模型历史，但共用产品会话的持久位置。 */
   readonly systemMessages: ConversationSystemMessageRepository;
@@ -859,30 +884,44 @@ export class ConversationSnapshotV2Repository {
          FROM conversation_messages AS message
          JOIN conversations AS conversation ON conversation.id = message.conversation_id
         WHERE conversation.project_id IN (SELECT value FROM json_each(?)) AND conversation.archived = 0
-          AND message.role = 'assistant' AND message.provider_turn_id IS NOT NULL AND message.provider_item_id IS NOT NULL
-          AND json_valid(message.metadata_json) AND json_extract(message.metadata_json, '$.delivery') = 'async'
-          AND NOT EXISTS (
-            SELECT 1 FROM conversation_turns AS turn
-             WHERE turn.conversation_id = message.conversation_id
-               AND (turn.provider_turn_id = message.provider_turn_id OR turn.id = message.provider_turn_id)
-               AND (turn.status IN ('completed', 'interrupted', 'failed') OR turn.completed_at IS NOT NULL)
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM conversation_messages AS final_message
-             WHERE final_message.conversation_id = message.conversation_id
-               AND final_message.provider_turn_id = message.provider_turn_id AND final_message.role = 'assistant'
-               AND json_valid(final_message.metadata_json) AND json_extract(final_message.metadata_json, '$.messageKind') = 'final'
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM conversation_submissions AS submission
-             WHERE submission.conversation_id = message.conversation_id
-               AND submission.status NOT IN ('failed', 'cancelled', 'deleted') AND json_valid(submission.input_json)
-               AND json_extract(submission.input_json, '$.questionAnswer.providerItemId') = message.provider_item_id
-               AND json_extract(submission.input_json, '$.questionAnswer.providerTurnId') = message.provider_turn_id
-          )`,
+          AND ${pendingAsyncQuestionSql}`,
       [JSON.stringify(projectIds)],
     );
     return new Set(questions.filter((question) => asyncMessageQuestions(parseJsonRecordOrNull(question.metadata_json) ?? {}).length > 0).map((question) => question.conversation_id));
+  }
+
+  /** 从当前可交互轮次读取待答通知，点击时可按原消息身份重查。 */
+  pendingAsyncQuestionNotifications(input: { projectId?: string; id?: string; before?: NotificationPosition; limit: number }): AsyncQuestionNotification[] {
+    /** 分页边界与统一列表的时间、来源、身份倒序一致。 */
+    const { projectId, id, before, limit } = input;
+    /** 搜索范围先约束原项目或原消息，所有外部值使用绑定参数。 */
+    const filters = `${projectId ? ' AND conversation.project_id = ?' : ''}${id ? ' AND message.id = ?' : ''}${
+      before ? " AND (message.created_at < ? OR (message.created_at = ? AND ('question' < ? OR ('question' = ? AND message.id < ?))))" : ''
+    }`;
+    /** 只读取活动轮次的元数据，避免加载会话正文、答复或附件。 */
+    const rows = this.db.select<Omit<AsyncQuestionNotification, 'source' | 'excerpt'> & { metadata: string }>(
+      `SELECT message.id, conversation.project_id AS projectId, project.name AS projectName, conversation.id AS conversationId, conversation.title,
+              message.provider_turn_id AS providerTurnId, message.provider_item_id AS providerItemId, message.created_at AS occurredAt, message.metadata_json AS metadata
+         FROM conversation_turns AS active_turn
+         JOIN conversations AS conversation ON conversation.id = active_turn.conversation_id
+         JOIN projects AS project ON project.id = conversation.project_id AND project.deleted_at IS NULL
+         JOIN conversation_messages AS message ON message.conversation_id = conversation.id AND message.provider_turn_id = active_turn.provider_turn_id
+        WHERE active_turn.status IN ('running', 'waiting', 'dispatching') AND active_turn.completed_at IS NULL
+          AND conversation.archived = 0 AND conversation.transport_kind = 'codex_native' AND conversation.listing_scope IN ('ordinary', 'automation_inbox')
+          AND ${pendingAsyncQuestionSql}${filters}
+        ORDER BY message.created_at DESC, message.id DESC`,
+      [...(projectId ? [projectId] : []), ...(id ? [id] : []), ...(before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [])],
+    );
+    /** 结构校验在分页限量之前，旧消息的无效元数据不会占用名额。 */
+    const items: AsyncQuestionNotification[] = [];
+    for (const { metadata, ...row } of rows) {
+      /** 只附首题简短摘要，详细表单仍由会话加载。 */
+      const question = asyncMessageQuestions(parseJsonRecordOrNull(metadata) ?? {})[0];
+      if (!question) continue;
+      items.push({ ...row, title: redactSensitivePreview(row.title).text, excerpt: redactSensitivePreview(question.question).text.replace(/\s+/gu, ' ').trim().slice(0, 120), source: 'question' });
+      if (items.length === limit) break;
+    }
+    return items;
   }
 
   /** 只返回可见会话的正文命中身份；大历史保留元数据检索，不拖慢运行宿主。 */

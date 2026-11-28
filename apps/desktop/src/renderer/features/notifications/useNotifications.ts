@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AutomationNotification, CommandRun, CommandRunNotification, NotificationItem, NotificationListFilter, TaskReminder } from '@zeus/shared';
+import type { AsyncQuestionNotification, AutomationNotification, CommandRun, CommandRunNotification, NotificationItem, NotificationListFilter, TaskReminder } from '@zeus/shared';
 import type { DashboardClient } from '../../apiClient.js';
 import type { WorkspacePageProps } from '../workspace/workspaceContracts.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+
+/** 待答由业务状态消除，不参加任何已读确认。 */
+type ReadableNotification = Exclude<NotificationItem, AsyncQuestionNotification>;
 
 /** 各来源共享列表和操作状态，导航后仍等待准确内容可见再确认。 */
 export function useNotifications(input: {
@@ -12,11 +15,9 @@ export function useNotifications(input: {
   subscribe: WorkspacePageProps['onSubscribeRealtimeEvents'];
   /** 文案与应用语言保持一致。 */
   language: 'zh-CN' | 'en-US';
-  /** 当前真实会话身份，不使用导航占位身份。 */
-  visibleConversationId: string | null;
-  /** 项目身份用于阻止跨项目误确认。 */
-  visibleProjectId: string | null;
-  /** 主窗口在前台且最新正文确实可见。 */
+  /** 主会话和侧边会话各自报告已显示的正文身份。 */
+  visibleConversations: readonly { id: string; projectId: string }[];
+  /** 仅当前台窗口保持状态同步时确认会话通知。 */
   contentVisible: boolean;
   /** 实际显示的任务详情身份。 */
   visibleTaskId: string | null;
@@ -25,7 +26,7 @@ export function useNotifications(input: {
   /** 工作台在前台且准确任务详情已经加载。 */
   taskContentVisible: boolean;
   /** 复用工作台现有离开确认与会话导航，取消返回 false。 */
-  onOpenConversation(item: AutomationNotification): Promise<boolean>;
+  onOpenConversation(item: AutomationNotification | AsyncQuestionNotification): Promise<boolean>;
   /** 复用已有任务导航和未保存草稿保护。 */
   onOpenTask(item: TaskReminder): Promise<void>;
   /** 现有执行历史界面已经显示的准确命令执行。 */
@@ -54,7 +55,7 @@ export function useNotifications(input: {
   /** 同一时间只处理一个用户操作。 */
   const [busyId, setBusyId] = useState<string | null>(null);
   /** 成功导航仍需等待正文的可见回执。 */
-  const [pendingRead, setPendingRead] = useState<NotificationItem | null>(null);
+  const [pendingRead, setPendingRead] = useState<ReadableNotification | null>(null);
   /** 旧查询响应不能覆盖后来的实时刷新或客户端切换。 */
   const queryRevision = useRef(0);
   /** 视图变化先同步更新查询范围，已排队的事件刷新仍读取当前视图。 */
@@ -111,7 +112,17 @@ export function useNotifications(input: {
     /** 启动、断线重连以及通知变化均从服务端补读。 */
     const dispose = subscribe?.(
       (event) => {
-        if (event.type.startsWith('automation.') || event.type.startsWith('task.') || event.type.startsWith('project.') || event.type.startsWith('command.run.') || event.type === 'conversation.thread.deleted') scheduleRefresh();
+        /** 待答只跟随消息完成、答复与轮次变化，不按流式增量刷新。 */
+        const questionChanged =
+          filterRef.current.view === 'pending' &&
+          (event.type === 'conversation.queue.changed' ||
+            event.type === 'conversation.submission.steering' ||
+            event.type === 'conversation.turn.started' ||
+            event.type === 'conversation.turn.completed' ||
+            event.type === 'conversation.thread.archived' ||
+            (event.type === 'conversation.item.completed' && (event.payload.itemType === 'agentMessage' || event.payload.itemType === 'assistantMessage')));
+        if (questionChanged || event.type.startsWith('automation.') || event.type.startsWith('task.') || event.type.startsWith('project.') || event.type.startsWith('command.run.') || event.type === 'conversation.thread.deleted')
+          scheduleRefresh();
       },
       (state) => {
         if (state === 'connected') scheduleRefresh();
@@ -128,7 +139,7 @@ export function useNotifications(input: {
 
   /** 确认后重新读取计数，旧修订确认失败时保留新提醒。 */
   const acknowledge = useCallback(
-    async (item: NotificationItem): Promise<void> => {
+    async (item: ReadableNotification): Promise<void> => {
       if (!client) return;
       setActionError(null);
       try {
@@ -148,7 +159,7 @@ export function useNotifications(input: {
   useEffect(() => {
     if (!pendingRead || pendingRead.source === 'git_delivery') return;
     if (pendingRead.source === 'automation') {
-      if (!input.contentVisible || pendingRead.conversationId !== input.visibleConversationId || pendingRead.projectId !== input.visibleProjectId) return;
+      if (!input.contentVisible || !input.visibleConversations.some((conversation) => conversation.id === pendingRead.conversationId && conversation.projectId === pendingRead.projectId)) return;
     } else if (pendingRead.source === 'command') {
       if (!input.commandContentVisible || pendingRead.id !== input.visibleCommandRun?.id || pendingRead.projectId !== input.visibleCommandRun.projectId) return;
     } else if (!input.taskContentVisible || pendingRead.taskId !== input.visibleTaskId || pendingRead.projectId !== input.visibleTaskProjectId) return;
@@ -163,8 +174,7 @@ export function useNotifications(input: {
   }, [
     acknowledge,
     input.contentVisible,
-    input.visibleConversationId,
-    input.visibleProjectId,
+    input.visibleConversations,
     input.taskContentVisible,
     input.visibleTaskId,
     input.visibleTaskProjectId,
@@ -212,7 +222,7 @@ export function useNotifications(input: {
         setBusyId(null);
       }
     },
-    /** 列表导航成功后才关闭弹层；失败时保留消息并补读失效会话。 */
+    /** 只确认成功打开的对象，失败时保留操作错误并刷新列表。 */
     async open(item: NotificationItem): Promise<boolean> {
       if (actionInFlight.current || !client || (item.source === 'automation' && !item.conversationId)) return false;
       actionInFlight.current = true;
@@ -221,13 +231,13 @@ export function useNotifications(input: {
       try {
         /** 用户取消未保存内容的离开确认时，不产生已读。 */
         let opened = true;
-        if (item.source === 'automation') opened = await input.onOpenConversation(item);
+        if (item.source === 'automation' || item.source === 'question') opened = await input.onOpenConversation(item);
         else if (item.source === 'command') await input.onOpenCommand(item);
         else if (item.source === 'git_delivery') {
           if (!window.zeus?.openTaskGitDeliveryWindow) throw new Error('代码交付窗口不可用。');
           await window.zeus.openTaskGitDeliveryWindow(item.scope.kind === 'task' ? { taskId: item.scope.taskId } : { projectId: item.projectId, conversationId: item.scope.conversationId });
         } else await input.onOpenTask(item);
-        if (opened && item.source !== 'git_delivery') setPendingRead(item);
+        if (opened && item.source !== 'git_delivery' && item.source !== 'question') setPendingRead(item);
         return opened;
       } catch (error) {
         setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
@@ -260,7 +270,7 @@ export function useNotifications(input: {
     },
     /** 单条图标可确认任意通知，不导航、不恢复或启动任何工作。 */
     async markRead(item: NotificationItem): Promise<void> {
-      if (actionInFlight.current || !client) return;
+      if (actionInFlight.current || !client || item.source === 'question') return;
       actionInFlight.current = true;
       setBusyId(`${item.source}:${item.id}`);
       setActionError(null);

@@ -145,12 +145,14 @@
 .automation-notification-item:last-child {
   border-bottom: 0;
 }
-/* 标题独立导航，描述和已读操作不嵌套进标题按钮。 */
+/* 标题和普通摘要共用同一焦点，独立操作放在按钮外。 */
 .automation-notification-open,
 .automation-notification-summary {
   display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
+  min-block-size: 24px;
   padding: 0;
   text-align: start;
   color: inherit;
@@ -162,20 +164,25 @@
 .automation-notification-open {
   cursor: pointer;
 }
-.automation-notification-open:hover > strong {
+.automation-notification-open:hover strong {
   color: var(--zeus-brand-primary);
 }
 .automation-notification-open:disabled {
   opacity: 0.65;
   cursor: default;
 }
-/* 标题最多一行，完整名称保留在悬停说明和可访问名称中。 */
-.automation-notification-open > strong,
-.automation-notification-summary > strong {
+/* 时间和操作维持自身宽度，较长的标题先换行。 */
+.automation-notification-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.automation-notification-heading > strong {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 /* 时间是独立主体，靠右展示并保持完整，不再承载项目和状态字段。 */
 .automation-notification-time {
@@ -184,6 +191,7 @@
   white-space: nowrap;
 }
 .automation-notification-description {
+  display: block;
   margin: 4px 0 0;
   white-space: pre-wrap;
 }
@@ -208,7 +216,7 @@
 }
 .automation-notification-item-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
 }
 /* 单条已读不额外占一行；布局始终预留点击区域，显隐时不会挤动标题。 */

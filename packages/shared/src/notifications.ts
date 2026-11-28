@@ -16,12 +16,34 @@ export interface CommandRunNotification {
   occurredAt: string;
 }
 
+/** 待答通知定位原问题，答复仍走原会话提交。 */
+export interface AsyncQuestionNotification {
+  /** 这条提问消息的稳定记录身份，用于列表和游标。 */
+  id: string;
+  /** 问题所在的项目和产品会话身份。 */
+  projectId: string;
+  conversationId: string;
+  /** 目录尚未加载时也能解释待答问题归属。 */
+  projectName: string;
+  /** 原会话表单使用的 Provider 轮次和问题身份。 */
+  providerTurnId: string;
+  providerItemId: string;
+  /** 会话标题与经过脱敏的首题摘要。 */
+  title: string;
+  excerpt: string;
+  /** 原问题的创建时间，ISO 8601。 */
+  occurredAt: string;
+  /** 由待答状态投影，没有独立已读回执。 */
+  source: 'question';
+}
+
 /** 来源只用于分发原有业务行为，界面不按来源分类。 */
 export type NotificationItem =
   | (AutomationNotification & { /** 原自动化结果。 */ source: 'automation' })
   | (TaskReminder & { /** 原任务截止提醒。 */ source: 'task' })
   | (GitDeliveryNotification & { /** 后台代码交付结果。 */ source: 'git_delivery' })
-  | (CommandRunNotification & { /** 命令中心执行结果。 */ source: 'command' });
+  | (CommandRunNotification & { /** 命令中心执行结果。 */ source: 'command' })
+  | AsyncQuestionNotification;
 
 /** 统一分页使用全局边界，不依赖上一条通知仍存在或仍未读。 */
 export type NotificationPosition = Pick<NotificationItem, 'occurredAt' | 'source' | 'id'>;

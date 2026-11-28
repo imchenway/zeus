@@ -6545,6 +6545,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 100%;
 }
 
+/* 问题表单挂载时淡入，布局和减少动态效果模式不等待动效。 */
+@media (prefers-reduced-motion: no-preference) {
+  .session-codex-parity-v1 .session-interaction-dock[data-async-question] > .session-request-user-input-surface {
+    animation: zeus-modal-backdrop-enter var(--zeus-motion-duration-quick, 140ms) ease-out;
+  }
+}
+
 /* 同步与异步询问共用底部内部尺寸。 */
 .session-codex-parity-v1 .session-interaction-dock .session-question-status {
   inline-size: 100%;

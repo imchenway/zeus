@@ -37,6 +37,7 @@ import {
   readCommandDeliveryDiagnostic,
   renderTaskPushLayoutText,
   temporaryWorkspaceId,
+  type AsyncQuestionNotification,
   type ThirdPartyTaskExtract,
   userFacingErrorCause,
   userFacingNetworkIssue,
@@ -271,6 +272,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setProjectWorkspaceConfigStatus,
     setRestoringArchivedConversationId,
     setSelectedNativeConversationId,
+    setPendingAsyncQuestion,
     setSelectedNativeConversationPresentation,
     setSelectedTaskIds,
     setSnapshot,
@@ -1794,12 +1796,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   const runAfterWorkspaceLeave = useCallback(
-    (leave: () => void | Promise<void>): Promise<boolean> =>
+    (leave: () => boolean | void | Promise<boolean | void>): Promise<boolean> =>
       new Promise<boolean>((resolve, reject) => {
         requestWorkspaceLeaveRef.current(
           () => {
             Promise.resolve(leave()).then(
-              () => resolve(true),
+              (result) => resolve(result !== false),
               (error: unknown) => reject(error),
             );
           },
@@ -1813,7 +1815,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   const nativeConversationSelectionRevision = useRef(0);
 
   /** 所有入口先沿用当前投影的导航身份，真实会话身份仍用于读取消息。 */
-  async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive'): Promise<void> {
+  async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive', question?: AsyncQuestionNotification): Promise<boolean> {
     /** 此次导航在开始读取前冻结其先后顺序。 */
     const selectionRevision = ++nativeConversationSelectionRevision.current;
     /** 子会话入口恢复所属主页面，不能把右侧会话误当成新的主页面。 */
@@ -1823,7 +1825,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const source =
         state.nativeConversationChoices.find((choice) => choice.id === conversation.sourceConversationId && choice.projectId === conversation.projectId) ??
         (await props.nativeConversationClient?.loadNativeConversationChoice(conversation.projectId, conversation.sourceConversationId));
-      if (selectionRevision !== nativeConversationSelectionRevision.current) return;
+      if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
       if (!source || source.id === conversation.id || source.projectId !== conversation.projectId || source.taskId !== conversation.taskId) throw new Error('侧边栏会话的来源无法读取。');
       /** 只有可进入普通会话页的未归档来源才恢复交互侧栏。 */
       if (!source.archived && !isInternalConversationChoice(source)) {
@@ -1836,7 +1838,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       snapshot.projects.find((candidate) => candidate.id === conversation.projectId) ?? props.onLoadProject?.(conversation.projectId) ?? props.commandClient?.loadProject(conversation.projectId),
       conversation.taskId ? (snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) ?? props.onLoadTask?.(conversation.taskId) ?? props.commandClient?.loadTask(conversation.taskId)) : undefined,
     ]);
-    if (selectionRevision !== nativeConversationSelectionRevision.current) return;
+    if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
     if (!targetProject || targetProject.id !== conversation.projectId) throw new Error('原会话所属项目无法读取。');
     if (conversation.taskId && (!task || task.id !== conversation.taskId || task.projectId !== targetProject.id)) throw new Error('原会话所属任务无法读取。');
     /** 已有推送工作面继续使用稳定导航身份，重复选择不重播切换动画。 */
@@ -1874,6 +1876,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       selectedNativeConversationIdRef.current = navigationId;
       setSelectedNativeConversationId(navigationId);
       setSelectedNativeConversationPresentation(resolvedPresentation);
+      setPendingAsyncQuestion(question ?? null);
       setFocusedArchivedConversation(conversation.archived ? conversation : null);
       setConversationDraftOpen(false);
       if (navigation === 'page') {
@@ -1884,27 +1887,28 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     if (selectedNativeConversationIdRef.current === navigationId) applySelection();
     else await transitionConversation(applySelection);
-    if (selectionRevision !== nativeConversationSelectionRevision.current) return;
+    if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
     if (conversation.transportKind === 'codex_native') {
       setNativeLegacyMessageLoadState('empty');
       setNativeLegacyMessageError(null);
-      return;
+      return true;
     }
     const sourceConversationId = conversation.legacySourceConversationId ?? conversation.id;
     if (nativeLegacyMessages[sourceConversationId]?.length) {
       setNativeLegacyMessageLoadState('empty');
       setNativeLegacyMessageError(null);
-      return;
+      return true;
     }
     if (!props.onLoadLegacyConversation) {
       setNativeLegacyMessageLoadState('error');
       setNativeLegacyMessageError('Legacy conversation details are unavailable; no messages can be referenced safely.');
-      return;
+      return true;
     }
     setNativeLegacyMessageLoadState('loading');
     setNativeLegacyMessageError(null);
     try {
       const loaded = await loadLegacyConversationDetail(conversation, props.onLoadLegacyConversation);
+      if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
       const detail = loaded.detail;
       setNativeLegacyConversationDetails((current) => ({ ...current, [loaded.sourceConversationId]: detail }));
       if (detail.messages.length === 0) {
@@ -1914,26 +1918,29 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setNativeLegacyMessageLoadState('empty');
       }
     } catch (error) {
+      if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
       setNativeLegacyMessageLoadState('error');
       setNativeLegacyMessageError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
       recordLocalError('native-legacy-conversation-load', error);
     }
+    return true;
   }
 
-  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive'): Promise<boolean> {
+  async function selectNativeConversation(conversation: NativeConversationChoice, navigation: 'page' | 'preserve' = 'page', presentation?: 'history' | 'interactive', question?: AsyncQuestionNotification): Promise<boolean> {
     if (isInternalConversationChoice(conversation)) return false;
-    if (navigation === 'preserve') {
-      await applyNativeConversationSelection(conversation, navigation, presentation);
-      return true;
-    }
-    return runAfterWorkspaceLeave(() => applyNativeConversationSelection(conversation, navigation, presentation));
+    if (navigation === 'preserve') return applyNativeConversationSelection(conversation, navigation, presentation);
+    return runAfterWorkspaceLeave(() => applyNativeConversationSelection(conversation, navigation, presentation, question));
   }
 
   /** 从抽屉或任务入口进入同一会话的完整页面，保留现有的实时呈现方式。 */
-  async function openNativeConversationPage(conversation: NativeConversationChoice): Promise<boolean> {
+  async function openNativeConversationPage(conversation: NativeConversationChoice, question?: AsyncQuestionNotification): Promise<boolean> {
     /** 已打开的会话不因切换展示容器退回历史模式。 */
-    const presentation = state.selectedNativeConversation?.projectId === conversation.projectId && state.selectedNativeConversation.id === conversation.id ? state.selectedNativeConversationPresentation : undefined;
-    if (!(await selectNativeConversation(conversation, 'page', presentation))) return false;
+    const presentation = question
+      ? 'interactive'
+      : state.selectedNativeConversation?.projectId === conversation.projectId && state.selectedNativeConversation.id === conversation.id
+        ? state.selectedNativeConversationPresentation
+        : undefined;
+    if (!(await selectNativeConversation(conversation, 'page', presentation, question))) return false;
     setTaskDetailPaneTaskId(undefined);
     setSessionDrawerTarget(undefined);
     setConversationDrawer(undefined);
@@ -1942,6 +1949,34 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     return true;
+  }
+
+  /** 应用内和系统通知均按原会话身份进入完整页面。 */
+  async function openConversationNotification(target: { projectId: string; conversationId: string | null } | AsyncQuestionNotification): Promise<boolean> {
+    /** 目录和正文通过同一会话客户端读取。 */
+    const client = props.nativeConversationClient;
+    if (!client) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '会话服务尚未连接。' : 'The conversation service is disconnected.');
+    if (!target.conversationId) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '原会话已不可用。' : 'The original conversation is unavailable.');
+    /** 通知查找期间发生的新选择优先。 */
+    const revision = ++nativeConversationSelectionRevision.current;
+    /** 读取原会话，同时重新确认具体问题尚可答复。 */
+    const question = 'providerItemId' in target ? target : undefined;
+    const [conversation, pendingQuestion] = await Promise.all([client.loadNativeConversationChoice(target.projectId, target.conversationId), question ? props.commandClient?.loadPendingQuestion(question.id) : undefined]);
+    if (revision !== nativeConversationSelectionRevision.current) return false;
+    if (conversation.projectId !== target.projectId || conversation.id !== target.conversationId || isInternalConversationChoice(conversation)) {
+      throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '原会话已不可用。' : 'The original conversation is unavailable.');
+    }
+    if (
+      question &&
+      (pendingQuestion?.id !== question.id ||
+        pendingQuestion.projectId !== question.projectId ||
+        pendingQuestion.conversationId !== question.conversationId ||
+        pendingQuestion.providerTurnId !== question.providerTurnId ||
+        pendingQuestion.providerItemId !== question.providerItemId)
+    ) {
+      throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '原问题已处理或轮次已结束。' : 'The question was answered or its turn ended.');
+    }
+    return openNativeConversationPage(conversation, pendingQuestion ?? undefined);
   }
 
   /** 任务入口沿用统一的完整会话页跳转。 */
@@ -2010,29 +2045,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   taskGitDeliveryConversationRef.current = ({ taskId, conversationId }) => {
     void openTaskConflictAiConversation(taskId, conversationId);
   };
-  conversationNotificationRef.current = ({ projectId, conversationId }) => {
-    const client = props.nativeConversationClient;
-    if (!client) return;
-    void client
-      .loadNativeConversationChoice(projectId, conversationId)
-      .then(async (conversation) => {
-        if (conversation.projectId !== projectId || conversation.id !== conversationId || isInternalConversationChoice(conversation)) return;
-        const project = snapshot.projects.find((candidate) => candidate.id === projectId);
-        if (!project) return;
-        if (conversation.taskId) {
-          setNativeConversationChoicesByTask((current) => ({
-            ...current,
-            [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation),
-          }));
-        } else {
-          setNativeConversationChoicesByProject((current) => ({
-            ...current,
-            [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], conversation),
-          }));
-        }
-        await selectNativeConversation(conversation);
-      })
-      .catch((error: unknown) => recordLocalError('conversation-notification-open', error));
+  conversationNotificationRef.current = (target) => {
+    void openConversationNotification(target).catch((error: unknown) => recordLocalError('conversation-notification-open', error));
   };
 
   /** 顶部与任务状态入口共用抽屉，打开时保留底层工作区。 */
@@ -3387,6 +3401,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openTaskConversationDrawer,
     openNativeConversationDrawer,
     openNativeConversationPage,
+    openConversationNotification,
     openTaskCreateModal,
     openTaskCreateForTeam,
     openTaskCopyModal,

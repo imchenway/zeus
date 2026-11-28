@@ -65,7 +65,7 @@ import { QueuedConversationMessages, type QueuedConversationMessagesProps } from
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
-import { AsyncQuestionPanel, asyncQuestionIdentity, useAsyncQuestionDock } from './AsyncQuestionMessage.js';
+import { AsyncQuestionPanel, asyncQuestionIdentity, useAsyncQuestionDock, type AsyncQuestionNavigation } from './AsyncQuestionMessage.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ComposerDropdown } from './ComposerDropdown.js';
@@ -405,6 +405,8 @@ export async function loadLegacyConversationDetail<T>(conversation: NativeConver
 }
 
 export interface ConnectedSessionWorkspaceProps {
+  /** 通知定位可交给主会话或实际显示的侧边会话。 */
+  asyncQuestionNavigation?: AsyncQuestionNavigation;
   /** 嵌入侧栏的会话不再递归创建另一层侧栏。 */
   sideQuestionDisabled?: boolean;
   /** 从主会话交付的原文评论，只加入本会话待发送区。 */
@@ -1061,6 +1063,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
           : undefined
       }
       focusComposerRequest={props.sideQuestionDisabled ? (props.pendingCodeComments?.at(-1)?.id ?? props.pendingResponseAnnotations?.at(-1)?.id ?? props.conversation.id) : undefined}
+      asyncQuestionNavigation={
+        props.contentVisible !== false && props.asyncQuestionNavigation?.target.projectId === props.conversation.projectId && props.asyncQuestionNavigation.target.conversationId === props.conversation.id
+          ? props.asyncQuestionNavigation
+          : undefined
+      }
       language={props.language}
       inputSuggestionSettings={props.inputSuggestionSettings}
       onGenerateInputSuggestion={props.client.generateInputSuggestion}
@@ -1885,6 +1892,8 @@ export interface NewConversationDraftStore {
 }
 
 export interface SessionWorkspaceProps {
+  /** 控制器接管后在同一会话的底部打开原答复表单。 */
+  asyncQuestionNavigation?: AsyncQuestionNavigation;
   /** 外部选区进入侧栏后聚焦该会话输入框，不影响主会话。 */
   focusComposerRequest?: string;
   /** 右侧会话复用上层客户端与会话创建能力。 */
@@ -2334,7 +2343,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const blockingPendingRequest = pendingRequests[0] ?? null;
   const blockingPlanImplementationRequest = blockingPendingRequest ? null : (pendingPlanImplementationRequests[0] ?? null);
   /** 异步问题使用同一个底部位置，正式阻塞请求保持原有优先级。 */
-  const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion));
+  const asyncQuestionDock = useAsyncQuestionDock(props.state, transcriptInteractionsEnabled && !props.suppressComposer && Boolean(actions.onAnswerAsyncQuestion), {
+    navigation: props.asyncQuestionNavigation,
+    controller: props.stateController,
+    language: props.language,
+  });
   /** 底部一次只显示一个交互表单，后台异步执行不转成等待状态。 */
   const dockedAsyncQuestion = blockingPendingRequest || blockingPlanImplementationRequest ? null : asyncQuestionDock.selected;
   /** 普通输入框继续让位于阻塞表单及只读入口。 */
@@ -3237,11 +3250,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     }
     if (dockedAsyncQuestion && props.state && actions.onAnswerAsyncQuestion) {
       return (
-        <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
+        <section className="session-interaction-dock" data-async-question aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
           {renderQueuedConversationMessages()}
           <AsyncQuestionPanel
             key={asyncQuestionIdentity(dockedAsyncQuestion)}
             item={dockedAsyncQuestion}
+            focusRequest={asyncQuestionDock.focusRequest}
             state={props.state}
             language={props.language}
             onAnswer={actions.onAnswerAsyncQuestion}

@@ -155,15 +155,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     client: state.props.commandClient ?? null,
     subscribe: state.props.onSubscribeRealtimeEvents,
     language: state.appShellSettings.appLanguage,
-    visibleConversationId: state.selectedNativeConversation?.id ?? null,
-    visibleProjectId: state.selectedNativeConversation?.projectId ?? null,
-    contentVisible: state.zeusWindowForeground && state.latestConversationContentVisible && state.nativeConversationStatusSyncState === 'connected',
-    onOpenConversation: async (item) => {
-      if (!item.conversationId || !state.props.nativeConversationClient) throw new Error('会话服务尚未连接。');
-      /** 从真实会话选择接口读取准确项目和会话，再沿用工作台导航。 */
-      const choice = await state.props.nativeConversationClient.loadNativeConversationChoice(item.projectId, item.conversationId);
-      return domainActions.selectNativeConversation(choice);
-    },
+    visibleConversations: state.latestContentVisibleConversations,
+    contentVisible: state.zeusWindowForeground && state.nativeConversationStatusSyncState === 'connected',
+    onOpenConversation: domainActions.openConversationNotification,
     visibleTaskId: state.taskDetail && state.taskDetail.id === state.taskDetailPaneTaskId ? state.taskDetail.id : null,
     visibleTaskProjectId: state.taskDetail?.projectId ?? null,
     taskContentVisible: state.zeusWindowForeground && state.activeNavTarget === 'projects' && state.activeProjectSection === 'tasks' && state.activeProjectId === state.taskDetail?.projectId,

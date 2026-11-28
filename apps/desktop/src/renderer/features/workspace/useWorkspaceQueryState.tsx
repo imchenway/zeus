@@ -1,4 +1,4 @@
-import type { FilePreviewSourceWorkspace } from '@zeus/shared';
+import type { AsyncQuestionNotification, FilePreviewSourceWorkspace } from '@zeus/shared';
 import { mergeTaskProjection } from '../tasks/taskQueryStore.js';
 import { compareConversationWorkStartedDesc, cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, matchesTaskDeadline, projectTerminalOutput, type TaskDeadlineFilter, temporaryWorkspaceId } from '@zeus/shared';
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
@@ -249,6 +249,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     updateNativeConversationChoiceProjectStates((current) => reuseConversationQueryValue(current, typeof update === 'function' ? update(current) : update));
   }, []);
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
+  /** 原问题表单完成定位前保留通知的准确身份。 */
+  const [pendingAsyncQuestion, setPendingAsyncQuestion] = useState<AsyncQuestionNotification | null>(null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [selectedNativeConversationPresentation, setSelectedNativeConversationPresentation] = useState<'history' | 'interactive'>(() => (props.initialSelectedNativeConversationId ? 'history' : 'interactive'));
   /** 同一工作面的主栏和侧栏各自记录阅读事实，切换后不继承旧工作面的状态。 */
@@ -1604,6 +1606,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     gitTargetRef,
     latestConversationContentVisible,
     latestContentVisibleConversations,
+    pendingAsyncQuestion,
     loadTaskBoard,
     loadingDiffBusy,
     loadingRuntimeBusy,
@@ -1822,6 +1825,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setSecurityAuditLogs,
     setSecuritySecrets,
     setSelectedNativeConversationId,
+    setPendingAsyncQuestion,
     setSelectedNativeConversationPresentation,
     setSelectedTaskIds,
     setSettingsCategory,

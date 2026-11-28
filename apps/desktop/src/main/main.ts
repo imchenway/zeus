@@ -207,6 +207,12 @@ let computerHost: ComputerHost | undefined;
 let externalBrowserHost: ExternalBrowserHost | undefined;
 let conversationInputResources: ConversationInputResourceBroker | undefined;
 let systemNotificationBridge: SystemNotificationBridge | undefined;
+/** 系统通知只传递目标身份，会话由工作台按现状加载。 */
+type ConversationNotificationTarget = { projectId: string; conversationId: string };
+/** 工作台订阅后才可接收通知，页面加载完成与订阅完成是不同的状态。 */
+const conversationNotificationReady = new WeakSet<BrowserWindow>();
+/** 窗口启动期间保留最新一次打开意图。 */
+const pendingConversationNotifications = new WeakMap<BrowserWindow, ConversationNotificationTarget>();
 let zeusDataRootPath: string | undefined;
 let zeusDataLayout: ZeusDataLayout | undefined;
 let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
@@ -907,6 +913,15 @@ async function revealOrCreateMainWindow(): Promise<void> {
   pendingComputerUseBackgroundLaunch = false;
 }
 
+/** 页面订阅尚未就绪时，等到通知接收方可以处理再打开目标。 */
+function sendConversationNotification(window: BrowserWindow, target: ConversationNotificationTarget): void {
+  if (!conversationNotificationReady.has(window)) {
+    pendingConversationNotifications.set(window, target);
+    return;
+  }
+  window.webContents.send('zeus:conversation-notification:open', target);
+}
+
 function normalizeDragPoint(point: unknown): { screenX: number; screenY: number } | undefined {
   if (!point || typeof point !== 'object') return undefined;
   const candidate = point as { screenX?: unknown; screenY?: unknown };
@@ -1396,6 +1411,10 @@ async function createWindow(): Promise<void> {
 
   windows.add(window);
   mainWindow = window;
+  /** 重新加载工作台时，旧文档的订阅随之失效。 */
+  window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (!isInPlace && isMainFrame) conversationNotificationReady.delete(window);
+  });
   window.on('focus', () => {
     window.webContents.send('zeus:requesting-window-foreground-changed', true);
     const context = mainWindowTaskGitContexts.get(window.id);
@@ -2368,7 +2387,7 @@ function setupIpc(): void {
     if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Zeus 主窗口当前不可用。');
     revealMainWindow(mainWindow);
     if (owned.taskId !== undefined) mainWindow.webContents.send('zeus:task-git-delivery:open-conversation', { taskId: owned.taskId, conversationId: candidate.conversationId });
-    else mainWindow.webContents.send('zeus:conversation-notification:open', { projectId: owned.projectId, conversationId: candidate.conversationId });
+    else sendConversationNotification(mainWindow, { projectId: owned.projectId, conversationId: candidate.conversationId });
     return { opened: true };
   });
   ipcMain.handle('zeus:menu-bar-usage:hide', (event) => {
@@ -2660,6 +2679,18 @@ function setupIpc(): void {
   ipcMain.on('zeus:renderer-home-interactive', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (window && windows.has(window)) traceApplicationStartup('renderer_home_interactive');
+  });
+  /** 只接纳可信工作台的主文档订阅，消费一次窗口启动期间的打开意图。 */
+  ipcMain.on('zeus:conversation-notification:ready', (event) => {
+    /** 通知对应的窗口不能由页面指定。 */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed() || !windows.has(window) || !isTrustedZeusRendererWindow(window) || event.senderFrame !== event.sender.mainFrame) return;
+    conversationNotificationReady.add(window);
+    /** 已经执行过的意图不因重复就绪回执再次打开。 */
+    const pending = pendingConversationNotifications.get(window);
+    if (!pending) return;
+    pendingConversationNotifications.delete(window);
+    sendConversationNotification(window, pending);
   });
   ipcMain.on('zeus:renderer-bootstrap-ready', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -5345,14 +5376,13 @@ function startSystemNotificationBridge(config: { baseUrl: string; apiToken: stri
             });
           });
         } else if (payload.projectId && payload.conversationId) {
+          /** 点击期间保持原系统通知的目标身份。 */
+          const target = { projectId: payload.projectId, conversationId: payload.conversationId };
           notification.on('click', () => {
             void requestMainWindow().then(() => {
               if (!mainWindow || mainWindow.isDestroyed()) return;
               revealMainWindow(mainWindow);
-              mainWindow.webContents.send('zeus:conversation-notification:open', {
-                projectId: payload.projectId,
-                conversationId: payload.conversationId,
-              });
+              sendConversationNotification(mainWindow, target);
             });
           });
         }

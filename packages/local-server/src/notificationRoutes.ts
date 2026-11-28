@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { compareNotificationPositions, type NotificationItem, type NotificationListFilter, type NotificationPage, type NotificationPosition } from '@zeus/shared';
-import type { ZeusDatabasePort, GitDeliveryRepository } from '@zeus/storage';
+import type { ZeusDatabasePort, GitDeliveryRepository, ConversationSnapshotV2Repository } from '@zeus/storage';
 import { CommandRunRepository } from '@zeus/storage';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AutomationNotificationService } from './automationNotificationService.js';
@@ -21,6 +21,8 @@ export function registerNotificationRoutes(options: {
   readOnly: boolean;
   /** 交付通知直接读取原运行记录。 */
   deliveries?: GitDeliveryRepository;
+  /** 待答条目从原提问与答复账本实时投影。 */
+  questions: Pick<ConversationSnapshotV2Repository, 'pendingAsyncQuestionNotifications'>;
 }): void {
   /** 该应用仅处理 HTTP 幂等与事务，不调用调度器或恢复执行。 */
   const mutations = new AutomationMutationApplication(options.db);
@@ -56,11 +58,14 @@ export function registerNotificationRoutes(options: {
       /** 来源参与身份排序，相同时间与相同业务身份不会互相覆盖。 */
       /** 全部交付通知按同一全局边界分页。 */
       const deliveries = options.deliveries?.notifications(before, pending);
+      /** 仅可答复的工作台在待处理页读取当前问题。 */
+      const questions = pending && !options.readOnly ? options.questions.pendingAsyncQuestionNotifications({ projectId, before, limit: pageSize + 1 }) : [];
       const candidates: NotificationItem[] = [
         ...commandNotifications.items.map((item) => ({ ...item, source: 'command' as const })),
         ...(deliveries?.items ?? []).map((item) => ({ ...item, source: 'git_delivery' as const })),
         ...(!pending ? automations.items.map((item) => ({ ...item, source: 'automation' as const })) : []),
         ...(!pending ? tasks.items.map((item) => ({ ...item, source: 'task' as const })) : []),
+        ...questions,
       ].sort(compareNotificationPositions);
       // 源查询与全局排序若不一致则拒绝响应，不能静默重复或跳过通知。
       assert(
@@ -78,6 +83,19 @@ export function registerNotificationRoutes(options: {
         unreadCount: automations.unreadCount + tasks.unreadCount + (deliveries?.unreadCount ?? 0) + commandNotifications.unreadCount,
         nextCursor: last && hasMore ? Buffer.from(JSON.stringify({ occurredAt: last.occurredAt, source: last.source, id: last.id })).toString('base64url') : null,
       } satisfies NotificationPage;
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
+  /** 打开表单前重查单条问题，已处理或已结束时返回空。 */
+  options.server.get<{ Params: { id: string } }>('/api/notifications/question/:id', async (request, reply) => {
+    try {
+      /** 这里只接收通知自身的持久消息身份。 */
+      const { id } = request.params;
+      if (!id || id.length > 1024) return reply.code(400).send({ error: 'ZEUS_NOTIFICATION_FILTER_INVALID', message: '问题身份无效。' });
+      if (options.readOnly) return null;
+      return options.questions.pendingAsyncQuestionNotifications({ id, limit: 1 })[0] ?? null;
     } catch (error) {
       return fail(reply, error);
     }
@@ -149,7 +167,7 @@ function decodeNotificationCursor(cursor?: string): NotificationPosition | undef
       typeof occurredAt !== 'string' ||
       occurredAt.length > 64 ||
       !Number.isFinite(Date.parse(occurredAt)) ||
-      (source !== 'automation' && source !== 'task' && source !== 'git_delivery' && source !== 'command') ||
+      (source !== 'automation' && source !== 'task' && source !== 'git_delivery' && source !== 'command' && source !== 'question') ||
       typeof id !== 'string' ||
       !id ||
       id.length > 1024

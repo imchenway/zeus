@@ -1,4 +1,4 @@
-import type { FilePreviewSourceWorkspace } from '@zeus/shared';
+import type { AsyncQuestionNotification, FilePreviewSourceWorkspace } from '@zeus/shared';
 import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
@@ -125,6 +125,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     runtimeTaskIdentityRef,
     saveTaskTableLayoutThenLeaveRef,
     selectedNativeConversation,
+    pendingAsyncQuestion,
+    setPendingAsyncQuestion,
     selectedNativeConversationPresentation,
     selectedProject,
     selectedTaskModelPushOperation,
@@ -1791,6 +1793,15 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     );
   }
 
+  /** 只释放本次已定位的问题，后来的导航意图仍由当前工作区处理。 */
+  const completeAsyncQuestionNavigation = useCallback(
+    (question: AsyncQuestionNotification, error?: unknown) => {
+      setPendingAsyncQuestion((current) => (current === question ? null : current));
+      if (error) recordLocalError('conversation-notification-question', error);
+    },
+    [recordLocalError, setPendingAsyncQuestion],
+  );
+
   /** 保留既有会话控制器与新建、重试、归档阅读的实际入口。 */
   function renderNativeConversationWorkspaceContent(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     const taskReadOnlyGate =
@@ -1874,6 +1885,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           localState={selectedTaskModelPushOperation?.session}
           localActions={selectedTaskModelPushOperation ? taskModelPushWorkspaceActions(selectedTaskModelPushOperation, onOpenTaskDetail) : undefined}
           conversation={selectedNativeConversation}
+          asyncQuestionNavigation={pendingAsyncQuestion ? { target: pendingAsyncQuestion, onSettled: completeAsyncQuestionNavigation } : undefined}
           historyOnly={selectedNativeConversationPresentation === 'history'}
           task={nativeSessionTask}
           owner={nativeSessionOwner}

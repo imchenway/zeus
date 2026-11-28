@@ -3954,7 +3954,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (projectId) gitSummaries.invalidateProject(projectId, typeof event.payload.repositoryId === 'string' ? event.payload.repositoryId : typeof event.payload.workspaceId === 'string' ? event.payload.workspaceId : undefined);
     }
   });
-  registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, deliveries: gitDelivery.repository, readOnly: readOnlyValidation });
+  registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, deliveries: gitDelivery.repository, questions: conversationSnapshotV2, readOnly: readOnlyValidation });
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
   /** 无项目自动化复用产品已有临时会话工作区，不创建普通项目。 */

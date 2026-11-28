@@ -364,8 +364,12 @@ export function createDesktopApi(transport: DesktopTransport) {
     },
     /** 接收会话通知的打开请求。 */
     onOpenConversationNotification: (listener: (input: unknown) => void) => {
+      /** 先安装监听，再接收窗口启动期间的点击。 */
       const handler = (input: unknown) => listener(input);
-      return transport.subscribe('zeus:conversation-notification:open', handler);
+      /** 解绑只释放当前工作台的监听。 */
+      const dispose = transport.subscribe('zeus:conversation-notification:open', handler);
+      transport.send('zeus:conversation-notification:ready');
+      return dispose;
     },
     /** 读取当前请求窗口的前后台状态。 */
     getRequestingWindowForeground: () => transport.invoke('zeus:requesting-window-foreground'),
