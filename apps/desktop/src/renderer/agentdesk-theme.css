@@ -3376,10 +3376,11 @@ body:has(.macos-ai-app.zeus-shell) {
   inline-size: 18px;
 }
 
-/* 会话面覆盖最右网格列，右侧工具列从标题下方开始。 */
+/* 会话跨到右侧工具列时固定在首行，避免网格自动排到窗口下方。 */
 .macos-ai-app.zeus-shell[data-session-topbar='true'] > .ai-workspace.classic-project-workspace {
   --project-frame-gap: 0px;
   grid-column: -3 / -1;
+  grid-row: 1;
 }
 
 /* 正文与底部工具避开右侧工具列，顶栏使用同一段空间。 */
